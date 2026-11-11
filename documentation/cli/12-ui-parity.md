@@ -37,6 +37,7 @@ record links only to the caller's own records
 | Redirector: redirectors, rules, criteria | `/rotators`, `/rotators/{id}/rules` (`PUT` saves the whole set, in order, as the page does) | `p202 rotator …`, `rotator set-rules`, `rotator rule-create/update/delete`, `rotator criteria-values`, `rotator test`, `rotator trace` | ◐ criteria values that come from a hosted list for some types; the auto-monetizer is set on the page only |
 | Mobile Apps (incl. goals, SKAN encodings, integrity) | `/apps/…`, `/goals/…` | `p202 app …`, `p202 goal …` | ✅ |
 | Get LP Code | `GET /landing-pages/{id}/code` (`?offers=campaign:12,rotator:3` for an advanced page) | `p202 landing-page code <id>` (`--offer`) | ✅ |
+| Get LP Code › Check my page, and each page's code check on Landing Pages | `POST /landing-pages/{id}/check` | `p202 landing-page check <id>` | ✅ |
 | Get Links | `POST /trackers`, `GET /trackers/{id}/url` (`t202kw`, `c1`–`c4`, `utm_*`, the source's custom variables) | `p202 tracker create`, `tracker create-with-url`, `tracker get-url`, `tracker bulk-urls` | ✅ |
 | Postback/Pixel | `GET /conversions/postback-code` | `p202 conversion postback-url`, `p202 conversion pixel` (`--type simple\|advanced\|universal`, `--iframe`) | ✅ |
 | Inbound Log | `GET /conversions/inbound-log` | `p202 conversion inbound-log` | ✅ |
@@ -59,6 +60,7 @@ record links only to the caller's own records
 | ---- | --- | --- | - |
 | Keywords, Text Ads, Countries, Cities, Regions, ISP/Carrier, Landing Pages, Devices, Browsers, Platforms | `/reports/breakdown?breakdown=…` | `p202 report breakdown --breakdown …`, `p202 analytics --group-by …` | ✅ |
 | Referers, IPs, Custom Variables (`c1`–`c4`, UTM), device type, rotator and rule | `/reports/breakdown?breakdown=referer\|referer_url\|ip\|c1…c4\|utm_*\|device_type\|rotator\|rotator_rule` | `p202 report breakdown --breakdown …` | ✅ |
+| Analyze › Publishers (what each publisher's links did) | `/reports/breakdown?breakdown=publisher`, `/reports/groups?by=publisher,publisher_link,campaign`, `publisher_id` on every `/reports/*` | `p202 report breakdown --breakdown publisher`, `p202 report groups --by publisher,publisher_link,campaign`, `--publisher-id` | ✅ |
 | The pages' filters (text ad, region, ISP, browser, platform, device type, keyword, IP, referer, "show") and periods | every `/reports/*` | every `p202 report …` command | ✅ |
 | Customer LTV (customers, companies, subscriptions, products, fields, webhooks, integrations, merges) | `/ltv/…` | `p202 ltv …` | ✅ |
 | Mobile Apps | `/apps/report`, `/apps/postbacks` | `p202 app report`, `app postbacks` | ✅ |
@@ -68,6 +70,7 @@ record links only to the caller's own records
 
 | Page | API | CLI | |
 | ---- | --- | --- | - |
+| Visitors › Not fraud (a click IPQualityScore filtered) | `POST /clicks/{id}/not-fraud` | `p202 click not-fraud <id>` | ✅ |
 | Visitors: each click with its campaign, source, keyword, IP, location, device, referrer and landing URLs | `/clicks`, `/clicks/{id}`, `/clicks/{id}/conversions` | `p202 click list`, `click get`, `click conversions` | ✅ the same filters and periods as the reports |
 | Spy: the newest clicks, then each new one | `/clicks` polled | `p202 click list --follow` | ✅ |
 
@@ -99,6 +102,7 @@ Every Update write previews with `?dry_run=1` (`--dry-run`).
 | Settings: AutoCron, "update available" | — | — | — hosted service |
 | 3rd Party API Integrations: secrets (IPQS, ClickBank, JVZoo, Zaxaa, Slack, PayKickstart's IPN keys) | `/users/{id}/preferences` | `p202 user prefs update` | ✅ |
 | 3rd Party API Integrations: the URLs to paste into each network | `/system/integrations` | `p202 system integrations` | ✅ |
+| 3rd Party API Integrations: record the notifications held for their currency | `/system/integrations/record-held` | `p202 system integrations record-held <integration>` | ✅ |
 | 3rd Party API Integrations: Postback authentication | `GET`/`PUT /conversions/postback-auth`, `POST /conversions/postback-auth/rotate` | `p202 conversion postback-auth get`, `set --mode`, `rotate --credential --grace-hours` | ✅ |
 | 3rd Party API Integrations: DNI networks | — | — | — hosted service |
 | Attribution: models, reports, journeys, exports | `/attribution/…` | `p202 attribution …` | ✅ |

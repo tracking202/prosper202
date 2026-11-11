@@ -28,7 +28,7 @@ p202_overview_run([
     'desc' => 'Clicks from the last 24 hours as they arrive; new ones appear at the top every few seconds.',
     'icon' => 'bi-broadcast',
     'action' => $base . 'tracking202/spy/',
-    'fragment' => $base . 'tracking202/ajax/click_history.php?spy=1',
+    'fragment' => p202_click_history_fragment($base . 'tracking202/ajax/click_history.php?spy=1', $_GET),
     'panel' => 'Live clicks',
     // The live view has its own window, the last 24 hours, whatever the
     // reports' range says; the classic page offered no range either.

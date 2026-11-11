@@ -198,6 +198,7 @@ $mysql['user_id'] = $db->real_escape_string((string)($tracker_row['user_id'] ?? 
 // A publisher link credits a publisher the account granted; any other id is ignored.
 $dlPublisher = p202ClickPublisher($db, (int) ($tracker_row['user_id'] ?? 0), $_GET);
 $mysql['publisher_user_id'] = (string) ($dlPublisher['user_id'] ?? 0);
+$mysql['publisher_tracker_id_public'] = $dlPublisher === null ? '0' : (string) $dlTrackerId;
 
 //now this sets timezone
 date_default_timezone_set($tracker_row['user_timezone']);
@@ -262,6 +263,16 @@ foreach (\Prosper202\Click\TrackerVariables::pairs($tracker_row) as [$value, $pp
 		$custom_var_ids[] = $variable_id;
 	}
 }
+
+// Said in the log when the click's traffic source account names another
+// user's source and the click came with a value of its variables.
+\Prosper202\Repository\LookupRepositoryFactory::noteUnrecordedVariables(
+    $db,
+    (int) ($tracker_row['user_id'] ?? 0),
+    (int) ($tracker_row['ppc_account_id'] ?? 0),
+    (int) ($tracker_row['own_ppc_network_id'] ?? 0) > 0,
+    $_GET
+);
 
 //utm_source
 $utm_source = ClickRequest::text($_GET, 'utm_source');

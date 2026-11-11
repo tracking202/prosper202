@@ -22,7 +22,7 @@ final class MoneyLossAlertsUpgradeIntegrationTest extends TestCase
 {
     use \Tests\Report\ScratchReportDatabase;
 
-    private const TABLES = ['202_alert_settings', '202_alert_state', '202_conversion_logs'];
+    private const TABLES = ['202_alert_settings', '202_alert_state', '202_alert_log', '202_conversion_logs'];
 
     /** @var list<string>|null 202_version as this class found it, put back after */
     private static ?array $versions = null;
@@ -60,6 +60,7 @@ final class MoneyLossAlertsUpgradeIntegrationTest extends TestCase
         $installed = self::shapes();
         self::q('DROP TABLE 202_alert_settings');
         self::q('DROP TABLE 202_alert_state');
+        self::q('DROP TABLE 202_alert_log');
         // As 1.9.79 left it: neither of the keys nor the columns the 1.9.80 step adds.
         self::q('ALTER TABLE 202_conversion_logs DROP INDEX user_conv_time, DROP INDEX user_currency_click_time,'
             . ' DROP COLUMN currency, DROP COLUMN stated_amount, DROP COLUMN stated_currency');

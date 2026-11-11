@@ -39,14 +39,49 @@ Set them up on **Setup › Destinations**, with `p202 destination`, or through
 | --- | --- |
 | `pending` | Waiting, or backing off after a failed try. A Google Ads row also waits, without using a try, for its click to be 6 hours old, for the destination to be connected to Google, and for you to fix what Google refused (the developer token, access, the customer IDs or the conversion action). |
 | `sent` | The platform accepted it. |
-| `failed` | Tries ran out, or the platform refused it, or it was not sent (a GA4 event more than 72 hours old, a private address). `last_error` says which. |
-| `withheld` | Nothing was sent: the click was guessed, or the visitor is held back (below). `last_error` says which. Never retried. |
+| `failed` | Tries ran out, or the platform refused it, or it was not sent (a GA4 event more than 72 hours old, a private address). `last_error` says which. It stays failed until you send it again. |
+| `withheld` | Nothing was sent: the click was guessed, or the visitor is held back (below). `last_error` says which. Never retried by itself. |
 | `cancelled` | The conversion or the destination was deleted before it went out. |
 
 A destination you turn off queues nothing; what it had queued waits and goes
 out when you turn it on again (a GA4 event by then more than 72 hours old
 fails instead). A deleted destination's unsent rows are
 cancelled, and its credentials erased.
+
+## Seeing what failed, and sending it again
+
+Under each destination, Setup › Destinations counts the last 7 days'
+conversions by status and lists the commonest reasons the failed and
+withheld ones were not sent. Each count opens the destination's **full
+log**, filtered to that status and paged, where a conversion links to its
+click in Conversion Logs.
+
+- **Send again.** After you fix the cause (a token, an account, a
+  conversion action, the privacy setting), *Send the N failed again* puts
+  every failed conversion of the last 90 days back in the queue with all
+  its tries; the log has the same button on each failed or withheld row. A
+  withheld conversion is checked again, and withheld again if it is still
+  held back. A conversion already sent is never sent twice.
+- **Send earlier conversions.** A new destination starts with the next
+  conversion. *Send earlier conversions* queues the paid conversions of the
+  last days you pick that its campaigns take and its log has no row for:
+  up to 3 days for GA4 (it refuses an event more than 72 hours old), up to
+  90 for Google Ads (which keeps the conversion it already holds, so one
+  uploaded twice counts once).
+
+Both take 5,000 conversions a press and say when more remain. The cron job
+sends about 200 a minute for all destinations together, so the page says how
+many were queued and about how long they take, and each destination shows
+how many are still to send; reload the page to see the counts move.
+
+## Editing a destination
+
+*Edit*, under each destination, changes its name, settings, campaigns,
+event parameters (GA4), per-campaign conversion actions (Google Ads),
+consent signals and credentials. A credential left blank keeps the stored
+one; a Google Ads destination stays connected unless you change its OAuth
+client. Saving makes the conversions waiting for the destination due at
+once.
 
 ## Privacy and personal data
 
@@ -56,12 +91,15 @@ cancelled, and its credentials erased.
   latest click from the same IP address) is withheld, as the offline
   conversion files leave it out: a guess would teach the platform's bidding
   the wrong clicks.
-- **A visitor who may be in the EEA or UK is withheld unless consent is
-  granted**, whatever your privacy setting. GeoIP decides from the click's
-  address; an address it cannot place counts as possibly European. Such a
-  visitor is sent only when your privacy setting is `disabled` and the
-  destination states both consent signals (`ad_user_data` and
-  `ad_personalization`) as `granted`.
+- **A visitor who may be in the EEA or UK is sent only when two things
+  hold**: your privacy setting is `disabled`, and the destination states
+  both consent signals (`ad_user_data` and `ad_personalization`) as
+  `granted`. Under `eu`, the default for new accounts, stating consent
+  sends none of them. GeoIP decides from the click's address; an address
+  it cannot place counts as possibly European. Setup › Destinations says
+  which setting is in force beside the consent fields, and warns under a
+  destination that states both signals granted while the setting still
+  holds those visitors back.
 - **Your privacy setting** (Personal settings, the same setting that masks
   addresses and drops cookies) applies on top: `all` sends no visitor; `eu`
   (the default for new accounts) sends only visitors placed outside Europe
@@ -237,8 +275,7 @@ action's *Uploads* in Google Ads after the first real conversions (a
 conversion appears there a few hours after its upload).
 
 Not yet: conversion adjustments and retractions (a refund does not reach
-Google Ads), batching, and backfilling conversions recorded before the
-destination existed.
+Google Ads) and batching.
 
 ## CLI
 
@@ -248,6 +285,8 @@ printf %s "$GA4_API_SECRET" | p202 destination create --name "Online store GA4" 
 p202 destination test 1
 p202 destination update 1 --campaign-id 12 --send-user-data
 p202 destination deliveries 1 --status failed
+p202 destination resend 1 --status failed      # after fixing the cause; --delivery-id N for one
+p202 destination backfill 1 --days 3           # conversions recorded before it existed
 p202 destination update 1 --disable
 
 # Google Ads: google-ads.json holds developer_token, oauth_client_id, oauth_client_secret
@@ -269,6 +308,8 @@ p202 destination test 2
 | `DELETE` | `/destinations/{id}` | Delete (`?dry_run=1` previews) |
 | `POST` | `/destinations/{id}/test` | Test fire |
 | `POST` | `/destinations/{id}/oauth/start` | Google Ads: the consent screen's `authorisation_url` and the `redirect_uri` to register |
+| `POST` | `/destinations/{id}/deliveries/resend` | Send again: `delivery_id` (one) or `status` (`failed` or `withheld`, the last 90 days'); answers `queued` and `more` |
+| `POST` | `/destinations/{id}/backfill` | Queue the last `days` of conversions it has no delivery for; answers `queued` and `more` |
 | `GET` | `/destinations/{id}/deliveries` | The delivery log (`status`, `kind`, `conv_id`, `time_from`, `time_to`, `limit`, `offset`) |
 
 Scopes `destinations:read` and `destinations:write`. Every route needs the

@@ -13,6 +13,7 @@ use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\JVZoo\JVZooAdapter;
 use Prosper202\PaymentNotification\JVZoo\JVZooKey;
 use Prosper202\PaymentNotification\JVZoo\JVZooRole;
+use Prosper202\PaymentNotification\JVZoo\RolelessTraffic;
 use Prosper202\PaymentNotification\Outcome;
 use Prosper202\PaymentNotification\OutcomeKind;
 use Prosper202\PaymentNotification\Receiver;
@@ -326,6 +327,89 @@ final class JVZooIpnIntegrationTest extends TestCase
         self::assertSame(200, $status, $body);
         self::assertStringContainsString('carries no caffitid', $body);
         self::assertCount(1, self::conversions());
+    }
+
+    /**
+     * A vendor still on the 1.9.56 URL who has chosen nothing: a sale no
+     * affiliate referred is recorded on the buy link's subid, the answer
+     * says how it was read, and the JVZoo card's counts (RolelessTraffic)
+     * see it and the affiliate-referred sale that recorded nothing.
+     */
+    public function testAVendorsSaleThatNamesNoAffiliateIsRecordedAtTheUrlWithNoRoleAndCounted(): void
+    {
+        self::q('DELETE FROM 202_inbound_log WHERE user_id = ' . self::ACCOUNT);
+        $direct = JVZooAdapterTest::signed(self::fields(['caffitid' => '', 'ctransaffiliate' => '',
+            'cvendthru' => 'subid=' . self::CLICK]), self::KEY);
+        [$status, $body] = self::jvzoo([], $direct);
+        self::assertSame(200, $status, $body);
+        self::assertStringContainsString('Recorded transaction ' . self::RECEIPT . ' on click ' . self::CLICK, $body);
+        self::assertStringContainsString('read it as a vendor\'s, since it names no affiliate', $body);
+        self::assertSame([(string) self::CLICK], array_column(self::conversions(), 'click_id'));
+        self::assertSame((string) self::ACCOUNT, self::conversions()[0]['user_id']);
+
+        // One an affiliate referred carries no tid of this account's: refused, as chosen (affiliate).
+        $referred = JVZooAdapterTest::signed(self::fields([
+            'caffitid' => '', 'cvendthru' => 'subid=' . self::SECOND_CLICK, 'ctransreceipt' => 'R-REFERRED-1',
+        ]), self::KEY);
+        [$status, $body] = self::jvzoo([], $referred);
+        self::assertSame(400, $status, $body);
+        self::assertCount(1, self::conversions());
+        // A test, and a sale at the URL that names its role, are not the 1.9.56 URL's money.
+        self::jvzoo([], JVZooAdapterTest::signed(self::fields(['ctransaction' => 'TEST']), self::KEY));
+        self::jvzoo(['role' => 'vendor'], $referred);
+
+        $log = new \Prosper202\InboundLog\InboundLog(self::requireScratch());
+        $traffic = RolelessTraffic::recent($log, self::ACCOUNT, time() - 3600);
+        self::assertSame([1, 1, 0, 0, 0], [$traffic->vendorNoAffiliate, $traffic->refused, $traffic->asAffiliate,
+            $traffic->asVendor, $traffic->conflict]);
+        self::assertTrue($traffic->inUse());
+        self::assertTrue($traffic->looksLikeAVendor());
+        $rows = $log->list(self::ACCOUNT, false, ['endpoint' => 'jvzoo', 'outcome' => 'recorded']);
+        self::assertSame('vendor_no_affiliate', $rows[count($rows) - 1]['fields'][JVZooAdapter::ROLELESS_LOG_FIELD]);
+
+        // Older than the window, or another account's: not counted.
+        self::assertFalse(RolelessTraffic::recent($log, self::ACCOUNT, time() + 60)->inUse());
+        self::assertFalse(RolelessTraffic::recent($log, self::OTHER, 0)->inUse());
+    }
+
+    /**
+     * The card reads the newest RolelessTraffic::READ JVZoo requests: when
+     * they do not reach back to the window's start, the counts say they are
+     * at least these, and the 1.9.56 URL reads as in use.
+     */
+    public function testCountsThatDoNotReachBackTheWholeWindowSayTheyAreAtLeast(): void
+    {
+        self::q('DELETE FROM 202_inbound_log WHERE user_id = ' . self::ACCOUNT);
+        $log = new \Prosper202\InboundLog\InboundLog(self::requireScratch());
+        $now = time();
+        try {
+            $noRole = [JVZooAdapter::ROLELESS_LOG_FIELD => JVZooAdapter::READ_VENDOR_NO_AFFILIATE];
+            $entry = static fn (array $fields): \Prosper202\InboundLog\Entry => new \Prosper202\InboundLog\Entry(
+                'jvzoo',
+                'POST',
+                200,
+                'recorded',
+                'Recorded.',
+                self::ACCOUNT,
+                fields: $fields
+            );
+            self::assertTrue($log->append($entry($noRole), $now - 500));
+            for ($i = 1; $i < RolelessTraffic::READ; $i++) {
+                self::assertTrue($log->append($entry([]), $now - 400));
+            }
+            $all = RolelessTraffic::recent($log, self::ACCOUNT, $now - 3600);
+            self::assertSame([1, false], [$all->vendorNoAffiliate, $all->more], 'the read reached every request');
+
+            // One more request with a role pushes the 1.9.56 one out of the read.
+            self::assertTrue($log->append($entry([]), $now - 300));
+            $cut = RolelessTraffic::recent($log, self::ACCOUNT, $now - 3600);
+            self::assertSame([0, true], [$cut->vendorNoAffiliate, $cut->more]);
+            self::assertTrue($cut->inUse());
+            // A window the read does reach the start of is whole.
+            self::assertFalse(RolelessTraffic::recent($log, self::ACCOUNT, $now - 350)->more);
+        } finally {
+            self::q('DELETE FROM 202_inbound_log WHERE user_id = ' . self::ACCOUNT);
+        }
     }
 
     /** Two accounts holding one key that read the 1.9.56 URL differently: refused, nothing recorded. */

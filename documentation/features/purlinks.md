@@ -31,6 +31,20 @@ return the same PurLinks as `purlink`.
 - Until the visitor's SubID is ready (a moment after the page loads) a PurLink
   points at the tracker's ordinary redirect (`go.php`), so a very fast click is
   still tracked. Once it is ready, the link points straight at the offer.
+- That redirect keeps the link's own destination. Several links to one
+  campaign that differ in a query parameter, such as a deep link
+  (`…&acip=491&u=<product page>`), each still reach their own product while
+  the SubID is being prepared, and when it could not be prepared. The redirect
+  takes a link's URL when its scheme, host and path are those of a URL the
+  campaign's redirect uses (its first URL, and the rotation URLs when
+  rotation is on); a link to anywhere else goes to the campaign URL. The
+  link keeps its own parameters. A tracking token the campaign's own URL
+  also has (`[[subid]]`, say) is filled in as usual; one it does not have is
+  left empty for that moment (`…&kw=[[t202kw]]&u=<product page>` arrives as
+  `…&kw=&u=<product page>`); once the SubID is ready the page fills it in.
+  To have a token filled by the redirect too, put it in the campaign's URL.
+  A link with `[[` or `]]` that is not one whole token goes to the campaign
+  URL. A cloaked simple-page campaign goes to the campaign URL.
 - Clicking, a middle-click, and open-in-new-tab all record the click-out. A
   right-click that only opens the menu does not.
 - The click-out is sent in the background (`fetch` with `keepalive`, or
@@ -67,7 +81,14 @@ builder) are found and updated as they appear.
 
 ## Changing links from a script
 
-- `updatePurLink()` updates every PurLink on the page again, as in 1.9.56.
+- `updatePurLink()` updates every PurLink on the page again, as in 1.9.56. It
+  records no pageview. A link whose SubID could not be prepared is tried
+  again, at most once every 30 seconds.
+- When the visitor comes back with the Back button and the browser restores
+  the page, the links are as they were, and a link whose SubID could not be
+  prepared is tried again. A 1.9.56 page that loads `landing.js` again on
+  `pageshow` keeps working: the second load refreshes the PurLinks and
+  records nothing.
 - A link's raw template can be set in `data-t202rawlink`; the link's `href` is
   then rendered from it.
 - `data-p202-purlink` marks a link as a PurLink even without tokens.
@@ -86,6 +107,35 @@ takes a SubID back accepts it and credits its offer: `gpb.php`, `pb.php`,
 notifications, revenue uploads and Update Subids. `pb.php` also checks that it
 names the postback's own campaign. A SubID whose signature does not match
 records nothing.
+
+## Keeping the first click's SubID
+
+As in 1.9.56, a page can ask that a returning visitor's PurLinks keep the
+SubID of the click that first brought them, so a later sale is credited to
+that click. Set this before the landing page code:
+
+```html
+<script>
+window.t202Settings = {
+    t202UseSubidOrig: true,
+    t202ExpireSubidOrig: 30
+};
+</script>
+```
+
+`t202ExpireSubidOrig` is the number of days to keep it (7 when left out, 365
+at most). Each later visit is still recorded as its own click, and its
+click-out is recorded on that click; only the SubID in the links is the first
+one. It is kept in a cookie on your landing page's site, one per offer
+(`_t202SubidOrig_<offer id>`) or per simple page (`_t202SubidOrig_p<page
+id>`), and a returning visitor's links are ready at once, with no request for
+a new SubID. A value 1.9.56 stored is not a signed SubID and is replaced by
+the visit's own.
+
+It is kept only for a visitor who has not refused tracking and whom the
+account's privacy setting does not hold back; `p202.consent(false)` removes
+it. If the first click has been deleted (automatic click deletion), a sale on
+its SubID is not recorded, so keep the days within your click retention.
 
 ## The deferred pixel
 
@@ -122,10 +172,12 @@ applies its own rules. A deferred-pixel request that refuses consent fires
 nothing and leaves the conversion for a later request that consents.
 
 The account's privacy setting (Settings › Privacy) does not stop PurLinks: a
-PurLink stores nothing in the visitor's browser and records what the tracker's
-redirect would. It does stop the deferred pixel, which fires third-party
-pixels: a visitor the setting holds back (under `eu`, anyone who may be in
-Europe) gets no deferred pixel. The page's proofs travel in request bodies, never in a
+PurLink stores nothing in the visitor's browser, unless the page turns on
+[keeping the first click's SubID](#keeping-the-first-clicks-subid), and
+records what the tracker's redirect would. The setting does stop that kept
+SubID, and it stops the deferred pixel, which fires third-party pixels: a
+visitor the setting holds back (under `eu`, anyone who may be in Europe) gets
+no deferred pixel. The page's proofs travel in request bodies, never in a
 URL, a cookie or a referrer, and the requests send no cookies.
 
 ## Limits
@@ -148,7 +200,16 @@ URL, a cookie or a referrer, and the requests send no cookies.
 ## Upgrading from 1.9.56
 
 - Pages carrying the 1.9.56 snippet keep working, including `defpixel=1`.
+- `window.t202Settings` with `t202UseSubidOrig` and `t202ExpireSubidOrig`
+  works again ([above](#keeping-the-first-clicks-subid)). So do values set
+  in `t202Settings` and `t202UrlVars`, and `[[sourceid]]` in a PurLink takes
+  the click's traffic source account again; see
+  [Dynamic content](dynamic-content.md#setting-values-before-the-visit-is-recorded-t202settings).
+- A PurLink on a simple landing page whose campaign is cloaked keeps its own
+  deep link through the cloaked redirect too.
 - 1.9.56 SubIDs (`<click>-<offer>`) that networks send back after the upgrade
   are still accepted, for a click already on that offer.
-- The 1.9.80 upgrade creates the tables PurLinks need; there is nothing to
-  migrate.
+- The 1.9.80 upgrade creates the tables PurLinks need and carries over the
+  PurLink clicks from the 90 days before it that had not converted, so a
+  postback that arrives afterwards still records its sale. Nothing else needs
+  migrating.

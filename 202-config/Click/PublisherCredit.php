@@ -32,8 +32,24 @@ final readonly class PublisherCredit
     /** createId(5): ten hex characters, in a VARCHAR(10). */
     private const PUBLIC_ID = '/\A[0-9A-Za-z]{1,10}\z/';
 
+    /** The clicks credited to a publisher, for an IN (...) over a click id. */
+    public const CREDITED_CLICKS_SQL = 'SELECT pc.click_id FROM 202_clicks_publisher pc';
+
     public function __construct(private Connection $conn)
     {
+    }
+
+    /**
+     * The report filter "clicks credited to publisher $publisherUserId", over
+     * the click id $clickId names (an alias and column, as `2st.click_id`).
+     */
+    public static function creditedClicksCondition(string $clickId, int $publisherUserId): string
+    {
+        if (preg_match('/\A[A-Za-z0-9_]+\.click_id\z/', $clickId) !== 1) {
+            throw new \InvalidArgumentException("PublisherCredit: '$clickId' is not a click id column");
+        }
+
+        return $clickId . ' IN (' . self::CREDITED_CLICKS_SQL . ' WHERE pc.publisher_user_id = ' . $publisherUserId . ')';
     }
 
     /**

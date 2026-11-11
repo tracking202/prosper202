@@ -220,6 +220,137 @@ final class RedirectorRulesSaveIntegrationTest extends TestCase
     }
 
     /**
+     * A country typed as a code and a device in capitals are saved in the
+     * form the redirects match, by the API's normalizer, and the save says
+     * what it changed. They were refused, and the redirector could not be
+     * saved until each was corrected by hand.
+     */
+    public function testACountryCodeAndACapitalisedDeviceAreSavedAsTheRedirectsMatchThem(): void
+    {
+        $post = self::post();
+        $post['data'][0]['criteria'][0]['value'] = 'uk, us';
+        $post['data'][1]['criteria'][0]['value'] = 'Mobile';
+
+        [$done, $said] = explode("\n", trim(self::save($post)), 2) + [1 => ''];
+        self::assertSame('DONE', $done);
+        self::assertSame([
+            'Rule 1: "uk" was saved as "United Kingdom(GB)", the form the redirects match.',
+            'Rule 1: "us" was saved as "United States(US)", the form the redirects match.',
+            'Rule 2: "Mobile" was saved as "mobile", the form the redirects match.',
+        ], json_decode($said, true));
+        self::assertSame(
+            ['United Kingdom(GB),United States(US)', 'mobile'],
+            array_column(self::snapshot()['criteria'], 'value')
+        );
+        // Saved again as stored, there is nothing to say.
+        $post['data'][0]['criteria'][0]['value'] = 'United Kingdom(GB),United States(US)';
+        $post['data'][1]['criteria'][0]['value'] = 'mobile';
+        $post['data'][1]['rule_id'] = (string) self::snapshot()['rules'][1]['id'];
+        $post['data'][1]['criteria'][0]['criteria_id'] = (string) self::snapshot()['criteria'][1]['id'];
+        $post['data'][0]['redirects'][1]['id'] = (string) self::snapshot()['redirects'][1]['id'];
+        $post['data'][1]['redirects'][0]['id'] = (string) self::snapshot()['redirects'][2]['id'];
+        self::assertSame('DONE', trim(self::save($post)));
+    }
+
+    /**
+     * A rule's value is suggested as it is typed: a country from the list
+     * the save normalizes with, a link's value from what the account's own
+     * clicks carried (and no other account's).
+     */
+    public function testAValueIsSuggestedFromTheCountriesAndTheAccountsOwnClicks(): void
+    {
+        $suggest = static fn (string $type, string $query): mixed => json_decode(
+            self::page('tracking202/ajax/rotator.php', ['autocomplete' => 'true', 'type' => $type, 'query' => $query]),
+            true
+        );
+        self::assertSame('United Kingdom(GB)', $suggest('country', 'uk')[0]);
+        self::assertContains('Germany(DE)', $suggest('country', 'germ'));
+
+        $now = time();
+        $lookup = static function (string $table, string $id, string $column, int $key, string $value): void {
+            self::q("DELETE FROM $table WHERE $id = $key");
+            self::row($table, [$id => $key, $column => $value]);
+        };
+        $lookup('202_utm_source', 'utm_source_id', 'utm_source', 990261, 'newsletter');
+        $lookup('202_utm_source', 'utm_source_id', 'utm_source', 990262, 'news_partner');
+        $lookup('202_utm_source', 'utm_source_id', 'utm_source', 990263, 'newsroom');
+        $lookup('202_utm_source', 'utm_source_id', 'utm_source', 990264, 'news,wire');
+        $lookup('202_utm_source', 'utm_source_id', 'utm_source', 990265, 'newspaper');
+        $click = 99026100;
+        $seen = static function (int $user, int $source, int $clicks, int $time) use (&$click): void {
+            self::row('202_dataengine', ['user_id' => $user, 'click_id' => ++$click, 'click_time' => $time,
+                'ppc_account_id' => 0, 'landing_page_id' => 0, 'utm_source_id' => $source, 'clicks' => $clicks, 'payout' => 0]);
+        };
+        self::q('DELETE FROM 202_dataengine WHERE user_id IN (' . self::USER . ', ' . self::OTHER . ')');
+        try {
+            $seen(self::USER, 990261, 2, $now - 3600);
+            $seen(self::USER, 990262, 5, $now - 7200);
+            $seen(self::OTHER, 990263, 9, $now - 3600);
+            $seen(self::USER, 990264, 9, $now - 3600);
+            $seen(self::USER, 990265, 9, $now - 40 * 86400);
+            self::assertSame(['news_partner', 'newsletter'], $suggest('utm_source', 'news'), 'the busiest first');
+            self::assertSame(['news_partner'], $suggest('utm_source', 's_p'), 'an underscore is itself, not any character');
+            self::assertSame([], $suggest('utm_source', 'zz'));
+            self::assertSame([], $suggest('weekday', 'mon'), 'a type with no list answers nothing');
+            // Every type's statement runs on the server.
+            $conn = new \Prosper202\Database\Connection(self::requireScratch());
+            foreach (['c1', 'c2', 'c3', 'c4', 't202kw', 'referer', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'] as $type) {
+                self::assertSame([], \Prosper202\Rotator\SeenValues::matching($conn, self::USER, $type, 'news', $now), $type);
+            }
+        } finally {
+            self::q('DELETE FROM 202_dataengine WHERE user_id IN (' . self::USER . ', ' . self::OTHER . ')');
+            self::q('DELETE FROM 202_utm_source WHERE utm_source_id BETWEEN 990261 AND 990265');
+        }
+    }
+
+    /**
+     * The page says, beside the rule, when a rule sends no visitor
+     * anywhere: a fraud rule with no IPQualityScore key saved, with the
+     * way to the setting.
+     */
+    public function testThePageWarnsOfARuleThatMatchesNoVisitor(): void
+    {
+        self::q("UPDATE 202_rotator_rules_criteria SET type = 'fraud', value = 'true' WHERE id = " . self::KEPT);
+        $page = self::page('tracking202/setup/rotator.php', ['rotator_id' => (string) self::ROTATOR]);
+        self::assertStringContainsString('No IPQualityScore key is saved', $page);
+        self::assertStringContainsString('202-account/api-integrations.php#ipqs">Add a key</a>', $page);
+        self::assertStringContainsString('check this rule', $page);
+        self::assertStringContainsString('data-type-warnings="{&quot;fraud&quot;', $page);
+
+        self::q("UPDATE 202_rotator_rules_criteria SET type = 'country', value = 'United Kingdom(GB)' WHERE id = " . self::KEPT);
+        $page = self::page('tracking202/setup/rotator.php', ['rotator_id' => (string) self::ROTATOR]);
+        self::assertStringNotContainsString('check this rule', $page);
+        self::assertStringContainsString('data-criterion-warning', $page);
+    }
+
+    /**
+     * Whether an ISP rule can be chosen follows the account's own MaxMind
+     * ISP setting, the one its redirects read, not the first account's.
+     */
+    public function testAnIspRuleFollowsTheAccountsOwnIspSetting(): void
+    {
+        $page = static fn (): string => self::page('tracking202/setup/rotator.php', ['rotator_id' => (string) self::ROTATOR]);
+        $set = static fn (int $user, int $isp) => self::q("INSERT INTO 202_users_pref SET user_id = $user, maxmind_isp = '$isp'"
+            . " ON DUPLICATE KEY UPDATE maxmind_isp = '$isp'");
+        $firstHad = self::requireScratch()->query('SELECT maxmind_isp FROM 202_users_pref WHERE user_id = 1')->fetch_row();
+        try {
+            $set(1, 1);
+            $set(self::USER, 0);
+            self::assertStringContainsString('(needs MaxMind ISP)', $page());
+            $set(1, 0);
+            $set(self::USER, 1);
+            self::assertStringNotContainsString('(needs MaxMind ISP)', $page());
+        } finally {
+            $set(self::USER, 0);
+            if ($firstHad === null) {
+                self::q('DELETE FROM 202_users_pref WHERE user_id = 1');
+            } else {
+                $set(1, (int) $firstHad[0]);
+            }
+        }
+    }
+
+    /**
      * A save that would remove a rule needs remove_rotator_rule, as the
      * page's remove button does, and refuses before anything is written.
      */
@@ -432,18 +563,29 @@ final class RedirectorRulesSaveIntegrationTest extends TestCase
      */
     private static function save(array $post): string
     {
+        return self::page('tracking202/ajax/rotator.php', [], $post);
+    }
+
+    /**
+     * What a page printed for the account.
+     *
+     * @param array<string, string> $get
+     * @param array<string, mixed> $post
+     */
+    private static function page(string $page, array $get, array $post = []): string
+    {
         self::requireScratch();
         $env = [
             'P202_TEST_REPORT_USER' => (string) self::USER,
             'P202_TEST_SESSION_DIR' => self::$sessions,
-            'P202_TEST_GET' => '{}',
-            'P202_TEST_POST' => (string) json_encode($post),
-            'P202_TEST_AJAX' => '1',
+            'P202_TEST_GET' => $get === [] ? '{}' : (string) json_encode($get),
+            'P202_TEST_POST' => $post === [] ? '{}' : (string) json_encode($post),
+            'P202_TEST_AJAX' => $post === [] ? '0' : '1',
         ] + getenv();
         $proc = proc_open(
             [
                 PHP_BINARY, '-d', 'display_errors=stderr', '-d', 'error_reporting=E_ALL & ~E_DEPRECATED',
-                __DIR__ . '/fixtures/page-runner.php', 'tracking202/ajax/rotator.php',
+                __DIR__ . '/fixtures/page-runner.php', $page,
             ],
             [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
             $pipes,

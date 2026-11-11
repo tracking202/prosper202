@@ -343,3 +343,50 @@ func TestPostbackChoicesThatCannotApplyAreRefusedBeforeAnyRequest(t *testing.T) 
 		}
 	}
 }
+
+const checkAnswer = `{"data":{"landing_page_id":12,"landing_page_id_public":6122,"landing_page_url":"https://lp.example/spring",
+"status":"absent","found":false,"message":"The code was not found on your page at https://lp.example.","other_landing_page_ids_public":[]}}`
+
+func TestLandingPageCheckPostsAndPrintsWhatWasFound(t *testing.T) {
+	_, seen := newSetupServer(t, setupFeatures, func(r *http.Request) (int, string) { return 200, checkAnswer })
+
+	stdout, _, err := executeCommand("landing-page", "check", "12")
+	if err != nil {
+		t.Fatalf("landing-page check: %v", err)
+	}
+	if len(*seen) != 1 || (*seen)[0].Method != "POST" || (*seen)[0].Path != "/api/v3/landing-pages/12/check" || len((*seen)[0].Query) != 0 {
+		t.Fatalf("requests = %+v, want one POST /landing-pages/12/check with no query", *seen)
+	}
+	for _, want := range []string{"Landing page 12 (https://lp.example/spring): absent", "The code was not found"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("output lacks %q:\n%s", want, stdout)
+		}
+	}
+}
+
+// The check changes no setup: --staged does not stamp it, where the server
+// would refuse it.
+func TestLandingPageCheckIsNotStaged(t *testing.T) {
+	_, seen := newSetupServer(t, setupFeatures, func(r *http.Request) (int, string) { return 200, checkAnswer })
+
+	if _, _, err := executeCommand("landing-page", "check", "12", "--staged", "--json"); err != nil {
+		t.Fatalf("landing-page check --staged: %v", err)
+	}
+	if len(*seen) != 1 || (*seen)[0].Query.Get("staged") != "" {
+		t.Fatalf("requests = %+v, want one POST without staged", *seen)
+	}
+}
+
+func TestLandingPageCheckOfAMissingPageSaysWhereToLook(t *testing.T) {
+	newSetupServer(t, setupFeatures, func(r *http.Request) (int, string) {
+		return 404, `{"error":true,"status":404,"message":"Landing page 99 not found"}`
+	})
+
+	_, _, err := executeCommand("landing-page", "check", "99", "--json")
+	if err == nil {
+		t.Fatal("a missing landing page was reported as checked")
+	}
+	if exitCodeForError(err) == 0 || hintFor(err) == "" {
+		t.Errorf("exit %d, hint %q: want a failure with a next step", exitCodeForError(err), hintFor(err))
+	}
+}

@@ -137,6 +137,82 @@ final class SubidLinesTest extends TestCase
         self::assertStringContainsString($why, $entry['error']);
     }
 
+    /** @return iterable<string, array{string, string, string}> */
+    public static function signedPayouts(): iterable
+    {
+        yield 'sign before' => ['$12.50', 'USD', '12.50'];
+        yield 'code after' => ['12.50 USD', 'USD', '12.50'];
+        yield 'code before, lower case' => ['usd12.5', 'USD', '12.5'];
+        yield 'both' => ['$12.50 USD', 'USD', '12.50'];
+        yield 'US$' => ['US$ 12.50', 'USD', '12.50'];
+        yield 'a dollar currency' => ['$5', 'CAD', '5'];
+        yield 'its own dollar sign' => ['C$5', 'CAD', '5'];
+        yield 'euro after' => ["12.50\u{20AC}", 'EUR', '12.50'];
+        yield 'krona' => ['12 kr', 'SEK', '12'];
+        yield 'a symbol that follows' => ["12K\u{10D}", 'CZK', '12'];
+        yield 'a symbol with a dot' => ['SFr.5', 'CHF', '5'];
+    }
+
+    /** @dataProvider signedPayouts */
+    public function testAPayoutWithTheAccountCurrencysSignIsReadAsItsNumber(string $written, string $currency, string $payout): void
+    {
+        $entry = SubidBatch::readLines(['940001,' . $written . ',order-9'], new \DateTimeZone('UTC'), self::NOW, $currency)[0];
+        self::assertNull($entry['status'], $entry['error'] ?? '');
+        self::assertSame($payout, $entry['payout']);
+        self::assertSame($written, $entry['payout_written']);
+        self::assertSame('order-9', $entry['transaction_id']);
+    }
+
+    public function testAPlainPayoutCarriesNoWrittenForm(): void
+    {
+        $entry = SubidBatch::readLines(['940001,12.50'], new \DateTimeZone('UTC'), self::NOW, 'USD')[0];
+        self::assertSame('12.50', $entry['payout']);
+        self::assertArrayNotHasKey('payout_written', $entry);
+    }
+
+    /** @return iterable<string, array{string, string, string}> */
+    public static function signedPayoutsRefused(): iterable
+    {
+        yield 'another currency' => ["\u{20AC}12.50", 'USD', 'not how this account\'s currency (USD) is written'];
+        yield 'a dollar sign on a euro account' => ['$12.50', 'EUR', 'not how this account\'s currency (EUR) is written'];
+        yield 'a code of another currency' => ['12.50 GBP', 'USD', 'carries "GBP"'];
+        yield 'thousands separator after the sign' => ['$1,250.00', 'USD', 'thousands separator'];
+        yield 'decimal comma before the sign' => ['12,50 $', 'USD', 'decimal comma'];
+        yield 'dot thousands after the sign' => ['$1.250,00', 'USD', 'a dot for thousands'];
+        yield 'negative after the sign' => ['$-5', 'USD', 'is negative'];
+        yield 'negative before the sign' => ['-$5', 'USD', 'is not a number'];
+        yield 'too large' => ['$1000000', 'USD', 'too large'];
+        yield 'a sign alone' => ['$', 'USD', 'is not a number'];
+    }
+
+    /** @dataProvider signedPayoutsRefused */
+    public function testASignDoesNotExcuseWhatIsRefusedWithoutIt(string $written, string $currency, string $why): void
+    {
+        $entry = SubidBatch::readLines(['940001,' . $written], new \DateTimeZone('UTC'), self::NOW, $currency)[0];
+        self::assertSame(SubidBatch::INVALID_LINE, $entry['status'], $written);
+        self::assertStringContainsString($why, $entry['error']);
+    }
+
+    public function testASignAfterThePayoutEndsTheAmount(): void
+    {
+        $entry = SubidBatch::readLines(['940001, 5 USD, 7'], new \DateTimeZone('UTC'), self::NOW, 'USD')[0];
+        self::assertNull($entry['status'], $entry['error'] ?? '');
+        self::assertSame(['5', '7'], [$entry['payout'], $entry['transaction_id']]);
+    }
+
+    public function testATransactionIdIsNeverRewritten(): void
+    {
+        $entry = SubidBatch::readLines(['940001, 12.00, 5000 $'], new \DateTimeZone('UTC'), self::NOW, 'USD')[0];
+        self::assertSame('5000 $', $entry['transaction_id']);
+    }
+
+    public function testADefaultPayoutIsReadAsALinesIs(): void
+    {
+        self::assertSame(['4.25', null], SubidBatch::readPayout('$4.25', 'USD'));
+        self::assertNotNull(SubidBatch::readPayout('$4.25', 'EUR')[1]);
+        self::assertNotNull(SubidBatch::readPayout('$4.25', null)[1]);
+    }
+
     public function testFiveFieldsAreRefused(): void
     {
         $entry = self::read(['940001, 1, tx, 2026-11-03, extra'])[0];

@@ -15,6 +15,30 @@ address below on a database shaped like a paid 1.9.56 one, after the upgrade.
 - **Landing-page code.** Pages that load
   `tracking202/static/landing.js?lpip=…` (Get LP Code in 1.9.56) still record
   their visits. You don't need to paste the code again.
+- **PurLinks.** Landing-page links that carry `[[subid]]` or another tracking
+  token go straight to the offer again, and the click-out is still recorded.
+  The PurLink SubID a 1.9.56 page handed out (`<click>-<campaign>`) is
+  accepted on postbacks to `gpb.php` and `pb.php`, for a click on that
+  campaign. A snippet's `defpixel=1` turns the deferred pixel on. PurLink
+  clicks from the 90 days before the upgrade that had not converted yet still
+  convert when their postback arrives. A page's `t202Settings`
+  (`t202UseSubidOrig`, `t202ExpireSubidOrig`) keeps a returning visitor's
+  original SubID in its PurLinks, with the visitor's consent. Values set in
+  `t202Settings`, `t202UrlVars`, `t202SubidOrig` and `t202SourceId` work as
+  before. PurLinks are
+  refreshed when a visitor returns with the Back or Forward button. A PurLink
+  that names a deeper URL of its campaign keeps it while its SubID is
+  prepared. See [PurLinks](../features/purlinks.md).
+- **Dynamic landing-page content.** Elements and form fields that name a
+  1.9.56 segment (`t202Kw`, `t202C1`, the visit's SubID and the others) are
+  filled again, and `window.dcs` is back. See
+  [Dynamic content](../features/dynamic-content.md) for what
+  `updateDataObj()` changes now and the two segments that are not restored.
+- **Google Ads parallel tracking templates.** A template that points at
+  `tracking202/redirect/pt.php?t202id=…` records the click with its keyword,
+  cost and traffic source, then sends Google on to the landing page. Keep
+  auto-tagging on in Google Ads: the page's script finds the click by its
+  `gclid`.
 - **Pixels and postbacks with an order number.** `gpb.php`, `gpx.php` and
   `upx.php` read the order number from `t202txid`, as 1.9.56 code sends it.
   Each new order number on a click is recorded as its own sale. `gpb.php`
@@ -38,7 +62,9 @@ address below on a database shaped like a paid 1.9.56 one, after the upgrade.
   (`tracking202/static/jvzoo.php`, no `?role=`) still records an affiliate's
   sales on the click in `caffitid`, verified with the stored JVZIPN secret
   key. A vendor's product JVZIPN URL needs the URL ending `?role=vendor` from
-  Account › API integrations › JVZoo.
+  Account › API integrations › JVZoo; until it is pasted, a vendor's sale that
+  names no affiliate is recorded at the old URL too, and the JVZoo card there
+  says when the old URL is still in use and offers to read it as a vendor's.
 - **Passwords.** Stored 1.9.56 passwords still sign in.
 - **Privacy.** Accounts that existed before the upgrade keep tracking as they
   did. Only accounts created on 1.9.79 or later start with privacy set to
@@ -63,7 +89,9 @@ These differ from 1.9.56 on purpose and stay that way.
 - **A publisher-credited click stays in the account that owns the link.**
   In 1.9.56 the click moved to the publisher's account. Now it stays where it
   is, so the owner's reports keep its campaign and payout. The publisher is
-  stored beside it. There is no report by publisher yet.
+  stored beside it, and Analyze › Publishers shows what each publisher's links
+  did (`p202 report breakdown --breakdown publisher`, or `breakdown=publisher`
+  in the API).
 - **Reset campaign subids now clears conversions.** The Reset campaign
   subids page (Update) removes the conversions of a category, or of one campaign in it,
   through the conversion ledger. Each click's value is then recalculated from
@@ -80,7 +108,7 @@ These differ from 1.9.56 on purpose and stay that way.
   scheduled Google feed URL answers `410 Gone` and names its replacement.
 - **The daily email report is retired.** Its cron address,
   `202-cronjobs/daily-email.php`, now answers `410 Gone`.
-- **The `landing.js` loader ignores `defpixel` and `rsid`** in old snippets.
+- **The `landing.js` loader ignores `rsid`** in old snippets.
 - **Update › CPC previews before it applies.** It shows how many clicks will
   change and refuses a confirmation that no longer matches that preview.
 
@@ -90,16 +118,6 @@ These differ from 1.9.56 on purpose and stay that way.
   `GeoIPISP.dat` file, it needs PHP's `geoip` extension to read it. The Docker
   image doesn't include that extension, so those installs record "Unknown
   ISP/Carrier". A `GeoIP2-ISP.mmdb` file works without it.
-- **Some paid-only tables are kept but not read**, among them
-  `202_clicks_purlink`. The upgrade doesn't drop them.
-
-## Not working yet after the upgrade
-
-These 1.9.56 features don't work on 1.9.80 yet. Each one is being restored,
-and its line comes off this list when the fix ships.
-
-- PurLinks (landing-page links straight to the offer), the PurLink SubID
-  format (`<click>-<campaign>`) on postbacks, and the deferred pixel
-  (`defpixel=1`).
-- Dynamic landing-page content, such as the visit's SubID.
-- Google Ads parallel tracking templates (`tracking202/redirect/pt.php`).
+- **Paid-only tables are kept.** The upgrade doesn't drop them. It reads
+  `202_clicks_purlink` once, to carry over PurLink clicks that have not
+  converted; nothing reads it afterwards.

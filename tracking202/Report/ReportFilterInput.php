@@ -41,6 +41,7 @@ final class ReportFilterInput
         'device_id' => 'user_pref_device_id',
         'browser_id' => 'user_pref_browser_id',
         'platform_id' => 'user_pref_platform_id',
+        'publisher_id' => 'user_pref_publisher_id',
         'ip' => 'user_pref_ip',
         'referer' => 'user_pref_referer',
         'keyword' => 'user_pref_keyword',
@@ -53,7 +54,7 @@ final class ReportFilterInput
     public const ID_FIELDS = [
         'ppc_network_id', 'ppc_account_id', 'aff_network_id', 'aff_campaign_id',
         'text_ad_id', 'landing_page_id', 'country_id', 'region_id', 'isp_id',
-        'device_id', 'browser_id', 'platform_id',
+        'device_id', 'browser_id', 'platform_id', 'publisher_id',
     ];
 
     /** Free-text filters, and the width of the column each is stored in. */

@@ -27,6 +27,10 @@ use Tests\Support\FakeMysqliConnection;
  */
 final class AccountProfileAndKeysTest extends TestCase
 {
+    /** What a key carries of its use before the 1.9.80 upgrade adds the columns. */
+    private const NO_USE = ['use_recorded' => false, 'last_used_at' => null, 'last_used_api' => null,
+        'last_used_client' => null, 'ends_at' => null];
+
     private const PREFS = ['user_keyword_searched_or_bidded' => 'searched', 'user_pref_dynamic_bid' => 1, 'user_pref_privacy' => 'eu'];
 
     protected function setUp(): void
@@ -102,7 +106,7 @@ final class AccountProfileAndKeysTest extends TestCase
             'scope' => 'reports:read',
             'label' => 'AI: Claude via mcp.tracking202.com',
             'watcher_token' => \Api\V3\Support\AiConnect::watcherToken('k1'),
-        ]], $keys, 'a key not hashed yet is named by the hash it will get, and never returned');
+        ] + self::NO_USE], $keys, 'a key not hashed yet is named by the hash it will get, and never returned');
         $select = $db->statementsContaining('FROM 202_api_keys WHERE user_id')[0]->sql;
         self::assertStringContainsString('SELECT api_key, created_at, scope, label FROM 202_api_keys', $select);
     }
@@ -138,6 +142,31 @@ final class AccountProfileAndKeysTest extends TestCase
      * 1.9.78's files can be served before its upgrade has added the label
      * column (the API is not sent to the upgrade page): the list still reads.
      */
+    public function testKeysCarryTheirLastUseAndEndingWhereTheColumnsExist(): void
+    {
+        $db = new FakeMysqliConnection();
+        $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'scope'", [['Field' => 'scope']]);
+        $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'label'", [['Field' => 'label']]);
+        $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'ends_at'", [['Field' => 'ends_at']]);
+        $db->whenQueryContainsReturnRows('FROM 202_api_keys WHERE user_id', [
+            ['api_key' => 'k1', 'created_at' => 5, 'scope' => null, 'label' => null, 'last_used_at' => '40',
+                'last_used_api' => 'v3', 'last_used_client' => 'store-sync/2.1', 'ends_at' => '90'],
+            ['api_key' => 'k2', 'created_at' => 4, 'scope' => null, 'label' => null, 'last_used_at' => null,
+                'last_used_api' => null, 'last_used_client' => null, 'ends_at' => null],
+        ]);
+
+        $keys = p202_account_api_keys($db, 7);
+        $use = static fn (array $key): array => array_intersect_key($key, self::NO_USE);
+        self::assertSame(['use_recorded' => true, 'last_used_at' => 40, 'last_used_api' => 'v3',
+            'last_used_client' => 'store-sync/2.1', 'ends_at' => 90], $use($keys[0]));
+        self::assertSame(['use_recorded' => true] + self::NO_USE, $use($keys[1]));
+        $select = $db->statementsContaining('FROM 202_api_keys WHERE user_id')[0]->sql;
+        self::assertStringContainsString(
+            'label, last_used_at, last_used_api, last_used_client, ends_at FROM 202_api_keys',
+            $select
+        );
+    }
+
     public function testKeysAreReadWithoutALabelColumnBeforeTheUpgradeRuns(): void
     {
         $db = new FakeMysqliConnection();
@@ -150,7 +179,7 @@ final class AccountProfileAndKeysTest extends TestCase
         self::assertStringContainsString('SELECT api_key, created_at, scope FROM 202_api_keys', $select);
         self::assertStringNotContainsString('label', $select, 'no column the install does not have');
         self::assertSame([['ref' => hash('sha256', 'k1'), 'prefix' => 'k1', 'created_at' => 5,
-            'scope' => 'reports:read', 'label' => null, 'watcher_token' => null]], $keys);
+            'scope' => 'reports:read', 'label' => null, 'watcher_token' => null] + self::NO_USE], $keys);
     }
 
     public function testALabelProbeThatCannotTellIsAnErrorNotAnAnswer(): void
@@ -173,7 +202,7 @@ final class AccountProfileAndKeysTest extends TestCase
         $select = $db->statementsContaining('FROM 202_api_keys WHERE user_id')[0]->sql;
         self::assertStringNotContainsString('scope', $select, 'the list does not name a column the install does not have');
         self::assertSame([['ref' => hash('sha256', 'k1'), 'prefix' => 'k1', 'created_at' => 5,
-            'scope' => null, 'label' => null, 'watcher_token' => null]], $keys);
+            'scope' => null, 'label' => null, 'watcher_token' => null] + self::NO_USE], $keys);
         self::assertSame(['*'], \Api\V3\Auth::parseScopes((string) ($keys[0]['scope'] ?? '')), 'which the page reads as full access, as the API grants it');
     }
 

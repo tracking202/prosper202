@@ -170,6 +170,43 @@ final class SubidLinesIntegrationTest extends TestCase
         $batch->clear(self::USER, [(string) $d]);
     }
 
+    /**
+     * A payout pasted with the account currency's sign is recorded as its
+     * number, through the batch and the API; another currency's is refused.
+     */
+    public function testAPayoutWithTheAccountCurrencysSignIsRecorded(): void
+    {
+        self::requireScratch();
+        $e = self::CLICKS[4];
+        $zone = new \DateTimeZone('UTC');
+        $batch = new SubidBatch(new Connection(self::$db));
+        $batch->clear(self::USER, [(string) $e]);
+
+        $preview = $batch->markPreview(self::USER, ["$e, \$12.50, sign-1"], null, $zone);
+        self::assertSame(['12.50', '$12.50'], [$preview['lines'][0]['payout'], $preview['lines'][0]['payout_written']]);
+        self::assertSame(1, $batch->mark(self::USER, ["$e, \$12.50, sign-1", "$e, 7.25 USD, sign-2"], null, $zone)['marked'] - 1);
+        self::assertSame([['12.5', 'sign-1'], ['7.25', 'sign-2']], array_map(static fn (array $r): array => [$r['payout'], $r['tx']], self::rows($e)));
+
+        $api = (new UpdateController(self::$db, self::USER))->markSubids(['subids' => ["$e,,sign-3"], 'payout' => 'US$ 4.50'], false);
+        self::assertSame(1, $api['data']['marked']);
+        self::assertSame('4.5', self::rows($e)[2]['payout'], 'the body\'s payout is read as a line\'s is');
+
+        try {
+            $batch->mark(self::USER, ["$e, \u{20AC}9, sign-4"], null, $zone);
+            self::fail('a payout in another currency was recorded');
+        } catch (SubidLinesRefused $refused) {
+            self::assertStringContainsString('(USD)', $refused->lines[0]['error']);
+        }
+        try {
+            (new UpdateController(self::$db, self::USER))->markSubids(['subids' => ["$e,,sign-5"], 'payout' => "\u{20AC}9"], false);
+            self::fail('the API recorded a default payout in another currency');
+        } catch (ValidationException $ex) {
+            self::assertArrayHasKey('payout', $ex->getFieldErrors());
+        }
+        self::assertCount(3, self::rows($e));
+        $batch->clear(self::USER, [(string) $e]);
+    }
+
     public function testALineThatCannotBeReadStopsTheWholeList(): void
     {
         self::requireScratch();
@@ -198,7 +235,7 @@ final class SubidLinesIntegrationTest extends TestCase
         $controller = new UpdateController(self::$db, self::USER);
 
         $refused = [
-            [['subids' => ["$e"], 'payout' => '$5'], 'payout'],
+            [['subids' => ["$e"], 'payout' => "\u{20AC}5"], 'payout'],
             [['subids' => ["$e"], 'timezone' => 'Mars/Olympus'], 'timezone'],
             [['subids' => ["$e"], 'payout' => null], 'payout'],
             [['subids' => ["$e"], 'timezone' => null], 'timezone'],

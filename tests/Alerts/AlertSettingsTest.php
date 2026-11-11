@@ -87,14 +87,15 @@ final class AlertSettingsTest extends TestCase
         self::assertStringContainsString($why, $errors[$field]);
     }
 
-    public function testAlertsOnWithNowhereToGoAreRefused(): void
+    public function testAlertsOnWithEveryChannelOffAreShownInTheAppOnly(): void
     {
         [$settings, $errors] = AlertSettings::fromInput(
             ['notify_slack' => '0', 'notify_email' => '0', 'notify_webhook' => '0'] + self::valid()
         );
 
-        self::assertNull($settings);
-        self::assertStringContainsString('choose where they go', $errors['notify_email']);
+        self::assertSame([], $errors);
+        self::assertNotNull($settings);
+        self::assertSame([true, false], [$settings->enabled, $settings->anyChannel()]);
 
         [$off] = AlertSettings::fromInput(
             ['enabled' => '0', 'notify_slack' => '0', 'notify_email' => '0', 'notify_webhook' => '0'] + self::valid()

@@ -78,8 +78,10 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 	// with both the list was about 89,500; with every 1.9.79 addition (the scope
 	// refusals, the optimizer's and the reports' notes) it is about 93,600; the
 	// click filter's five tools (user_id and ids left out, no entry update) and
-	// settings_get add about 5,100.
-	const budget = 99000
+	// settings_get add about 5,100; the publisher dimension and its filter
+	// (on report_summary, report_breakdown and click_list) about 800;
+	// landing_page_check about 700.
+	const budget = 100500
 	if len(body) > budget {
 		t.Fatalf("the tool list is %d characters, over its %d budget; trim notes or omit flags", len(body), budget)
 	}
@@ -277,6 +279,13 @@ var mcpReadToolRequired = map[string]map[string]string{
 	"click_filter_test": {"ip": "203.0.113.7"},
 }
 
+// A read tool's POST that changes no setup (api.isReadOnlyPost), with why.
+var mcpReadToolPosts = map[string]string{
+	// The server fetches the page's own saved URL and keeps what it found
+	// beside the page; it asks a read scope.
+	"POST /api/v3/landing-pages/1/check": "landing_page_check",
+}
+
 // Every read tool, run with placeholder arguments, asks the install for data
 // and sends no write.
 func TestMCPReadToolsSendNoWrites(t *testing.T) {
@@ -306,7 +315,7 @@ func TestMCPReadToolsSendNoWrites(t *testing.T) {
 		_, stderr, err := mcpExecute(t, "mcp", "call", s.Name, "--input", string(body))
 		data := 0
 		for _, hit := range fake.requests() {
-			if !strings.HasPrefix(hit, "GET ") {
+			if !strings.HasPrefix(hit, "GET ") && mcpReadToolPosts[hit] != s.Name {
 				t.Errorf("%s is a read tool and sent %s", s.Name, hit)
 			}
 			if !strings.HasPrefix(hit, "GET /api/versions") && !strings.HasPrefix(hit, "GET /api/v3/capabilities") {

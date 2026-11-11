@@ -8,6 +8,10 @@
  *
  *   node tests/live/purlink-browser.js --base http://127.0.0.1:18970 \
  *     --db p202_purlink_e2e_test [--mysql-port 13376] [--chromium PATH]
+ *     [--headed-bfcache [--chromium-headed PATH]]
+ *
+ * --headed-bfcache opens a visible Chromium with its back/forward cache on
+ * and measures a real restore after Back (the default run is headless).
  *
  * It seeds and deletes its own rows (ids 9503xx); the database name must look
  * disposable. Playwright: P202_PLAYWRIGHT, tests/browser/node_modules or a
@@ -66,6 +70,8 @@ function seed() {
   sql('DELETE FROM 202_ppc_account_pixels WHERE ppc_account_id = ' + SOURCE);
   sql('DELETE FROM 202_ppc_accounts WHERE ppc_account_id = ' + SOURCE);
   sql('DELETE FROM 202_aff_networks WHERE aff_network_id = ' + NETWORK);
+  // The pass sends its postbacks as a network without the account's token would.
+  sql("INSERT INTO 202_postback_auth SET user_id=" + USER + ", auth_mode='off', updated_at=" + now + " ON DUPLICATE KEY UPDATE auth_mode='off'");
   sql("SET SESSION sql_mode=''; INSERT INTO 202_aff_networks SET aff_network_id=" + NETWORK + ', user_id=' + USER + ", aff_network_name='purlink-e2e', aff_network_time=" + now);
   for (const c of [SIMPLE, OFFER_B, OFFER_C]) {
     sql("SET SESSION sql_mode=''; INSERT INTO 202_aff_campaigns SET aff_campaign_id=" + c.id + ', aff_campaign_id_public=' + c.pub +
@@ -91,10 +97,35 @@ function loader(lpip, extra) {
     '}(document, "script"));</script>';
 }
 
+const DEEP_B = OFFER_B.url + '&acip=' + OFFER_B.pub + '&u=deep1';
+const DEEP_SIMPLE = SIMPLE.url + '&u=deep2';
+const LEGACY_SRC = BASE + '/tracking202/static/landing.js?lpip=' + LP_SIMPLE + '&defpixel=1';
+
 function pageHtml(route) {
-  const head = route === '/refuse' ? '<script>window.p202 = {consent: false};</script>' : '';
+  let head = route.endsWith('refuse') ? '<script>window.p202 = {consent: false};</script>' : '';
+  if (route.startsWith('/orig')) { head = '<script>window.t202Settings = {t202UseSubidOrig: true, t202ExpireSubidOrig: 30};</script>'; }
+  head += '<script>window.__shows = []; window.addEventListener("pageshow", function (e) { window.__shows.push(e.persisted); });</script>';
   let body;
-  if (route.startsWith('/adv')) {
+  if (route.startsWith('/settings') || route === '/nosettings') {
+    const settings = '<script>window.t202Settings = {t202C1: "home", t202UrlVars: {t202Kw: "q", t202C2: "sub"}};</script>';
+    body = (route === '/settings' ? settings : '') + loader(LP_SIMPLE) + (route === '/settings-late' ? settings : '') +
+      '<input id="kw" name="t202Kw"><a id="offer" href="' + SIMPLE.url + '">Offer</a>' +
+      '<a id="tokens" href="http://partner.example/?kw=[[t202kw]]&c1=[[c1]]&c2=[[c2]]">Partner</a>';
+  } else if (route.startsWith('/ids')) {
+    body = (route === '/ids30' ? '<script>window.t202Settings = {t202ExpireSubidOrig: 30};</script>' : '') + loader(LP_SIMPLE) +
+      '<input id="sub" name="t202Subid"><input id="orig" name="t202SubidOrig"><span id="srcid" t202attribute="t202SourceId">x</span>' +
+      '<a id="offer" href="' + SIMPLE.url + '">Offer</a><a id="src" href="http://partner.example/?src=[[sourceid]]&c1=[[c1]]">Source</a>';
+  } else if (route === '/away') {
+    return '<!doctype html><html><head><title>Away</title></head><body><p>away</p></body></html>';
+  } else if (route === '/bf') {
+    body = loader(LP_ADV) + '<a id="d1" href="' + DEEP_B + '">Deep</a>';
+  } else if (route === '/deep') {
+    body = loader(LP_ADV) + '<a id="d1" href="' + DEEP_B + '">Deep</a> <a id="b" href="' + OFFER_B.url + '&acip=' + OFFER_B.pub + '">B</a>';
+  } else if (route === '/deepsimple') {
+    body = loader(LP_SIMPLE) + '<a id="d2" href="' + DEEP_SIMPLE + '">Deep</a> <a id="offer" href="' + SIMPLE.url + '">Offer</a>';
+  } else if (route === '/orig-simple') {
+    body = loader(LP_SIMPLE) + '<a id="offer" href="' + SIMPLE.url + '">Offer</a>';
+  } else if (route.startsWith('/adv') || route === '/orig-adv') {
     body = loader(LP_ADV) +
       '<a id="b" href="' + OFFER_B.url + '&acip=' + OFFER_B.pub + '">B</a> <a id="c" href="' + OFFER_C.url + '&acip=' + OFFER_C.pub + '">C</a>';
   } else if (route === '/legacy') {
@@ -125,7 +156,8 @@ async function directHref(page, selector) {
   await page.waitForFunction((sel) => {
     const el = document.querySelector(sel);
     const href = el && el.getAttribute(sel === '#form' ? 'action' : 'href');
-    return !!href && href.indexOf('offer.example') >= 0 && href.indexOf('[[') < 0;
+    // The redirect that stands in carries the link's URL encoded: not that.
+    return !!href && href.indexOf('http://offer.example/') === 0 && href.indexOf('[[') < 0;
   }, selector, { timeout: 15000 });
   return page.$eval(selector, (el, sel) => el.getAttribute(sel === '#form' ? 'action' : 'href'), selector);
 }
@@ -173,6 +205,8 @@ const accepted = (status) => status === 200 || status === 202;
   await context.route('http://source.example/**', (route) => { pixels.push(route.request().url()); route.fulfill({ contentType: 'image/gif', body: '' }); });
   context.on('request', (r) => { if (r.url().startsWith(BASE + '/tracking202/')) { trackerHits.push(r.url()); } });
 
+  // The account's privacy setting, put back even when the pass stops half way.
+  let privacy = null;
   try {
     console.log('Simple page: direct links, tokens, forms, inserted links');
     let page = await context.newPage();
@@ -236,7 +270,7 @@ const accepted = (status) => status === 200 || status === 202;
     console.log('Deferred pixel');
     // Under the default privacy setting ('eu') an unplaced visitor such as
     // 127.0.0.1 is held back: PurLinks work, third-party pixels do not fire.
-    const privacy = value('SELECT user_pref_privacy FROM 202_users_pref WHERE user_id=' + USER);
+    privacy = value('SELECT user_pref_privacy FROM 202_users_pref WHERE user_id=' + USER);
     page = await context.newPage();
     await page.goto(origin + '/defpixel?t202id=' + TRACKER);
     const heldBack = await directHref(page, '#offer');
@@ -263,7 +297,8 @@ const accepted = (status) => status === 200 || status === 202;
     page.on('request', (r) => { if (r.url().includes('purlink-prepare')) { refusedPrepare.push(r.url()); } });
     await page.goto(origin + '/refuse');
     await page.waitForFunction(() => (document.querySelector('#offer').getAttribute('href') || '').indexOf('go.php') >= 0, null, { timeout: 15000 });
-    check((await page.getAttribute('#offer', 'href')) === BASE + '/tracking202/redirect/go.php?lpip=' + LP_SIMPLE, 'a refusal leaves the tracker redirect');
+    check((await page.getAttribute('#offer', 'href')) === BASE + '/tracking202/redirect/go.php?lpip=' + LP_SIMPLE + '&p202_to=' + encodeURIComponent(SIMPLE.url),
+      'a refusal leaves the tracker redirect, which keeps the link\'s own URL');
     check(refusedPrepare.length === 0, 'and asks for no SubID');
     // The refusal is remembered for this site; give consent back for the rest.
     check((await page.evaluate(() => window.p202.consent(true))) === true, 'p202.consent(true) restores consent');
@@ -280,10 +315,363 @@ const accepted = (status) => status === 200 || status === 202;
     await page.goto(origin + '/legacy');
     check((await legacyLanding).url().includes('p202_defpixel=1'), 'the 1.9.56 landing.js loader carries defpixel=1 over');
     check(SUBID.test(subidOf(await directHref(page, '#offer'))), 'and its page gets PurLinks');
+
+    // ---- P7LK: deep links, back/forward, the original subid ----
+    const location = (url, cookie) => fetch(url, { redirect: 'manual', headers: cookie ? { cookie } : {} })
+      .then((r) => r.status + ' ' + (r.headers.get('location') || ''));
+    const go = BASE + '/tracking202/redirect/go.php';
+    const to = (url) => '&p202_to=' + encodeURIComponent(url);
+    const settle = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    console.log('Deep-link fallback: the redirect itself');
+    const ownB = OFFER_B.url + '&acip=' + OFFER_B.pub;
+    const plainB = 'http://offer.example/b?s=';
+    check((await location(go + '?acip=' + OFFER_B.pub + to(DEEP_B))) === '302 http://offer.example/b?s=&acip=' + OFFER_B.pub + '&u=deep1',
+      'go.php?acip= with the link\'s own URL goes to its deep link: ' + await location(go + '?acip=' + OFFER_B.pub + to(DEEP_B)));
+    check((await location(go + '?acip=' + OFFER_B.pub)) === '302 ' + plainB, 'without one, to the campaign URL');
+    check((await location(go + '?acip=' + OFFER_B.pub + to(ownB))) === '302 ' + plainB, 'the campaign\'s own PurLink goes to the campaign URL');
+    check((await location(go + '?acip=' + OFFER_B.pub + to('http://evil.example/b?s=[[subid]]&u=x'))) === '302 ' + plainB, 'another host goes to the campaign URL');
+    check((await location(go + '?acip=' + OFFER_B.pub + to('http://offer.example/other?s=[[subid]]&u=x'))) === '302 ' + plainB, 'another path goes to the campaign URL');
+    check((await location(go + '?acip=' + OFFER_B.pub + to('http://offer.example@evil.example/b?s=[[subid]]'))) === '302 ' + plainB, 'user info naming the host goes to the campaign URL');
+    check((await location(go + '?acip=' + OFFER_B.pub + to('http://offer.example/b?s=[[subid]]&u=x&k=[[t202kw]]'))) === '302 ' + plainB + '&u=x&k=', 'a token the campaign URL lacks is left empty and the link kept');
+    const deepSimpleTo = 'http://offer.example/a?sub=&kw=&c1=&u=deep2';
+    check((await location(go + '?lpip=' + LP_SIMPLE + to(DEEP_SIMPLE))) === '302 ' + deepSimpleTo,
+      'go.php?lpip= keeps a simple page link\'s deep link: ' + await location(go + '?lpip=' + LP_SIMPLE + to(DEEP_SIMPLE)));
+    const outbound = 'tracking202outbound=' + encodeURIComponent('http://offer.example/a?sub=77');
+    check((await location(go + '?lpip=' + LP_SIMPLE, outbound)) === '302 http://offer.example/a?sub=77', 'the outbound cookie still answers a plain simple-page redirect');
+    check((await location(go + '?lpip=' + LP_SIMPLE + to(DEEP_SIMPLE), outbound)) === '302 ' + deepSimpleTo, 'and does not stand in for a deep link');
+    check((await location(go + '?lpip=' + LP_SIMPLE + to('http://evil.example/a?u=1'))) === '302 http://offer.example/a?sub=&kw=&c1=', 'a simple page: another host goes to the campaign URL');
+
+    console.log('Deep-link fallback and Back, in the page');
+    page = await context.newPage();
+    let prepares = 0;
+    let failPrepare = true;
+    const records = [];
+    await page.route('**/purlink-prepare.php', (route) => { prepares++; return failPrepare ? route.abort() : route.continue(); });
+    page.on('request', (r) => { if (/\/tracking202\/static\/(record|landing\.php)/.test(r.url())) { records.push(r.url()); } });
+    await page.goto(origin + '/deep');
+    await page.waitForFunction(() => (document.querySelector('#d1').getAttribute('href') || '').indexOf('go.php') >= 0, null, { timeout: 15000 });
+    check((await page.getAttribute('#d1', 'href')) === go + '?acip=' + OFFER_B.pub + to(DEEP_B), 'while no SubID can be prepared the link is the redirect with its own URL');
+    await waitFor(() => prepares >= 3, 'three attempts', 10000);
+    await settle(3500);
+    check(prepares === 3, 'preparation is tried three times, then left: ' + prepares);
+    check((await page.getAttribute('#d1', 'href')).indexOf('go.php') >= 0, 'and the link stays on the redirect');
+    const deepClick = value('SELECT MAX(click_id) FROM 202_clicks');
+    const deepPci = value('SELECT click_id_public FROM 202_clicks_record WHERE click_id=' + deepClick);
+    check((await location(go + '?acip=' + OFFER_B.pub + '&pci=' + deepPci + to(DEEP_B))) === '302 http://offer.example/b?s=' + deepClick + '&acip=' + OFFER_B.pub + '&u=deep1',
+      'followed for this click, the redirect fills the click\'s SubID and keeps the deep link');
+    check(value('SELECT aff_campaign_id FROM 202_clicks WHERE click_id=' + deepClick) === String(OFFER_B.id), 'and records the click leaving for offer B');
+    const recordsBefore = records.length;
+    await page.evaluate(() => window.updatePurLink());
+    await settle(500);
+    check(prepares === 3, 'updatePurLink() right after the failures asks nothing');
+    failPrepare = false;
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+    const restored = await directHref(page, '#d1');
+    check(SUBID.test(subidOf(restored)) && new URL(restored).searchParams.get('u') === 'deep1', 'a restored page (pageshow, persisted) asks again and the link is the offer, deep link kept: ' + restored);
+    check(prepares === 4, 'with one more request: ' + prepares);
+    check(records.length === recordsBefore && records.filter((u) => u.includes('/record')).length === 1, 'and no second pageview: ' + records.length);
+    // A real Back: does this Chromium restore the page from its back/forward cache?
+    const offerBefore = offers.length;
+    await Promise.all([page.waitForURL('http://offer.example/**'), page.click('#d1')]);
+    check(new URL(page.url()).searchParams.get('u') === 'deep1', 'clicking the restored link lands on the deep link: ' + page.url());
+    await page.goBack();
+    await settle(1500);
+    const shows = await page.evaluate(() => window.__shows);
+    const bfcache = shows.some((v) => v === true);
+    console.log('  note Back ' + (bfcache ? 'restored the page from the back/forward cache' : 'reloaded the page (Playwright switches the back/forward cache off; --headed-bfcache measures a restore)') + ': ' + JSON.stringify(shows));
+    check(SUBID.test(subidOf(await directHref(page, '#d1'))), 'after Back the link is a PurLink, not a literal [[subid]]');
+    check(offers.length > offerBefore, 'the offer was reached');
+    await page.close();
+
+    // The visitor's own click on the stand-in redirect, before any SubID arrives.
+    page = await context.newPage();
+    await page.route('**/purlink-prepare.php', (route) => route.abort());
+    await page.goto(origin + '/deep');
+    await page.waitForFunction(() => (document.querySelector('#d1').getAttribute('href') || '').indexOf('go.php') >= 0, null, { timeout: 15000 });
+    const hitsAt = trackerHits.length;
+    // A redirect's target is not routed by Playwright, so the request for
+    // the offer is read rather than the page it would load.
+    const sent = page.waitForRequest((r) => r.url().indexOf('http://offer.example/') === 0, { timeout: 15000 });
+    await page.click('#d1').catch(() => {});
+    const landed = new URL((await sent).url());
+    check(landed.pathname === '/b' && landed.searchParams.get('u') === 'deep1' && landed.searchParams.get('acip') === String(OFFER_B.pub) && !landed.searchParams.has('p202_to'),
+      'a visitor clicking before a SubID arrives is sent to the deep link by the redirect: ' + landed.href);
+    check(trackerHits.slice(hitsAt).some((u) => u.includes('/redirect/go.php')), 'by way of go.php');
+    console.log('  note the redirect filled s=' + JSON.stringify(landed.searchParams.get('s')) + ' for that visitor');
+    await page.close();
+
+    console.log('The 1.9.56 loader, loaded again');
+    page = await context.newPage();
+    const legacyHits = [];
+    page.on('request', (r) => { if (/\/tracking202\/static\/(record|landing\.)/.test(r.url())) { legacyHits.push(r.url()); } });
+    await page.goto(origin + '/legacy');
+    await directHref(page, '#offer');
+    await settle(500);
+    const hitsBefore = legacyHits.filter((u) => !u.includes('landing.js')).length;
+    await page.evaluate(() => { const real = window.updatePurLink; window.__updates = 0; window.updatePurLink = function () { window.__updates++; return real.apply(this, arguments); }; });
+    const again = page.waitForResponse((r) => r.url().includes('landing.js'));
+    await page.evaluate((src) => { const s = document.createElement('script'); s.src = src; s.async = true; document.body.appendChild(s); }, LEGACY_SRC);
+    await again;
+    await settle(800);
+    check((await page.evaluate(() => window.__updates)) === 1, 'loading landing.js again calls updatePurLink()');
+    check(legacyHits.filter((u) => !u.includes('landing.js')).length === hitsBefore, 'and asks for no second landing.php or pageview');
+    await page.close();
+
+    console.log('The original subid (t202Settings.t202UseSubidOrig)');
+    const freshContext = async () => {
+      const c = await browser.newContext();
+      await c.route('http://offer.example/**', (route) => route.fulfill({ contentType: 'text/html', body: '<p>offer</p>' }));
+      return c;
+    };
+    // The PurLink subids kept per offer or page; the dynamic-content block's
+    // plain first-click cookie (_t202SubidOrig) is firstClickCookie's.
+    const origCookies = async (c) => (await c.cookies(origin)).filter((k) => k.name.indexOf('_t202SubidOrig_') === 0);
+    const firstClickCookie = async (c) => (await c.cookies(origin)).find((k) => k.name === '_t202SubidOrig') || null;
+    const visit = async (c, url) => {
+      const p = await c.newPage();
+      const asked = [];
+      p.on('request', (r) => { if (r.url().includes('purlink-prepare')) { asked.push(r.url()); } });
+      await p.goto(url);
+      return { p, asked };
+    };
+    // Held back by the privacy setting (the default 'eu', this visitor unplaced): nothing is kept.
+    let ctx = await freshContext();
+    let v = await visit(ctx, origin + '/orig-adv');
+    check(SUBID.test(subidOf(await directHref(v.p, '#b'))), 'a held-back visitor still gets PurLinks');
+    await settle(300);
+    check((await origCookies(ctx)).length === 0 && (await firstClickCookie(ctx)) === null, 'and no original subid is kept for them');
+    await ctx.close();
+
+    sql("UPDATE 202_users_pref SET user_pref_privacy='disabled' WHERE user_id=" + USER);
+    // Without t202Settings nothing is kept.
+    ctx = await freshContext();
+    v = await visit(ctx, origin + '/adv');
+    await directHref(v.p, '#b');
+    await settle(300);
+    check((await origCookies(ctx)).length === 0, 'a page without t202Settings keeps no original subid');
+    await ctx.close();
+
+    ctx = await freshContext();
+    v = await visit(ctx, origin + '/orig-adv');
+    const firstB = subidOf(await directHref(v.p, '#b'));
+    const firstClick = SUBID.exec(firstB)[1];
+    await settle(300);
+    let kept = await origCookies(ctx);
+    const days = kept.length ? (kept[0].expires - Date.now() / 1000) / 86400 : 0;
+    const keptB = kept.find((k) => k.name === '_t202SubidOrig_' + OFFER_B.pub);
+    check(kept.length === 2 && !!keptB && keptB.value === firstB && kept.some((k) => k.name === '_t202SubidOrig_' + OFFER_C.pub),
+      'the first visit keeps each offer\'s subid: ' + JSON.stringify(kept.map((k) => k.name + '=' + k.value)));
+    check(days > 29.9 && days <= 30, 'for the 30 days the page asked: ' + days.toFixed(3));
+    check(v.asked.length === 2, 'having asked once per offer: ' + v.asked.length);
+    v = await visit(ctx, origin + '/orig-adv');
+    const secondB = subidOf(await directHref(v.p, '#b'));
+    const secondClick = await waitFor(() => { const m = value('SELECT MAX(click_id) FROM 202_clicks'); return Number(m) > Number(firstClick) ? m : ''; });
+    check(!!secondClick, 'a second pageview records a new click: ' + firstClick + ' then ' + secondClick);
+    check(secondB === firstB, 'and its link carries the first click\'s subid: ' + secondB);
+    await settle(500);
+    check(v.asked.length === 0, 'with no request for a new one');
+    check(accepted(await postback(firstB, { txid: 'e2e-orig', amount: '3' })), 'a conversion with that subid is accepted');
+    check(value("SELECT click_id FROM 202_conversion_logs WHERE transaction_id='e2e-orig'") === firstClick, 'and credited to the first click');
+    // Simple page: its own cookie, by page.
+    v = await visit(ctx, origin + '/orig-simple?t202id=' + TRACKER);
+    const firstSimple = subidOf(await directHref(v.p, '#offer'));
+    await settle(300);
+    kept = await origCookies(ctx);
+    check(kept.some((k) => k.name === '_t202SubidOrig_p' + LP_SIMPLE && k.value === firstSimple) && kept.length === 3, 'a simple page keeps its own, by page: ' + JSON.stringify(kept.map((k) => k.name)));
+    v = await visit(ctx, origin + '/orig-simple?t202id=' + TRACKER);
+    check(subidOf(await directHref(v.p, '#offer')) === firstSimple, 'and a later pageview carries it');
+    await settle(500);
+    check(v.asked.length === 0, 'with no request for a new one');
+    check((await v.p.evaluate(() => window.p202.consent(false))) === false, 'p202.consent(false) refuses');
+    check((await origCookies(ctx)).length === 0 && (await firstClickCookie(ctx)) === null, 'and removes every kept subid, the first click\'s too');
+    await ctx.close();
+    // ---- Q4PL: t202Settings values and t202UrlVars, t202SubidOrig, t202SourceId, the cloaked hop ----
+    const clickValues = (id) => ({
+      keyword: value('SELECT k.keyword FROM 202_clicks_advance a JOIN 202_keywords k USING (keyword_id) WHERE a.click_id=' + id),
+      c1: value('SELECT v.c1 FROM 202_clicks_tracking t JOIN 202_tracking_c1 v USING (c1_id) WHERE t.click_id=' + id),
+      c2: value('SELECT v.c2 FROM 202_clicks_tracking t JOIN 202_tracking_c2 v USING (c2_id) WHERE t.click_id=' + id),
+    });
+    const tracked = async (c, url) => {
+      const p = await c.newPage();
+      const hits = [];
+      p.on('request', (r) => { if (/\/tracking202\/static\/(record|dcs-update)/.test(r.url())) { hits.push(r.url()); } });
+      await p.goto(url);
+      await p.waitForFunction(() => window.dcs && window.dcs.t202DataObj && window.dcs.t202DataObj.t202Subid !== '', null, { timeout: 15000 });
+      const id = await p.evaluate(() => window.dcs.t202DataObj.t202Subid);
+      await waitFor(() => value('SELECT COUNT(*) FROM 202_clicks_advance WHERE click_id=' + id) === '1');
+      return { p, hits, id };
+    };
+    const dcsOf = (p) => p.evaluate(() => { const d = window.dcs.t202DataObj; return { kw: d.t202Kw, c1: d.t202C1, c2: d.t202C2, sub: d.t202Subid, orig: d.t202SubidOrig, src: d.t202SourceId }; });
+    sql("UPDATE 202_users_pref SET user_pref_privacy='disabled' WHERE user_id=" + USER);
+
+    console.log('t202Settings values and t202UrlVars');
+    const SETTINGS_QUERY = '?q=red+shoes&sub=aff7&t202kw=blue&c2=zz&t202id=' + TRACKER;
+    for (const route of ['/settings', '/settings-late']) {
+      ctx = await freshContext();
+      const s = await tracked(ctx, origin + route + SETTINGS_QUERY);
+      await settle(800);
+      const stored = clickValues(s.id);
+      check(stored.keyword === 'red shoes' && stored.c1 === 'home' && stored.c2 === 'aff7',
+        route + ': the click is recorded with the page\'s values: ' + JSON.stringify(stored));
+      check(s.hits.filter((u) => u.includes('/record')).length === 1 && !s.hits.some((u) => u.includes('dcs-update')),
+        route + ': by its one pageview, with no update sent: ' + s.hits.length);
+      const d = await dcsOf(s.p);
+      check(d.kw === 'red shoes' && d.c1 === 'home' && d.c2 === 'aff7', route + ': dcs.t202DataObj holds them: ' + JSON.stringify(d));
+      check((await s.p.inputValue('#kw')) === 'red shoes', route + ': an element named t202Kw shows the keyword');
+      const offerHref = await directHref(s.p, '#offer');
+      check(offerHref === 'http://offer.example/a?sub=' + subidOf(offerHref) + '&kw=red%20shoes&c1=home' && SUBID.exec(subidOf(offerHref))[1] === s.id,
+        route + ': the PurLink carries them: ' + offerHref);
+      check((await s.p.getAttribute('#tokens', 'href')) === 'http://partner.example/?kw=red%20shoes&c1=home&c2=aff7', route + ': and a link with tokens only');
+      await ctx.close();
+    }
+    ctx = await freshContext();
+    let plainVisit = await tracked(ctx, origin + '/nosettings' + SETTINGS_QUERY);
+    await settle(500);
+    let plainStored = clickValues(plainVisit.id);
+    check(plainStored.keyword === 'blue' && plainStored.c1 === '' && plainStored.c2 === 'zz', 'a page without settings records the URL\'s own values: ' + JSON.stringify(plainStored));
+    check((await plainVisit.p.getAttribute('#tokens', 'href')) === 'http://partner.example/?kw=blue&c1=&c2=zz', 'and fills its links from them');
+    await ctx.close();
+
+    console.log('t202SubidOrig, t202SourceId and the 1.9.56 globals');
+    ctx = await freshContext();
+    let first = await tracked(ctx, origin + '/ids?t202id=' + TRACKER);
+    let ids = await dcsOf(first.p);
+    check(ids.orig === first.id && (await first.p.inputValue('#orig')) === first.id && (await first.p.inputValue('#sub')) === first.id,
+      'on a first visit t202SubidOrig is the click: ' + JSON.stringify(ids));
+    check((await first.p.evaluate(() => [window.t202GetSubid(), window.t202GetSubidOrig()])).join() === first.id + ',' + first.id, 't202GetSubid() and t202GetSubidOrig() return it');
+    let plainCookie = await firstClickCookie(ctx);
+    let plainDays = plainCookie ? (plainCookie.expires - Date.now() / 1000) / 86400 : 0;
+    check(!!plainCookie && plainCookie.value === first.id && plainDays > 6.9 && plainDays <= 7, 'kept in _t202SubidOrig for 7 days: ' + (plainCookie ? plainCookie.value + ' ' + plainDays.toFixed(3) : 'none'));
+    check(value('SELECT ppc_account_id FROM 202_clicks WHERE click_id=' + first.id) === String(SOURCE) && ids.src === String(SOURCE),
+      't202SourceId is the click\'s traffic source account: ' + ids.src);
+    check((await first.p.textContent('#srcid')) === String(SOURCE), 'an element with t202attribute="t202SourceId" shows it');
+    await directHref(first.p, '#offer');
+    check((await first.p.getAttribute('#src', 'href')) === 'http://partner.example/?src=' + SOURCE + '&c1=', '[[sourceid]] in a PurLink takes it: ' + await first.p.getAttribute('#src', 'href'));
+    const second = await tracked(ctx, origin + '/ids');
+    ids = await dcsOf(second.p);
+    check(Number(second.id) > Number(first.id) && ids.sub === second.id && ids.orig === first.id && (await second.p.inputValue('#orig')) === first.id,
+      'a second pageview has its own subid and the first click as the original: ' + JSON.stringify(ids));
+    check(ids.src === '' && value('SELECT ppc_account_id FROM 202_clicks WHERE click_id=' + second.id) === '0', 'a visit with no traffic source account has no t202SourceId');
+    await directHref(second.p, '#offer');
+    check((await second.p.getAttribute('#src', 'href')) === 'http://partner.example/?src=&c1=', 'and [[sourceid]] is left empty');
+    check((await second.p.evaluate(() => window.p202.consent(false))) === false, 'p202.consent(false) refuses');
+    ids = await dcsOf(second.p);
+    check(ids.sub === '' && ids.orig === '' && ids.src === '' && (await second.p.inputValue('#orig')) === '' &&
+      (await second.p.evaluate(() => window.t202GetSubid() + window.t202GetSubidOrig())) === '', 'and clears them: ' + JSON.stringify(ids));
+    check((await firstClickCookie(ctx)) === null, 'and removes the cookie');
+    await ctx.close();
+
+    ctx = await freshContext();
+    const thirty = await tracked(ctx, origin + '/ids30');
+    plainCookie = await firstClickCookie(ctx);
+    plainDays = plainCookie ? (plainCookie.expires - Date.now() / 1000) / 86400 : 0;
+    check(!!plainCookie && plainCookie.value === thirty.id && plainDays > 29.9 && plainDays <= 30, 't202ExpireSubidOrig: 30 keeps it 30 days: ' + plainDays.toFixed(3));
+    await ctx.close();
+
+    ctx = await freshContext();
+    const refusedPage = await ctx.newPage();
+    const refusedRecord = refusedPage.waitForResponse((r) => r.url().includes('/tracking202/static/record'), { timeout: 15000 });
+    await refusedPage.goto(origin + '/ids-refuse?t202id=' + TRACKER);
+    await refusedRecord;
+    await settle(800);
+    ids = await dcsOf(refusedPage);
+    check(ids.sub === '' && ids.orig === '' && ids.src === '' && (await refusedPage.inputValue('#orig')) === '' && (await refusedPage.textContent('#srcid')) === '',
+      'a visitor who refused has none of them: ' + JSON.stringify(ids));
+    check((await ctx.cookies(origin)).filter((k) => k.name.indexOf('_t202SubidOrig') === 0).length === 0, 'and no cookie');
+    await ctx.close();
+
+    console.log('A cloaked simple page keeps the deep link');
+    sql('UPDATE 202_aff_campaigns SET aff_campaign_cloaking=1 WHERE aff_campaign_id=' + SIMPLE.id);
+    try {
+      ctx = await freshContext();
+      const cloaked = await tracked(ctx, origin + '/ids?t202kw=green&c1=cl');
+      await ctx.close();
+      const clickCookies = 'tracking202subid=' + cloaked.id + '; tracking202subid_a_' + SIMPLE.id + '=' + cloaked.id;
+      const hop = async (toParam) => {
+        const firstHop = await location(go + '?lpip=' + LP_SIMPLE + toParam, clickCookies);
+        const next = firstHop.replace(/^302 /, '');
+        const html = firstHop.indexOf('302 ') === 0 && next.indexOf(BASE + '/tracking202/redirect/lpc.php?') === 0
+          ? await fetch(next, { headers: { cookie: clickCookies } }).then((r) => r.text()) : '';
+        const q = /name="q"\s+value="([^"]*)"/.exec(html);
+        const meta = /http-equiv="refresh"\s+content="1; url=([^"]*)"/.exec(html);
+        const unescape = (t) => t.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#039;/g, "'");
+        return { firstHop, next, q: q ? unescape(q[1]) : '', meta: meta ? unescape(meta[1]) : '' };
+      };
+      const own = 'http://offer.example/a?sub=' + cloaked.id + '&kw=green&c1=cl';
+      let h = await hop(to(DEEP_SIMPLE));
+      check(h.next === BASE + '/tracking202/redirect/lpc.php?lpip=' + LP_SIMPLE + '&p202_to=' + encodeURIComponent(DEEP_SIMPLE),
+        'go.php hands the cloaked hop the link\'s own URL: ' + h.firstHop);
+      check(h.q === own + '&u=deep2' && h.meta === h.q, 'and lpc.php\'s page names the deep link with the click\'s values filled: ' + h.q);
+      check(h.q.indexOf('p202_to') < 0 && h.next.indexOf('202vars') < 0, 'p202_to reaches neither the destination nor 202vars');
+      check(value('SELECT click_cloaking FROM 202_clicks_record WHERE click_id=' + cloaked.id) === '1', 'the click left cloaked');
+      h = await hop('');
+      check(h.next === BASE + '/tracking202/redirect/lpc.php?lpip=' + LP_SIMPLE && h.q === own, 'without one, as before: ' + h.next + ' -> ' + h.q);
+      h = await hop(to('http://evil.example/a?sub=[[subid]]&u=x'));
+      check(h.q === own, 'another host goes to the campaign URL: ' + h.q);
+      h = await hop(to('http://offer.example/other?sub=[[subid]]&u=x'));
+      check(h.q === own, 'another path goes to the campaign URL: ' + h.q);
+      const direct = await fetch(BASE + '/tracking202/redirect/lpc.php?lpip=' + LP_SIMPLE + to('http://evil.example/x'), { headers: { cookie: clickCookies } }).then((r) => r.text());
+      check(direct.indexOf('evil.example') < 0 && direct.indexOf('http://offer.example/a?sub=' + cloaked.id) > 0, 'lpc.php asked directly takes no other host either');
+    } finally {
+      sql('UPDATE 202_aff_campaigns SET aff_campaign_cloaking=0 WHERE aff_campaign_id=' + SIMPLE.id);
+    }
+
+    if (process.argv.includes('--headed-bfcache')) {
+      console.log('A true back/forward cache restore (headed Chromium)');
+      // Playwright switches the back/forward cache off by default.
+      const headed = await playwright.chromium.launch({
+        headless: false, executablePath: arg('chromium-headed') || process.env.P202_CHROMIUM_HEADED || undefined,
+        ignoreDefaultArgs: ['--disable-back-forward-cache'],
+      });
+      try {
+        const bctx = await headed.newContext();
+        const bp = await bctx.newPage();
+        const cdp = await bctx.newCDPSession(bp);
+        const notUsed = [];
+        await cdp.send('Page.enable');
+        cdp.on('Page.backForwardCacheNotUsed', (e) => notUsed.push(e));
+        let asked = 0;
+        let failing = true;
+        const pageviews = [];
+        await bp.route('**/purlink-prepare.php', (route) => { asked++; return failing ? route.abort() : route.continue(); });
+        bp.on('request', (r) => { if (/\/tracking202\/static\/record/.test(r.url())) { pageviews.push(r.url()); } });
+        await bp.goto(origin + '/bf');
+        await bp.waitForFunction(() => (document.querySelector('#d1').getAttribute('href') || '').indexOf('go.php') >= 0, null, { timeout: 15000 });
+        await waitFor(() => asked >= 3, 'three attempts', 10000);
+        await settle(3500);
+        check(asked === 3 && (await bp.getAttribute('#d1', 'href')).indexOf('go.php') >= 0, 'three failed preparations leave the link on the redirect: ' + asked);
+        await bp.evaluate(() => { window.__mark = 'kept'; });
+        failing = false;
+        await bp.goto(origin + '/away');
+        // A restored page fires no load event, which goBack() waits for by default.
+        await bp.goBack({ waitUntil: 'commit', timeout: 10000 }).catch((e) => console.log('  note goBack: ' + String(e.message).split('\n')[0]));
+        await settle(2500);
+        const state = await bp.evaluate(() => ({ shows: window.__shows, mark: window.__mark || null,
+          nav: (performance.getEntriesByType('navigation')[0] || {}).type || null,
+          reasons: JSON.stringify((performance.getEntriesByType('navigation')[0] || {}).notRestoredReasons || null) }));
+        console.log('  note pageshow events: ' + JSON.stringify(state.shows) + ', page state kept: ' + state.mark + ', navigation type: ' + state.nav);
+        console.log('  note notRestoredReasons: ' + state.reasons + '; CDP backForwardCacheNotUsed: ' +
+          JSON.stringify(notUsed.map((e) => (e.notRestoredExplanations || []).map((x) => x.type + ':' + x.reason))));
+        check(state.mark === 'kept' && state.shows.length === 2 && state.shows[0] === false && state.shows[1] === true,
+          'Back restored the page from the back/forward cache (pageshow persisted)');
+        const after = await bp.getAttribute('#d1', 'href');
+        await waitFor(() => asked >= 4, 'asked again', 8000);
+        const direct = await directHref(bp, '#d1').catch(() => '');
+        check(asked === 4 && SUBID.test(subidOf(direct || 'http://x/')) && new URL(direct).searchParams.get('u') === 'deep1',
+          'the restored page asks again and the link becomes the offer, deep link kept: ' + (direct || after) + ' (' + asked + ' requests)');
+        check(pageviews.length === 1, 'with no second pageview: ' + pageviews.length);
+      } finally {
+        await headed.close();
+      }
+    }
+    sql("UPDATE 202_users_pref SET user_pref_privacy='" + privacy.replace(/'/g, '') + "' WHERE user_id=" + USER);
+    sql("UPDATE 202_users_pref SET user_pref_privacy='" + privacy.replace(/'/g, '') + "' WHERE user_id=" + USER);
   } catch (error) {
     console.error(error);
     failures++;
   } finally {
+    if (privacy !== null) { sql("UPDATE 202_users_pref SET user_pref_privacy='" + privacy.replace(/'/g, '') + "' WHERE user_id=" + USER); }
     await browser.close();
     lp.close();
   }

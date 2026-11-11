@@ -32,6 +32,10 @@ $conn = new Connection($db);
 $accountZone = AccountZone::read($conn, (int) $_SESSION['user_id']);
 // A field posted as anything but text is refused below, not read as empty.
 $postedPayout = is_string($_POST['subid_payout'] ?? null) ? trim($_POST['subid_payout']) : '';
+$accountCurrency = SubidBatch::accountCurrency($conn, (int) $_SESSION['user_id']);
+// "$12.50" is read as 12.50 in an account that records in USD, as a line's payout is.
+[$defaultPayout, $payoutProblem] = $postedPayout === '' ? [null, null] : SubidBatch::readPayout($postedPayout, $accountCurrency);
+$signsRead = [];
 $postedZone = is_string($_POST['subid_timezone'] ?? $accountZone) ? (string) ($_POST['subid_timezone'] ?? $accountZone) : '';
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
@@ -44,8 +48,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$fieldError = 'Paste at least one subid, one per line.';
 	} elseif (!is_string($_POST['subid_payout'] ?? '')) {
 		$payoutError = 'Enter the payout as a number, such as 12.50.';
-	} elseif ($postedPayout !== '' && ($payoutError = (string) SubidBatch::payoutError($postedPayout)) !== '') {
-		$payoutError = ucfirst($payoutError) . '.';
+	} elseif ($payoutProblem !== null) {
+		$payoutError = ucfirst($payoutProblem) . '.';
 	} elseif (!AccountZone::isZone($postedZone)) {
 		$zoneError = 'Choose a time zone from the list.';
 	} else {
@@ -58,11 +62,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$result = (new SubidBatch($conn))->mark(
 				$userId,
 				p202_update_lines((string) ($_POST['subids'] ?? '')),
-				$postedPayout === '' ? null : $postedPayout,
+				$defaultPayout,
 				new DateTimeZone($postedZone)
 			);
 			$marked = $result['marked'];
+			if ($defaultPayout !== null && $defaultPayout !== $postedPayout) {
+				$signsRead[] = $postedPayout . ' as ' . $defaultPayout;
+			}
 			foreach ($result['lines'] as $line) {
+				if (isset($line['payout_written'])) {
+					$signsRead[] = $line['payout_written'] . ' as ' . $line['payout'];
+				}
 				if ($line['status'] === SubidBatch::NOT_A_SUBID || $line['status'] === SubidBatch::NOT_FOUND) {
 					$ignored[] = $line['subid'];
 				} elseif ($line['status'] === SubidBatch::ALREADY_CONVERTED && ($line['deleted'] ?? false)) {
@@ -99,6 +109,11 @@ echo p202_update_header('bi-check2-square', 'Update subids', 'Mark clicks as con
 
 if ($success) {
 	echo p202_flash('ok', $marked . ' subid(s) marked as converted. Your account income now reflects them.');
+	if ($signsRead !== []) {
+		$signsRead = array_values(array_unique($signsRead));
+		echo p202_flash('info', 'Payouts written with a currency sign were read as ' . $accountCurrency . ' amounts: '
+			. p202_update_list_sentence($signsRead, 5) . '.');
+	}
 	if ($ignored !== []) {
 		echo p202_flash('warn', 'Not found in your account, so not marked: ' . p202_update_list_sentence($ignored) . '.');
 	}
@@ -132,7 +147,7 @@ if ($success) {
 					<div class="mb-3">
 						<label class="form-label" for="subids">Subids</label>
 						<textarea class="form-control font-monospace<?php echo $fieldError !== '' || $refusedLines !== [] ? ' is-invalid' : ''; ?>" rows="8" name="subids" id="subids" placeholder="SUBID, PAYOUT, TRANSACTION ID, TIMESTAMP" required><?php echo p202_setup_e($typed); ?></textarea>
-						<div class="form-text">One per line: <code>SUBID, PAYOUT, TRANSACTION ID, TIMESTAMP</code>. Everything after the subid is optional; leave a field empty to skip it (<code>123,,order-9</code>). Times read like <code>11/03/2026 2:30:00 PM</code> or <code>2026-11-03 14:30:00</code>.</div>
+						<div class="form-text">One per line: <code>SUBID, PAYOUT, TRANSACTION ID, TIMESTAMP</code>. Everything after the subid is optional; leave a field empty to skip it (<code>123,,order-9</code>). Times read like <code>11/03/2026 2:30:00 PM</code> or <code>2026-11-03 14:30:00</code>. A payout may carry your account currency's sign or code (<code><?php echo p202_setup_e($accountCurrency); ?></code>), as a network's report writes it.</div>
 						<div class="form-text">A line without a transaction id marks its click once: a click that already converted is left as it is. A line with one records that sale once, so a click can carry several sales and sending the same list twice changes nothing.</div>
 						<?php if ($fieldError !== '') { ?><div class="invalid-feedback d-block"><?php echo p202_setup_e($fieldError); ?></div><?php } ?>
 						<?php if ($refusedLines !== []) { ?>

@@ -393,6 +393,14 @@ function query(
             $click_sql .= " AND      2c.aff_campaign_id='" . $mysql['user_pref_aff_campaign_id'] . "'";
             $count_where .= " AND      2c.aff_campaign_id='" . $mysql['user_pref_aff_campaign_id'] . "'";
         }
+        if (!empty($user_row['user_pref_publisher_id'])) {
+            $publisherClicks = ' AND ' . \Prosper202\Click\PublisherCredit::creditedClicksCondition(
+                '2c.click_id',
+                (int) $user_row['user_pref_publisher_id']
+            );
+            $click_sql .= $publisherClicks;
+            $count_where .= $publisherClicks;
+        }
         if ($user_row['user_pref_text_ad_id']) {
             $mysql['user_pref_text_ad_id'] = $db->real_escape_string($user_row['user_pref_text_ad_id']);
             $click_sql .= " AND      2ca.text_ad_id='" . $mysql['user_pref_text_ad_id'] . "'";

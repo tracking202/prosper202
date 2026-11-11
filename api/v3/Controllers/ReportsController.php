@@ -52,6 +52,16 @@ class ReportsController
      *    redirect's id, not the rule's). A rotator's default (no rule
      *    matched) is no rule and in no rotator_rule row; rotatorStats() has
      *    it.
+     *  - publisher: the publisher a publisher link credited the click to
+     *    (202_clicks_publisher, Prosper202\Click\PublisherCredit), by user
+     *    id, named as Get Links names it. The click is the link's account's,
+     *    so its figures are that account's; a click credited to nobody is in
+     *    no row.
+     *  - publisher_link: the tracking link a publisher's click came on, by
+     *    the link's public id (its t202id), which the click writer stores
+     *    with the credit since 1.9.80. No join onto 202_trackers: the public
+     *    id is not unique, and a link since removed still names its clicks.
+     *    A credited click from before the id was stored is in no row.
      */
     private const array BREAKDOWNS = [
         'campaign'     => ['table' => '202_aff_campaigns',      'id' => 'aff_campaign_id',  'name' => 'aff_campaign_name',  'de_id' => 'aff_campaign_id'],
@@ -136,6 +146,19 @@ class ReportsController
             'table' => '202_rotator_rules', 'id' => 'id', 'name' => 'rule_name', 'de_id' => 'rule_id',
             'extra' => ['rotator_id' => 'ref.rotator_id'],
         ],
+        'publisher' => [
+            'table' => '202_users', 'id' => 'user_id', 'name' => 'user_name', 'de_id' => 'click_id',
+            'join' => "INNER JOIN 202_clicks_publisher cp ON cp.click_id = de.click_id\n"
+                . '            INNER JOIN 202_users ref ON ref.user_id = cp.publisher_user_id',
+            'name_sql' => "COALESCE(NULLIF(TRIM(CONCAT_WS(' ', ref.user_fname, ref.user_lname)), ''), ref.user_name)",
+            'group' => 'ref.user_id, ref.user_fname, ref.user_lname, ref.user_name',
+        ],
+        'publisher_link' => [
+            'table' => '202_clicks_publisher', 'id' => 'tracker_id_public', 'name' => 'tracker_id_public',
+            'de_id' => 'click_id',
+            'join' => 'INNER JOIN 202_clicks_publisher ref ON ref.click_id = de.click_id AND ref.tracker_id_public <> 0',
+            'name_sql' => 'CAST(ref.tracker_id_public AS CHAR)',
+        ],
     ];
 
     /**
@@ -180,7 +203,7 @@ class ReportsController
     public const int GROUPS_MAX_ROWS = 5000;
 
     /** The aliases the BREAKDOWNS join snippets use, renamed per level. */
-    private const array JOIN_ALIASES = ['ref', 'su', 'dm', 'i6'];
+    private const array JOIN_ALIASES = ['ref', 'su', 'dm', 'i6', 'cp'];
 
     public const int BREAKDOWN_MAX_LIMIT = 500;
     private const array DAYPART_ALLOWED_SORTS = [
@@ -319,7 +342,7 @@ class ReportsController
      * only across profiles that state one currency), and a currency that
      * could not be read is not USD, so a failed read throws.
      */
-    private function accountCurrency(): string
+    public function accountCurrency(): string
     {
         $stmt = $this->prepare('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1');
         $this->bind($stmt, 'i', $this->userId);

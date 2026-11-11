@@ -91,26 +91,12 @@ $detect = new DeviceDetect();
 $ua = $detect->getUserAgent();
 $result = $parser->parse($ua);
 
-if( !$detect->isMobile() && !$detect->isTablet() ){
-
-	switch ($result->device->family) {
-		//Is Bot
-		case 'Bot':
-			$result->device->family = "Bot";
-		break;
-		//Is Desktop
-		case 'Other':
-			$result->device->family = "Desktop";
-		break;
-	}
-} else {
-	if ($detect->isTablet()) {
-		$result->device->family = "Tablet";
-		//If mobile	
-	} else {
-		$result->device->family = "Mobile";
-	}
-}
+// Tablet, Mobile, Bot or Desktop, as the click is recorded: what a device rule names.
+$result->device->family = \Prosper202\Rotator\VisitorDevice::of(
+	$detect->isTablet(),
+	$detect->isMobile(),
+	(string) $result->device->family
+);
 
 // The bid the link names when the account takes dynamic bids, else the tracker's CPC.
 $bid = $rotator_row['user_pref_dynamic_bid'] == '1' ? DynamicBid::fromRequest($_GET['t202b'] ?? null) : null;
@@ -478,14 +464,27 @@ if ($rtrCampaignRows) {
 		          WHERE v.ppc_network_id = pn.ppc_network_id AND v.deleted = 0) AS ppc_variable_ids,
 		        (SELECT GROUP_CONCAT(v.parameter ORDER BY v.ppc_variable_id)
 		           FROM 202_ppc_network_variables AS v
-		          WHERE v.ppc_network_id = pn.ppc_network_id AND v.deleted = 0) AS parameters
+		          WHERE v.ppc_network_id = pn.ppc_network_id AND v.deleted = 0) AS parameters,
+		        IFNULL(pn.ppc_network_id, 0) AS own_ppc_network_id
 		   FROM 202_ppc_accounts AS ppc
-		   JOIN 202_ppc_networks AS pn ON pn.ppc_network_id = ppc.ppc_network_id AND pn.user_id = ppc.user_id
+		   LEFT JOIN 202_ppc_networks AS pn ON pn.ppc_network_id = ppc.ppc_network_id AND pn.user_id = ppc.user_id
 		  WHERE ppc.ppc_account_id = '" . $mysql['ppc_account_id'] . "'
 		    AND ppc.user_id = '" . $db->real_escape_string((string) $user_id) . "'"
 	);
 	$rtrVariableIds = [];
-	foreach (\Prosper202\Click\TrackerVariables::pairs(is_array($rtrVariables) ? $rtrVariables : []) as [$rtrParameter, $rtrVariableId]) {
+            $rtrVariablePairs = \Prosper202\Click\TrackerVariables::pairs(
+                is_array($rtrVariables) ? $rtrVariables : []
+            );
+            // Said in the log when the click's traffic source account names another
+            // user's source and the click came with a value of its variables.
+            \Prosper202\Repository\LookupRepositoryFactory::noteUnrecordedVariables(
+                $db,
+                (int) $user_id,
+                (int) $mysql['ppc_account_id'],
+                (int) ($rtrVariables['own_ppc_network_id'] ?? 0) > 0,
+                $_GET
+            );
+	foreach ($rtrVariablePairs as [$rtrParameter, $rtrVariableId]) {
 		$rtrValue = str_replace('%20', ' ', ClickRequest::text($_GET, $rtrParameter));
 		if ($rtrValue !== '') {
 			$rtrVariableIds[] = $trackingRepo->findOrCreateVariable($rtrValue, $rtrVariableId);
@@ -502,6 +501,9 @@ $mysql['user_id'] = $db->real_escape_string((string)$user_id);
 // ignored. A re-click keeps its first visit's credit.
 $rtrPublisher = $reClick === null ? p202ClickPublisher($db, (int) $user_id, $_GET) : null;
 $mysql['publisher_user_id'] = (string) ($rtrPublisher['user_id'] ?? 0);
+$mysql['publisher_tracker_id_public'] = $rtrPublisher === null
+	? '0'
+	: (string) (\Prosper202\Click\PublicId::parse($_GET['t202id'] ?? '') ?? 0);
 
 //lets determine if cloaking is on
 $cloaking_on = false;

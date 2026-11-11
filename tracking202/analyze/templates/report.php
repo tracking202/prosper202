@@ -70,7 +70,7 @@ $shown = $submitted === null ? $values : $submitted['values'];
 $names = $analyze['names'];
 
 $lists = $analyze['lists'] + ['region_id' => [], 'isp_id' => []];
-$specs = p202_report_filters($shown, $lists, $offered);
+$specs = p202_without_unused_publisher_filter(p202_report_filters($shown, $lists, $offered));
 foreach ($specs as $index => $spec) {
     $field = $spec['name'];
     $named = array_search($field, Input::NAMED_FIELDS, true);

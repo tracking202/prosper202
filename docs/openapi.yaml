@@ -957,8 +957,128 @@ paths:
                             keys_stored:
                               type: integer
                               description: PayKickstart only, how many IPN secret keys are stored
+                            held_notifications:
+                              type: object
+                              description: >-
+                                PayKickstart, Shopify and Zaxaa only. Notifications
+                                refused because they state another currency than the
+                                account counts in are held; Account › API integrations
+                                records the recordable ones. Left out when the held
+                                notifications cannot be read (before the upgrade has run).
+                              properties:
+                                recordable:
+                                  type: integer
+                                  description: Held and stated in the currency the account counts in now
+                                waiting:
+                                  type: integer
+                                  description: Held and stated in another currency
+                                waiting_currencies:
+                                  type: array
+                                  items:
+                                    type: string
+                            no_role_url:
+                              type: object
+                              description: >-
+                                The `jvzoo` entry only. What the URL Prosper202 1.9.56
+                                showed (jvzoo.php with no role) received in the last 30
+                                days, counting notifications that move money.
+                              properties:
+                                read_as:
+                                  type: string
+                                  enum: [affiliate, vendor]
+                                  description: How the account reads that URL (jvzoo_roleless_role)
+                                vendor_no_affiliate:
+                                  type: integer
+                                  description: Named no affiliate, so read as a vendor's whatever read_as is
+                                refused:
+                                  type: integer
+                                  description: Read as an affiliate's and recorded nothing
+                                as_affiliate:
+                                  type: integer
+                                  description: Read as an affiliate's and accepted
+                                as_vendor:
+                                  type: integer
+                                  description: Read as a vendor's because the account chose it
+                                conflict:
+                                  type: integer
+                                  description: Refused because accounts sharing the key read the URL differently
+                                more:
+                                  type: boolean
+                                  description: >-
+                                    The newest 499 JVZoo requests did not reach back 30
+                                    days, so the counts are at least these
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /system/integrations/record-held:
+    post:
+      tags: [System]
+      summary: Record the notifications held for their currency
+      description: |
+        The Record button of Account › API integrations. A PayKickstart,
+        Shopify or Zaxaa notification that states another currency than the
+        account counts in records nothing and is held (`held_notifications`
+        on `GET /system/integrations`). This records the caller's held
+        notifications of one integration that are stated in the currency the
+        account counts in now: each goes through the checks a notification
+        arriving now goes through, in the order it arrived, at most 200 a
+        request (`left` says how many remain; send it again). Sent twice,
+        each is recorded once. One the checks refuse for good is held no
+        longer (`refused`, and `first_refusal` says why); one that failed
+        stays held (`failed`).
+
+        Admin (or Super user) with `access_to_api_integrations`, and
+        `system:write`. Not stageable, and no preview.
+      operationId: systemRecordHeldNotifications
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [integration]
+              additionalProperties: false
+              properties:
+                integration:
+                  type: string
+                  enum: [paykickstart, shopify, zaxaa]
+      responses:
+        "200":
+          description: What was recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      integration:
+                        type: string
+                      recorded:
+                        type: integer
+                        description: Conversions and reversals written
+                      on_file:
+                        type: integer
+                        description: On file already, so nothing was added
+                      refused:
+                        type: integer
+                        description: Refused as one arriving now would be, and held no longer
+                      failed:
+                        type: integer
+                        description: >-
+                          Still held, to be sent again: it could not be recorded just
+                          now, or it is a refund whose sale is itself still held
+                      left:
+                        type: integer
+                        description: Held, recordable and not reached by this request
+                      first_refusal:
+                        type: string
+                        description: What the first refused one was told
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /system/traffic-source-owners:
     get:
@@ -1001,6 +1121,25 @@ paths:
         `several_users`: whichever account it is in, another user's accounts
         still name it. `POST /system/traffic-source-owners/split` does.
 
+        A click records only the custom variables of a source in its own
+        user's account. Until a listed source with custom variables is moved
+        back or split, clicks on the accounts of its `named_by` users store no
+        value of them (`variables_unrecorded`, `variables_note`), and the
+        server's error log says so while such clicks arrive with values.
+
+        The cron job splits a source by itself, once an hour, when every
+        traffic source account of another user that names it was saved at or
+        after the source's last save (`auto_split: true`): the source was
+        where it is when each account came to name it, so no move is a move
+        back, and each of those users is given a copy while nothing is taken
+        from its user. It leaves the rest listed, and `auto_split_blocked_by`
+        says why: `may_be_theirs` (an account was saved before the source
+        was, so the source may have been that user's and a move back may be
+        wanted), `same_name` (a user who would get a copy already has a live
+        source of that name), `no_such_user`, `deleted_user`. `splits` lists
+        the splits of the last 30 days, the cron job's (`automatic: true`)
+        and users'.
+
         Admin (or Super user) with `access_to_settings`, and `system:read`:
         the report names every user's sources.
       operationId: systemTrafficSourceOwners
@@ -1025,6 +1164,74 @@ paths:
                       ambiguous:
                         type: integer
                         description: Sources a repair moves only to a user named for it
+                      variables_unrecorded:
+                        type: integer
+                        description: >-
+                          Sources with live custom variables. Clicks on the traffic source
+                          accounts of their `named_by` users store no value of those variables
+                          until the source is moved back or split.
+                      variables_note:
+                        type: string
+                        nullable: true
+                        description: >-
+                          The sentence that says so, as Account › Settings shows it; null
+                          when `variables_unrecorded` is 0.
+                      auto_split:
+                        type: integer
+                        description: Listed sources the cron job's next hourly run splits without being asked
+                      splits:
+                        type: array
+                        description: The splits of the last 30 days, newest first
+                        items:
+                          type: object
+                          properties:
+                            ppc_network_id:
+                              type: integer
+                              description: The source that was split, which stayed where it was
+                            ppc_network_name:
+                              type: string
+                            removed:
+                              type: boolean
+                            owner_user_id:
+                              type: integer
+                              description: The user the source stayed with
+                            owner_user_name:
+                              type: string
+                              nullable: true
+                            automatic:
+                              type: boolean
+                              description: True for the cron job's split, false for a user's
+                            actor_user_id:
+                              type: integer
+                              description: The user who split it; 0 for the cron job
+                            split_at:
+                              type: integer
+                              description: Unix time
+                            copies:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  user_id:
+                                    type: integer
+                                  user_name:
+                                    type: string
+                                    nullable: true
+                                  ppc_network_id:
+                                    type: integer
+                                    description: The copy, in that user's account
+                                  ppc_account_ids:
+                                    type: array
+                                    items:
+                                      type: integer
+                                  custom_variables:
+                                    type: integer
+                      splits_note:
+                        type: string
+                        nullable: true
+                        description: >-
+                          What a split did, as Account › Settings says it; null when `splits`
+                          is empty.
         "403":
           $ref: "#/components/responses/Forbidden"
 
@@ -1174,8 +1381,9 @@ paths:
         set to the source is set to the copy, and those accounts are queued
         for the cron job's report rollup, so the clicks already on them are
         reported under the copy after its next run. The custom variable
-        values recorded on those clicks before the split stay recorded
-        against the source's own variables. The report no longer lists the
+        values recorded on those clicks before the split read under the
+        copy's own variables in Analyze › Variables: each of the copy's
+        variables remembers the one it was copied from. The report no longer lists the
         source. To have it end up in another user's account, move it there
         first (`repair` with `to_user_id`), then split it.
 
@@ -2198,6 +2406,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
         - name: click_lead
           in: query
           description: "0 = clicks only, 1 = conversions only"
@@ -2250,6 +2459,56 @@ paths:
                 $ref: "#/components/schemas/ClickResponse"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /clicks/{id}/not-fraud:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    post:
+      tags: [Clicks]
+      summary: Count a click IPQualityScore filtered again
+      description: |
+        Visitors' Not fraud button. For a click filtered for its fraud score
+        (`filter_reason: fraud_score`): the click, and the caller's other
+        clicks from the same address that were filtered for their score (at
+        most 200 a call; `more_clicks_filtered` says when some remain), count
+        again, each one's report row is rolled up again, and the address is
+        put on the click filter list as always count
+        (`GET /users/{id}/click-filter`), so it is not scored again. Remove
+        the entry there to have the address scored again.
+
+        `address_always_counted` is false, with the reason in `note`, when
+        the address could not be listed (the list is full); the clicks count
+        again all the same.
+
+        404 for a click that is not the caller's, or was not filtered for its
+        fraud score: a click one of the account's own rules filtered is
+        changed through the click filter. Takes no body; one is a 422. Needs
+        `access_to_personal_settings` and `clicks:write`. Not stageable, and
+        it has no dry run. Sending it again is safe.
+      operationId: markClickNotFraud
+      responses:
+        "200":
+          description: What was counted again
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      click_id: {type: integer}
+                      ip_address: {type: string, example: "203.0.113.50"}
+                      clicks_counted: {type: integer, description: "Clicks that count again, this one included."}
+                      more_clicks_filtered: {type: boolean, description: "True when more than 200 clicks from the address were filtered; send the request again."}
+                      address_always_counted: {type: boolean}
+                      note: {type: string}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /clicks/{id}/conversions:
     parameters:
@@ -2857,8 +3116,13 @@ paths:
         the same list twice is safe. A converting click is no longer
         filtered.
 
-        A line whose payout, transaction id or time cannot be read (a
-        currency sign, a thousands separator or decimal comma, a negative
+        A payout may carry the sign or code of the account's currency before
+        or after the number (`$12.50`, `12.50 USD`), as a network's report
+        writes it: it is read as the number, and the line's answer keeps
+        what was sent as `payout_written`. `payout` is read the same way.
+
+        A line whose payout, transaction id or time cannot be read (another
+        currency's sign, a thousands separator or decimal comma, a negative
         amount, a date that does not exist, is in the future or is before its
         click, more than four fields) is a 422
         naming it (`subids.3`), and nothing in the request is written; a dry
@@ -3072,6 +3336,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
       responses:
         "200":
           description: Summary metrics
@@ -3157,6 +3422,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
       responses:
         "200":
           description: The groups as a tree (`data`, each with `children` but the innermost), `totals`, and `by`
@@ -3203,7 +3469,11 @@ paths:
         summary and in no row. `ip` is the visitor's address (IPv6 decoded),
         `referer` the referring domain, `referer_url` the whole URL,
         `device_type` Desktop/Mobile/Tablet/Bot, `rotator_rule` the rule that
-        matched (its rows also carry `rotator_id`). Names of visitor-authored
+        matched (its rows also carry `rotator_id`), `publisher` the publisher
+        a publisher link credited the click to (its user id and name; a click
+        on no publisher link is in no row), `publisher_link` the tracking
+        link such a click came on (its `t202id`; clicks credited before
+        1.9.80 stored it are in no row). Names of visitor-authored
         dimensions (keyword, city, region, isp, browser, platform, device,
         ip, referer, referer_url, c1-c4, utm_*) are sanitized on the way out.
       operationId: reportBreakdown
@@ -3244,6 +3514,8 @@ paths:
               - utm_content
               - rotator
               - rotator_rule
+              - publisher
+              - publisher_link
         - name: sort
           in: query
           description: Any metric a row carries; anything else is a 422 naming them.
@@ -3291,6 +3563,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
       responses:
         "200":
           description: Breakdown results
@@ -3377,6 +3650,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
       responses:
         "200":
           description: Timeseries data
@@ -3487,6 +3761,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
       responses:
         "200":
           description: Day-parting rows
@@ -3655,6 +3930,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
       responses:
         "200":
           description: The rotator's figures
@@ -3779,7 +4055,10 @@ paths:
         whatever its `splittest` says. Every campaign and
         landing page a redirect names must be one of your live ones. Each
         criterion's value is stored as the page stores it: split on commas
-        and trimmed (`all`, in any case, as `ALL`); a device is lower case. Every key is
+        and trimmed (`all`, in any case, as `ALL`), a country as Name(CC) and a
+        device in lower case, however they are sent (`meta.normalized` lists
+        what was stored in another form; `meta.warnings` names a rule or
+        criterion that matches no visitor). Every key is
         checked, at every level; a problem is a `422` naming its place
         (`rules.1.redirects.0.redirect_campaign`), with every problem in the
         set reported at once and nothing written. A set has at least one
@@ -4234,6 +4513,51 @@ paths:
                   data:
                     $ref: "#/components/schemas/AttributionQueue"
 
+  /attribution/queue/retry:
+    post:
+      tags: [Attribution]
+      summary: Try the account's failed attribution work again now
+      description: >-
+        Makes the account's failed conversions, identity merges and model recomputes due at once and
+        runs the attribution worker once, briefly. Another account's rows wait their turn. An account
+        may ask once every 30 seconds, and the worker is run only when something was made due. Takes
+        no body. Role permission `view_attribution_reports`.
+      operationId: retryAttributionQueue
+      responses:
+        "200":
+          description: What was made due, what became of the run, and the backlog after
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      made_due:
+                        type: object
+                        properties:
+                          conversions:
+                            type: integer
+                          merges:
+                            type: integer
+                          models:
+                            type: integer
+                      worker:
+                        type: string
+                        enum: [ran, busy, failed, idle, waiting]
+                        description: >-
+                          `ran` when the worker ran; `busy` when another run held its lock and takes the
+                          rows next; `failed` when the run itself failed (logged), and the cron job's next
+                          run takes them; `idle` when nothing was waiting on a failure, so nothing was
+                          run; `waiting` when the account asked less than 30 seconds ago and nothing was
+                          done.
+                      retry_after_seconds:
+                        type: integer
+                        description: The seconds until the account may ask again; 0 unless worker is `waiting`.
+                      queue:
+                        $ref: "#/components/schemas/AttributionQueue"
+
   /attribution/exports:
     get:
       tags: [Attribution]
@@ -4611,6 +4935,95 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /destinations/{id}/deliveries/resend:
+    post:
+      tags: [Destinations]
+      summary: Send failed or withheld conversions again
+      description: >-
+        Puts conversions that ended `failed` or `withheld` back in the queue
+        as `pending` with all their tries, for after the cause is fixed (a
+        token, an account, a conversion action, the privacy setting). Send
+        `delivery_id` for one delivery, or `status` for every delivery of
+        that status made in the last 90 days, 5,000 a call (`more` is true
+        when others remain; call again). The send's checks run again, so a
+        conversion still held back is withheld again. A conversion already
+        sent is never sent twice. 422 when `delivery_id` is not a failed or
+        withheld conversion of this destination.
+      operationId: resendDestinationDeliveries
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                delivery_id: {type: integer, description: One delivery; not with status}
+                status: {type: string, enum: [failed, withheld], description: Every delivery of this status; not with delivery_id}
+      responses:
+        "200":
+          description: How many were queued again
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      queued: {type: integer}
+                      more: {type: boolean}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /destinations/{id}/backfill:
+    post:
+      tags: [Destinations]
+      summary: Queue earlier conversions for a destination
+      description: >-
+        Queues each paid conversion of the last `days` that the destination's
+        campaigns take and its log has no delivery for (recorded before the
+        destination existed, or while it was off), oldest first, 5,000 a call
+        (`more` is true when others remain; call again). `days` is 1 to 3
+        for GA4, which refuses an event more than 72 hours old, and 1 to 90
+        for Google Ads. They are sent by the cron job like any other.
+      operationId: backfillDestination
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [days]
+              properties:
+                days: {type: integer, minimum: 1, maximum: 90}
+      responses:
+        "200":
+          description: How many were queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      queued: {type: integer}
+                      more: {type: boolean}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /destinations/{id}/deliveries:
     get:
       tags: [Destinations]
@@ -4621,8 +5034,10 @@ paths:
         apart), `sent`, `failed` (attempts ran out, the platform refused it,
         or the request was refused before it was sent), `withheld` (nothing
         was sent - the click was guessed rather than named, the privacy
-        setting holds the visitor back, or the visitor may be in the EEA or
-        UK and the destination does not state both consent signals granted) or
+        setting holds the visitor back (`eu`, the default, holds back every
+        visitor who may be in the EEA or UK whatever consent is stated), or,
+        with the setting `disabled`, the visitor may be in the EEA or UK and
+        the destination does not state both consent signals granted) or
         `cancelled` (the conversion or the destination was deleted first).
         `summary` is what was sent, without identifiers' values.
         `meta.summary` counts every status under the same filters except
@@ -5416,6 +5831,32 @@ paths:
                             <app> via mcp.tracking202.com".
                         created_at:
                           type: integer
+                        last_used_at:
+                          type: integer
+                          nullable: true
+                          description: >-
+                            When the key last authenticated a request, to
+                            within five minutes; null when no use is recorded.
+                            Recorded from 1.9.80 on, and absent until that
+                            upgrade has run.
+                        last_used_api:
+                          type: string
+                          nullable: true
+                          description: The API version of that request (`v1`, `v2` or `v3`)
+                        last_used_client:
+                          type: string
+                          nullable: true
+                          description: >-
+                            The User-Agent that request sent, as the client
+                            named itself; null when it sent none.
+                        ends_at:
+                          type: integer
+                          nullable: true
+                          description: >-
+                            Set on a key that was replaced. The key is refused
+                            with 401 from this time on, stays in this list for
+                            seven days more and is then removed; null for a key
+                            that does not end.
         "403":
           $ref: "#/components/responses/Forbidden"
     post:
@@ -5448,6 +5889,15 @@ paths:
                     - type: array
                       items:
                         type: string
+                label:
+                  type: string
+                  nullable: true
+                  maxLength: 100
+                  description: >-
+                    What will use the key, shown in the key lists. Up to 100
+                    characters on one line, not starting with "AI:" (422
+                    otherwise). Omit, or send null or an empty string, for a
+                    key with no name.
       responses:
         "201":
           description: API key created
@@ -5467,10 +5917,86 @@ paths:
                       scope:
                         type: string
                         description: The stored scope; `*` for full access
+                      label:
+                        type: string
+                        nullable: true
+                        description: The name the key was given, or null
                       created_at:
                         type: integer
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /users/{id}/api-keys/replace:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    post:
+      tags: [Users]
+      summary: Replace an API key
+      description: >-
+        Your own with the `access_to_personal_settings` permission, or a user
+        you may manage. What Replace does in My Account. A new key is made
+        with the old key's scope and label and returned once. The old key
+        keeps working for 24 hours and is then refused with 401 and a message
+        saying it was replaced. To end the old key at once, delete it. A
+        scoped caller cannot replace a key broader than its own (403). The
+        old key is sent in the body, never in the path.
+      operationId: replaceApiKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [api_key]
+              properties:
+                api_key:
+                  type: string
+                  description: The full key to replace
+      responses:
+        "201":
+          description: Replacement key created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      user_id:
+                        type: integer
+                      api_key:
+                        type: string
+                        description: The new key, in full (shown once)
+                      scope:
+                        type: string
+                        description: The old key's scope, carried over; `*` for full access
+                      label:
+                        type: string
+                        nullable: true
+                        description: The old key's label, carried over
+                      created_at:
+                        type: integer
+                      replaced:
+                        type: object
+                        properties:
+                          api_key:
+                            type: string
+                            description: The old key, masked
+                          ends_at:
+                            type: integer
+                            description: When the old key stops working
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The user has no such key
+        "409":
+          description: >-
+            The key was already replaced, belongs to an AI app's connection
+            (connect the app again instead), or the 1.9.80 database upgrade
+            has not run.
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /users/{id}/api-keys/{keyId}:
     parameters:
@@ -7578,6 +8104,7 @@ paths:
       - $ref: '#/components/parameters/filterKeyword'
       - $ref: '#/components/parameters/filterIp'
       - $ref: '#/components/parameters/filterReferer'
+      - $ref: '#/components/parameters/filterPublisherId'
       responses:
         '200':
           description: One row per weekday (`day_of_week` 0 = Monday … 6 = Sunday, `day_name`) with the same metrics
@@ -10030,7 +10557,7 @@ paths:
                     type: string
                   description: The events to deliver, each one this install sends — `customer.updated`,
                     `revenue.recorded`, `subscription.changed`, `conversion.recorded`, `engagement.recorded`,
-                    `alert.conversions_stopped`, `alert.spend_without_conversions`, `alert.postback_refusals_spiked` — or `["*"]` alone, which also takes the events later versions add. Omitted, null or [] is every event
+                    `alert.conversions_stopped`, `alert.spend_without_conversions`, `alert.postback_refusals_spiked`, `alert.test` — or `["*"]` alone, which also takes the events later versions add. Omitted, null or [] is every event
                     this version sends. Any other name is a 422 naming it by position (`events.0`) with the list (a
                     name checked only for its form, `revenue.recoded`, made a hook that received nothing), and
                     anything but a list of strings is a 422 (a lone string was read as no list, and subscribed the
@@ -11085,6 +11612,56 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /landing-pages/{id}/check:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    post:
+      tags: [Setup]
+      summary: Check that a landing page carries its tracking code
+      description: |
+        "Check my page" on Setup > Get LP Code. Prosper202 fetches the landing
+        page's saved URL and reads its HTML for the code of this landing page
+        (the loader `GET /landing-pages/{id}/code` returns, or the older
+        `landing.js` one). The answer is kept, and Setup > Landing Pages shows
+        it beside the page.
+
+        `status` is `present` (the current code), `legacy` (the older code,
+        which still works), `mixed` (this page's code and another landing
+        page's), `other_tracker` (this page's id, loaded from a host that is
+        not this install's tracking domain), `wrong_id` (only another landing
+        page's code), `commented` (only inside an HTML comment), `absent`, or
+        `error` when the page could not be fetched; `message` says what was
+        found and what to do. `found` is true for `present` and `legacy`. A
+        page that cannot be fetched is an answer (200, `status: error`), not
+        a failed request.
+
+        The fetch is held to the rules postbacks are: public addresses only,
+        each redirect checked, at most 10 seconds and 2 MB. It reads the HTML
+        as served, so code a tag manager adds after the page loads is not
+        seen, and finding the code does not prove a visit is recorded.
+
+        The landing page must be the caller's and not removed (404
+        otherwise). Takes no body and no parameters; either is a 422. Not
+        stageable, and it has no dry run. Needs `access_to_setup_section`
+        and `landing-pages:read`: it changes no setup.
+      operationId: checkLandingPageCode
+      responses:
+        "200":
+          description: What the check found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/LandingPageCheck"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /conversions/postback-code:
     get:
       tags: [Setup]
@@ -11804,6 +12381,15 @@ components:
       schema:
         type: string
         maxLength: 255
+    filterPublisherId:
+      name: publisher_id
+      in: query
+      description: >-
+        Clicks a publisher link credited to this publisher (a user id, the `id` of a
+        `breakdown=publisher` row), or `none` for the clicks credited to no publisher. 0 is no filter.
+      schema:
+        type: string
+        pattern: '^([0-9]+|none)$'
 
     # App postback filters (list + report)
     postbackRegistrationId:
@@ -12591,6 +13177,25 @@ components:
           items:
             type: string
             enum: [owner_has_accounts, several_users, saved_after_rename, no_such_user, deleted_user]
+        variables_unrecorded:
+          type: boolean
+          description: >-
+            Whether the source has live custom variables. A click records only the
+            variables of a source in its own user's account, so clicks on the accounts
+            of the `named_by` users store no value of them until the source is moved
+            back or split.
+        auto_split:
+          type: boolean
+          description: >-
+            Whether the cron job splits it within the hour without being asked. Every
+            traffic source account of another user that names it was saved at or after
+            the source's last save.
+        auto_split_blocked_by:
+          type: array
+          description: Why it is left to an operator; empty when `auto_split` is true
+          items:
+            type: string
+            enum: [may_be_theirs, same_name, no_such_user, deleted_user]
         custom_variables:
           type: integer
           description: The source's live custom variables, which a split copies
@@ -13177,6 +13782,22 @@ components:
           type: integer
           readOnly: true
 
+    LandingPageCheck:
+      type: object
+      properties:
+        landing_page_id: {type: integer}
+        landing_page_id_public: {type: integer, description: "The id the page's code carries (lpip=)."}
+        landing_page_url: {type: string, description: "The saved URL that was fetched (its [[placeholders]] left out)."}
+        status:
+          type: string
+          enum: [present, legacy, mixed, other_tracker, wrong_id, commented, absent, error]
+        found: {type: boolean, description: "True when the page carries this landing page's code (present or legacy)."}
+        message: {type: string, description: "What was found, and what to do about it."}
+        other_landing_page_ids_public:
+          type: array
+          items: {type: string}
+          description: "The other landing pages' public ids the page carries code for (mixed, wrong_id)."
+
     LandingPageCreate:
       type: object
       required: [landing_page_url, aff_campaign_id]
@@ -13184,6 +13805,12 @@ components:
         landing_page_url:
           type: string
           maxLength: 255
+          description: >-
+            Starts with http:// or https://. A host sent without its scheme
+            (lp.example.com/x, //lp.example.com/x) is stored with https://,
+            as Setup > Landing Pages stores it, and the answer says so in
+            meta.normalized; any other value is a 422. Sync compares landing
+            pages on the stored form.
         aff_campaign_id:
           type: integer
         landing_page_nickname:
@@ -13217,6 +13844,21 @@ components:
       properties:
         data:
           $ref: "#/components/schemas/LandingPage"
+        meta:
+          type: object
+          description: Present on a create or update that completed a URL.
+          properties:
+            normalized:
+              type: object
+              description: >-
+                Each URL field (landing_page_url, leave_behind_page_url) that
+                was sent as a host without its scheme, with what was sent and
+                what is stored for it.
+              additionalProperties:
+                type: object
+                properties:
+                  sent: {type: string, example: "lp.example.com/x"}
+                  stored: {type: string, example: "https://lp.example.com/x"}
 
     LandingPageListResponse:
       type: object
@@ -14119,6 +14761,7 @@ components:
           enum: [marked, would_mark, cleared, would_clear, already_converted, not_found, not_a_subid, duplicate_in_list]
         first_line: {type: integer, description: "For duplicate_in_list: the earlier item with the same click (and the same transaction id)."}
         payout: {type: string, description: "Update Subids: the line's own payout, when it gives one."}
+        payout_written: {type: string, description: "Update Subids: the payout as the line wrote it, when it carried the account currency's sign or code (`$12.50`) and `payout` is the number read from it."}
         transaction_id: {type: string, description: "Update Subids: the line's transaction id, when it gives one."}
         conv_time: {type: integer, description: "Update Subids: the line's time as a Unix timestamp, when it gives one."}
         conversions: {type: integer, description: "In a delete dry run: the click's live conversions."}
@@ -15091,8 +15734,9 @@ components:
                   every visitor whatever the statement, from every entry point
                   (stored as `ALL`; a value stored before as `all`, `All` or
                   with a space beside it is read the same way);
-                  countries as Name(CC), e.g. "United States(US)"; devices in
-                  lower case (a capital never matches, so it is a 422).
+                  a country is stored as Name(CC), e.g. "United States(US)", and
+                  may be sent as its two-letter code or its name; a device is
+                  stored in lower case however it is sent.
                   For type ip, single IPv4 or IPv6 addresses, stored in canonical
                   form; a value that is not an address (a range included) is a 422.
                   A value holding ALL is taken for any type, ip included, without
@@ -15765,6 +16409,13 @@ components:
           type: integer
         user_time_register:
           type: integer
+        user_public_publisher_id:
+          type: string
+          nullable: true
+          readOnly: true
+          description: >-
+            The id a publisher link carries as `t202pubid` to credit its clicks to this user. It counts only
+            for a user holding the Publisher role, on a link of an account that may manage users.
 
     UserCreate:
       type: object

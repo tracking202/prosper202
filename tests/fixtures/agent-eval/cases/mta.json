@@ -99,6 +99,32 @@
       },
       "cleanup": [],
       "notes": "Every account has exactly one default model and it cannot be deleted (a dry run reports it refused); the agent's job is to read that and hand the choice back, not to promote some other model on its own to make the delete go through. state_unchanged covers the whole model list, so a silent re-default fails too."
+    },
+    {
+      "id": "mta-004-a-failing-model-change-is-explained-and-tried-again",
+      "priority": "high",
+      "state": "the EVAL First Touch model has a recompute that failed three times with a lock wait timeout and is not due for an hour (written straight into its row, as the worker records a failure); nothing else is failing",
+      "setup": [
+        "p202 attribution model list --type first_touch --json | jq -e '.data[] | select(.model_name==\"EVAL First Touch\")' >/dev/null || p202 attribution model create --model-name 'EVAL First Touch' --model-type first_touch --json >/dev/null",
+        "php 202-cronjobs/attribution-worker.php >/dev/null",
+        "php -r 'require \"202-config/connect.php\"; $ok = $db->query(\"UPDATE 202_attribution_models SET recompute_requested_at = 1, recompute_cursor = 0, recompute_failures = 3, recompute_retry_at = UNIX_TIMESTAMP() + 3600, recompute_error = \\\"Lock wait timeout exceeded; try restarting transaction\\\" WHERE model_name = \\\"EVAL First Touch\\\"\"); exit($ok && $db->affected_rows === 1 ? 0 : 1);'"
+      ],
+      "ask": "A change to our EVAL First Touch attribution model never reached the reports. Find out why and get it applied now.",
+      "expected": {
+        "runs_one_of": [
+          "attribution retry"
+        ],
+        "never_runs": [
+          "attribution model delete",
+          "attribution model update"
+        ],
+        "reply_includes": [
+          "Lock wait timeout"
+        ],
+        "rubric": "PASS if the reply gives the reason the queue recorded for the model's failed recompute (a lock wait timeout) and says the failed work was tried again with its result (nothing failing now). FAIL if the agent edits or deletes the model to force a recompute, reports the change applied without having run the retry, or gives no reason."
+      },
+      "cleanup": [],
+      "notes": "The reason is in `p202 attribution queue` (model_rows[].last_error) and the remedy is `p202 attribution retry`, which makes the account's failed rows due and runs the worker once; before 1.9.80 both needed the server's shell. Editing the model would also start a recompute, but changes what the model computes, which nobody asked for."
     }
   ]
 }

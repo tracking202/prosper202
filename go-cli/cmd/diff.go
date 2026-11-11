@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -255,6 +256,28 @@ func buildEntityLookups(data map[string][]map[string]interface{}) entityLookups 
 	}
 }
 
+// bareHostURL is a host written without its scheme: a dotted host name or an
+// IPv4 address, an optional port, then nothing or a path, query or fragment.
+// The server's rule (Prosper202\Http\HttpUrlPrefix::BARE_HOST), held to it by
+// testdata/http_url_prefix_cases.json, which the server's test reads too.
+var bareHostURL = regexp.MustCompile(`(?is)^(//)?((?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]|(?:[0-9]{1,3}\.){3}[0-9]{1,3})(?::[0-9]{1,5})?(?:[/?#].*)?)$`)
+
+// completeHTTPURL is url as the server stores a landing page's: with
+// https:// before a host written without a scheme, and as given otherwise.
+// Sync matches landing pages by this form on both sides, so a source that
+// holds lp.example.com/x and a target that stored https://lp.example.com/x
+// for it are one page.
+func completeHTTPURL(url string) string {
+	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+		return url
+	}
+	m := bareHostURL.FindStringSubmatch(url)
+	if m == nil {
+		return url
+	}
+	return "https://" + m[2]
+}
+
 func buildIDLookup(rows []map[string]interface{}, idFields ...string) (map[string]string, map[string]string) {
 	if len(idFields) < 2 {
 		return map[string]string{}, map[string]string{}
@@ -270,6 +293,9 @@ func buildIDLookup(rows []map[string]interface{}, idFields ...string) (map[strin
 			continue
 		}
 		name := scalarString(row[nameField])
+		if nameField == "landing_page_url" {
+			name = completeHTTPURL(name)
+		}
 		if name == "" {
 			name = "id:" + id
 		}
@@ -378,7 +404,7 @@ func naturalKeyForEntity(entity string, row map[string]interface{}, lookups enti
 	case "campaigns":
 		return scalarString(row["aff_campaign_name"])
 	case "landing-pages":
-		return scalarString(row["landing_page_url"])
+		return completeHTTPURL(scalarString(row["landing_page_url"]))
 	case "text-ads":
 		return scalarString(row["text_ad_name"])
 	case "rotators":
@@ -404,6 +430,13 @@ func normalizeComparableRecord(entity string, row map[string]interface{}, lookup
 		out["aff_network_id"] = remapForeignKey(row, "aff_network_id", lookups.affNetworks)
 	case "landing-pages":
 		out["aff_campaign_id"] = remapForeignKey(row, "aff_campaign_id", lookups.campaigns)
+		// The server stores a bare host with https:// (completeHTTPURL), so a
+		// source row holding one is the target's completed row, not a change.
+		for _, field := range []string{"landing_page_url", "leave_behind_page_url"} {
+			if url, ok := out[field].(string); ok {
+				out[field] = completeHTTPURL(url)
+			}
+		}
 	case "text-ads":
 		out["aff_campaign_id"] = remapForeignKey(row, "aff_campaign_id", lookups.campaigns)
 		out["landing_page_id"] = remapForeignKey(row, "landing_page_id", lookups.landingPages)

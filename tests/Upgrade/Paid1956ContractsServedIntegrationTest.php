@@ -17,9 +17,6 @@ use PHPUnit\Framework\TestCase;
  * account's setup, upgraded by the ladder as the upgrade page runs it, and
  * then served by `php -S` over the 202-config.php the integration job writes,
  * once both its connections are seen to reach the scratch database.
- * A contract whose fix is still in review is a case skipped with its pull
- * request's number and in the group `pending`, which the CI runner leaves
- * out; that request removes both when it lands.
  *
  * documentation/upgrading/from-paid-1.9.56.md lists what changed on purpose.
  *
@@ -44,7 +41,7 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
     private const API_KEY = 'paid1956-regression-key';
     private const JVZIPN_KEY = 'jvzipn-paid1956-key';
     private const SHOPIFY_SECRET = 'demo-store-webhook-secret-1956';
-    /** Rows the pending cases seed: traffic source, account, rotator. */
+    /** Rows single cases seed: traffic source, account, rotator. */
     private const NETWORK = 995641;
     private const PPC_ACCOUNT = 995642;
     private const ROTATOR = 995651;
@@ -618,6 +615,19 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
         ));
         self::assertSame((string) self::OWNER, self::scalar("SELECT user_id FROM 202_clicks WHERE click_id = $click"),
             'the click stays the account\'s, so its reports keep it');
+        self::assertSame((string) (self::TRACKER + self::PUBLIC_OFFSET), self::scalar(
+            "SELECT tracker_id_public FROM 202_clicks_publisher WHERE click_id = $click"
+        ), 'and the link it came on, for the report by link');
+
+        // A landing page's click records the link its visit named.
+        $lpip = self::LANDING_PAGE + self::PUBLIC_OFFSET;
+        [$status, $headers] = self::http("/tracking202/static/record_simple.php?lpip=$lpip&t202id="
+            . (self::LP_TRACKER + self::PUBLIC_OFFSET) . '&t202pubid=' . self::PUBLISHER_ID);
+        self::assertSame(200, $status, $headers . $this->serverLog());
+        self::assertSame((string) (self::LP_TRACKER + self::PUBLIC_OFFSET), self::scalar(
+            'SELECT tracker_id_public FROM 202_clicks_publisher WHERE publisher_user_id = ' . self::PUBLISHER
+            . ' ORDER BY click_id DESC LIMIT 1'
+        ));
 
         // A public id of a user without the Publisher role is a claim nobody granted.
         $plain = $this->directLinkClick('&t202pubid=' . self::MANAGER_ID);
@@ -674,8 +684,7 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
         self::assertSame(['ORDER-8001'], array_column($page['rows'], 'transaction_id'));
     }
 
-    // Contracts restored after 1.9.80 branched. One whose fix is still in review
-    // is skipped and in the group `pending`; its pull request removes both.
+    // Contracts restored after 1.9.80 branched.
 
     /**
      * 1.9.56's gpb.php took its values from a form POST body as well as the query.
@@ -691,12 +700,9 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
 
     /**
      * A PurLink SubID from 1.9.56 is `<click>-<campaign public id>`, and gpb.php takes it.
-     *
-     * @group pending
      */
     public function testTheGlobalPostbackTakesA1956PurLinkSubid(): void
     {
-        self::markTestSkipped('pending #383');
         $click = $this->directLinkClick();
         $acip = self::CAMPAIGN + self::PUBLIC_OFFSET;
         [$status, $headers] = self::http("/tracking202/static/gpb.php?subid=$click-$acip&amount=40.00&t202txid=ORDER-6101");
@@ -708,12 +714,9 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
 
     /**
      * A 1.9.56 snippet's defpixel=1 turns the deferred pixel on.
-     *
-     * @group pending
      */
     public function testTheLegacySnippetsDeferredPixelIsRead(): void
     {
-        self::markTestSkipped('pending #383');
         $lpip = self::LANDING_PAGE + self::PUBLIC_OFFSET;
         [$status, , $body] = self::http("/tracking202/static/landing.php?lpip=$lpip&defpixel=1");
         self::assertSame(200, $status);
@@ -721,18 +724,17 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
     }
 
     /**
-     * 1.9.56's dynamic content handed the landing page the visit's SubID.
-     *
-     * @group pending
+     * 1.9.56's dynamic content handed the landing page the visit's SubID
+     * (beside it now: the proof dcs.updateDataObj() changes the click with).
      */
     public function testDynamicContentHandsThePageTheSubid(): void
     {
-        self::markTestSkipped('pending #392');
         $lpip = self::LANDING_PAGE + self::PUBLIC_OFFSET;
         [$status, $headers, $body] = self::http("/tracking202/static/record_simple.php?lpip=$lpip");
         self::assertSame(200, $status, $headers . $this->serverLog());
         $click = self::scalar('SELECT MAX(click_id) FROM 202_clicks WHERE landing_page_id = ' . self::LANDING_PAGE);
-        self::assertStringContainsString('window.p202DcsClick({"t202Subid":"' . $click . '"})', $body);
+        self::assertNotNull($click);
+        self::assertMatchesRegularExpression('~window\.p202DcsClick\(\{"t202Subid":"' . $click . '"[,}]~', $body);
     }
 
     /**
@@ -783,12 +785,9 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
 
     /**
      * A Google Ads tracking template from 1.9.56 (pt.php) records the click and sends the visitor on.
-     *
-     * @group pending
      */
     public function testAGoogleParallelTrackingLinkRecordsTheClick(): void
     {
-        self::markTestSkipped('pending #394');
         $before = (int) self::scalar('SELECT COUNT(*) FROM 202_clicks WHERE user_id = ' . self::OWNER);
         [$status, $headers] = self::http('/tracking202/redirect/pt.php?t202id=' . (self::LP_TRACKER + self::PUBLIC_OFFSET)
             . '&gclid=G-paid-1956', [], null, ['Referer: https://www.google.com/']);
@@ -864,6 +863,14 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
         self::assertMatchesRegularExpression('~^Location: https://shop\.example/newsletter~mi', $headers);
         [, $headers] = self::http("$path&c1=autumn", [], null, ['X-Forwarded-For: 198.51.100.22']);
         self::assertMatchesRegularExpression('~^Location: https://shop\.example/default~mi', $headers);
+
+        // A redirector link carrying a publisher records the link with the credit.
+        [$status, $headers] = self::http("$path&c1=spring&t202pubid=" . self::PUBLISHER_ID, [], null, ['X-Forwarded-For: 198.51.100.23']);
+        self::assertSame(302, $status, $headers . $this->serverLog());
+        self::assertSame((string) (self::ROTATOR_TRACKER + self::PUBLIC_OFFSET), self::scalar(
+            'SELECT tracker_id_public FROM 202_clicks_publisher WHERE publisher_user_id = ' . self::PUBLISHER
+            . ' ORDER BY click_id DESC LIMIT 1'
+        ));
     }
 
     /**

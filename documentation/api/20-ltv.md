@@ -365,7 +365,12 @@ export webhooks' setting; link-local and metadata addresses never are.
 Personal settings › Money-loss alerts). The cron job's hourly run queues
 them for webhooks subscribed to them, or to every event, unless the account
 turned the alerts or their webhook channel off. All carry `{alert,
-campaign_id, campaign_name, message}`.
+campaign_id, campaign_name, message, url}`; `url` is the page of this
+install that shows the problem (the Inbound Log, or the campaign), `null`
+when the run does not know the install's address.
+`alert.test` is the settings card's "Send a test alert": it goes to every
+webhook subscribed to any of the three alerts (or to every event), carries
+`test: 1` and `campaign_id` 0, and reports no problem.
 `conversions_stopped` adds `last_conversion_at`,
 `seconds_without_conversion`, `usual_gap_seconds` (between converting
 hours), `clicks_since_last_conversion`, `usual_clicks_per_converting_hour`,
@@ -390,7 +395,7 @@ its status.
 `events` is a list of the events this install sends — `customer.updated`,
 `revenue.recorded`, `subscription.changed`, `conversion.recorded`,
 `engagement.recorded`, `alert.conversions_stopped`,
-`alert.spend_without_conversions`, `alert.postback_refusals_spiked` — or `["*"]` alone, which also takes the events later
+`alert.spend_without_conversions`, `alert.postback_refusals_spiked`, `alert.test` — or `["*"]` alone, which also takes the events later
 versions add. Left out (or `[]`) it is every event this version sends. Any
 other name is a `422` naming it by position (`events.0`) with the list: a
 misspelled `revenue.recoded` used to make a webhook that received nothing,

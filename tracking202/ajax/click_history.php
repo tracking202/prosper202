@@ -8,7 +8,9 @@ declare(strict_types=1);
  * newer than the newest one shown, as bare rows). Drawn on the v2 shell by
  * 202-js/p202-overview.js; the filters are the user's report preferences,
  * which the page applied from its URL. A row with conversions opens their
- * breakdown (click_conversions.php) in the modal drawn below the table.
+ * breakdown (click_conversions.php) in the modal drawn below the table. A
+ * filtered row says why (202_clicks_filter_reason), and one filtered for
+ * its IPQualityScore score can be marked "not fraud" (click_not_fraud.php).
  */
 include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 require_once(substr(__DIR__, 0, -17) . '/202-config/functions-ui-overview.php');
@@ -22,6 +24,17 @@ $reportView = p202_report_view_begin();
 $incremental = false;
 $isSpy = (isset($_GET['spy']) && $_GET['spy'] == 1);
 
+// ?filter_reason=: only the clicks filtered for that reason. The reason is one of a fixed list, never the request's text.
+try {
+	$askedReason = p202_click_filter_reason_asked($_GET);
+} catch (InvalidArgumentException $refused) {
+	http_response_code(400);
+	die(p202_flash('bad', $refused->getMessage()));
+}
+$reasonWhere = $askedReason === null ? null
+	: "AND EXISTS (SELECT 1 FROM 202_clicks_filter_reason AS 2frw WHERE 2frw.click_id = 2c.click_id AND 2frw.filter_reason = '"
+		. \Prosper202\Click\Filter\ClickFilterVerdict::STORED_REASONS[array_search($askedReason, \Prosper202\Click\Filter\ClickFilterVerdict::STORED_REASONS, true)] . "')";
+
 // Shared SQL — identical for spy and non-spy paths. A campaign, traffic
 // source and its account, landing page or text ad is named only when it is
 // the click's own account's (CLAUDE.md #27): a click naming another
@@ -34,7 +47,8 @@ $command = "SELECT 2c.click_id, 2c.click_time, 2c.click_alp, text_ad_name, aff_c
 2co.site_url_address AS outbound,2cod.site_domain_host AS outbound_host,
 2cc.site_url_address AS cloaking,2ccd.site_domain_host AS cloaking_host,
 2credir.site_url_address AS redirect,2credird.site_domain_host AS redirect_host,
-(SELECT COUNT(*) FROM 202_conversion_logs AS cvl WHERE cvl.click_id = 2c.click_id) AS conversion_rows
+(SELECT COUNT(*) FROM 202_conversion_logs AS cvl WHERE cvl.click_id = 2c.click_id) AS conversion_rows,
+(SELECT 2fr.filter_reason FROM 202_clicks_filter_reason AS 2fr WHERE 2fr.click_id = 2c.click_id) AS filter_reason
 FROM 202_dataengine AS 2c
 LEFT JOIN 202_clicks_record USING (click_id)
 LEFT JOIN 202_clicks_site AS 2cs ON (2c.click_id = 2cs.click_id)
@@ -94,6 +108,9 @@ if ($isSpy) {
 	} else {
 		$extra_where = null;
 	}
+	if ($reasonWhere !== null) {
+		$extra_where = trim((string) $extra_where . ' ' . $reasonWhere);
+	}
 	// Spy view uses its own 24-hour time window (applied inside query() when
 	// $isspy=true), so skip the calendar time preference — otherwise a saved
 	// date range like "yesterday" or "last month" silently excludes all recent
@@ -113,7 +130,7 @@ if ($isSpy) {
 	$order = ($requested_order !== '' && isset($allowed_orders[$requested_order]))
 		? $allowed_orders[$requested_order]
 		: null;
-	$query = query($command, $db_table, null, null, null, $order, $offset);
+	$query = query($command, $db_table, null, null, null, $order, $offset, null, null, false, $reasonWhere);
 }
 
 
@@ -149,6 +166,12 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 $empty = $isSpy
 	? ['icon' => 'bi-broadcast', 'title' => 'No clicks in the last 24 hours', 'body' => 'New clicks appear here within a few seconds of arriving. Send traffic through a tracking link to see them.', 'action' => 'Get tracking links', 'href' => get_absolute_url() . 'tracking202/setup/get_trackers.php']
 	: p202_overview_empty(get_absolute_url(), 'No clicks match these filters');
+
+// Above the list and above its empty state, so a reason with no clicks can be changed.
+echo p202_click_filter_reason_select($askedReason);
+if ($askedReason !== null) {
+	$empty['title'] = 'No clicks filtered for this reason match these filters';
+}
 
 if ($click_result->num_rows == 0) {
 	echo '<div class="p202-empty">'

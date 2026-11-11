@@ -36,7 +36,7 @@ const P202_OVERVIEW_CLICK_FILTERS = [
     'ppc_network_id', 'aff_campaign_id', 'user_pref_show',
     'ppc_account_id', 'aff_network_id', 'landing_page_id', 'text_ad_id', 'method_of_promotion',
     'country_id', 'region_id', 'isp_id', 'device_id', 'browser_id', 'platform_id',
-    'subid', 'ip', 'keyword', 'referer',
+    'publisher_id', 'subid', 'ip', 'keyword', 'referer',
 ];
 
 /**
@@ -315,6 +315,12 @@ function p202_overview_filter_lists(\Prosper202\Database\Connection $conn, int $
         // entry per name.
         'country_id' => static fn () => $flat($rows('SELECT MIN(country_id), country_name FROM 202_locations_country GROUP BY country_name ORDER BY country_name', false)),
         'device_id' => static fn () => $flat($rows('SELECT type_id, type_name FROM 202_device_types ORDER BY type_name', false)),
+        // The publishers the account may put on a link (Get Links' list).
+        'publisher_id' => static fn () => array_column(
+            (new \Prosper202\Click\PublisherCredit($conn))->grantable($userId),
+            'name',
+            'user_id'
+        ),
     ];
     // Install-wide and unbounded: what this account's clicks carried.
     foreach (array_keys(P202_OVERVIEW_SEEN_LISTS) as $name) {
@@ -546,7 +552,7 @@ function p202_overview_page(array $page): string
     // The classic reports' own names and specs for everything the catalog
     // knows; the groupings are this family's own.
     $catalogNames = array_values(array_filter($names, static fn (string $n): bool => !str_starts_with($n, 'group_')));
-    $filters = p202_report_filters($values, $page['lists'], $catalogNames);
+    $filters = p202_without_unused_publisher_filter(p202_report_filters($values, $page['lists'], $catalogNames));
     $groupings = in_array('group_1', $names, true) ? p202_overview_groupings() : [];
     $none = P202_OVERVIEW_GROUP_NONE;
     $groupLabels = ['group_1' => 'Group by', 'group_2' => 'Then by', 'group_3' => 'Third grouping', 'group_4' => 'Fourth grouping'];
@@ -814,6 +820,90 @@ function p202_overview_pagination(int $pages, int $offset, string $label = 'Repo
     }
     $html .= $item(min($pages - 1, $offset + 1), '&rsaquo;', 'Next page', false, $offset >= $pages - 1);
     return $html . '</ul></nav>';
+}
+
+/**
+ * What a filtered click's pill says in Visitors and Spy, and why, for its
+ * recorded reason (Prosper202\Click\Filter\ClickFilterVerdict); null is a
+ * click with none on record.
+ *
+ * @return array{0: string, 1: string} the pill's words, and its title
+ */
+function p202_click_filter_reason(?string $reason): array
+{
+    $threshold = \Prosper202\Fraud\IpqsScoring::FRAUD_THRESHOLD;
+
+    return match ($reason) {
+        \Prosper202\Click\Filter\ClickFilterVerdict::FRAUD_SCORE => ['Filtered: fraud score',
+            'IPQualityScore scored this visitor\'s address ' . $threshold . ' or more out of 100. If that is wrong, choose Not fraud.'],
+        \Prosper202\Click\Filter\ClickFilterVerdict::SIGN_IN_ADDRESS => ['Filtered: your address',
+            'This click came from an address you signed in from (My Account › Personal Settings › Click filter).'],
+        \Prosper202\Click\Filter\ClickFilterVerdict::CRAWLER_RANGE => ['Filtered: crawler',
+            'This click came from a known crawler\'s address range.'],
+        \Prosper202\Click\Filter\ClickFilterVerdict::REPEAT_VISIT => ['Filtered: repeat visit',
+            'The same visitor had clicked already within your repeat-visit window.'],
+        \Prosper202\Click\Filter\ClickFilterVerdict::FILTER_LIST => ['Filtered: your list',
+            'This click\'s address is on your click filter list as always filter.'],
+        default => ['Filtered', 'This click was filtered out. No reason is on record: it was recorded before reasons were kept, or filtered as a bot.'],
+    };
+}
+
+/**
+ * The filter reason a Visitors or Spy request asks to see the clicks of
+ * (?filter_reason=fraud_score): one of the recorded reasons, or null for
+ * none asked. A value that is no reason is refused, not read as none.
+ *
+ * @param array<array-key, mixed> $query
+ * @throws InvalidArgumentException
+ */
+function p202_click_filter_reason_asked(array $query): ?string
+{
+    if (!array_key_exists('filter_reason', $query) || $query['filter_reason'] === '') {
+        return null;
+    }
+    $reason = $query['filter_reason'];
+    if (!is_string($reason) || !in_array($reason, \Prosper202\Click\Filter\ClickFilterVerdict::STORED_REASONS, true)) {
+        throw new InvalidArgumentException('filter_reason must be one of ' . implode(', ', \Prosper202\Click\Filter\ClickFilterVerdict::STORED_REASONS) . '.');
+    }
+
+    return $reason;
+}
+
+/**
+ * $fragment (the click history's address) carrying the page's
+ * ?filter_reason=, so the list the page draws is the one its address names.
+ * A value that is no reason is left off: the page draws every click.
+ *
+ * @param array<array-key, mixed> $query the page's query
+ */
+function p202_click_history_fragment(string $fragment, array $query): string
+{
+    try {
+        $reason = p202_click_filter_reason_asked($query);
+    } catch (InvalidArgumentException) {
+        $reason = null;
+    }
+
+    return $reason === null ? $fragment : $fragment . (str_contains($fragment, '?') ? '&' : '?') . 'filter_reason=' . rawurlencode($reason);
+}
+
+/**
+ * The "Filtered because" select above the click history: choosing a reason
+ * reloads the page with ?filter_reason= (p202-overview.js), which lists the
+ * clicks filtered for it.
+ */
+function p202_click_filter_reason_select(?string $asked): string
+{
+    $options = '<option value="">Any click</option>';
+    foreach (\Prosper202\Click\Filter\ClickFilterVerdict::STORED_REASONS as $reason) {
+        $label = substr(p202_click_filter_reason($reason)[0], strlen('Filtered: '));
+        $options .= '<option value="' . $reason . '"' . ($reason === $asked ? ' selected' : '') . '>Filtered: ' . htmlspecialchars($label, ENT_QUOTES, 'UTF-8') . '</option>';
+    }
+
+    return '<div class="d-flex align-items-center gap-2 mb-2">'
+        . '<label class="form-label small text-secondary mb-0" for="p202-filter-reason">Show</label>'
+        . '<select class="form-select form-select-sm w-auto" id="p202-filter-reason" data-p202-filter-reason>' . $options . '</select>'
+        . '</div>';
 }
 
 /**

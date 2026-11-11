@@ -95,6 +95,8 @@ final class RollupWritersAreMarkedTest extends TestCase
         'api/v3/Controllers/AdministrationController.php' => 'reads: counts the rows ClickRetention would delete (CLICK_DATA_TABLES) and stores the deletion date on 202_users_pref; the cron job deletes',
         // The subid writes behind the Update pages and the /conversions/subids API.
         '202-config/Update/SubidBatch.php' => 'writes click_filtered, which no sum reads',
+        '202-config/Attribution/QueueRetry.php' => 'makes the account\'s failed outbox rows due, reading'
+            . ' 202_conversion_logs only to find whose they are',
         '202-config/Attribution/ConversionBackfill.php' => 'MARK_SQL writes the ledger backfill\'s marker, reading MAX(click_id) of 202_clicks; the conversions it backfills are written by MysqlConversionLedger',
         '202-config/Database/Tables/AttributionTables.php' => 'schema definitions: CREATE TABLE IF NOT EXISTS, no row',
         '202-config/Database/Tables/ClickTables.php' => 'schema definitions: CREATE TABLE IF NOT EXISTS, no row',

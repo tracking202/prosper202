@@ -89,6 +89,11 @@ final class AccountScopedJoinTest extends TestCase
     private const GROUP_LEAVES = 'the group report\'s innermost groups, a derived table: its WHERE is'
         . ' filtered()\'s, which begins `de.user_id = ?` with the account, and its joins are dimensionJoin()\'s,'
         . ' which testRuntimeBuiltSqlIsTied() runs';
+    private const PUBLISHER_CREDIT = 'the publisher a click was credited to, named in the click\'s own account\'s'
+        . ' report: 202_clicks_publisher is written only by MysqlClickRepository (ClickRowsWrittenOnlyByTheWriterTest),'
+        . ' with the user PublisherCredit::forClick() answered for the click\'s account, a Publisher of its install'
+        . ' that the account may grant; the user row is the publisher\'s, not a record the click\'s account owns, so'
+        . ' there is no account to tie it to, and only its name is read';
     private const NOT_SQL = 'an exception message ("has no name join"), not SQL';
     private const CALLER_SCOPE = 'the caller\'s click scope over 202_dataengine (the report\'s own user filter); the rows it selects are one click\'s conversions';
     private const INSTALL_REGISTRATION = 'an install\'s registration: InstallIntake::insert() writes registration_id and user_id together from one registration, and no statement updates either';
@@ -145,6 +150,15 @@ final class AccountScopedJoinTest extends TestCase
      * @var array<string, array<string, string>>
      */
     private const HARMLESS = [
+        '202-config/Click/ClickPathReads.php' => [
+            'no user_id tie | 202_ppc_networks | '
+                . 'other.ppc_network_id = ppc.ppc_network_id AND other.user_id <> ppc.user_id' =>
+                'finds, on purpose, that the account\'s own traffic source account (`ppc.user_id = ?`) names a'
+                . ' source in another user\'s account, for the server log\'s line about a click stored without'
+                . ' its custom variables (UnrecordedSourceVariables): it reads that source\'s id, its user\'s id'
+                . ' and its variables\' names to count the values a click came with, records none of them and'
+                . ' answers nothing to the visitor',
+        ],
         '202-config/DataEngine/ReportAggregation.php' => [
             'subquery without a WHERE | 202_dataengine | 202_dataengine' => self::REPORT_AGGREGATE_SCOPE,
             'subquery with runtime text before its WHERE | 202_dataengine | '
@@ -268,6 +282,10 @@ final class AccountScopedJoinTest extends TestCase
         '202-config/ReportSummaryForm.class.php' => [
             'table built at runtime | \\Prosper202\\Conversion\\Ledger\\LedgerReportSql::partsTable($clickScope) | LEFT OUTER JOIN {\\Prosper202\\Conversion\\Ledger\\LedgerReportSql::partsTable($clickScope)} AS lcp ON ( `2c`.click_id = lcp.' => self::LEDGER_PARTS,
         ],
+        '202-config/Rotator/SeenValues.php' => [
+            'table built at runtime | $lookup | AS seen STRAIGHT_JOIN {$lookup}'
+                . ' ON ( {$idColumn} = seen.id ) WHERE {$value}' => self::RUNTIME_CHECKED,
+        ],
         '202-config/Setup/TrafficSourceOwners.php' => [
             'no user_id tie | 202_ppc_networks | pn.ppc_network_id = pa.ppc_network_id' => self::OWNERSHIP_REPORT,
         ],
@@ -329,6 +347,7 @@ final class AccountScopedJoinTest extends TestCase
                 . ' | implode("\n ", $joins)' => self::GROUP_LEAVES,
             'no table after JOIN | ? | LEFT JOIN' => self::JOIN_REWRITE,
             'table built at runtime | {$bd[\'table\']} | INNER JOIN {{$bd[\'table\']}} ref ON {$on}' => self::RUNTIME_CHECKED,
+            'no user_id tie | 202_users | ref.user_id = cp.publisher_user_id' => self::PUBLISHER_CREDIT,
         ],
         'tracking202/Report/ReportPrefsStore.php' => [
             'condition built at runtime | 202_dataengine | {$scope} AND `2st`.click_time >= ? '
@@ -518,6 +537,17 @@ final class AccountScopedJoinTest extends TestCase
         $join = $reports->getMethod('dimensionJoin');
         foreach (array_keys($reports->getConstant('BREAKDOWNS')) as $dimension) {
             $sql = 'SELECT 1 FROM 202_dataengine de ' . $join->invoke(null, $dimension) . ' WHERE de.user_id = ?';
+            if ($dimension === 'publisher') {
+                // PUBLISHER_CREDIT: the one join onto a user who is not the click's account.
+                self::assertSame(
+                    [['no user_id tie', '202_users', 'ref.user_id = cp.publisher_user_id']],
+                    array_map(
+                        static fn (array $f): array => [$f['kind'], $f['table'], $f['detail']],
+                        SqlJoinScan::findings($sql, [], self::accountTables())
+                    )
+                );
+                continue;
+            }
             $checked += $this->assertTied($sql, "ReportsController::dimensionJoin('$dimension')");
         }
         foreach (\Prosper202\Report\MysqlReportRepository::dimensions() as $dimension) {
@@ -553,6 +583,21 @@ final class AccountScopedJoinTest extends TestCase
             }
         }
         self::assertGreaterThanOrEqual(8, $lists, 'every seen list was read');
+
+        // Setup › Redirectors' suggestions, read the same way: the account's
+        // grouped report rows, then lookups no account owns.
+        $suggested = 0;
+        foreach (\Prosper202\Rotator\SeenValues::types() as $type) {
+            $sql = \Prosper202\Rotator\SeenValues::sql($type, 20);
+            self::assertStringContainsString('d.user_id = ?', $sql);
+            self::assertSame(
+                1,
+                $this->assertTied($sql, "SeenValues::sql('$type')"),
+                'only the scoped click subquery reads an account-owned table'
+            );
+            $suggested++;
+        }
+        self::assertGreaterThanOrEqual(11, $suggested, 'every suggested type was read');
     }
 
     public function testReportAggregationKeepsTheCallersScopeBeforeLabelJoins(): void

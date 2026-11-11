@@ -287,7 +287,7 @@ Response fields: `total_clicks`, `total_leads`, `total_income`, `total_cost`, `t
 p202 report breakdown --breakdown country --period last7 --sort total_net --sort-dir DESC --limit 10 --json
 ```
 
-Available breakdowns: `campaign`, `aff_network`, `ppc_account`, `ppc_network`, `landing_page`, `keyword`, `country`, `city`, `region`, `browser`, `platform`, `device`, `isp`, `text_ad`, `ip`, `referer` (referring domain), `referer_url`, `device_type` (Desktop/Mobile/Tablet/Bot), `c1`–`c4`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `rotator`, `rotator_rule` (aliases `lp`, `source`, `network`, `offer`, `geo`, `referrer`, `referrer_url`, `rule`). The server lists its own dimensions in `/capabilities` as `features.report_breakdowns`. When a value is not on the CLI's built-in list, the CLI asks the server: a dimension the server lists is sent, and anything else fails with the server's list in the message.
+Available breakdowns: `campaign`, `aff_network`, `ppc_account`, `ppc_network`, `landing_page`, `keyword`, `country`, `city`, `region`, `browser`, `platform`, `device`, `isp`, `text_ad`, `ip`, `referer` (referring domain), `referer_url`, `device_type` (Desktop/Mobile/Tablet/Bot), `c1`–`c4`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `rotator`, `rotator_rule`, `publisher` (the publisher a publisher link credited the click to; Analyze › Publishers is `report groups --by publisher,publisher_link,campaign`), `publisher_link` (the link such a click came on, by its `t202id`; stored since 1.9.80) (aliases `lp`, `source`, `network`, `offer`, `geo`, `referrer`, `referrer_url`, `rule`). The server lists its own dimensions in `/capabilities` as `features.report_breakdowns`. When a value is not on the CLI's built-in list, the CLI asks the server: a dimension the server lists is sent, and anything else fails with the server's list in the message.
 
 A row is one stored value: clicks with no value for the dimension (no referer, no `c1`, not matched by a rotator rule) are in `report summary` and in no row, so rows can add up to less than the summary. `rotator_rule` rows carry `rotator_id`; a rotator's default is in `p202 rotator stats <id>`, not here.
 
@@ -552,7 +552,8 @@ neither). `read,stage` is the propose-only agent shape: it reads everything
 and stages writes for a person to apply, but can perform none itself. A
 scoped key is attenuated even for admins, cannot mint a key broader than
 itself, and is refused by the legacy v1/v2 APIs. `p202 user apikey rotate`
-carries the old key's scope onto the replacement unless you pass `--scope`.
+carries the old key's scope and label onto the replacement; the old key
+works for 24 hours more, and `p202 user apikey delete` ends it at once.
 A 403 whose message names a required scope means the key, not the command,
 is wrong -- switch keys or mint one with the scope the message names.
 
@@ -598,7 +599,7 @@ p202 rotator rule-create "$ROTATOR_ID" \
 ```
 
 JSON fields (`--criteria-json`, `--redirects-json`, `--weighting-config`) are validated locally before the API call. Malformed JSON produces an immediate error (exit 1).
-A rotator's default is one destination (`--default-url`, `--default-campaign` or `--default-lp`); setting one on `update` replaces the default whatever its kind. Each redirect names exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`; criteria types are country, region, eu, city, isp, fraud, ip, iprange, browser, platform, device, visitor, c1-c4, t202kw, referer and utm_source/medium/campaign/term/content, and countries are written `United States(US)` (`p202 rotator criteria-values`) — a bare `US` is refused, because it never matches. An `ip` criterion lists single IPv4 or IPv6 addresses (stored canonical, so `2001:DB8::1` is `2001:db8::1`); a range or a typo is refused by name for the same reason.
+A rotator's default is one destination (`--default-url`, `--default-campaign` or `--default-lp`); setting one on `update` replaces the default whatever its kind. Each redirect names exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`; criteria types are country, region, eu, city, isp, fraud, ip, iprange, browser, platform, device, visitor, c1-c4, t202kw, referer and utm_source/medium/campaign/term/content, and countries are stored as `United States(US)` (`p202 rotator criteria-values`) — a bare `US` or a name is taken and stored that way, as a device is stored in lower case; the answer's `meta.normalized` says what was changed, and `meta.warnings` names a rule that matches no visitor. An `ip` criterion lists single IPv4 or IPv6 addresses (stored canonical, so `2001:DB8::1` is `2001:db8::1`); a range or a typo is refused by name for the same reason.
 A rule needs at least one criterion and one redirect: the redirects read a rule with no criterion as every visitor, so `rule-create` refuses one without `--criteria-json` or `--country`, and an empty list, before any request. To match every visitor, say so with the value `ALL`.
 
 ### Forecast next week and flag today as normal or anomalous
@@ -819,6 +820,7 @@ Landing page code (Setup > Get LP Code):
 
 ```
 p202 landing-page code <id> [--offer campaign:N|rotator:N]... [--json]
+p202 landing-page check <id> [--json]   # the server fetches the page: data.found, data.status, data.message
 ```
 
 `data`: `landing_page_type` (`simple`/`advanced`), `base_url`, `loader`,
@@ -856,6 +858,7 @@ p202 click list --follow [--limit 10] [--interval 5s] [--stop-after 10m] [--ndjs
 p202 click get <id> [--json]           # filter_reason: why a filtered click is (null before 1.9.79)
 p202 click list --filter-reason sign_in_address|crawler_range|repeat_visit|filter_list|fraud_score|bot|not_recorded
 p202 click conversions <id> [--json]   # every conversion on the click, counted or not and why
+p202 click not-fraud <id> [--json]     # a fraud_score click and its address's others count again; the address is always counted
 p202 click update-cpc --from YYYY-MM-DD --to YYYY-MM-DD --cpc D
                 [--aff-network-id N] [--aff-campaign-id N] [--ppc-network-id N] [--ppc-account-id N]
                 [--landing-page-id N] [--text-ad-id N] [--method-of-promotion directlink|landingpage]
@@ -946,13 +949,17 @@ p202 destination update <id> [--enable|--disable] [--name S] [any create flag]  
 p202 destination test <id> [--json]                     # made-up conversion to GA4's /debug/mp/collect: valid + messages
 p202 destination deliveries <id> [--status pending|sent|failed|withheld|cancelled] [--kind conversion|test]
                        [--conv-id N] [--limit 50] [--offset 0] [--json]    # the log; meta.summary counts by status
+p202 destination resend <id> (--delivery-id N | --status failed|withheld) [--json]   # sent again with all their tries; `more` true: run again
+p202 destination backfill <id> --days N [--json]        # queue the last N days' conversions it has no delivery for (GA4 1-3, Google Ads 1-90)
 p202 destination delete <id> [--force] [--dry-run] [--json]                # unsent rows cancelled; the log stays
 ```
 
 The API secret is read from a file or piped stdin (`-`), never a flag value. `--staged` is refused: the
-routes are not stageable. A `withheld` delivery is never retried: a guessed click, the privacy setting, or an
-EEA/UK visitor without both consent signals stated `granted` (`last_error` says which);
-`failed` with `last_error` says why (GA4's answer, an event over 72 hours old, an address never called).
+routes are not stageable. A `withheld` delivery is never retried by itself: a guessed click, the privacy setting (`eu`, the default, holds
+back every EEA/UK visitor whatever consent is stated), or, with the setting `disabled`, an EEA/UK visitor without
+both consent signals stated `granted` (`last_error` says which); `destination resend` has it checked again.
+`failed` with `last_error` says why (GA4's answer, an event over 72 hours old, an address never called); it stays
+failed until `destination resend` after the cause is fixed.
 A Google Ads destination with `status` `needs_authorisation` holds its conversions `pending` (no tries used)
 until a person opens `connect`'s `authorisation_url`; an agent cannot complete that step. A click under 6 hours
 old also waits; one with no gclid/wbraid/gbraid and no hashed data is `withheld`. While conversions wait on
@@ -1013,7 +1020,7 @@ Output rows carry the point forecast, `lower_bound`/`upper_bound` (the band `--c
 
 Anomaly check for alerting: an observed value below `lower_bound` (or above `upper_bound`) of the band forecast for that date is outside the band's nominal coverage (90% at the default confidence). Full guide with worked examples: `documentation/cli/11-forecasting.md`.
 
-Report filter flags (all optional, all combine): `--aff-campaign-id`, `--ppc-account-id`, `--aff-network-id`, `--ppc-network-id`, `--landing-page-id`, `--country-id`, `--text-ad-id`, `--region-id`, `--isp-id`, `--browser-id`, `--platform-id`, `--device-type` (1 Desktop, 2 Mobile, 3 Tablet, 4 Bot), `--method-of-promotion directlink|landingpage`, `--show all|real|filtered|filtered_bot|leads`, `--keyword TEXT` (contains), `--ip ADDRESS` (exact, IPv4 or IPv6), `--referer TEXT` (contains). An id of 0 is no filter. `report losers`/`winners` turn their attribution check off when any filter other than the breakdown's own is set.
+Report filter flags (all optional, all combine): `--aff-campaign-id`, `--ppc-account-id`, `--aff-network-id`, `--ppc-network-id`, `--landing-page-id`, `--country-id`, `--text-ad-id`, `--region-id`, `--isp-id`, `--browser-id`, `--platform-id`, `--device-type` (1 Desktop, 2 Mobile, 3 Tablet, 4 Bot), `--method-of-promotion directlink|landingpage`, `--show all|real|filtered|filtered_bot|leads`, `--keyword TEXT` (contains), `--ip ADDRESS` (exact, IPv4 or IPv6), `--referer TEXT` (contains), `--publisher-id ID|none` (clicks a publisher link credited to that publisher; `none` is clicks on no publisher link). An id of 0 is no filter. `report losers`/`winners` turn their attribution check off when any filter other than the breakdown's own is set.
 
 `dashboard` defaults `period=today` if omitted.
 
@@ -1078,7 +1085,8 @@ p202 attribution breakdown       [--group-by D] [--model ID] [--compare-model ID
                                  [--period P | --time-from T --time-to T] [--limit N] [--json]
 p202 attribution journeys        [--period P | --time-from T --time-to T] [--json]
 p202 attribution journey         <conv_id> [--json]
-p202 attribution queue           [--limit N] [--json]
+p202 attribution queue           [--limit N] [--json]     (what is failing, each with last_error)
+p202 attribution retry           [--json]                 (failed work made due, the worker run once)
 
 p202 attribution export create   [--group-by D] [--model ID] [--compare-model ID]
                                  [--period P | --time-from T --time-to T] [--run-at T]
@@ -1246,11 +1254,11 @@ p202 user role assign <user_id> --role-id N [--json]
 p202 user role remove <user_id> <role_id> [--force] [--dry-run] [--json]
 
 p202 user apikey list   <user_id> [--json]                # includes each key's scope
-p202 user apikey create <user_id> [--scope S] [--json]    # S: *, read, write, or <area>:read/<area>:write tokens
+p202 user apikey create <user_id> [--scope S] [--name N] [--json]    # S: *, read, write, or <area>:read/<area>:write tokens; N: what will use the key
 p202 user apikey delete <user_id> <api_key> [--force] [--dry-run] [--json]
-p202 user apikey rotate <user_id> <old_api_key> [--scope S] [--keep-old] [--force]
-                       [--update-config] [--force-config-update] [--json]
-                       # without --scope, the old key's scope carries onto the new key
+p202 user apikey rotate <user_id> <old_api_key> [--update-config] [--force-config-update] [--json]
+                       # new key with the old key's scope and label; the old key works 24 hours more
+                       # (end it now with `user apikey delete`)
 
 p202 user identity-key get    <user_id> [--json]          # the key your server signs customer ids with
 p202 user identity-key rotate <user_id> [--force] [--json]
@@ -1327,7 +1335,8 @@ p202 system traffic-source-owners repair <ppc_network_id> [--to-user-id N] [--fo
 p202 system traffic-source-owners repair --all [--force]                             # every source the report names a user for
 p202 system traffic-source-owners split <ppc_network_id> [--force]                  # a copy of its own for each named_by user; their accounts move onto it
 # Admin and a role with access_to_api_integrations:
-p202 system integrations [--json]   # notification URLs per integration; secret_stored, never the secret
+p202 system integrations [--json]   # notification URLs per integration; secret_stored, never the secret; held_notifications (recordable, waiting) and jvzoo no_role_url
+p202 system integrations record-held <paykickstart|shopify|zaxaa> [--json]   # record the notifications held for their currency, once the account counts in it; run again while left > 0
 ```
 
 - A key whose user is not an Admin or the Super user gets exit 2 with
@@ -1348,6 +1357,13 @@ p202 system integrations [--json]   # notification URLs per integration; secret_
   cron job deletes every click recorded before midnight that began the day N
   days ago (server time), in batches over its next runs; the command itself
   deletes nothing, so say the deletion is set, not done.
+- From 1.9.80 the server's cron job splits by itself, hourly, a source whose
+  `auto_split` is true (every other user's account was put on it after it was
+  last saved): do not repair or split one of those, it needs nothing. `show
+  --json` lists what was split in the last 30 days under `data.splits`
+  (`automatic: true` for the cron job's). A source with
+  `auto_split_blocked_by` (`may_be_theirs`, `same_name`, `no_such_user`,
+  `deleted_user`) waits for a person's decision, as before.
 - `system traffic-source-owners` never moves a source by itself. `show` names,
   per source, the user it is in, each user whose traffic source accounts name
   it (with their accounts, clicks and conversions), `repair_to_user_id` and
@@ -1499,6 +1515,7 @@ Rules:
 | conversion upload-revenue | Yes (same file) | Each upload is a new batch whose values replace the earlier batch's for its clicks |
 | --dry-run on the Update commands | Yes | None (the endpoint's own `?dry_run=1`) |
 | landing-page code, conversion postback-url / pixel | Yes | None (reads) |
+| landing-page check | Yes | The answer kept beside the page is replaced by the newer one |
 | ppc-network variable create / ppc-account pixel create | With `--idempotency-key` | Without a key, adds another each call |
 | ppc-network variable / ppc-account pixel update, delete | Yes | Same state; a second delete is a 404 |
 | any write --staged | No (each staging records a new proposal) | Records a staged change; nothing changes until `change apply` |

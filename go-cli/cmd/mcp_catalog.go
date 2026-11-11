@@ -86,8 +86,8 @@ var (
 	// referers, which anyone can write).
 	mcpNumericID = regexp.MustCompile(`^[0-9]{1,20}$`)
 	mcpChangeID  = regexp.MustCompile(`^chg_[A-Za-z0-9]{1,64}$`)
-	// ppc_network_id's report filters also take none, for the clicks with
-	// no traffic source.
+	// ppc_network_id's and publisher_id's report filters also take none, for
+	// the clicks with no traffic source, or credited to no publisher.
 	mcpNumericOrNone = regexp.MustCompile(`^(?:[0-9]{1,20}|none)$`)
 )
 
@@ -96,7 +96,7 @@ var (
 // send nothing else there. none is a read's filter only: a write stores the
 // id, and the API refuses none there.
 func mcpIDFlagPattern(property string, kind mcpKind) (*regexp.Regexp, string) {
-	if property == "ppc_network_id" && kind == mcpRead {
+	if (property == "ppc_network_id" || property == "publisher_id") && kind == mcpRead {
 		return mcpNumericOrNone, "a numeric id, or none"
 	}
 	return mcpNumericID, "a numeric id"
@@ -187,7 +187,7 @@ var mcpOmittedFlags = map[string]bool{
 // would repeat them in the tool list a model reads on each connection, so
 // only report_summary, report_breakdown and click_list take them (a
 // breakdown by device, browser, ... answers most of what they would).
-var rareFilters = []string{"browser-id", "device-type", "ip", "isp-id", "method-of-promotion", "platform-id", "referer", "region-id", "text-ad-id"}
+var rareFilters = []string{"browser-id", "device-type", "ip", "isp-id", "method-of-promotion", "platform-id", "publisher-id", "referer", "region-id", "text-ad-id"}
 
 // deleteNote is on every delete tool: the call deletes once approved, so the
 // model is told to show the user the preview first.
@@ -247,6 +247,7 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "landing_page_list", Command: []string{"landing-page", "list"}, Title: "List landing pages", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "landing_page_get", Command: []string{"landing-page", "get"}, Title: "Get a landing page", Kind: mcpRead, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list).", true)}},
 	{Name: "landing_page_code", Command: []string{"landing-page", "code"}, Title: "Get landing page tracking code", Kind: mcpRead, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list).", true)}},
+	{Name: "landing_page_check", Command: []string{"landing-page", "check"}, Title: "Check a page carries its tracking code", Kind: mcpRead, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list).", true)}, Note: "Fetches the page's saved URL and looks for landing_page_code's code."},
 	{Name: "landing_page_create", Command: []string{"landing-page", "create"}, Title: "Create a landing page", Kind: mcpCreate},
 	{Name: "landing_page_update", Command: []string{"landing-page", "update"}, Title: "Update a landing page", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list).", true)}},
 	{Name: "landing_page_delete", Command: []string{"landing-page", "delete"}, Title: "Delete a landing page", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list); or give ids for several.", false)}, Note: deleteNote},

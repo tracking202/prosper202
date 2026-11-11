@@ -116,6 +116,7 @@ $mysql['user_id'] = $db->real_escape_string((string) ($tracker_row['user_id'] ??
 // A publisher link credits a publisher the account granted; any other id is ignored.
 $raPublisher = p202ClickPublisher($db, (int) ($tracker_row['user_id'] ?? 0), $_GET);
 $mysql['publisher_user_id'] = (string) ($raPublisher['user_id'] ?? 0);
+$mysql['publisher_tracker_id_public'] = $raPublisher !== null && $raTrackerRow !== null ? (string) $raTrackerId : '0';
 $mysql['aff_campaign_id'] = $db->real_escape_string((string) ($tracker_row['aff_campaign_id'] ?? '0'));
 $mysql['ppc_account_id'] = $db->real_escape_string((string) ($tracker_row['ppc_account_id'] ?? '0'));
 // The bid the link names when the account takes dynamic bids, else the tracker's CPC.
@@ -176,6 +177,16 @@ foreach (\Prosper202\Click\TrackerVariables::pairs($tracker_row) as [$value, $pp
 		$custom_var_ids[] = $variable_id;
 	}
 }
+
+// Said in the log when the click's traffic source account names another
+// user's source and the click came with a value of its variables.
+\Prosper202\Repository\LookupRepositoryFactory::noteUnrecordedVariables(
+    $db,
+    (int) ($tracker_row['user_id'] ?? 0),
+    (int) ($tracker_row['ppc_account_id'] ?? 0),
+    (int) ($tracker_row['own_ppc_network_id'] ?? 0) > 0,
+    $_GET
+);
 
 //utm_source
 $utm_source = ClickRequest::text($_GET, 'utm_source');
@@ -447,7 +458,14 @@ var pci = <?php echo json_encode((string) $click_id_public); ?>;
 echo p202ClickCookieJs(['tracking202subid' => (string) $click_id, 'tracking202pci' => (string) $click_id_public]);
 $p13nOwner = (int) ($tracker_row['user_id'] ?? 0);
 echo p202MintPersonalizationCookieJs($db, $p13nOwner, $_GET, (int) $click_id, trackingEnabled());
-echo p202DcsClickJs($_GET, (int) $click_id, (int) $mysql['landing_page_id'], (int) $mysql['user_id'], $db);
+echo p202DcsClickJs(
+    $_GET,
+    (int) $click_id,
+    (int) $mysql['landing_page_id'],
+    (int) $mysql['user_id'],
+    $db,
+    (int) $mysql['ppc_account_id']
+);
 echo \Prosper202\Click\PurLinkPageview::forDatabase($_GET, trackingEnabled(), (int) $click_id, (int) $mysql['landing_page_id'], (int) $mysql['user_id'], $db);
 ?>
 

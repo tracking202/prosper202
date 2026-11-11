@@ -151,6 +151,26 @@ if (!function_exists('_upgrade_seed_bot202_facebook_pixel_lookups')) {
     }
 }
 
+if (!function_exists('_upgrade_complete_landing_page_urls')) {
+    /**
+     * Landing page URLs stored without a scheme take https://
+     * (Prosper202\Setup\LandingPageUrlRepair), for the 1.9.80 rung. Best
+     * effort: a failure is logged and never stops the upgrade, and a URL
+     * left as it was is completed when its page is next saved.
+     */
+    function _upgrade_complete_landing_page_urls(): void
+    {
+        global $db;
+
+        try {
+            $conn = ($db instanceof \mysqli) ? $db : $db->getConnection();
+            \Prosper202\Setup\LandingPageUrlRepair::run(new \Prosper202\Database\Connection($conn));
+        } catch (\Throwable $e) {
+            error_log('Prosper202 upgrade: landing page URLs stored without a scheme could not be completed: ' . $e->getMessage());
+        }
+    }
+}
+
 if (!function_exists('_upgrade_seed_licence_answers')) {
     /**
      * Copy the licence answers cached on disk within the grace period into
@@ -173,7 +193,9 @@ if (!function_exists('_upgrade_seed_licence_answers')) {
 
     /**
      * Hash the API keys still stored whole (ApiKeyStore::hashStoredKeys()),
-     * for the 1.9.80 rung. False when one is left whole.
+     * and convert a label column that cannot hold every name
+     * (ApiKeyStore::widenLabel()), for the 1.9.80 rung. False when a key is
+     * left whole or the column unconverted.
      */
     function _upgrade_hash_api_keys(): bool
     {
@@ -181,7 +203,9 @@ if (!function_exists('_upgrade_seed_licence_answers')) {
 
         try {
             $conn = ($db instanceof \mysqli) ? $db : $db->getConnection();
-            return \Prosper202\User\ApiKeyStore::hashStoredKeys($conn);
+            // Both run, so one failure does not hide the other.
+            $named = \Prosper202\User\ApiKeyStore::widenLabel($conn);
+            return \Prosper202\User\ApiKeyStore::hashStoredKeys($conn) && $named;
         } catch (\Throwable $e) {
             error_log('Prosper202 upgrade: the API keys could not be hashed: ' . $e->getMessage());
             return false;
@@ -5097,6 +5121,8 @@ class UPGRADE
                 \Prosper202\Database\Tables\CoreTables::messagingAttributes(),
                 // The inbound postback and notification log (Prosper202\InboundLog).
                 \Prosper202\Database\Tables\ConversionTables::inboundLog(),
+                // Payment notifications held for their currency (HeldNotifications).
+                \Prosper202\Database\Tables\ConversionTables::heldPaymentNotifications(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
                 // The publisher a publisher link's click is credited to
@@ -5114,12 +5140,20 @@ class UPGRADE
                 // Each API key as its SHA-256 and prefix, and an AI connection's
                 // key with its watcher token (Prosper202\User\ApiKeyStore); the
                 // keys already there are hashed (the last argument, this step only).
+                // Also each key's last use (last_used_at, last_used_api,
+                // last_used_client) and a replaced key's ending (ends_at). The
+                // two text columns name utf8mb4: a table made before 1.9.55
+                // has the server's default charset, and a client's name is
+                // any text.
                 \Prosper202\Database\Tables\UserTables::apiKeys(),
                 // The money-loss alerts' settings per account (no row is on;
                 // a row with enabled 0 is off), and the incident each was last
                 // sent for (Prosper202\Alerts).
                 \Prosper202\Database\Tables\UserTables::alertSettings(),
                 \Prosper202\Database\Tables\UserTables::alertState(),
+                // The alerts each account was raised, shown on Home and the
+                // settings card (MysqlAlertStore).
+                \Prosper202\Database\Tables\UserTables::alertLog(),
                 // The rates a postback's amount on a campaign paid in another
                 // currency is converted with (Ledger\ExchangeRateCache). Before
                 // the ledger's columns: a writer that finds those reads this.
@@ -5144,9 +5178,18 @@ class UPGRADE
                 // attribution worker's run carries on (AttributionWorker::
                 // fanOutModelRecomputes()). Every model already there is at 0.
                 \Prosper202\Database\Tables\AttributionTables::attributionModels(),
+                // What each landing page's last code check found
+                // (Prosper202\Setup\LandingPageCheckStore).
+                \Prosper202\Database\Tables\CampaignTables::landingPageChecks(),
+                // 202_ppc_network_variables gains copied_from_ppc_variable_id:
+                // the variable a traffic source's copy took each of its own
+                // from (TrafficSourceOwners::split()), which names the values
+                // recorded before the copy. Null on every variable already there.
+                \Prosper202\Database\Tables\TrackingTables::ppcNetworkVariables(),
             ], [], [], true) && $paid_ok;
             if ($step_ok) {
                 _upgrade_seed_bot202_facebook_pixel_lookups();
+                _upgrade_complete_landing_page_urls();
             }
             if ($step_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {

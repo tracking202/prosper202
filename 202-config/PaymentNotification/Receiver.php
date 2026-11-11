@@ -35,6 +35,20 @@ final class Receiver
     public function receive(InboundRequest $request): Outcome
     {
         [$outcome, $notification] = $this->decide($request);
+        $logFields = [];
+        if ($this->provider instanceof NotesHowItReadTheRequest) {
+            $logFields = $this->provider->logFields();
+            $note = $notification !== null && ($notification->kind->records() || $notification->kind->reverses())
+                ? $this->provider->readingNote() : '';
+            if ($note !== '') {
+                $outcome = new Outcome(
+                    $outcome->kind,
+                    $outcome->message . $note,
+                    $outcome->conversionId,
+                    $outcome->accountId
+                );
+            }
+        }
         if ($outcome->kind === OutcomeKind::FAILED) {
             require_once dirname(__DIR__) . '/version.php';
             $pending = SchemaVersion::pendingUpgrade($this->db, \PROSPER202_VERSION);
@@ -56,7 +70,7 @@ final class Receiver
                 $notification?->clickId,
                 $outcome->conversionId,
                 $notification?->transactionId,
-                Redactor::fields($request->fields, $endpoint),
+                $logFields + Redactor::fields($request->fields, $endpoint),
             ));
         } catch (\Throwable $e) {
             error_log($this->provider->name() . ' notification: the inbound log could not be written: ' . $e->getMessage());

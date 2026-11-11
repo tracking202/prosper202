@@ -226,6 +226,7 @@ function p202_report_filters(array $values, array $lists = [], ?array $include =
         'device_id' => ['label' => 'Device type', 'type' => 'select', 'any' => 'All devices', 'advanced' => true],
         'browser_id' => ['label' => 'Browser', 'type' => 'select', 'any' => 'All browsers', 'advanced' => true],
         'platform_id' => ['label' => 'Platform', 'type' => 'select', 'any' => 'All platforms', 'advanced' => true],
+        'publisher_id' => ['label' => 'Publisher', 'type' => 'select', 'any' => 'All publishers', 'advanced' => true],
         'subid' => ['label' => 'Subid', 'type' => 'search', 'advanced' => true],
         'ip' => ['label' => 'Visitor IP', 'type' => 'search', 'advanced' => true],
         'keyword' => ['label' => 'Keyword', 'type' => 'search', 'advanced' => true],
@@ -271,6 +272,23 @@ function p202_report_filters(array $values, array $lists = [], ?array $include =
         $specs[] = $spec;
     }
     return $specs;
+}
+
+/**
+ * The filter specs without the Publisher menu when it would offer nothing:
+ * an account with no publishers and none selected has no use for it. One
+ * that is selected stays, so it can be seen and cleared.
+ *
+ * @param list<array<string, mixed>> $specs
+ * @return list<array<string, mixed>>
+ */
+function p202_without_unused_publisher_filter(array $specs): array
+{
+    return array_values(array_filter(
+        $specs,
+        static fn (array $spec): bool => ($spec['name'] ?? '') !== 'publisher_id'
+            || ($spec['options'] ?? []) !== [] || (string) ($spec['value'] ?? '') !== ''
+    ));
 }
 
 /**

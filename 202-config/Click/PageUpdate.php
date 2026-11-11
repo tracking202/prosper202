@@ -50,11 +50,13 @@ final class PageUpdate
         int $userId,
         int $now,
         callable $key,
+        int $sourceId = 0,
     ): string {
         if ($clickId < 1 || !$trackingAllowed || !RequestSignals::consentGiven($request)) {
             return '';
         }
-        $payload = ['t202Subid' => (string) $clickId];
+        // t202SourceId: the click's traffic source account, as [[sourceid]] is filled.
+        $payload = ['t202Subid' => (string) $clickId, 't202SourceId' => $sourceId > 0 ? (string) $sourceId : ''];
         try {
             $secret = $key();
             if ($secret === null) {

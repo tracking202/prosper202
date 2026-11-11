@@ -342,6 +342,7 @@ final class ClickTables
             "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CLICKS_PUBLISHER . "` (
                 `click_id` bigint(20) unsigned NOT NULL,
                 `publisher_user_id` mediumint(8) unsigned NOT NULL,
+                `tracker_id_public` bigint(20) unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`click_id`),
                 KEY `publisher_user_id` (`publisher_user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"

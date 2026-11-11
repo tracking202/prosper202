@@ -491,9 +491,11 @@ try {
         // /conversions routes, whose GET /conversions/{id} would otherwise
         // answer GET /conversions/postback-code. SetupRoutesPermissionTest
         // holds all of this.
-        $router->group('', function (Router $r) use ($crud, $queryParams, $auth) {
+        $router->group('', function (Router $r) use ($crud, $queryParams, $payload, $auth) {
             $code = \Api\V3\Controllers\SetupCodeController::class;
             $r->get('/landing-pages/{id}/code', fn($ctx) => $crud($code)->landingPageCode(PathId::of($ctx), $queryParams));
+            // "Check my page": fetches the page and keeps the answer. Not stageable (it changes no setup), and no preview.
+            $r->post('/landing-pages/{id}/check', fn($ctx) => $crud($code)->landingPageCheck(PathId::of($ctx), $queryParams, $payload));
             // The postback token rides in the URLs only for a key that may write conversions.
             $r->get('/conversions/postback-code', fn() => $crud($code)->postbackCode($queryParams, null, $auth->hasScope('conversions:write')));
         }, [$setupSection]);
@@ -551,6 +553,16 @@ try {
         $router->get('/clicks/{id}/conversions', function ($ctx) use ($crud, $auth, $campaignFigures, $recordMoney) {
             $auth->requireScope('conversions:read');
             return $campaignFigures($crud(\Api\V3\Controllers\ClicksController::class)->conversions(PathId::of($ctx)), $recordMoney);
+        });
+
+        // "Not fraud" on a click IPQualityScore filtered (Visitors' button):
+        // the click and the account's other clicks from its address count
+        // again, and the address goes on the click filter list as always
+        // count. It writes that list, so it asks what Personal Settings'
+        // Click filter card asks. Not stageable, and no preview.
+        $router->post('/clicks/{id}/not-fraud', function ($ctx) use ($crud, $auth, $db, $payload) {
+            $auth->requirePermission($db, 'access_to_personal_settings');
+            return $crud(\Api\V3\Controllers\ClicksController::class)->notFraud(PathId::of($ctx), $payload);
         });
 
         // ── Conversions ──────────────────────────────────────────────────
@@ -773,6 +785,8 @@ try {
             $r->delete('/{id}',     fn($ctx) => tap($crud($cls), fn($c) => $c->delete(PathId::of($ctx))));
             $r->post('/{id}/test',  fn($ctx) => $crud($cls)->test(PathId::of($ctx)));
             $r->post('/{id}/oauth/start', fn($ctx) => $crud($cls)->oauthStart(PathId::of($ctx), $_SERVER));
+            $r->post('/{id}/deliveries/resend', fn($ctx) => $crud($cls)->resend(PathId::of($ctx), $payload));
+            $r->post('/{id}/backfill', fn($ctx) => $crud($cls)->backfill(PathId::of($ctx), $payload));
         }, [$setupSection]);
 
         // ── API capabilities ────────────────────────────────────────────
@@ -858,7 +872,7 @@ try {
         $rotators = \Api\V3\Controllers\RotatorsController::class;
         $router->group('/rotators', function (Router $r) use ($crud, $queryParams, $rotators) {
             $r->get('',                        fn() => $crud($rotators)->list($queryParams));
-            $r->get('/{id}',                   fn($ctx) => $crud($rotators)->get(PathId::of($ctx)));
+            $r->get('/{id}',                   fn($ctx) => $crud($rotators)->read(PathId::of($ctx)));
             $r->get('/{id}/rules',             fn($ctx) => $crud($rotators)->listRules(PathId::of($ctx)));
         }, [$setupSection]);
         // A rule set that leaves out a rule removes it: the page's save asks
@@ -927,6 +941,7 @@ try {
             $r->get('/reports/journeys',           fn() => $crud($cls)->journeyMetrics($queryParams));
             $r->get('/conversions/{id}/journey',   fn($ctx) => $crud($cls)->journey(PathId::of($ctx)));
             $r->get('/queue',                      fn() => $crud($cls)->queue($queryParams));
+            $r->post('/queue/retry', fn() => $crud($cls)->retryQueue());
         }, [
             static function () use ($auth, $db): void {
                 $auth->requirePermission($db, 'view_attribution_reports');
@@ -1238,6 +1253,12 @@ try {
                 $make()->deleteApiKey(PathId::of($ctx), (string)$ctx['keyId']);
                 return null;
             });
+            // The key to replace is in the body: it works for a day more,
+            // and a path is logged.
+            $r->post('/{id}/api-keys/replace', function ($ctx) use ($auth, $make, $payload, $db) {
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return ['_status' => 201] + $make()->replaceApiKey(PathId::of($ctx), $payload, $auth);
+            });
 
             // Identity linking key (self-or-admin): what the operator's
             // server signs customer ids with (cust_sig).
@@ -1339,8 +1360,10 @@ try {
             $r->get('/isp-lookup',               fn() => $crud($cls)->ispLookup());
             $r->put('/isp-lookup',               fn() => $crud($cls)->setIspLookup($payload));
         }, [$auth->requireAdmin(...), $settingsPage]);
-        $router->group('/system', function (Router $r) use ($crud) {
-            $r->get('/integrations', fn() => $crud(\Api\V3\Controllers\AdministrationController::class)->integrations());
+        $router->group('/system', function (Router $r) use ($crud, $payload) {
+            $cls = \Api\V3\Controllers\AdministrationController::class;
+            $r->get('/integrations', fn() => $crud($cls)->integrations());
+            $r->post('/integrations/record-held', fn() => $crud($cls)->recordHeld($payload));
         }, [$auth->requireAdmin(...), $integrationsPage]);
 
         // ── Traffic sources another user's accounts name ─────────────────
@@ -1381,10 +1404,10 @@ try {
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
                 'apps'          => '/apps/{id|skan-encodings|postbacks|report|notifications|verify|schema|installs}[/installs|/install-token|/store-link|/integrity|/integrity-credential]',
                 'goals'         => '/goals/{id|validate|evaluate}',
-                'destinations'  => '/destinations[/{id}][/test|/deliveries|/oauth/start]',
+                'destinations'  => '/destinations[/{id}][/test|/deliveries[/resend]|/backfill|/oauth/start]',
                 'events'        => '/events',
                 'users'         => '/users',
-                'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations|traffic-source-owners|traffic-source-owners/repair|traffic-source-owners/split}',
+                'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations|integrations/record-held|traffic-source-owners|traffic-source-owners/repair|traffic-source-owners/split}',
                 'sync'          => '/sync/{plan|jobs|status|history|re-sync}',
                 'changes'       => '/changes/{entity}',
                 'audit'         => '/audit/sync-jobs',
@@ -1717,6 +1740,13 @@ try {
             // events compute over the body and store nothing: reads that
             // arrive as POST because the definitions are their input. After
             // the staged override for the same reason as /apps/verify.
+            $scopeAction = 'read';
+        }
+        if ($method === 'POST' && preg_match('#^/landing-pages/[^/]+/check$#', $path) === 1) {
+            // "Check my page" fetches the landing page's own saved URL and
+            // keeps what it found beside the page: no setup changes, so a
+            // key that may read landing pages may ask. After the staged
+            // override, as /apps/verify is.
             $scopeAction = 'read';
         }
         if ($method === 'POST' && preg_match('#^/staged-changes/[^/]+/discard$#', $path) === 1) {

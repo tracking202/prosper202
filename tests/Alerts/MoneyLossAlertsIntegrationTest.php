@@ -70,6 +70,7 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
 
     public static function setUpBeforeClass(): void
     {
+        require_once dirname(__DIR__, 2) . '/202-config/functions-alerts-ui.php';
         if (!self::connectScratch()) {
             return;
         }
@@ -193,7 +194,8 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
         $this->log = (string) tempnam(sys_get_temp_dir(), 'p202-alerts-log-');
         $this->savedLog = ini_get('error_log');
         ini_set('error_log', $this->log);
-        foreach (['202_alert_state', '202_ltv_webhook_deliveries', '202_alert_settings'] as $table) {
+        $tables = ['202_alert_state', '202_alert_log', '202_ltv_webhook_deliveries', '202_alert_settings'];
+        foreach ($tables as $table) {
             self::q("DELETE FROM $table WHERE user_id IN (" . self::USERS . ')');
         }
         self::q('DELETE FROM 202_alert_state WHERE user_id = 0');
@@ -447,8 +449,326 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
         self::assertSame(self::QUIET, $store->cursor(), 'and moves nothing');
     }
 
+    public function testEveryAlertIsListedInTheAppWithItsPageAndWhatEachChannelDid(): void
+    {
+        $this->runAlerts(self::$now, self::SETTINGS_URL);
+        $store = new MysqlAlertStore(new Connection(self::$db));
+
+        $listed = $store->recent(self::OWNER, self::$now - 60, 10);
+        self::assertSame(
+            ['spend_without_conversions', 'conversions_stopped'],
+            array_map(static fn (array $a): string => $a['kind']->stateKey(), $listed),
+            'the latest first'
+        );
+        foreach ($listed as $alert) {
+            self::assertSame(
+                [MysqlAlertStore::SENT, 1, ['slack', 'email', 'webhook'], '', self::$now, self::$now],
+                [$alert['delivery'], $alert['attempts'], $alert['sent_by'], $alert['delivery_note'],
+                    $alert['first_seen_at'], $alert['last_seen_at']]
+            );
+        }
+        self::assertStringStartsWith('Spring Sale (campaign #' . self::STOPPED . ')', $listed[1]['message']);
+
+        // Each message links the page that shows the problem.
+        $log = 'https://p202.example.com/tracking202/setup/inbound_log.php';
+        $campaign = 'https://p202.example.com/tracking202/setup/aff_campaigns.php?edit_aff_campaign_id='
+            . self::OVER_CAP;
+        self::assertStringContainsString(
+            "\n<$log|See what its postbacks and pixels last sent (Setup › Inbound Log)>\n",
+            self::slackText((string) $this->posted[0][CURLOPT_POSTFIELDS])
+        );
+        self::assertStringContainsString("(Setup › Inbound Log): $log\n", $this->mailed[0][2]);
+        self::assertStringContainsString("Open the campaign (Setup › Campaigns): $campaign\n", $this->mailed[1][2]);
+        $payloads = array_map(
+            static fn (array $d): array => json_decode((string) $d['payload'], true, 512, JSON_THROW_ON_ERROR)['data'],
+            self::deliveries()
+        );
+        self::assertSame([$log, $campaign], array_column($payloads, 'url'));
+
+        // An hour on the problems still hold: nothing is sent again, and each row says it is still going on.
+        $this->runAlerts(self::$now + 3600, self::SETTINGS_URL);
+        $later = $store->recent(self::OWNER, self::$now - 60, 10);
+        self::assertCount(2, $later, 'one row per incident');
+        self::assertSame(
+            [[self::$now, self::$now + 3600], [self::$now, self::$now + 3600]],
+            array_map(static fn (array $a): array => [$a['first_seen_at'], $a['last_seen_at']], $later)
+        );
+        self::assertCount(2, $this->mailed);
+
+        $html = p202_alerts_list($later, 'https://p202.example.com/', self::$now + 3600);
+        self::assertSame(2, substr_count($html, 'p202-pill--bad">Going on'));
+        self::assertStringContainsString('href="' . $log . '"', $html);
+        self::assertStringContainsString('href="' . htmlspecialchars($campaign) . '"', $html);
+        self::assertStringContainsString('Sent by Slack, Email, Webhooks.', $html);
+        self::assertSame(
+            2,
+            substr_count(p202_alerts_list($later, 'https://p202.example.com/', self::$now + 4 * 3600), '>Earlier<'),
+            'a problem no run has seen lately is no longer going on'
+        );
+
+        // The account with nowhere to send it still has it in the app, with why.
+        $quiet = $store->recent(self::QUIET, self::$now - 60, 10);
+        self::assertSame(
+            [[MysqlAlertStore::NOWHERE, []]],
+            array_map(static fn (array $a): array => [$a['delivery'], $a['sent_by']], $quiet)
+        );
+        self::assertStringContainsString('Email: the account has no valid email address', $quiet[0]['delivery_note']);
+        self::assertStringContainsString(
+            'Shown here only: no channel had anywhere to send it.',
+            p202_alerts_list($quiet, 'https://p202.example.com/', self::$now)
+        );
+        self::assertSame([], $store->recent(self::OTHER, 0, 10), 'an account with alerts off has none');
+
+        // Home's panel is the same list, and nothing for an account with no alerts.
+        $panel = p202_alerts_home_panel(self::$db, self::OWNER, 'https://p202.example.com/', self::$now + 3600);
+        self::assertStringContainsString('id="money-loss-alerts"', $panel);
+        self::assertSame(2, substr_count($panel, 'Going on'));
+        self::assertSame('', p202_alerts_home_panel(self::$db, self::OTHER, 'https://p202.example.com/', self::$now));
+
+        // The log keeps an alert LOG_DAYS days after its problem was last seen.
+        $this->runAlerts(self::$now + 3600 + AlertRun::LOG_DAYS * 86400 - 60);
+        self::assertCount(2, $store->recent(self::OWNER, self::$now, 10));
+    }
+
+    public function testAnAlertEveryChannelFailedForSaysSoInTheApp(): void
+    {
+        $this->settings(self::OWNER, new AlertSettings(true, true, false, false, 5, 10, '0.00'));
+        $this->slackStatus = 500;
+        $store = new MysqlAlertStore(new Connection(self::$db));
+
+        $this->runAlerts(self::$now);
+        $first = $store->recent(self::OWNER, 0, 10);
+        self::assertSame([[MysqlAlertStore::FAILED, 1]], array_map(
+            static fn (array $a): array => [$a['delivery'], $a['attempts']],
+            $first
+        ));
+        self::assertStringContainsString('Slack: the webhook answered 500', $first[0]['delivery_note']);
+        self::assertStringNotContainsString('ownerSecretPath', $first[0]['delivery_note']);
+        self::assertStringContainsString(
+            'Not sent yet (try 1 of 3).',
+            p202_alerts_list($first, 'https://p202.example.com/', self::$now)
+        );
+
+        $this->runAlerts(self::$now + 1);
+        $this->runAlerts(self::$now + 2);
+        $this->runAlerts(self::$now + 3);
+        $last = $store->recent(self::OWNER, 0, 10);
+        self::assertSame([[MysqlAlertStore::FAILED, 3, self::$now + 3]], array_map(
+            static fn (array $a): array => [$a['delivery'], $a['attempts'], $a['last_seen_at']],
+            $last
+        ));
+        $html = p202_alerts_list($last, 'https://p202.example.com/', self::$now + 3);
+        self::assertStringContainsString(
+            'class="text-danger">Never sent, after 3 tries. Slack: the webhook answered 500',
+            $html
+        );
+    }
+
+    public function testATestAlertGoesWhereARealOneWouldAndSaysWhatEachChannelDid(): void
+    {
+        $conn = new Connection(self::$db);
+        $root = dirname(__DIR__, 2);
+
+        $linked = $this->notifier($conn, self::SETTINGS_URL);
+        [$kind, $text] = p202_alerts_send_test(self::$db, self::OWNER, [], $root, self::$now, $linked);
+        self::assertSame('ok', $kind);
+        self::assertStringContainsString('Slack took it', $text);
+        self::assertStringContainsString('accepted it for rp' . self::OWNER . '@example.com', $text);
+        self::assertStringContainsString('queued as alert.test', $text);
+        self::assertSame([self::OWNER_SLACK], array_column($this->posted, CURLOPT_URL));
+        $slack = self::slackText((string) $this->posted[0][CURLOPT_POSTFIELDS]);
+        self::assertStringStartsWith('*Test alert*: This is a test of your Prosper202 money-loss alerts', $slack);
+        self::assertStringContainsString('<' . self::SETTINGS_URL . '|Open your alert settings>', $slack);
+        self::assertSame(
+            '[Prosper202] Test alert: your alerts reach you',
+            iconv_mime_decode($this->mailed[0][1], 0, 'UTF-8')
+        );
+        $deliveries = self::deliveries();
+        self::assertSame(['alert.test'], array_column($deliveries, 'event_name'));
+        $data = json_decode((string) $deliveries[0]['payload'], true, 512, JSON_THROW_ON_ERROR)['data'];
+        self::assertSame(['test', 0, 1], [$data['alert'], $data['campaign_id'], $data['test']]);
+        $store = new MysqlAlertStore($conn);
+        self::assertSame([], $store->recent(self::OWNER, 0, 10), 'a test is not an alert');
+        self::assertSame(['test:0'], array_keys($store->sentIncidents(self::OWNER)), 'only the test\'s own turn');
+
+        // A webhook subscribed to the alerts by name hears the test too; one that takes none of them does not.
+        $this->settings(self::OTHER, new AlertSettings(true, false, false, true, 5, 10, '0.00'));
+        [$kind, $text] = $this->sendTest(self::OTHER, 60);
+        self::assertSame('ok', $kind, $text);
+        self::assertSame([self::OWNER, self::OTHER], array_map('intval', array_column(self::deliveries(), 'user_id')));
+        self::q("UPDATE 202_ltv_webhooks SET subscribed_events = 'revenue.recorded' WHERE user_id = " . self::OTHER);
+        try {
+            [$kind, $text] = $this->sendTest(self::OTHER, 120);
+            self::assertSame('bad', $kind);
+            self::assertStringContainsString('reached no channel', $text);
+            self::assertStringContainsString('Webhooks: not tried, no webhook subscribes to the alerts.', $text);
+        } finally {
+            self::q('UPDATE 202_ltv_webhooks SET subscribed_events ='
+                . " 'alert.conversions_stopped,alert.spend_without_conversions' WHERE user_id = " . self::OTHER);
+        }
+        self::assertCount(2, self::deliveries());
+
+        // A channel that fails is named with why, beside the ones that took it.
+        $this->slackStatus = 500;
+        [$kind, $text] = $this->sendTest(self::OWNER, 180);
+        self::assertSame('warn', $kind);
+        self::assertStringContainsString('Slack: failed, the webhook answered 500', $text);
+
+        // A second test inside the same half minute is not sent, and the answer says when the next may be.
+        $posted = count($this->posted);
+        [$kind, $text] = $this->sendTest(self::OWNER, 190);
+        self::assertSame('warn', $kind);
+        self::assertStringContainsString('Send the next in 20 seconds', $text);
+        self::assertCount($posted, $this->posted);
+        [$kind] = $this->sendTest(self::OWNER, 210);
+        self::assertSame('warn', $kind, 'sent again once the half minute is over (Slack still fails)');
+        self::assertCount($posted + 1, $this->posted);
+
+        // With alerts off nothing is sent, and the answer says why.
+        $this->settings(self::OTHER, new AlertSettings(false, true, true, true, 5, 10, '0.00'));
+        $mailed = count($this->mailed);
+        [$kind, $text] = $this->sendTest(self::OTHER, 240);
+        self::assertSame('warn', $kind);
+        self::assertStringContainsString('money-loss alerts are off', $text);
+        self::assertCount($mailed, $this->mailed);
+    }
+
+    public function testAnAlertListThatCannotBeWrittenNeverStopsOrRepeatsAnAlert(): void
+    {
+        $this->settings(self::OWNER, new AlertSettings(true, true, false, false, 5, 10, '100.00'));
+
+        // The list's table is not there: the alerts are sent all the same, once.
+        self::q('RENAME TABLE 202_alert_log TO 202_alert_log_away');
+        try {
+            $first = $this->runAlerts(self::$now);
+            $again = $this->runAlerts(self::$now + 30);
+        } finally {
+            self::q('RENAME TABLE 202_alert_log_away TO 202_alert_log');
+        }
+        self::assertSame(['accounts' => 2, 'sent' => 2, 'failed' => 0, 'unsent' => 1, 'errors' => 0], $first);
+        self::assertSame([0, 0], [$again['sent'], $again['errors']]);
+        self::assertCount(2, $this->posted, 'each alert reached Slack once');
+        self::assertStringContainsString('could not be listed in the app', (string) file_get_contents($this->log));
+
+        // The row is made but what the channels did cannot be written to it: still sent once.
+        self::q('DELETE FROM 202_alert_state WHERE user_id = ' . self::OWNER);
+        self::q("CREATE TRIGGER p202_test_refuse_alert_log BEFORE UPDATE ON 202_alert_log FOR EACH ROW
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'refused for the test'");
+        try {
+            self::assertSame(2, $this->runAlerts(self::$now + 60)['sent']);
+            self::assertSame(0, $this->runAlerts(self::$now + 120)['sent'], 'what was sent is not sent again');
+        } finally {
+            self::q('DROP TRIGGER IF EXISTS p202_test_refuse_alert_log');
+        }
+        self::assertCount(4, $this->posted);
+    }
+
+    public function testAnAlertOfAKindThisCodeDoesNotKnowIsListedWithTheRest(): void
+    {
+        $this->runAlerts(self::$now);
+        self::q('INSERT INTO 202_alert_log SET user_id = ' . self::OWNER . ", aff_campaign_id = 0, incident_key = 1,
+            alert_kind = 'from_a_later_version', message = 'Checkout stopped answering.', delivery = 1,
+            sent_by = 'email', first_seen_at = " . self::$now . ', last_seen_at = ' . (self::$now + 1));
+
+        $listed = (new MysqlAlertStore(new Connection(self::$db)))->recent(self::OWNER, 0, 10);
+
+        self::assertCount(3, $listed);
+        self::assertNull($listed[0]['kind']);
+        $html = p202_alerts_list($listed, 'https://p202.example.com/', self::$now);
+        self::assertStringContainsString('<strong>Alert</strong><div>Checkout stopped answering.</div>', $html);
+        self::assertStringContainsString('Spring Sale', $html, 'the alerts beside it are still listed');
+        self::assertSame(2, substr_count($html, '<a href='), 'and no link is made up for it');
+    }
+
+    public function testACommandLineRunLinksOnceABrowserHasShownWhereTheInstallIs(): void
+    {
+        $conn = new Connection(self::$db);
+        $root = dirname(__DIR__, 2);
+        $cli = ['argv' => []];
+        $under = '/' . basename($root) . '/';
+        $page = $under . '202-account/account.php#money-loss-alerts';
+        $browser = ['DOCUMENT_ROOT' => dirname($root), 'HTTPS' => 'on', 'HTTP_HOST' => 'elsewhere.example.net'];
+        self::q('DELETE FROM 202_users_pref WHERE user_id = 1');
+        self::row('202_users_pref', ['user_id' => 1, 'user_tracking_domain' => 'alerts.example.com']);
+        try {
+            self::assertNull(AlertNotifier::settingsUrl($conn, $cli, $root), 'nothing has shown the path yet');
+
+            AlertNotifier::rememberWebAddress($conn, $cli, $root, self::$now);
+            self::assertNull(AlertNotifier::settingsUrl($conn, $cli, $root), 'a command-line run shows nothing');
+
+            AlertNotifier::rememberWebAddress($conn, $browser, $root, self::$now);
+            self::assertSame(
+                'https://alerts.example.com' . $page,
+                AlertNotifier::settingsUrl($conn, $cli, $root),
+                'the stored domain, never the request\'s host, at the path and scheme the browser found'
+            );
+
+            // The hourly run from the command line now links its messages.
+            $this->settings(self::OWNER, new AlertSettings(true, false, true, false, 5, 10, '0.00'));
+            $this->runAlerts(self::$now, AlertNotifier::settingsUrl($conn, $cli, $root));
+            self::assertStringContainsString(
+                'https://alerts.example.com' . $under . 'tracking202/setup/inbound_log.php' . "\n",
+                $this->mailed[0][2]
+            );
+
+            // A domain stored with its scheme keeps it; one without takes the scheme the browser came on.
+            AlertNotifier::rememberWebAddress($conn, ['HTTPS' => 'off'] + $browser, $root, self::$now);
+            self::assertSame('http://alerts.example.com' . $page, AlertNotifier::settingsUrl($conn, $cli, $root));
+            self::q("UPDATE 202_users_pref SET user_tracking_domain = 'https://alerts.example.com' WHERE user_id = 1");
+            self::assertSame('https://alerts.example.com' . $page, AlertNotifier::settingsUrl($conn, $cli, $root));
+
+            // An install that no longer sits at the remembered path is not linked to a guess.
+            (new MysqlAlertStore($conn))->saveInstallAddress(true, '/moved-away/', self::$now);
+            self::assertNull(AlertNotifier::settingsUrl($conn, $cli, $root));
+
+            // No stored domain is no address, whatever a request says.
+            AlertNotifier::rememberWebAddress($conn, $browser, $root, self::$now);
+            self::q("UPDATE 202_users_pref SET user_tracking_domain = '' WHERE user_id = 1");
+            self::assertNull(AlertNotifier::settingsUrl($conn, $cli, $root));
+            self::assertNull(AlertNotifier::settingsUrl($conn, $browser, $root));
+        } finally {
+            self::q('DELETE FROM 202_users_pref WHERE user_id = 1');
+        }
+    }
+
+    public function testAlertsOnWithEveryChannelOffAreRaisedAndShownInTheAppOnly(): void
+    {
+        $this->settings(self::OWNER, new AlertSettings(true, false, false, false, 5, 10, '100.00'));
+
+        $report = $this->runAlerts(self::$now);
+
+        self::assertSame(['accounts' => 2, 'sent' => 0, 'failed' => 0, 'unsent' => 3, 'errors' => 0], $report);
+        self::assertSame([[], [], []], [$this->posted, $this->mailed, self::deliveries()]);
+        $listed = (new MysqlAlertStore(new Connection(self::$db)))->recent(self::OWNER, 0, 10);
+        self::assertSame(
+            [[MysqlAlertStore::NOWHERE, ''], [MysqlAlertStore::NOWHERE, '']],
+            array_map(static fn (array $a): array => [$a['delivery'], $a['delivery_note']], $listed)
+        );
+        $this->runAlerts(self::$now + 3600);
+        self::assertSame([], $this->mailed, 'and not tried again');
+
+        [$kind, $text] = $this->sendTest(self::OWNER, 7200);
+        self::assertSame('warn', $kind);
+        self::assertStringContainsString('shown only on Home and on this card', $text);
+    }
+
+    /** @return array{0: string, 1: string} */
+    private function sendTest(int $user, int $at = 0): array
+    {
+        $notifier = $this->notifier(new Connection(self::$db));
+
+        return p202_alerts_send_test(self::$db, $user, [], dirname(__DIR__, 2), self::$now + $at, $notifier);
+    }
+
     /** @return array{accounts: int, sent: int, failed: int, unsent: int, errors: int} */
     private function runAlerts(int $now, ?string $settingsUrl = null): array
+    {
+        $conn = new Connection(self::$db);
+
+        return (new AlertRun($conn, $this->notifier($conn, $settingsUrl)))->run($now, time() + 60);
+    }
+
+    private function notifier(Connection $conn, ?string $settingsUrl = null): AlertNotifier
     {
         $transport = function (array $options): array {
             $this->posted[] = $options;
@@ -465,9 +785,8 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
 
             return true;
         };
-        $conn = new Connection(self::$db);
 
-        return (new AlertRun($conn, new AlertNotifier($conn, $slack, $mailer, $settingsUrl)))->run($now, time() + 60);
+        return new AlertNotifier($conn, $slack, $mailer, $settingsUrl);
     }
 
     private function settings(int $user, AlertSettings $settings): void
@@ -534,8 +853,9 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
     {
         $users = self::USERS;
         foreach (
-            ['202_alert_state', '202_alert_settings', '202_ltv_webhook_deliveries', '202_ltv_webhooks',
-            '202_conversion_logs', '202_dataengine', '202_aff_campaigns', '202_users_pref', '202_users'] as $table
+            ['202_alert_state', '202_alert_log', '202_alert_settings', '202_ltv_webhook_deliveries',
+            '202_ltv_webhooks', '202_conversion_logs', '202_dataengine', '202_aff_campaigns', '202_users_pref',
+            '202_users'] as $table
         ) {
             self::q("DELETE FROM $table WHERE user_id IN ($users)");
         }

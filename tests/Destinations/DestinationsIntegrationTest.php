@@ -492,4 +492,169 @@ final class DestinationsIntegrationTest extends TestCase
         self::assertStringContainsString('cannot be read', (string) $row['last_error']);
         self::assertSame([], $this->bodies);
     }
+
+    public function testAFailedConversionIsSentAgainWithAllItsTriesOneOrAllOfThem(): void
+    {
+        $id = $this->destination();
+        $mine = $this->destination(['measurement_id' => 'G-OTHER1'], 2);
+        foreach ([100, 101, 102] as $click) {
+            $this->click($click);
+            $this->record($click, 'ORD-R' . $click);
+        }
+        $this->answers = array_fill(0, 3, ['status' => 400, 'body' => 'bad']);
+        self::assertSame(3, $this->worker()->sendDue(10, 5, time() + 1)['failed']);
+        $first = (int) self::$db->query("SELECT delivery_id FROM 202_destination_deliveries WHERE destination_id = $id ORDER BY delivery_id LIMIT 1")->fetch_row()[0];
+
+        self::assertNull($this->worker()->resend(2, $id, $first, '', time()), 'another account\'s destination');
+        self::assertSame(0, $this->worker()->resend(2, $mine, $first, '', time())['queued'], 'another destination\'s delivery');
+        self::assertSame(['failed', 'failed', 'failed'], array_column(self::deliveries($id), 'status'));
+
+        self::assertSame(['queued' => 1, 'more' => false], $this->worker()->resend(1, $id, $first, '', time()));
+        self::assertSame(0, $this->worker()->resend(1, $id, $first, '', time())['queued'], 'a row already waiting is not taken again');
+        $row = self::deliveries($id)[0];
+        self::assertSame(['pending', '0', null, null], [$row['status'], $row['attempts'], $row['last_status_code'], $row['last_error']]);
+        self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 2)['sent'], 'the platform takes it now');
+
+        self::assertSame(['queued' => 2, 'more' => false], $this->worker()->resend(1, $id, null, 'failed', time()));
+        self::assertSame(2, $this->worker()->sendDue(10, 5, time() + 3)['sent']);
+        self::assertSame(['sent', 'sent', 'sent'], array_column(self::deliveries($id), 'status'));
+        self::assertSame(0, $this->worker()->resend(1, $id, null, 'failed', time())['queued']);
+
+        $this->expectException(\Prosper202\Destinations\DestinationInputException::class);
+        $this->worker()->resend(1, $id, null, 'sent', time());
+    }
+
+    public function testAWithheldConversionSentAgainIsCheckedAgain(): void
+    {
+        $id = $this->destination();
+        self::fixture("UPDATE 202_users_pref SET user_pref_privacy='all' WHERE user_id=1");
+        $this->click(100);
+        $this->record(100, 'ORD-W1');
+        self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 1)['withheld']);
+
+        self::assertSame(1, $this->worker()->resend(1, $id, null, 'withheld', time())['queued']);
+        self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 2)['withheld'], 'still held back, so withheld again');
+        self::assertSame([], $this->bodies);
+
+        self::fixture("UPDATE 202_users_pref SET user_pref_privacy='disabled' WHERE user_id=1");
+        self::assertSame(1, $this->worker()->resend(1, $id, null, 'withheld', time())['queued']);
+        self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 3)['sent']);
+    }
+
+    public function testEarlierConversionsAreQueuedOnceForADestinationMadeAfterThem(): void
+    {
+        $this->click(100, campaign: 31);
+        $this->click(101);
+        $this->click(102, campaign: 31);
+        $kept = $this->record(100, 'ORD-B1');
+        $otherCampaign = $this->record(101, 'ORD-B2');
+        $old = $this->record(102, 'ORD-B3');
+        self::fixture('UPDATE 202_conversion_logs SET conv_time = ' . (time() - 5 * 86400) . " WHERE conv_id = $old");
+        (new MysqlConversionRepository(new Connection(self::$db)))->record(1, ['click_id' => 100, 'transaction_id' => 'ORD-B1', 'reversal' => true, 'source' => 'api'], MatchMethod::CLICK_ID);
+        $this->click(200, user: 2, campaign: 40);
+        $this->record(200, 'ORD-B4', 2);
+
+        $id = $this->destination(['campaign_ids' => [31]]);
+        self::assertSame([], self::deliveries($id), 'made after them, it has none');
+        self::assertNull($this->worker()->backfill(2, $id, 1, time()));
+        self::assertSame(['queued' => 1, 'more' => false], $this->worker()->backfill(1, $id, 3, time()));
+        self::assertSame([(string) $kept], array_column(self::deliveries($id), 'conv_id'), 'not the other campaign\'s, the older one, the reversal or another account\'s');
+        self::assertSame(0, $this->worker()->backfill(1, $id, 3, time())['queued'], 'a conversion with a row is not queued twice');
+        self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 1)['sent']);
+        self::assertNotSame($otherCampaign, $kept);
+
+        $this->expectException(\Prosper202\Destinations\DestinationInputException::class);
+        $this->worker()->backfill(1, $id, 4, time());
+    }
+
+    public function testADestinationsLastWeekIsCountedByStatusAndReason(): void
+    {
+        $id = $this->destination();
+        $quiet = $this->destination(['measurement_id' => 'G-QUIET1']);
+        self::fixture("UPDATE 202_destinations SET enabled = 0 WHERE destination_id = $quiet");
+        foreach ([100, 101, 102] as $click) {
+            $this->click($click);
+            $this->record($click, 'ORD-H' . $click);
+        }
+        $this->answers = [['status' => 400, 'body' => 'bad'], ['status' => 400, 'body' => 'bad']];
+        $this->worker()->sendDue(10, 5, time() + 1);
+        $this->worker()->testFire(1, $id, time());
+        $old = (int) self::$db->query("SELECT delivery_id FROM 202_destination_deliveries WHERE destination_id = $id AND status = 'failed' ORDER BY delivery_id LIMIT 1")->fetch_row()[0];
+        self::fixture('UPDATE 202_destination_deliveries SET created_at = ' . (time() - 10 * 86400) . " WHERE delivery_id = $old");
+
+        $health = $this->worker()->health(1, [$id, $quiet], time() - 7 * 86400, time());
+        self::assertSame(['pending' => 0, 'sent' => 1, 'failed' => 1, 'withheld' => 0, 'cancelled' => 0], $health[$id]['counts'], 'the week\'s conversions, without the test or the older failure');
+        self::assertSame(['failed' => 2, 'withheld' => 0], $health[$id]['resendable'], 'the older failure can still be sent again');
+        self::assertCount(1, $health[$id]['reasons']);
+        self::assertSame(['failed', 1], [$health[$id]['reasons'][0]['status'], $health[$id]['reasons'][0]['n']]);
+        self::assertNotSame('', $health[$id]['reasons'][0]['reason']);
+        self::assertSame([0, 0], [$health[$id]['waiting'], $health[$quiet]['waiting']]);
+        self::assertSame(2, $this->worker()->resend(1, $id, null, 'failed', time())['queued']);
+        self::assertSame(2, $this->worker()->health(1, [$id], time() - 7 * 86400, time())[$id]['waiting'], 'still to send, the one older than the week included');
+        self::fixture("UPDATE 202_destination_deliveries SET status = 'failed' WHERE destination_id = $id AND status = 'pending'");
+        self::assertSame(0, array_sum($health[$quiet]['counts']));
+        self::assertSame(0, array_sum($this->worker()->health(2, [$id], 0, time())[$id]['counts']), 'another account reads none of them');
+
+        self::assertSame(['failed', 'failed'], array_column($this->worker()->log(1, $id, 'failed', 1, 0), 'status'), 'one more than the page, so the page knows there is another');
+        self::assertCount(2, $this->worker()->log(1, $id, 'failed', 5, 0));
+        self::assertCount(4, $this->worker()->log(1, $id, null, 50, 0), 'three conversions and the test');
+        self::assertSame([], $this->worker()->log(2, $id, null, 50, 0));
+    }
+
+    public function testAnEditThatLeavesTheSecretBlankKeepsIt(): void
+    {
+        $id = $this->destination();
+        $kept = $this->store()->update(1, $id, ['name' => 'Renamed', 'settings' => ['measurement_id' => 'G-NEW123'], 'credentials' => []], time(), true);
+        self::assertSame(['Renamed', 'G-NEW123'], [$kept['name'], $kept['settings']['measurement_id']]);
+        self::assertSame(self::SECRET, $this->store()->forSending(1, $id)['credentials']['api_secret']);
+
+        $this->store()->update(1, $id, ['credentials' => ['api_secret' => 'A-new-secret-9']], time(), true);
+        self::assertSame('A-new-secret-9', $this->store()->forSending(1, $id)['credentials']['api_secret']);
+
+        // Positive control: without the flag, credentials are replaced whole and an empty set is refused.
+        $this->expectException(\Prosper202\Destinations\DestinationInputException::class);
+        $this->store()->update(1, $id, ['credentials' => []], time());
+    }
+
+    public function testTheApiSendsAgainAndBackfillsWhatTheBodyNames(): void
+    {
+        $id = $this->destination();
+        $this->click(100);
+        $this->record(100, 'ORD-A1');
+        $this->answers = [['status' => 400, 'body' => 'bad']];
+        $this->worker()->sendDue(10, 5, time() + 1);
+        $delivery = (int) self::$db->query("SELECT delivery_id FROM 202_destination_deliveries WHERE destination_id = $id")->fetch_row()[0];
+        $api = new \Api\V3\Controllers\DestinationsController(self::$db, 1);
+
+        $refused = static function (callable $call): string {
+            try {
+                $call();
+            } catch (\Api\V3\Exception\ValidationException | \Api\V3\Exception\NotFoundException $e) {
+                return $e::class;
+            }
+
+            return 'accepted';
+        };
+        $validation = \Api\V3\Exception\ValidationException::class;
+        self::assertSame($validation, $refused(fn () => $api->resend($id, [])), 'neither named');
+        self::assertSame($validation, $refused(fn () => $api->resend($id, ['delivery_id' => $delivery, 'status' => 'failed'])), 'both named');
+        self::assertSame($validation, $refused(fn () => $api->resend($id, ['delivery_id' => (string) $delivery])), 'an id that is not a number is not read as one');
+        self::assertSame($validation, $refused(fn () => $api->resend($id, ['status' => 'sent'])));
+        self::assertSame($validation, $refused(fn () => $api->resend($id, ['delivery_id' => $delivery + 999])), 'no such delivery');
+        self::assertSame($validation, $refused(fn () => $api->resend($id, ['status' => 'failed', 'force' => true])), 'an unknown key');
+        self::assertSame(\Api\V3\Exception\NotFoundException::class, $refused(fn () => (new \Api\V3\Controllers\DestinationsController(self::$db, 2))->resend($id, ['status' => 'failed'])));
+        self::assertSame('failed', self::deliveries($id)[0]['status'], 'nothing refused changed it');
+
+        self::assertSame(['data' => ['queued' => 1, 'more' => false]], $api->resend($id, ['delivery_id' => $delivery]));
+        self::assertSame(['pending', '0'], [self::deliveries($id)[0]['status'], self::deliveries($id)[0]['attempts']]);
+        self::assertSame(['data' => ['queued' => 0, 'more' => false]], $api->resend($id, ['status' => 'failed']), 'none is failed now');
+
+        $later = $this->destination(['measurement_id' => 'G-LATER12']);
+        self::assertSame($validation, $refused(fn () => $api->backfill($later, [])));
+        self::assertSame($validation, $refused(fn () => $api->backfill($later, ['days' => '3'])));
+        self::assertSame($validation, $refused(fn () => $api->backfill($later, ['days' => 30])), 'GA4 takes 3 days at most');
+        self::assertSame(\Api\V3\Exception\NotFoundException::class, $refused(fn () => (new \Api\V3\Controllers\DestinationsController(self::$db, 2))->backfill($later, ['days' => 1])));
+        self::assertSame(['data' => ['queued' => 1, 'more' => false]], $api->backfill($later, ['days' => 3]));
+        self::assertCount(1, self::deliveries($later));
+    }
 }

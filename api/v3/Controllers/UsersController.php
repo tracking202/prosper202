@@ -101,7 +101,8 @@ class UsersController
     public function list(): array
     {
         $stmt = $this->prepare(
-            'SELECT user_id, user_fname, user_lname, user_name, user_email, user_timezone, user_active, user_deleted, user_time_register
+            'SELECT user_id, user_fname, user_lname, user_name, user_email, user_timezone, user_active, user_deleted, user_time_register,
+                user_public_publisher_id
             FROM 202_users WHERE user_deleted = 0 ORDER BY user_id ASC'
         );
         $this->execute($stmt, 'List query failed');
@@ -117,7 +118,8 @@ class UsersController
     public function get(int $id): array
     {
         $stmt = $this->prepare(
-            'SELECT user_id, user_fname, user_lname, user_name, user_email, user_timezone, user_active, user_deleted, user_time_register
+            'SELECT user_id, user_fname, user_lname, user_name, user_email, user_timezone, user_active, user_deleted, user_time_register,
+                user_public_publisher_id
             FROM 202_users WHERE user_id = ? AND user_deleted = 0 LIMIT 1'
         );
         $this->bind($stmt, 'i', $id);
@@ -147,7 +149,7 @@ class UsersController
     private const PROFILE_FIELDS = ['user_name', 'user_email', 'user_fname', 'user_lname', 'user_timezone', 'user_active'];
 
     /** What GET /users/{id} answers that no write here sets. */
-    private const READ_ONLY = ['user_id', 'user_deleted', 'user_time_register', 'roles'];
+    private const READ_ONLY = ['user_id', 'user_deleted', 'user_time_register', 'user_public_publisher_id', 'roles'];
 
     public function create(array $payload): array
     {
@@ -193,12 +195,16 @@ class UsersController
             $installHash = (string) $hashRow['install_hash'];
         }
 
-        $newId = $this->transaction(function () use ($fname, $lname, $username, $hashedPass, $email, $tz, $now, $active, $installHash): int {
+        // The id a publisher link carries as t202pubid, as User management
+        // gives every user it adds: without one a Publisher cannot be put on a link.
+        $publisherId = bin2hex(random_bytes(5));
+
+        $newId = $this->transaction(function () use ($fname, $lname, $username, $hashedPass, $email, $tz, $now, $active, $installHash, $publisherId): int {
             $stmt = $this->prepare(
-                'INSERT INTO 202_users (user_fname, user_lname, user_name, user_pass, user_email, user_dash_email, user_timezone, user_time_register, user_active, install_hash, user_hash, user_deleted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)'
+                'INSERT INTO 202_users (user_fname, user_lname, user_name, user_pass, user_email, user_dash_email, user_timezone, user_time_register, user_active, install_hash, user_hash, user_deleted, user_public_publisher_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)'
             );
-            $this->bind($stmt, 'sssssssiiss', $fname, $lname, $username, $hashedPass, $email, $email, $tz, $now, $active, $installHash, '');
+            $this->bind($stmt, 'sssssssiisss', $fname, $lname, $username, $hashedPass, $email, $email, $tz, $now, $active, $installHash, '', $publisherId);
             $this->execute($stmt, 'Create failed');
             $newId = $stmt->insert_id;
             $stmt->close();
@@ -569,8 +575,9 @@ class UsersController
         // label came with 1.9.78; the files can land before its upgrade runs.
         $hasLabelColumn = \Api\V3\Auth::apiKeyLabelColumnExists($this->db);
         $columns = 'user_id, ' . ApiKeyStore::columns($this->db) . ($hasScopeColumn ? ', scope' : '')
-            . ($hasLabelColumn ? ', label' : '') . ', created_at';
-        $stmt = $this->prepare("SELECT $columns FROM 202_api_keys WHERE user_id = ?");
+            . ($hasLabelColumn ? ', label' : '') . ', created_at' . ApiKeyStore::useColumns($this->db);
+        $stmt = $this->prepare("SELECT $columns FROM 202_api_keys WHERE user_id = ?"
+            . ApiKeyStore::listedCondition($this->db, time()));
         $this->bind($stmt, 'i', $userId);
         $this->execute($stmt, 'Query failed');
         $result = $this->resultOf($stmt, 'Query failed');
@@ -658,8 +665,22 @@ class UsersController
 
     public function createApiKey(int $userId, array $payload = [], ?\Api\V3\Auth $auth = null): array
     {
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['scope'], 'an API key');
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['scope', 'label'], 'an API key');
         $scopeTokens = $this->normalizeRequestedScope($payload['scope'] ?? null);
+        // The page's rule for a name (ApiKeyStore::labelFrom()); null or '' is no name.
+        $keyLabel = isset($payload['label']) ? ApiKeyStore::labelFrom($payload['label']) : null;
+        if ($keyLabel === false) {
+            throw new ValidationException('Invalid label', [
+                'label' => 'A key\'s name is text of up to ' . ApiKeyStore::LABEL_LENGTH
+                    . ' characters on one line, and does not start with "AI:".',
+            ]);
+        }
+        if ($keyLabel !== null && !\Api\V3\Auth::apiKeyLabelColumnExists($this->db)) {
+            throw new ConflictException(
+                'This install cannot name API keys yet (no label column on 202_api_keys). '
+                . 'Run the upgrade at /202-config/upgrade.php, or create the key without a label.'
+            );
+        }
 
         foreach ($scopeTokens ?? [] as $token) {
             if (!\Api\V3\Auth::isValidScopeToken($token)) {
@@ -710,8 +731,11 @@ class UsersController
         $storedScope = $scopeTokens === null ? null : implode(',', $scopeTokens);
 
         try {
-            ApiKeyStore::insert($this->db, $userId, $key, $storedScope, null, $now);
+            ApiKeyStore::insert($this->db, $userId, $key, $storedScope, $keyLabel, $now);
         } catch (QueryException $e) {
+            if ($keyLabel !== null && ApiKeyStore::isUnstorableText($e)) {
+                throw new ValidationException('Invalid label', ['label' => ApiKeyStore::UNSTORABLE_NAME]);
+            }
             throw new DatabaseException('Failed to create API key', $e);
         }
 
@@ -720,6 +744,7 @@ class UsersController
             'user_id' => $userId,
             'api_key' => $key,
             'scope' => $storedScope ?? '*',
+            'label' => $keyLabel,
             'created_at' => $now,
         ]];
     }
@@ -768,6 +793,73 @@ class UsersController
             ]);
         }
         return $tokens;
+    }
+
+    /**
+     * Replaces the key the body names as My Account's Replace does
+     * (ApiKeyStore::replace()): a new key with its scope and label, returned
+     * once, and the old key ending after the grace. A scoped caller cannot
+     * replace a key broader than its own, as it cannot create one.
+     */
+    public function replaceApiKey(int $userId, array $payload, ?\Api\V3\Auth $auth = null): array
+    {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['api_key'], 'an API key replacement');
+        $apiKey = $payload['api_key'] ?? null;
+        if (!is_string($apiKey) || $apiKey === '') {
+            throw new ValidationException('Invalid API key', [
+                'api_key' => 'Required: the full key to replace, as a string.',
+            ]);
+        }
+        [$keyMatch, $keyTypes, $keyValues] = ApiKeyStore::matchKey($this->db, $apiKey);
+        $stmt = $this->prepare('SELECT ' . ApiKeyStore::columns($this->db)
+            . (\Api\V3\Auth::apiKeyScopeColumnExists($this->db) ? ', scope' : '')
+            . ' FROM 202_api_keys WHERE user_id = ? AND ' . $keyMatch . ' LIMIT 1');
+        $this->bind($stmt, 'i' . $keyTypes, $userId, ...$keyValues);
+        $this->execute($stmt, 'Query failed');
+        $old = $this->resultOf($stmt, 'Query failed')->fetch_assoc();
+        $stmt->close();
+        if (!$old) {
+            throw new NotFoundException('API key not found');
+        }
+        if ($auth !== null && !$auth->hasFullScope()) {
+            foreach (\Api\V3\Auth::parseScopes((string) ($old['scope'] ?? '')) as $token) {
+                if (!$auth->coversScopeToken($token)) {
+                    throw new \Api\V3\AuthException(
+                        sprintf(
+                            "Cannot replace a key with scope '%s': your key only has %s.",
+                            $token,
+                            implode(',', $auth->scopes())
+                        ),
+                        403
+                    );
+                }
+            }
+        }
+
+        $key = bin2hex(random_bytes(32));
+        $now = time();
+        try {
+            $replaced = ApiKeyStore::replace($this->db, $userId, ApiKeyStore::ref($old), $key, $now);
+        } catch (\DomainException $refused) {
+            throw new ConflictException($refused->getMessage());
+        } catch (QueryException $e) {
+            throw new DatabaseException('Failed to replace API key', $e);
+        }
+        if ($replaced === null) {
+            throw new NotFoundException('API key not found');
+        }
+
+        return ['data' => [
+            'user_id' => $userId,
+            'api_key' => $key,
+            'scope' => implode(',', \Api\V3\Auth::parseScopes((string) ($replaced['scope'] ?? ''))),
+            'label' => $replaced['label'],
+            'created_at' => $now,
+            'replaced' => [
+                'api_key' => ApiKeyStore::masked(ApiKeyStore::prefixOf($old)),
+                'ends_at' => $replaced['ends_at'],
+            ],
+        ]];
     }
 
     public function deleteApiKey(int $userId, string $apiKey): void

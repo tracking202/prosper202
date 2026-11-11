@@ -92,15 +92,17 @@ final class DestinationStore
 
     /**
      * Change what $patch names: name, enabled, settings (replaced whole) and
-     * credentials (replaced whole). Null when the account has no such destination.
+     * credentials (replaced whole; with $keepUnnamedCredentials, a credential
+     * the patch leaves out keeps its stored value, as a form whose blank
+     * secret means "keep" needs). Null when the account has no such destination.
      *
      * @param array<string, mixed> $patch
      * @return array<string, mixed>|null
      */
-    public function update(int $userId, int $destinationId, array $patch, int $now): ?array
+    public function update(int $userId, int $destinationId, array $patch, int $now, bool $keepUnnamedCredentials = false): ?array
     {
         // Read and written under one row lock, so two concurrent changes cannot lose one (CLAUDE.md #36).
-        $updated = $this->conn->transaction(function () use ($userId, $destinationId, $patch, $now): bool {
+        $updated = $this->conn->transaction(function () use ($userId, $destinationId, $patch, $now, $keepUnnamedCredentials): bool {
             $lock = $this->conn->prepareWrite('SELECT ' . self::COLUMNS . ' FROM `' . TableRegistry::DESTINATIONS . '` WHERE destination_id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1 FOR UPDATE');
             $this->conn->bind($lock, 'ii', [$destinationId, $userId]);
             $row = $this->conn->fetchOne($lock);
@@ -131,12 +133,17 @@ final class DestinationStore
                     throw new DestinationInputException(is_array($settings) ? 'credentials' : 'settings', 'settings and credentials must be objects.');
                 }
                 $adapter = $this->type((string) $row['type']);
+                // The key is read (and minted, as writeCredentials() would) outside the forgiving decode, so a
+                // lock error on that read reaches transaction() instead of being taken for unreadable ones.
+                $stored = $given !== null && (string) $row['credentials'] !== ''
+                    ? self::readableOrNone((string) $row['credentials'], $this->key(true), $destinationId, $userId)
+                    : [];
+                if ($given !== null && $keepUnnamedCredentials) {
+                    $given += array_intersect_key($stored, array_flip($adapter->credentialKeys()));
+                }
                 [$settings, $credentials] = $this->settings($userId, $adapter, $settings, $given);
-                if ($credentials !== null && $adapter instanceof AuthorisedDestination && (string) $row['credentials'] !== '') {
+                if ($credentials !== null && $adapter instanceof AuthorisedDestination && $stored !== []) {
                     // Typed credentials never carry the grant; it stays while it is the same client's.
-                    // The key is read (and minted, as writeCredentials() would) outside the forgiving decode, so a
-                    // lock error on that read reaches transaction() instead of being taken for unreadable ones.
-                    $stored = self::readableOrNone((string) $row['credentials'], $this->key(true), $destinationId, $userId);
                     $credentials = $adapter->keptOnReplace($stored, $credentials);
                 }
             }

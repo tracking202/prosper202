@@ -164,7 +164,7 @@ final class OwnerPrivacyTest extends TestCase
         $_SESSION = ['privacy' => 'disabled'];
         p202ApplyOwnerPrivacy(2, $this->conn([1 => 'disabled', 2 => 'disabled']));
         self::assertSame(
-            'try { if (typeof window.p202DcsClick === "function") window.p202DcsClick({"t202Subid":"41"}); } catch (e) {}' . "\n",
+            'try { if (typeof window.p202DcsClick === "function") window.p202DcsClick({"t202Subid":"41","t202SourceId":""}); } catch (e) {}' . "\n",
             p202DcsClickJs([], 41, 12, 2, $noKey)
         );
         self::assertSame('', p202DcsClickJs(['p202_consent' => '0'], 41, 12, 2, $noKey), 'refused');

@@ -83,7 +83,7 @@ final class AnalyzeReportController
         'ppc_network_id', 'aff_campaign_id', 'user_pref_show',
         'ppc_account_id', 'aff_network_id', 'landing_page_id', 'text_ad_id', 'method_of_promotion',
         'country_id', 'region_id', 'isp_id', 'device_id', 'browser_id', 'platform_id',
-        'ip', 'keyword', 'referer',
+        'publisher_id', 'ip', 'keyword', 'referer',
         'user_pref_limit', 'user_cpc_or_cpv',
     ];
 
