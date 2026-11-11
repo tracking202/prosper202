@@ -656,20 +656,10 @@ function rotateTrackerUrl($db, $tracker_row)
 {
 
 
+    // The same list decides which places a link's own destination may take (PurLinkDestination).
+    $urls = \Prosper202\Click\CampaignUrls::inRotation($tracker_row);
     if (! $tracker_row['aff_campaign_rotate'])
-        return $tracker_row['aff_campaign_url'];
-
-    $urls = [];
-    array_push($urls, $tracker_row['aff_campaign_url']);
-
-    if ($tracker_row['aff_campaign_url_2'])
-        array_push($urls, $tracker_row['aff_campaign_url_2']);
-    if ($tracker_row['aff_campaign_url_3'])
-        array_push($urls, $tracker_row['aff_campaign_url_3']);
-    if ($tracker_row['aff_campaign_url_4'])
-        array_push($urls, $tracker_row['aff_campaign_url_4']);
-    if ($tracker_row['aff_campaign_url_5'])
-        array_push($urls, $tracker_row['aff_campaign_url_5']);
+        return $urls[0];
 
     $count = count($urls);
 
@@ -1494,7 +1484,8 @@ function getPrePopVars($vars, bool $toOwnLandingPage = false)
         'utm_medium',
         'utm_campaign',
         'utm_term',
-        'utm_content'
+        'utm_content',
+        \Prosper202\Click\PurLinkDestination::PARAM
     ];
     if (!$toOwnLandingPage) {
         array_push($stoplist, 'cust', 'customer_ref', 'cust_type', 'customer_ref_type', 'cust_sig', 'p202_consent');

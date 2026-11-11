@@ -65,6 +65,8 @@ final class PurLinkPageview
                 'exitProof' => PurLinkProof::issue(PurLinkProof::EXIT, $clickId, $landingPageId, $userId, $now, self::LIFETIME, $secret),
             ];
             if ($trackingAllowed) {
+                // The page may keep this visitor's first subid (t202UseSubidOrig).
+                $payload['keepSubid'] = true;
                 $payload['pixelProof'] = PurLinkProof::issue(PurLinkProof::PIXELS, $clickId, $landingPageId, $userId, $now, self::LIFETIME, $secret);
             }
             $json = json_encode($payload, JSON_THROW_ON_ERROR | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);

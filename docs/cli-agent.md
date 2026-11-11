@@ -1352,6 +1352,13 @@ p202 system integrations [--json]   # notification URLs per integration; secret_
   cron job deletes every click recorded before midnight that began the day N
   days ago (server time), in batches over its next runs; the command itself
   deletes nothing, so say the deletion is set, not done.
+- From 1.9.80 the server's cron job splits by itself, hourly, a source whose
+  `auto_split` is true (every other user's account was put on it after it was
+  last saved): do not repair or split one of those, it needs nothing. `show
+  --json` lists what was split in the last 30 days under `data.splits`
+  (`automatic: true` for the cron job's). A source with
+  `auto_split_blocked_by` (`may_be_theirs`, `same_name`, `no_such_user`,
+  `deleted_user`) waits for a person's decision, as before.
 - `system traffic-source-owners` never moves a source by itself. `show` names,
   per source, the user it is in, each user whose traffic source accounts name
   it (with their accounts, clicks and conversions), `repair_to_user_id` and
