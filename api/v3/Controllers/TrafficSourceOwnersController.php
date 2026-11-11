@@ -61,10 +61,25 @@ final class TrafficSourceOwnersController
         $sources = $this->guard(fn (): array => $this->owners()->report($counts));
         $repairable = count(array_filter($sources, static fn (array $s): bool => $s['repair_to_user_id'] !== null));
 
+        $unrecorded = count(array_filter($sources, static fn (array $s): bool => $s['variables_unrecorded']));
+        $splits = $this->guard(
+            fn (): array => $this->owners()->recentSplits(time() - TrafficSourceOwners::SPLITS_LISTED_SECONDS)
+        );
+
         return ['data' => [
             'sources' => $sources,
             'repairable' => $repairable,
             'ambiguous' => count($sources) - $repairable,
+            // Sources with custom variables: clicks on the other users'
+            // accounts record none of them, and the note says so.
+            'variables_unrecorded' => $unrecorded,
+            'variables_note' => $unrecorded > 0 ? TrafficSourceOwners::VARIABLES_NOTE : null,
+            // Listed sources the cron job's next hourly run splits without
+            // being asked (each source's auto_split), and the splits of the
+            // last 30 days, the cron job's and users', newest first.
+            'auto_split' => count(array_filter($sources, static fn (array $s): bool => $s['auto_split'])),
+            'splits' => $splits,
+            'splits_note' => $splits === [] ? null : TrafficSourceOwners::SPLITS_NOTE,
         ]];
     }
 

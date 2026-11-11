@@ -199,4 +199,51 @@ final class TrafficSourceOwnersClassifyTest extends TestCase
         ], $entry['ambiguous']);
         self::assertTrue($entry['removed']);
     }
+
+    /**
+     * What the cron job splits by itself: a source every account of another
+     * user was saved at or after. One account saved before it (the source
+     * may have been that user's), a user with no record and a deleted user
+     * each leave it to the operator, whatever the move's own marks say.
+     *
+     * @dataProvider automaticSplits
+     * @param list<array<string, mixed>> $accounts
+     * @param list<string> $blocked
+     */
+    public function testOnlyASourceEveryOtherAccountWasPutOnIsSplitUnasked(array $accounts, array $blocked): void
+    {
+        $entry = TrafficSourceOwners::classify(self::source(self::TAKER), $accounts, self::USERS);
+
+        self::assertNotNull($entry);
+        self::assertSame($blocked, $entry['auto_split_blocked_by']);
+        self::assertSame($blocked === [], $entry['auto_split']);
+    }
+
+    /** @return iterable<string, array{list<array<string, mixed>>, list<string>}> */
+    public static function automaticSplits(): iterable
+    {
+        $after = self::RENAMED + 1;
+        $before = self::RENAMED - 1;
+        yield 'put on it after it was saved' => [[self::account(2, self::OWNER, $after)], []];
+        yield 'in the second it was saved' => [[self::account(2, self::OWNER, self::RENAMED)], []];
+        yield 'its own user has accounts too, saved whenever' => [
+            [self::account(1, self::TAKER, $before), self::account(2, self::OWNER, $after)], [],
+        ];
+        yield 'two other users, both after' => [
+            [self::account(2, self::OWNER, $after), self::account(3, self::OFF, $after)], [],
+        ];
+        yield 'saved before it: it may be theirs' => [[self::account(2, self::OWNER, $before)], ['may_be_theirs']];
+        yield 'one account after, one before' => [
+            [self::account(2, self::OWNER, $after), self::account(3, self::OWNER, $before)], ['may_be_theirs'],
+        ];
+        yield 'one user after, another before' => [
+            [self::account(2, self::OWNER, $after), self::account(3, self::OFF, $before)], ['may_be_theirs'],
+        ];
+        yield 'a removed account saved before counts' => [
+            [self::account(2, self::OWNER, $after), self::account(3, self::OWNER, $before, 1)], ['may_be_theirs'],
+        ];
+        yield 'a deleted user' => [[self::account(2, self::THIRD, $after)], ['deleted_user']];
+        yield 'a user with no record' => [[self::account(2, 99, $after)], ['no_such_user']];
+        yield 'before, and deleted' => [[self::account(2, self::THIRD, $before)], ['may_be_theirs', 'deleted_user']];
+    }
 }

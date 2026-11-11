@@ -60,7 +60,11 @@ final readonly class ClickPathReads
      * A tracker by its public id (dl.php's direct link, the variable names
      * get_custom_vars.php and a landing page's script with no page named
      * read), with its campaign, text ad and traffic source when each is the
-     * tracker's account's, and the account's settings.
+     * tracker's account's, and the account's settings. own_ppc_network_id
+     * is the source when it is the account's own, else 0: a click whose
+     * traffic source account has none of its own may be losing another
+     * user's source's variables (UnrecordedSourceVariables), and one that has
+     * is never asked.
      *
      * @return Row|null
      */
@@ -78,6 +82,7 @@ final readonly class ClickPathReads
                     tr.click_cloaking,
                     IFNULL(ta.text_ad_id, 0) AS text_ad_id,
                     IFNULL(ppc.ppc_account_id, 0) AS ppc_account_id,
+                    IFNULL(pn.ppc_network_id, 0) AS own_ppc_network_id,
                     IFNULL(ac.aff_campaign_id, 0) AS aff_campaign_id,
                     tr.aff_campaign_id AS tracker_campaign_named,
                     ac.aff_campaign_rotate,
@@ -137,6 +142,7 @@ final readonly class ClickPathReads
         return $this->setupRow(
             'SELECT IFNULL(ta.text_ad_id, 0) AS text_ad_id,
                     IFNULL(ppc.ppc_account_id, 0) AS ppc_account_id,
+                    IFNULL(pn.ppc_network_id, 0) AS own_ppc_network_id,
                     tr.click_cpc,
                     tr.click_cloaking,
                     IFNULL(ac.aff_campaign_id, 0) AS aff_campaign_id,
@@ -386,6 +392,39 @@ final readonly class ClickPathReads
               LIMIT 1',
             'i',
             [$publicId]
+        );
+    }
+
+    /**
+     * The source an account's traffic source account names when that source
+     * is in another user's account, with the names of its variables: the
+     * variables no read above answers, so the click stores no value of them
+     * (UnrecordedSourceVariables says so in the log). source_user_id is null
+     * for a source of the account's own and for one that does not exist.
+     * Names only, to tell whether a click came with a value; nothing here
+     * records one.
+     *
+     * @return Row|null
+     */
+    public function sourceOfAnotherUser(int $userId, int $ppcAccountId): ?array
+    {
+        if ($userId < 1 || $ppcAccountId < 1) {
+            return null;
+        }
+
+        return $this->setupRow(
+            'SELECT ppc.ppc_network_id,
+                    other.user_id AS source_user_id,
+                    (SELECT GROUP_CONCAT(v.parameter ORDER BY v.ppc_variable_id)
+                       FROM 202_ppc_network_variables AS v
+                      WHERE v.ppc_network_id = other.ppc_network_id AND v.deleted = 0) AS parameters
+               FROM 202_ppc_accounts AS ppc
+               LEFT JOIN 202_ppc_networks AS other
+                      ON other.ppc_network_id = ppc.ppc_network_id AND other.user_id <> ppc.user_id
+              WHERE ppc.ppc_account_id = ? AND ppc.user_id = ?
+              LIMIT 1',
+            'ii',
+            [$ppcAccountId, $userId]
         );
     }
 
