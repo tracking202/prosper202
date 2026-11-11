@@ -68,29 +68,44 @@ final class PurLinkDestinationTest extends TestCase
     }
 
     /** @dataProvider tokensTheUrlLacks */
-    public function testALinkWithATokenTheCampaignsUrlLacksGoesWhereTheCampaignSays(string $query): void
+    public function testATokenTheCampaignsUrlLacksIsLeftEmptyAndTheLinkKept(string $token): void
+    {
+        $link = 'https://shop.example/go?aff=7&sid=[[subid]]&u=deep&x=';
+        self::assertSame($link, PurLinkDestination::choose(self::CHOSEN, $link . $token, self::CAMPAIGN));
+    }
+
+    public static function tokensTheUrlLacks(): iterable
+    {
+        yield 'a token' => ['[[c1]]'];
+        yield 'in other case' => ['[[CpC]]'];
+        yield 'two of them' => ['[[c1]][[gclid]]'];
+    }
+
+    /** @dataProvider bracketsThatAreNoWholeToken */
+    public function testBracketsThatAreNotAWholeTokenGoWhereTheCampaignSays(string $query): void
     {
         $link = 'https://shop.example/go?aff=7&sid=[[subid]]&' . $query;
         self::assertSame(self::CHOSEN, PurLinkDestination::choose(self::CHOSEN, $link, self::CAMPAIGN));
     }
 
-    public static function tokensTheUrlLacks(): iterable
+    public static function bracketsThatAreNoWholeToken(): iterable
     {
-        yield 'a token' => ['x=[[c1]]'];
-        yield 'in other case' => ['x=[[CpC]]'];
         yield 'an opening pair alone' => ['x=a[[b'];
         yield 'a closing pair alone' => ['x=a]]b'];
         yield 'a pair around a token the URL has' => ['x=[[c[[subid]]]]'];
+        yield 'a pair around a token the URL lacks' => ['x=[[su[[c1]]bid]]'];
+        yield 'a pair around two tokens the URL lacks' => ['x=[[c[[c2]]p[[c3]]c]]'];
+        yield 'a name the replacer does not know' => ['x=[[nothing]]'];
     }
 
-    public function testEveryTokenTheReplacerKnowsIsRefusedWhereTheUrlLacksIt(): void
+    public function testEveryTokenTheReplacerKnowsIsLeftEmptyWhereTheUrlLacksIt(): void
     {
         $tokens = (new \ReflectionClass(\Prosper202\Conversion\TrafficSourcePixels::class))->getConstant('TOKENS');
         $names = array_merge(...array_values($tokens));
         self::assertGreaterThan(30, count($names));
         foreach ($names as $name) {
             $link = "https://shop.example/go?aff=7&x=[[$name]]";
-            $expected = $name === 'subid' ? $link : self::CHOSEN;
+            $expected = $name === 'subid' ? $link : 'https://shop.example/go?aff=7&x=';
             self::assertSame($expected, PurLinkDestination::choose(self::CHOSEN, $link, self::CAMPAIGN), $name);
         }
     }
@@ -105,7 +120,10 @@ final class PurLinkDestinationTest extends TestCase
         $onSecond = 'https://second.example/in?k=[[t202kw]]&u=1';
         self::assertSame($onSecond, PurLinkDestination::choose(self::CHOSEN, $onSecond, $campaign));
         $onFirst = 'https://shop.example/go?k=[[t202kw]]&u=1';
-        self::assertSame(self::CHOSEN, PurLinkDestination::choose(self::CHOSEN, $onFirst, $campaign));
+        self::assertSame(
+            'https://shop.example/go?k=&u=1',
+            PurLinkDestination::choose(self::CHOSEN, $onFirst, $campaign)
+        );
     }
 
     public function testSingleBracketsAreNoToken(): void

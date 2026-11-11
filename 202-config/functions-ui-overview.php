@@ -36,7 +36,7 @@ const P202_OVERVIEW_CLICK_FILTERS = [
     'ppc_network_id', 'aff_campaign_id', 'user_pref_show',
     'ppc_account_id', 'aff_network_id', 'landing_page_id', 'text_ad_id', 'method_of_promotion',
     'country_id', 'region_id', 'isp_id', 'device_id', 'browser_id', 'platform_id',
-    'subid', 'ip', 'keyword', 'referer',
+    'publisher_id', 'subid', 'ip', 'keyword', 'referer',
 ];
 
 /**
@@ -315,6 +315,12 @@ function p202_overview_filter_lists(\Prosper202\Database\Connection $conn, int $
         // entry per name.
         'country_id' => static fn () => $flat($rows('SELECT MIN(country_id), country_name FROM 202_locations_country GROUP BY country_name ORDER BY country_name', false)),
         'device_id' => static fn () => $flat($rows('SELECT type_id, type_name FROM 202_device_types ORDER BY type_name', false)),
+        // The publishers the account may put on a link (Get Links' list).
+        'publisher_id' => static fn () => array_column(
+            (new \Prosper202\Click\PublisherCredit($conn))->grantable($userId),
+            'name',
+            'user_id'
+        ),
     ];
     // Install-wide and unbounded: what this account's clicks carried.
     foreach (array_keys(P202_OVERVIEW_SEEN_LISTS) as $name) {
@@ -546,7 +552,7 @@ function p202_overview_page(array $page): string
     // The classic reports' own names and specs for everything the catalog
     // knows; the groupings are this family's own.
     $catalogNames = array_values(array_filter($names, static fn (string $n): bool => !str_starts_with($n, 'group_')));
-    $filters = p202_report_filters($values, $page['lists'], $catalogNames);
+    $filters = p202_without_unused_publisher_filter(p202_report_filters($values, $page['lists'], $catalogNames));
     $groupings = in_array('group_1', $names, true) ? p202_overview_groupings() : [];
     $none = P202_OVERVIEW_GROUP_NONE;
     $groupLabels = ['group_1' => 'Group by', 'group_2' => 'Then by', 'group_3' => 'Third grouping', 'group_4' => 'Fourth grouping'];

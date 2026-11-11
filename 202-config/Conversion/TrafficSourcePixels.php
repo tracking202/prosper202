@@ -119,8 +119,7 @@ final class TrafficSourcePixels
      */
     public static function withoutTokens(string $url, array $names): string
     {
-        $known = array_merge(...array_values(self::TOKENS));
-        $names = array_values(array_intersect($known, $names));
+        $names = array_values(array_intersect(self::tokenSpellings(), $names));
         if ($names === []) {
             return $url;
         }
@@ -130,6 +129,16 @@ final class TrafficSourcePixels
         }
 
         return $rest;
+    }
+
+    /**
+     * Every spelling replaceTokens() knows a token by.
+     *
+     * @return list<string>
+     */
+    public static function tokenSpellings(): array
+    {
+        return array_merge(...array_values(self::TOKENS));
     }
 
     /**

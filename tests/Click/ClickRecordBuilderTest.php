@@ -72,6 +72,7 @@ final class ClickRecordBuilderTest extends TestCase
         'click_filter_reason' => ['clickFilterReason', 'filter_list', 'filter_list'],
         'click_filter_entry_id' => ['clickFilterEntryId', '146', 146],
         'publisher_user_id' => ['publisherUserId', '31', 31],
+        'publisher_tracker_id_public' => ['publisherTrackerPublicId', '147', 147],
     ];
 
     private const FLAGS = [
