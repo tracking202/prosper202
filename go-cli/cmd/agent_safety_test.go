@@ -240,21 +240,14 @@ func TestApikeyCreateSendsScope(t *testing.T) {
 	}
 }
 
-func TestApikeyRotateCarriesOldKeyScope(t *testing.T) {
-	var createBody map[string]interface{}
+func TestApikeyCreateSendsTheNameAsTheLabelAndRefusesAnEmptyOne(t *testing.T) {
+	var bodies []map[string]interface{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == "GET" && r.URL.Path == "/api/v3/users/7/api-keys":
-			w.WriteHeader(200)
-			w.Write([]byte(`{"data":[{"user_id":7,"api_key":"old-key-************************","scope":"reports:read","created_at":1}]}`))
-		case r.Method == "POST" && r.URL.Path == "/api/v3/users/7/api-keys":
-			_ = json.NewDecoder(r.Body).Decode(&createBody)
-			w.WriteHeader(201)
-			w.Write([]byte(`{"data":{"api_key":"new-key-abcdef1234","scope":"reports:read"}}`))
-		default:
-			w.WriteHeader(404)
-			w.Write([]byte(`{"message":"not found"}`))
-		}
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		bodies = append(bodies, body)
+		w.WriteHeader(201)
+		w.Write([]byte(`{"data":{"user_id":7,"api_key":"k","scope":"*","label":"Nightly store sync","created_at":1}}`))
 	}))
 	defer srv.Close()
 
@@ -262,107 +255,29 @@ func TestApikeyRotateCarriesOldKeyScope(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	stdout, _, err := executeCommand("user", "apikey", "rotate", "7", "old-key-12345678", "--keep-old")
+	stdout, _, err := executeCommand("user", "apikey", "create", "7", "--name", "Nightly store sync")
 	if err != nil {
-		t.Fatalf("user apikey rotate error: %v", err)
+		t.Fatalf("user apikey create --name error: %v", err)
 	}
-	if createBody["scope"] != "reports:read" {
-		t.Errorf("rotation posted scope = %#v, want %q (carried from old key)", createBody["scope"], "reports:read")
+	if len(bodies) != 1 || bodies[0]["label"] != "Nightly store sync" || len(bodies[0]) != 1 {
+		t.Errorf("posted = %#v, want only the label", bodies)
 	}
-	if !strings.Contains(stdout, "reports:read") {
-		t.Errorf("output should report the carried scope, got:\n%s", stdout)
+	if !strings.Contains(stdout, "Nightly store sync") {
+		t.Errorf("output should show the name, got:\n%s", stdout)
 	}
-}
 
-func TestApikeyRotateAmbiguousPrefixDemandsExplicitScope(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "GET" && r.URL.Path == "/api/v3/users/7/api-keys" {
-			w.WriteHeader(200)
-			w.Write([]byte(`{"data":[
-				{"user_id":7,"api_key":"old-key-a***********************","scope":"read","created_at":1},
-				{"user_id":7,"api_key":"old-key-b***********************","scope":"*","created_at":2}
-			]}`))
-			return
-		}
-		w.WriteHeader(500)
-		w.Write([]byte(`{"message":"rotation should not proceed"}`))
-	}))
-	defer srv.Close()
-
-	tmp := t.TempDir()
-	setTestHome(t, tmp)
-	writeTestConfig(t, tmp, srv.URL, "test-key")
-
-	_, _, err := executeCommand("user", "apikey", "rotate", "7", "old-key-12345678", "--keep-old")
+	_, _, err = executeCommand("user", "apikey", "create", "7", "--name", "")
 	if err == nil {
-		t.Fatal("expected an error for ambiguous key prefix")
+		t.Fatal("an empty --name must be refused")
 	}
 	if exitCodeForError(err) != ExitValidation {
 		t.Errorf("exit code = %d, want %d", exitCodeForError(err), ExitValidation)
 	}
-	if hint := hintFor(err); !strings.Contains(hint, "--scope") {
-		t.Errorf("hint should name --scope, got %q", hint)
+	if hint := hintFor(err); !strings.Contains(hint, "omit --name") {
+		t.Errorf("hint = %q, want it to say --name can be omitted", hint)
 	}
-}
-
-func TestApikeyRotateUnknownPrefixRefusesRatherThanMintingFullAccess(t *testing.T) {
-	// A lookup that matches nothing leaves the old key's scope unknown, and
-	// unknown must never resolve to a full-access key.
-	var posted bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "GET" && r.URL.Path == "/api/v3/users/7/api-keys" {
-			w.WriteHeader(200)
-			w.Write([]byte(`{"data":[{"user_id":7,"api_key":"zzzzzzzz***********************","scope":"read","created_at":1}]}`))
-			return
-		}
-		if r.Method == "POST" {
-			posted = true
-		}
-		w.WriteHeader(500)
-		w.Write([]byte(`{"message":"rotation should not proceed"}`))
-	}))
-	defer srv.Close()
-
-	tmp := t.TempDir()
-	setTestHome(t, tmp)
-	writeTestConfig(t, tmp, srv.URL, "test-key")
-
-	_, _, err := executeCommand("user", "apikey", "rotate", "7", "old-key-12345678", "--keep-old")
-	if err == nil {
-		t.Fatal("expected an error when no key matches the prefix")
-	}
-	if exitCodeForError(err) != ExitValidation {
-		t.Errorf("exit code = %d, want %d", exitCodeForError(err), ExitValidation)
-	}
-	if posted {
-		t.Error("no key may be minted when the old key's scope cannot be determined")
-	}
-}
-
-func TestApikeyRotateShortOldKeyRefusesRatherThanMintingFullAccess(t *testing.T) {
-	var posted bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "POST" {
-			posted = true
-		}
-		w.WriteHeader(500)
-		w.Write([]byte(`{"message":"rotation should not proceed"}`))
-	}))
-	defer srv.Close()
-
-	tmp := t.TempDir()
-	setTestHome(t, tmp)
-	writeTestConfig(t, tmp, srv.URL, "test-key")
-
-	_, _, err := executeCommand("user", "apikey", "rotate", "7", "short", "--keep-old")
-	if err == nil {
-		t.Fatal("expected an error for an old key too short to identify")
-	}
-	if exitCodeForError(err) != ExitValidation {
-		t.Errorf("exit code = %d, want %d", exitCodeForError(err), ExitValidation)
-	}
-	if posted {
-		t.Error("no key may be minted when the old key cannot be identified")
+	if len(bodies) != 1 {
+		t.Errorf("a refused create reached the server: %#v", bodies)
 	}
 }
 

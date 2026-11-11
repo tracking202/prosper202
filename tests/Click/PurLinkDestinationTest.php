@@ -68,29 +68,44 @@ final class PurLinkDestinationTest extends TestCase
     }
 
     /** @dataProvider tokensTheUrlLacks */
-    public function testALinkWithATokenTheCampaignsUrlLacksGoesWhereTheCampaignSays(string $query): void
+    public function testATokenTheCampaignsUrlLacksIsLeftEmptyAndTheLinkKept(string $token): void
+    {
+        $link = 'https://shop.example/go?aff=7&sid=[[subid]]&u=deep&x=';
+        self::assertSame($link, PurLinkDestination::choose(self::CHOSEN, $link . $token, self::CAMPAIGN));
+    }
+
+    public static function tokensTheUrlLacks(): iterable
+    {
+        yield 'a token' => ['[[c1]]'];
+        yield 'in other case' => ['[[CpC]]'];
+        yield 'two of them' => ['[[c1]][[gclid]]'];
+    }
+
+    /** @dataProvider bracketsThatAreNoWholeToken */
+    public function testBracketsThatAreNotAWholeTokenGoWhereTheCampaignSays(string $query): void
     {
         $link = 'https://shop.example/go?aff=7&sid=[[subid]]&' . $query;
         self::assertSame(self::CHOSEN, PurLinkDestination::choose(self::CHOSEN, $link, self::CAMPAIGN));
     }
 
-    public static function tokensTheUrlLacks(): iterable
+    public static function bracketsThatAreNoWholeToken(): iterable
     {
-        yield 'a token' => ['x=[[c1]]'];
-        yield 'in other case' => ['x=[[CpC]]'];
         yield 'an opening pair alone' => ['x=a[[b'];
         yield 'a closing pair alone' => ['x=a]]b'];
         yield 'a pair around a token the URL has' => ['x=[[c[[subid]]]]'];
+        yield 'a pair around a token the URL lacks' => ['x=[[su[[c1]]bid]]'];
+        yield 'a pair around two tokens the URL lacks' => ['x=[[c[[c2]]p[[c3]]c]]'];
+        yield 'a name the replacer does not know' => ['x=[[nothing]]'];
     }
 
-    public function testEveryTokenTheReplacerKnowsIsRefusedWhereTheUrlLacksIt(): void
+    public function testEveryTokenTheReplacerKnowsIsLeftEmptyWhereTheUrlLacksIt(): void
     {
         $tokens = (new \ReflectionClass(\Prosper202\Conversion\TrafficSourcePixels::class))->getConstant('TOKENS');
         $names = array_merge(...array_values($tokens));
         self::assertGreaterThan(30, count($names));
         foreach ($names as $name) {
             $link = "https://shop.example/go?aff=7&x=[[$name]]";
-            $expected = $name === 'subid' ? $link : self::CHOSEN;
+            $expected = $name === 'subid' ? $link : 'https://shop.example/go?aff=7&x=';
             self::assertSame($expected, PurLinkDestination::choose(self::CHOSEN, $link, self::CAMPAIGN), $name);
         }
     }
@@ -105,7 +120,10 @@ final class PurLinkDestinationTest extends TestCase
         $onSecond = 'https://second.example/in?k=[[t202kw]]&u=1';
         self::assertSame($onSecond, PurLinkDestination::choose(self::CHOSEN, $onSecond, $campaign));
         $onFirst = 'https://shop.example/go?k=[[t202kw]]&u=1';
-        self::assertSame(self::CHOSEN, PurLinkDestination::choose(self::CHOSEN, $onFirst, $campaign));
+        self::assertSame(
+            'https://shop.example/go?k=&u=1',
+            PurLinkDestination::choose(self::CHOSEN, $onFirst, $campaign)
+        );
     }
 
     public function testSingleBracketsAreNoToken(): void
@@ -123,6 +141,33 @@ final class PurLinkDestinationTest extends TestCase
         $second = 'https://second.example/in?sid=[[subid]]&u=x';
         self::assertSame($chosen, PurLinkDestination::choose($chosen, $second, $campaign));
         self::assertSame($second, PurLinkDestination::choose($chosen, $second, self::CAMPAIGN));
+    }
+
+    public function testAHopThatChoosesIsHandedOnlyWhatChooseCouldTake(): void
+    {
+        $link = 'https://shop.example/go?aff=7&sid=[[subid]]&u=https%3A%2F%2Fshop.example%2Fp%2F9';
+        $query = PurLinkDestination::query($link);
+        self::assertSame('&p202_to=' . rawurlencode($link), $query);
+        parse_str('lpip=77' . $query, $read);
+        self::assertSame($link, $read[PurLinkDestination::PARAM], 'the next hop reads the link back whole');
+        foreach ([null, '', ['x'], 5, 'https://shop.example/go?u=' . str_repeat('a', 2048)] as $refused) {
+            self::assertSame('', PurLinkDestination::query($refused));
+        }
+    }
+
+    /**
+     * lp.php's cloaked hop: lpc.php is handed the link and asks choose(), as
+     * lp.php and off.php do before they redirect.
+     */
+    public function testEveryRedirectThatStandsInForAPurLinkAsksForItsDestination(): void
+    {
+        $root = dirname(__DIR__, 2) . '/tracking202/redirect/';
+        foreach (['lp.php' => 1, 'lpc.php' => 1, 'off.php' => 2] as $file => $calls) {
+            $source = (string) file_get_contents($root . $file);
+            self::assertSame($calls, substr_count($source, 'PurLinkDestination::choose('), $file);
+        }
+        $lp = (string) file_get_contents($root . 'lp.php');
+        self::assertStringContainsString('PurLinkDestination::query(', $lp, 'the cloaked hop is handed the link');
     }
 
     public function testACampaignWithNoUrlTakesNothing(): void

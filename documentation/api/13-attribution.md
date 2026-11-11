@@ -28,6 +28,7 @@ way around a read the role does not allow.
 | `GET` | `/attribution/reports/journeys` | Journey length, time to convert, one-touch share by browser |
 | `GET` | `/attribution/conversions/{id}/journey` | One conversion's touches, the signals that linked them, every model's credit |
 | `GET` | `/attribution/queue` | The worker's backlog: waiting, failing (with the error), and why each row was queued; identity merges awaiting their re-queue, failing (`merges_failing`), each listed in `merge_rows` with its `last_error`; model changes awaiting their recompute (`models_awaiting_recompute`), failing (`models_failing`), each listed in `model_rows` with its `last_error` |
+| `POST` | `/attribution/queue/retry` | Try the account's failed work again now: its failed conversions, merges and model changes are made due and the worker is run once. Answers `made_due` (`conversions`, `merges`, `models`), `worker` (`ran`; `busy` when another run held the lock and takes them next; `failed` when the run itself failed, logged, and the cron job's next run takes them; `idle` when nothing was waiting on a failure, so nothing was run; `waiting` when the account asked less than 30 seconds ago, with `retry_after_seconds`) and `queue`, the backlog after. No body |
 | `GET` | `/attribution/exports` | Export jobs, newest first (`?status=`, `?limit=`) |
 | `GET` | `/attribution/exports/{id}` | One export job |
 | `POST` | `/attribution/exports` | Queue an export: a breakdown written to CSV, now or at `run_at`, optionally to a webhook (honors `Idempotency-Key`; supports `?staged=1`) |

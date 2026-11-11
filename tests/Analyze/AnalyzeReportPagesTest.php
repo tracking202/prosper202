@@ -53,7 +53,7 @@ final class AnalyzeReportPagesTest extends TestCase
         preg_match_all("#'tracking202/analyze/([a-z_]+\\.php)'#", $menu, $m);
         $known = array_column(AnalyzeReportController::REPORTS, 'page');
         foreach ($m[1] as $page) {
-            if (in_array($page, ['ltv.php', 'mobile_apps.php'], true)) {
+            if (in_array($page, ['ltv.php', 'mobile_apps.php', 'publishers.php'], true)) {
                 continue;
             }
             self::assertContains($page, $known, "the Analyze strip's $page is one of the shared report pages");

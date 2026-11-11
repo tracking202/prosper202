@@ -405,6 +405,37 @@ var attrQueueCmd = &cobra.Command{
 	},
 }
 
+var attrRetryCmd = &cobra.Command{
+	Use:   "retry",
+	Short: "Try failed attribution work again now: failed conversions, visitor merges and model changes are made due and the worker run once",
+	Long: `Try the account's failed attribution work again now.
+
+Every conversion, visitor merge and model change that failed is made due at
+once and the attribution worker is run once, briefly. The answer says how
+many of each were made due (made_due), what became of the run (worker: ran,
+busy when another run held the lock and takes them next, failed when the run
+itself failed and the cron job's next run takes them, idle when nothing was
+waiting on a failure, waiting when it was asked less than 30 seconds ago, with
+retry_after_seconds) and the backlog as it now stands (queue, as
+"p202 attribution queue" shows it).
+
+Read why something fails first with "p202 attribution queue": each failing
+row carries last_error. Fix what it names, then run this.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		data, err := c.Post("attribution/queue/retry", map[string]interface{}{})
+		if err != nil {
+			return withHint(err, "Nothing was run again. See what is failing and why with `p202 attribution queue`; if the server itself is failing, check `p202 system health`.")
+		}
+		render(data)
+		return nil
+	},
+}
+
 // asAPIError is errors.As for *api.APIError, nil-safe.
 func asAPIError(err error, target **api.APIError) bool {
 	if err == nil {
@@ -451,6 +482,6 @@ func init() {
 	registerAttributionRangeFlags(attrJourneysCmd)
 	attrQueueCmd.Flags().Int("limit", 50, "Rows of the backlog to list, 1-500")
 
-	attributionCmd.AddCommand(attrModelCmd, attrBreakdownCmd, attrJourneysCmd, attrJourneyCmd, attrQueueCmd)
+	attributionCmd.AddCommand(attrModelCmd, attrBreakdownCmd, attrJourneysCmd, attrJourneyCmd, attrQueueCmd, attrRetryCmd)
 	rootCmd.AddCommand(attributionCmd)
 }

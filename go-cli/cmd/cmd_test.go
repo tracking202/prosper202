@@ -3722,106 +3722,134 @@ func TestSyncSkipErrorsStopsAtTheKeysFailure(t *testing.T) {
 	}
 }
 
-func TestUserAPIKeyRotateDeletesOldKeyByDefault(t *testing.T) {
-	var createPath, deletePath string
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == "GET" && r.URL.Path == "/api/v3/users/7/api-keys":
-			w.WriteHeader(200)
-			w.Write([]byte(`{"data":[{"user_id":7,"api_key":"old-key-************************","scope":"*","created_at":1700000000}]}`))
-		case r.Method == "POST" && r.URL.Path == "/api/v3/users/7/api-keys":
-			createPath = r.URL.Path
-			w.WriteHeader(200)
-			w.Write([]byte(`{"data":{"api_key":"new-key-abcdef1234"}}`))
-		case r.Method == "DELETE" && r.URL.Path == "/api/v3/users/7/api-keys/old-key-12345678":
-			deletePath = r.URL.Path
-			w.WriteHeader(200)
-			w.Write([]byte(`{"ok":true}`))
-		default:
-			w.WriteHeader(404)
-			w.Write([]byte(`{"message":"not found"}`))
+// replaceServer answers POST /users/7/api-keys/replace as a 1.9.80 server
+// does, and records the body and whether anything else was asked.
+func replaceServer(t *testing.T, body *map[string]interface{}, other *[]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/api/v3/users/7/api-keys/replace" {
+			_ = json.NewDecoder(r.Body).Decode(body)
+			w.WriteHeader(201)
+			w.Write([]byte(`{"data":{"user_id":7,"api_key":"new-key-abcdef1234","scope":"reports:read","label":"Nightly store sync","created_at":1700000000,"replaced":{"api_key":"old-key-************************","ends_at":1700086400}}}`))
+			return
 		}
+		*other = append(*other, r.Method+" "+r.URL.Path)
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"not found"}`))
 	}))
+}
+
+func TestUserAPIKeyRotateReplacesWithAGraceAndDeletesNothing(t *testing.T) {
+	var body map[string]interface{}
+	var other []string
+	srv := replaceServer(t, &body, &other)
 	defer srv.Close()
 
 	tmp := t.TempDir()
 	setTestHome(t, tmp)
-	writeTestConfig(t, tmp, srv.URL, "old-key-12345678")
+	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	stdout, _, err := executeCommand("user", "apikey", "rotate", "7", "old-key-12345678", "--force")
+	// --force was the old confirmation skip; it is still accepted.
+	stdout, stderr, err := executeCommand("--json", "user", "apikey", "rotate", "7", "old-key-12345678", "--force")
 	if err != nil {
 		t.Fatalf("user apikey rotate error: %v", err)
 	}
-
-	if createPath != "/api/v3/users/7/api-keys" {
-		t.Errorf("createPath = %q, want /api/v3/users/7/api-keys", createPath)
+	if body["api_key"] != "old-key-12345678" || len(body) != 1 {
+		t.Errorf("replace body = %#v, want only the old key", body)
 	}
-	if deletePath != "/api/v3/users/7/api-keys/old-key-12345678" {
-		t.Errorf("deletePath = %q, want /api/v3/users/7/api-keys/old-key-12345678", deletePath)
+	if len(other) != 0 {
+		t.Errorf("rotate asked the server for more than the replace: %v", other)
 	}
-	if !strings.Contains(stdout, "new-key-abcdef1234") {
-		t.Errorf("output should contain new key, got:\n%s", stdout)
+	var out map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout)
+	}
+	if out["new_api_key"] != "new-key-abcdef1234" || out["scope"] != "reports:read" || out["label"] != "Nightly store sync" {
+		t.Errorf("output = %#v, want the new key with the old key's scope and label", out)
+	}
+	if out["old_key_deleted"] != false || out["old_key_ends"] != "2023-11-15T22:13:20Z" || out["old_key_ends_at"] != float64(1700086400) {
+		t.Errorf("output = %#v, want the old key not deleted and ending 2023-11-15T22:13:20Z", out)
+	}
+	if strings.Contains(stdout+stderr, "old-key-12345678") {
+		t.Errorf("the old key is not printed back:\n%s\n%s", stdout, stderr)
 	}
 }
 
-func TestUserAPIKeyRotateKeepOldSkipsDelete(t *testing.T) {
-	deleted := false
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == "GET" && r.URL.Path == "/api/v3/users/7/api-keys":
-			w.WriteHeader(200)
-			w.Write([]byte(`{"data":[{"user_id":7,"api_key":"old-key-************************","scope":"*","created_at":1700000000}]}`))
-		case r.Method == "POST" && r.URL.Path == "/api/v3/users/7/api-keys":
-			w.WriteHeader(200)
-			w.Write([]byte(`{"data":{"api_key":"new-key-abcdef1234"}}`))
-		case r.Method == "DELETE":
-			deleted = true
-			w.WriteHeader(200)
-			w.Write([]byte(`{"ok":true}`))
-		default:
-			w.WriteHeader(404)
-			w.Write([]byte(`{"message":"not found"}`))
-		}
-	}))
+func TestUserAPIKeyRotateRefusesTheFlagsItNoLongerTakes(t *testing.T) {
+	var body map[string]interface{}
+	var other []string
+	srv := replaceServer(t, &body, &other)
 	defer srv.Close()
 
 	tmp := t.TempDir()
 	setTestHome(t, tmp)
-	writeTestConfig(t, tmp, srv.URL, "old-key-12345678")
+	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("user", "apikey", "rotate", "7", "old-key-12345678", "--keep-old")
-	if err != nil {
-		t.Fatalf("user apikey rotate --keep-old error: %v", err)
+	for flag, wantHint := range map[string]string{
+		"--keep-old":   "p202 user apikey create 7",
+		"--scope=read": "p202 user apikey create 7 --scope",
+	} {
+		_, _, err := executeCommand("user", "apikey", "rotate", "7", "old-key-12345678", flag)
+		if err == nil {
+			t.Fatalf("rotate %s must be refused", flag)
+		}
+		if exitCodeForError(err) != ExitValidation {
+			t.Errorf("rotate %s: exit code = %d, want %d", flag, exitCodeForError(err), ExitValidation)
+		}
+		if hint := hintFor(err); !strings.Contains(hint, wantHint) {
+			t.Errorf("rotate %s: hint = %q, want it to name %q", flag, hint, wantHint)
+		}
 	}
+	if body != nil || len(other) != 0 {
+		t.Errorf("a refused rotate reached the server: %#v %v", body, other)
+	}
+}
 
-	if deleted {
-		t.Errorf("old key should not be deleted when --keep-old is set")
+func TestUserAPIKeyRotateRefusalsSayWhatToRunNext(t *testing.T) {
+	for status, c := range map[int]struct{ message, hint string }{
+		404: {"API key not found", "p202 user apikey list 7"},
+		409: {"That key was already replaced.", "p202 user apikey delete 7"},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+			w.Write([]byte(`{"error":true,"message":"` + c.message + `","status":` + strconv.Itoa(status) + `}`))
+		}))
+		tmp := t.TempDir()
+		setTestHome(t, tmp)
+		writeTestConfig(t, tmp, srv.URL, "test-key")
+
+		stdout, _, err := executeCommand("user", "apikey", "rotate", "7", "old-key-12345678")
+		srv.Close()
+		if err == nil {
+			t.Fatalf("a %d from the server must fail the rotate", status)
+		}
+		if !strings.Contains(err.Error(), c.message) {
+			t.Errorf("%d: message = %q, want the server's %q", status, err.Error(), c.message)
+		}
+		if hint := hintFor(err); !strings.Contains(hint, c.hint) {
+			t.Errorf("%d: hint = %q, want it to name %q", status, hint, c.hint)
+		}
+		var apiErr *api.APIError
+		if !errors.As(err, &apiErr) || apiErr.Status != status {
+			t.Errorf("%d: the API error is not reachable through the hint: %v", status, err)
+		}
+		if stdout != "" {
+			t.Errorf("%d: stdout must stay empty on failure, got %q", status, stdout)
+		}
 	}
 }
 
 func TestUserAPIKeyRotateUpdateConfig(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == "GET" && r.URL.Path == "/api/v3/users/7/api-keys":
-			w.WriteHeader(200)
-			w.Write([]byte(`{"data":[{"user_id":7,"api_key":"old-key-************************","scope":"*","created_at":1700000000}]}`))
-		case r.Method == "POST" && r.URL.Path == "/api/v3/users/7/api-keys":
-			w.WriteHeader(200)
-			w.Write([]byte(`{"data":{"api_key":"new-key-abcdef1234"}}`))
-		default:
-			w.WriteHeader(404)
-			w.Write([]byte(`{"message":"not found"}`))
-		}
-	}))
+	var body map[string]interface{}
+	var other []string
+	srv := replaceServer(t, &body, &other)
 	defer srv.Close()
 
 	tmp := t.TempDir()
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "old-key-12345678")
 
-	_, _, err := executeCommand("user", "apikey", "rotate", "7", "old-key-12345678", "--keep-old", "--update-config")
+	_, _, err := executeCommand("user", "apikey", "rotate", "7", "old-key-12345678", "--update-config")
 	if err != nil {
 		t.Fatalf("user apikey rotate --update-config error: %v", err)
 	}

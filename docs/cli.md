@@ -1183,6 +1183,7 @@ All report commands (`report summary|breakdown|timeseries|daypart|weekpart|cross
 | `--keyword`         | Keyword contains this text (case-insensitive; `%` and `_` are literal) |
 | `--ip`              | One IPv4 or IPv6 address, exactly |
 | `--referer`         | Referring URL contains this text (case-insensitive) |
+| `--publisher-id`    | Clicks a publisher link credited to this publisher (the id of a `--breakdown publisher` row), or `none` for clicks on no publisher link |
 
 A filter the server does not know, or a malformed value (`--ip 999.1.1.1`), is a
 validation error naming it; `--show`, `--method-of-promotion` and `--period` are
@@ -1275,7 +1276,7 @@ p202 report groups --by ppc_network,campaign,keyword --period last7   # the Grou
 | `-l, --limit`      | 50            | Maximum results (1–500)    |
 | `-o, --offset`     | 0             | Pagination offset          |
 
-**Breakdown dimensions:** campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, region, browser, platform, device, isp, text_ad, ip, referer (the referring domain), referer_url (the whole URL), device_type (Desktop/Mobile/Tablet/Bot), c1, c2, c3, c4, utm_source, utm_medium, utm_campaign, utm_term, utm_content, rotator, rotator_rule (aliases: lp, source, network, offer, geo, referrer, referrer_url, rule). The server advertises its own list as `features.report_breakdowns` in `/capabilities`; a value missing from the CLI's list is sent when the server lists it.
+**Breakdown dimensions:** campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, region, browser, platform, device, isp, text_ad, ip, referer (the referring domain), referer_url (the whole URL), device_type (Desktop/Mobile/Tablet/Bot), c1, c2, c3, c4, utm_source, utm_medium, utm_campaign, utm_term, utm_content, rotator, rotator_rule, publisher (the publisher a publisher link credited the click to), publisher_link (the link such a click came on, by its t202id) (aliases: lp, source, network, offer, geo, referrer, referrer_url, rule). The server advertises its own list as `features.report_breakdowns` in `/capabilities`; a value missing from the CLI's list is sent when the server lists it.
 
 A row is one stored value; clicks with no value for the dimension (no referer, no c1, no rotator rule) are in `report summary` only. A rotator's default is not a rule: `p202 rotator stats <id>` shows it.
 
@@ -1622,7 +1623,17 @@ p202 attribution breakdown --group-by traffic_source --model 3 --compare-model 4
 p202 attribution journeys --period last30
 p202 attribution journey 1234
 p202 attribution queue
+p202 attribution retry
 ```
+
+`queue` lists what is waiting and what is failing, each failing conversion,
+visitor merge and model change with its `last_error`. `retry` makes the
+account's failed ones due at once and runs the attribution worker once: it
+answers `made_due` (how many of each), `worker` (`ran`, `busy` when another
+run held the lock and takes them next, `failed` when the run itself failed
+and the cron job's next run takes them, `idle` when nothing was waiting on a
+failure, `waiting` when it was asked less than 30 seconds ago, with
+`retry_after_seconds`) and `queue`, the backlog after.
 
 | Flag              | Default  | Description |
 |-------------------|----------|-------------|
@@ -1792,9 +1803,11 @@ p202 user role remove 2 3             # Remove role 3 from user 2
 ```bash
 p202 user apikey list 1               # List keys for user 1
 p202 user apikey create 1             # Generate new key (shown once)
+p202 user apikey create 1 --name "Nightly store sync"   # Named for what will use it
 p202 user apikey delete 1 <key>       # Delete a specific key
-p202 user apikey rotate 1 <old-key> --force
-p202 user apikey rotate 1 <old-key> --keep-old --update-config
+p202 user apikey rotate 1 <old-key>   # New key, same scope and label; the old one works 24 hours more
+p202 user apikey rotate 1 <old-key> --update-config
+p202 user apikey delete 1 <old-key>   # End the old key now
 ```
 
 The full API key is displayed only once at creation time. Store it securely.
@@ -1977,6 +1990,10 @@ p202 system login-log --status not_completed  # right password, but a database f
                                     # sign-in (the throttle counts failed attempts alone)
 p202 system integrations --wide     # the INS/IPN/ZPN URLs to paste into ClickBank, JVZoo,
                                     # Zaxaa, PayKickstart; secret_stored, never the secret
+p202 system integrations --json     # also held_notifications: sales held because they state
+                                    # another currency than the account counts in
+p202 system integrations record-held shopify   # record the held ones now stated in the account's
+                                    # currency (paykickstart, shopify or zaxaa); safe to run twice
 
 p202 system retention show          # auto_delete_days, and any scheduled one-off deletion
 p202 system retention set --days 180          # asks when it keeps less than now; --force skips

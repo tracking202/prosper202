@@ -108,6 +108,27 @@ final class ReportFilterTest extends TestCase
         }
     }
 
+    public function testPublisherIdIsTheClicksAPublisherLinkCredited(): void
+    {
+        self::assertSame(
+            [['de.click_id IN (SELECT pc.click_id FROM 202_clicks_publisher pc WHERE pc.publisher_user_id = ?)'], [7], 'i'],
+            self::applied(['publisher_id' => '7'])
+        );
+        self::assertSame(
+            [['de.click_id NOT IN (SELECT pc.click_id FROM 202_clicks_publisher pc)'], [], ''],
+            self::applied(['publisher_id' => 'none'])
+        );
+        self::assertSame([[], [], ''], self::applied(['publisher_id' => '0']));
+        foreach (['None', '7abc', '-1', 'a1b2c3d4e5'] as $bad) {
+            try {
+                self::applied(['publisher_id' => $bad]);
+                self::fail("publisher_id=$bad was accepted");
+            } catch (ValidationException $e) {
+                self::assertStringContainsString('or none for the clicks credited to no publisher', $e->getFieldErrors()['publisher_id']);
+            }
+        }
+    }
+
     public function testDeviceTypeIsEveryModelOfThatType(): void
     {
         self::assertSame(

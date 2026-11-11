@@ -1,0 +1,2 @@
+# DT30 follow-up: a key's name on an install older than 1.9.55.
+-- Changed: On an install whose API key table was made before 1.9.55, the upgrade to 1.9.80 converts the key name column to utf8mb4, so a key named in any script (My Account, POST /api/v3/users/{id}/api-keys, `p202 user apikey create --name`) saves. Where a name still cannot be stored, the page and the API (422) say so and no key is made.

@@ -7,8 +7,9 @@ namespace Prosper202\Alerts;
 /**
  * An account's money-loss alerts (202_alert_settings). On for an account with
  * no row: email to its own address, Slack only where it set a webhook, and
- * webhooks only where one subscribed to the alerts' events. Turning them off
- * stores a row with enabled 0.
+ * webhooks only where one subscribed to the alerts' events. With every
+ * channel off the alerts are raised and listed in the app only. Turning them
+ * off stores a row with enabled 0.
  *
  * A campaign is steady when live conversions arrived in at least
  * minConversions distinct hours of the last LOOKBACK_DAYS; its usual gap is
@@ -105,13 +106,6 @@ final class AlertSettings
             $cap = number_format((float) $cap, 2, '.', '');
         }
 
-        if (
-            $errors === [] && $switches['enabled']
-            && !$switches['notify_slack'] && !$switches['notify_email'] && !$switches['notify_webhook']
-        ) {
-            $errors['notify_email'] = 'cannot be off with Slack and webhooks off too while alerts are on:'
-                . ' choose where they go';
-        }
         if ($errors !== [] || $gap === null || $min === null || $cap === null) {
             return [null, $errors];
         }

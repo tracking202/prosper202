@@ -56,9 +56,14 @@ each refusal against a running instance.
 | ------ | ---- | ---- | ----------- |
 | `GET` | `/users/{id}/api-keys` | Self with `access_to_personal_settings`, or a user you may manage | List API keys (masked) |
 | `POST` | `/users/{id}/api-keys` | Self with `access_to_personal_settings`, or a user you may manage | Generate a new API key |
+| `POST` | `/users/{id}/api-keys/replace` | Self with `access_to_personal_settings`, or a user you may manage | Replace a key: a new one with the same scope and label, the old one works 24 hours more |
 | `DELETE` | `/users/{id}/api-keys/{keyId}` | Self with `access_to_personal_settings`, or a user you may manage | Delete an API key |
 
 API keys are masked after the first 8 characters in list responses. The full key is only returned once, at creation time.
+
+A key can be named when it is created, for what will use it: `"label"` in the body of `POST /users/{id}/api-keys`, `--name` on `p202 user apikey create`, or the name field in My Account. A name is up to 100 characters on one line and does not start with "AI:"; anything else is refused with `422`. It shows in the key lists and carries over when the key is replaced.
+
+From 1.9.80 each key in the list also carries `last_used_at` (when it last authenticated a request, to within five minutes; `null` when no use is recorded), `last_used_api` (`v1`, `v2` or `v3`), `last_used_client` (the `User-Agent` that request sent, as the client named itself) and `ends_at`. `ends_at` is set on a key that was replaced, in My Account › Personal Settings › API keys, with `POST /users/{id}/api-keys/replace` (body `{"api_key": "<the old key>"}`) or with `p202 user apikey rotate`: the replaced key keeps working for 24 hours and is refused with `401` from then on, with a message saying it was replaced. It stays in the list for seven days after it ends and is then removed. To end a key at once, delete it. Replace answers `409` for a key already replaced and for an AI app's key (connect the app again), and `403` to a scoped caller for a key broader than its own.
 
 ## Preference Endpoints
 
@@ -150,6 +155,12 @@ curl -s "$P202/api/v3/users/1/click-filter/test?ip=198.51.100.7" -H "Authorizati
 | `user_lname` | string | No | Last name, at most 50 characters |
 | `user_timezone` | string | No | A PHP time zone name such as `America/New_York`, as Personal settings offers them (default: UTC); anything else is `422` |
 | `user_active` | integer | No | `1` can sign in and use its API keys (default), `0` cannot: its keys answer `401`, and a browser it is signed in on is signed out at its next request, also one that makes no request until the user is `1` again. Every remember-me key the user holds is deleted in the same write, so no browser kept signed in signs back in when the user is `1` again; a key that cannot be deleted leaves the user as they were and answers `500`. Any other value is `422` rather than read as `0` |
+
+A user also answers `user_public_publisher_id` (read-only): the id a publisher
+link carries as `t202pubid`. Add `&t202pubid=<id>` to a tracking link to make
+it that user's publisher link; its clicks are credited to the user when they
+hold the Publisher role and the link's account may manage users. Reports
+break down and filter by publisher ([Reports](11-reports.md)).
 
 ## Preference Fields
 

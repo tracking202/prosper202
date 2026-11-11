@@ -9,6 +9,7 @@ use Api\V3\Exception\RemoteApiException;
 use Api\V3\Exception\SyncException;
 use Api\V3\Exception\SyncRecordException;
 use Api\V3\Exception\ValidationException;
+use Prosper202\Http\HttpUrlPrefix;
 
 class SyncEngine
 {
@@ -892,6 +893,11 @@ class SyncEngine
                 continue;
             }
             $natural = $this->scalarString($row[$naturalField] ?? null);
+            if ($naturalField === 'landing_page_url') {
+                // As the target stores it: a bare host takes https:// (HttpUrlPrefix), so a source
+                // row holding one and the target's completed row are one page.
+                $natural = HttpUrlPrefix::complete($natural);
+            }
             if ($natural === '') {
                 $natural = 'id:' . $id;
             }
@@ -1080,7 +1086,7 @@ class SyncEngine
             case 'campaigns':
                 return $this->scalarString($row['aff_campaign_name'] ?? null);
             case 'landing-pages':
-                return $this->scalarString($row['landing_page_url'] ?? null);
+                return HttpUrlPrefix::complete($this->scalarString($row['landing_page_url'] ?? null));
             case 'text-ads':
                 return $this->scalarString($row['text_ad_name'] ?? null);
             case 'rotators':
@@ -1127,6 +1133,12 @@ class SyncEngine
                 break;
             case 'landing-pages':
                 $out['aff_campaign_id'] = $this->remapForeignKey($row, 'aff_campaign_id', $lookups['campaigns']['by_id'] ?? []);
+                // Compared as stored: the target completes a bare host, so it is no change.
+                foreach (['landing_page_url', 'leave_behind_page_url'] as $urlField) {
+                    if (is_string($out[$urlField] ?? null)) {
+                        $out[$urlField] = HttpUrlPrefix::complete($out[$urlField]);
+                    }
+                }
                 break;
             case 'text-ads':
                 $out['aff_campaign_id'] = $this->remapForeignKey($row, 'aff_campaign_id', $lookups['campaigns']['by_id'] ?? []);

@@ -198,6 +198,7 @@ $mysql['user_id'] = $db->real_escape_string((string)($tracker_row['user_id'] ?? 
 // A publisher link credits a publisher the account granted; any other id is ignored.
 $dlPublisher = p202ClickPublisher($db, (int) ($tracker_row['user_id'] ?? 0), $_GET);
 $mysql['publisher_user_id'] = (string) ($dlPublisher['user_id'] ?? 0);
+$mysql['publisher_tracker_id_public'] = $dlPublisher === null ? '0' : (string) $dlTrackerId;
 
 //now this sets timezone
 date_default_timezone_set($tracker_row['user_timezone']);

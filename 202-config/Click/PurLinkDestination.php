@@ -11,8 +11,9 @@ use Prosper202\Conversion\TrafficSourcePixels;
  * template when it is one of the campaign's URLs with another query (a deep
  * link), else the URL the campaign chose. Scheme, host, port and path must
  * be those of a URL the campaign's redirect uses (CampaignUrls): only the
- * query may differ, and the [[tokens]] it holds are among the ones those
- * URLs hold, so a link fills no value the campaign's own URL does not send.
+ * query may differ. A [[token]] those URLs hold stays for the replacer; any
+ * other is taken out, so a link keeps its destination and fills no value
+ * the campaign's own URL does not send.
  */
 final class PurLinkDestination
 {
@@ -56,18 +57,39 @@ final class PurLinkDestination
         if (!$samePlace) {
             return $chosen;
         }
-        // Less the tokens those URLs hold, no bracket pair may remain: one
-        // could be, or become once a token beside it is filled, a token the
-        // campaign's URL does not hold.
+        $known = TrafficSourcePixels::tokenSpellings();
         try {
-            $rest = TrafficSourcePixels::withoutTokens($requested, $tokens);
+            // Less every token as written, no bracket pair may remain: one
+            // could be, or become once a token beside it is emptied or
+            // filled, a token the campaign's URL does not hold. One pass, so
+            // a token that taking another out puts together is still there
+            // to be seen.
+            $rest = TrafficSourcePixels::withoutTokens($requested, $known);
+            if (str_contains($rest, '[[') || str_contains($rest, ']]')) {
+                error_log('Prosper202 PurLink destination: a link\'s own URL holds brackets that are not a whole'
+                    . ' token; the campaign\'s URL is used');
+
+                return $chosen;
+            }
+
+            // A token the campaign's URL does not hold is left empty, as the
+            // replacer leaves one no click has a value for.
+            return TrafficSourcePixels::withoutTokens($requested, array_values(array_diff($known, $tokens)));
         } catch (\RuntimeException $e) {
             error_log('Prosper202 PurLink destination: ' . $e->getMessage() . '; the campaign\'s URL is used');
 
             return $chosen;
         }
+    }
 
-        return str_contains($rest, '[[') || str_contains($rest, ']]') ? $chosen : $requested;
+    /** "&p202_to=…" for a hop that chooses the destination itself, or "" for a value choose() never takes. */
+    public static function query(mixed $requested): string
+    {
+        if (!is_string($requested) || $requested === '' || strlen($requested) > self::MAX_BYTES) {
+            return '';
+        }
+
+        return '&' . self::PARAM . '=' . rawurlencode($requested);
     }
 
     /** scheme://host:port/path in one spelling, or null for a URL a redirect may not take. */

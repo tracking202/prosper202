@@ -1476,6 +1476,7 @@ func init() {
 		switch e.Name {
 		case "landing-page":
 			cmd.AddCommand(newLandingPageCodeCmd(e))
+			cmd.AddCommand(newLandingPageCheckCmd(e))
 		case "ppc-network":
 			cmd.AddCommand(newPpcNetworkVariableCmd())
 		case "ppc-account":

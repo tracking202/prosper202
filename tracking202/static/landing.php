@@ -238,6 +238,60 @@ var utm_term = t202GetVar('utm_term');
 var utm_content = t202GetVar('utm_content');
 var utm_campaign = t202GetVar('utm_campaign');
 
+// 1.9.56's t202Settings: a key of dcs.t202DataObj given a value
+// ({t202C1: 'home'}), and t202UrlVars naming the URL parameter a key is read
+// from ({t202Kw: 'q'}), which wins when the URL has it. Applied before the
+// pageview is sent, so the click is recorded with them.
+var p202SettingParams = {t202kw: 't202kw', t202c1: 'c1', t202c2: 'c2', t202c3: 'c3', t202c4: 'c4',
+    t202utm_source: 'utm_source', t202utm_medium: 'utm_medium', t202utm_term: 'utm_term',
+    t202utm_content: 'utm_content', t202utm_campaign: 'utm_campaign', t202pubid: 't202pubid',
+    t202gclid: 'gclid', t202gbraid: 'gbraid', t202wbraid: 'wbraid', t202ttclid: 'ttclid',
+    t202msclkid: 'msclkid', t202fbclid: 'fbclid'};
+// Settings of their own, and what only the tracker knows.
+var p202SettingNotAValue = /^t202(urlvars|usesubidorig|expiresubidorig|subid|subidorig|sourceid|ip)$/i;
+var p202SettingValues = {};
+var p202SettingsApplied = false;
+var p202DcsSet = null;
+// A value the pageview sends: the page's setting for it, else the URL's.
+function p202Var(param) {
+    var set = Object.prototype.hasOwnProperty.call(p202SettingValues, param);
+    return set ? p202SettingValues[param] : t202GetVar(param);
+}
+function p202ApplySettings() {
+    if (p202SettingsApplied) { return; }
+    p202SettingsApplied = true;
+    var s = window.t202Settings;
+    if (!s || typeof s !== 'object') { return; }
+    var own = Object.prototype.hasOwnProperty, data = {}, any = false, key, text;
+    for (key in s) {
+        if (!own.call(s, key) || p202SettingNotAValue.test(key)) { continue; }
+        text = typeof s[key] === 'number' && isFinite(s[key]) ? String(s[key]) : s[key];
+        if (typeof text !== 'string') { continue; }
+        if (text !== '') { data[key] = text; any = true; }
+    }
+    var map = s.t202UrlVars;
+    if (map && typeof map === 'object') {
+        for (key in map) {
+            if (!own.call(map, key) || typeof map[key] !== 'string' || map[key] === '') { continue; }
+            if (p202SettingNotAValue.test(key)) { continue; }
+            text = t202GetVar(map[key]);
+            if (text !== '') { data[key] = text; any = true; }
+        }
+    }
+    if (!any) { return; }
+    for (key in data) {
+        if (own.call(data, key) && own.call(p202SettingParams, key.toLowerCase())) {
+            p202SettingValues[p202SettingParams[key.toLowerCase()]] = data[key];
+        }
+    }
+    t202kw = readCookie('t202forcedkw') || p202Var('t202kw');
+    c1 = p202Var('c1'); c2 = p202Var('c2'); c3 = p202Var('c3'); c4 = p202Var('c4');
+    utm_source = p202Var('utm_source'); utm_medium = p202Var('utm_medium'); utm_term = p202Var('utm_term');
+    utm_content = p202Var('utm_content'); utm_campaign = p202Var('utm_campaign');
+    if (p202DcsSet) { p202DcsSet(data); }
+    if (p202PurLinkEnabled && window.p202PurLink) { p202ConfigurePurLinks(p202PurLinkPending); }
+}
+
 // --- First-party identity (plan §6.2) ---
 // The landing page's own visitor id (p202lpid): 128 random bits kept in this
 // site's localStorage, sent with the pageview and added to links into the
@@ -363,13 +417,17 @@ function p202PurLinkFallback(offer, template) {
 // Kept only with consent and where the account's privacy setting allows
 // full tracking (pageview.keepSubid), one cookie per offer or simple page.
 var P202_SUBID_ORIG = '_t202SubidOrig';
+function p202SubidOrigExpiry() {
+    var s = window.t202Settings;
+    var days = (s && typeof s === 'object') ? Number(s.t202ExpireSubidOrig) : NaN;
+    return (isFinite(days) && days > 0) ? Math.min(days, 365) : 7;
+}
 function p202SubidOrigDays() {
     var s = window.t202Settings;
     if (!s || typeof s !== 'object') { return 0; }
     var use = s.t202UseSubidOrig;
     if (use !== true && use !== 1 && use !== '1' && use !== 'true') { return 0; }
-    var days = Number(s.t202ExpireSubidOrig);
-    return (isFinite(days) && days > 0) ? Math.min(days, 365) : 7;
+    return p202SubidOrigExpiry();
 }
 function p202SubidOrigName(offer) {
     return P202_SUBID_ORIG + (offer ? '_' + offer : '_p' + p202PurLinkPage);
@@ -422,12 +480,12 @@ function p202ConfigurePurLinks(pageview) {
         fallback: p202PurLinkFallback,
         tokens: {t202kw: t202kw, c1: c1, c2: c2, c3: c3, c4: c4,
             utm_source: utm_source, utm_medium: utm_medium, utm_campaign: utm_campaign,
-            utm_term: utm_term, utm_content: utm_content, t202pubid: t202GetVar('t202pubid'),
-            gclid: t202GetVar('gclid'), gbraid: t202GetVar('gbraid'), wbraid: t202GetVar('wbraid'),
-            ttclid: t202GetVar('ttclid'), msclkid: t202GetVar('msclkid'), fbclid: t202GetVar('fbclid'),
+            utm_term: utm_term, utm_content: utm_content, t202pubid: p202Var('t202pubid'),
+            gclid: p202Var('gclid'), gbraid: p202Var('gbraid'), wbraid: p202Var('wbraid'),
+            ttclid: p202Var('ttclid'), msclkid: p202Var('msclkid'), fbclid: p202Var('fbclid'),
             referer: document.referrer || null, referrer: document.referrer || null,
             random: String(Math.floor(Math.random() * 1000000000)),
-            // 1.9.56 listed [[sourceid]] but nothing on the page knows it: fill it empty.
+            // Filled from dcs.t202DataObj.t202SourceId once the click is known.
             sourceid: ''}
     };
     if (pageview && pageview.exitProof && !p202PurLinkRevoked && p202ConsentGiven()) {
@@ -533,6 +591,7 @@ window.p202FbPixelAssistant = function(settings) {
 // this snippet must be able to stop the very first pageview's id, which is
 // the one it exists to stop.
 function p202SendBeacon() {
+    p202ApplySettings();
 	var lpip = <?php echo $lpip_js; ?>;
 	var t202id = t202GetVar('t202id');
 	var t202ref = t202GetVar('t202ref');
@@ -563,13 +622,13 @@ function p202SendBeacon() {
 		"c4=" + t202Enc(c4),
 		"t202b=" + t202Enc(t202b),
 		// A publisher link's id: record.php credits it only to a publisher the account granted.
-		"t202pubid=" + t202Enc(t202GetVar('t202pubid')),
-		"gclid=" + t202Enc(t202GetVar('gclid')),
-        "gbraid=" + t202Enc(t202GetVar('gbraid')),
-        "wbraid=" + t202Enc(t202GetVar('wbraid')),
-        "ttclid=" + t202Enc(t202GetVar('ttclid')),
-        "msclkid=" + t202Enc(t202GetVar('msclkid')),
-        "fbclid=" + t202Enc(t202GetVar('fbclid')),
+        "t202pubid=" + t202Enc(p202Var('t202pubid')),
+        "gclid=" + t202Enc(p202Var('gclid')),
+        "gbraid=" + t202Enc(p202Var('gbraid')),
+        "wbraid=" + t202Enc(p202Var('wbraid')),
+        "ttclid=" + t202Enc(p202Var('ttclid')),
+        "msclkid=" + t202Enc(p202Var('msclkid')),
+        "fbclid=" + t202Enc(p202Var('fbclid')),
 		"target_passthrough=" + t202Enc(t202GetVar('target_passthrough')),
 		"keyword=" + t202Enc(t202GetVar('keyword')),
 		"utm_source=" + t202Enc(utm_source),
@@ -709,6 +768,11 @@ if (Object.prototype.toString.call(window.p202.q) === '[object Array]') {
 	}
 }
 
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', p202ApplySettings);
+} else {
+    setTimeout(p202ApplySettings, 0);
+}
 <?php if ($p202SendsBeacon) { ?>
 if (document.readyState === 'loading') {
 	document.addEventListener('DOMContentLoaded', p202SendBeacon);
@@ -748,13 +812,17 @@ if (document.readyState === 'loading') {
 		if (!consented()) { data.t202IP = ''; }
 		for (key in clientParamMap) { if (own(clientParamMap, key)) { data[clientParamMap[key]] = clientValues[key]; } }
 		data.t202Subid = '';
+        // 1.9.56's: the visitor's first click here, and the click's traffic
+        // source account, both from record.php's answer.
+        data.t202SubidOrig = '';
+        data.t202SourceId = '';
 		data.t202Pci = t202GetVar('pci');
 		data.t202Id = t202GetVar('t202id');
 		data.t202Kw = t202kw;
 		data.t202C1 = c1; data.t202C2 = c2; data.t202C3 = c3; data.t202C4 = c4;
 		// 1.9.56's three ad click ids, and those 1.9.79 added.
 		var adClickIds = {t202GCLID: 'gclid', t202GBRAID: 'gbraid', t202WBRAID: 'wbraid', t202TTCLID: 'ttclid', t202FBCLID: 'fbclid', t202MSCLKID: 'msclkid'};
-		for (key in adClickIds) { if (own(adClickIds, key)) { data[key] = t202GetVar(adClickIds[key]); } }
+        for (key in adClickIds) { if (own(adClickIds, key)) { data[key] = p202Var(adClickIds[key]); } }
 		data.t202Utm_source = utm_source; data.t202Utm_medium = utm_medium; data.t202Utm_term = utm_term;
 		data.t202Utm_content = utm_content; data.t202Utm_campaign = utm_campaign;
 		data.t202Referrer = document.referrer;
@@ -946,6 +1014,24 @@ if (document.readyState === 'loading') {
 
 	var dcs = new T202Data();
 	window.dcs = dcs;
+    // t202Settings' values (p202ApplySettings()), under a key in any case.
+    p202DcsSet = function(values) {
+        if (window.dcs !== dcs) { return; }
+        var changed = [];
+        for (var key in dcs.t202DataObj) {
+            if (!own(dcs.t202DataObj, key)) { continue; }
+            for (var given in values) {
+                if (own(values, given) && given.toLowerCase() === key.toLowerCase()) {
+                    dcs.t202DataObj[key] = values[given];
+                    changed.push(key);
+                }
+            }
+        }
+        render(dcs, changed);
+    };
+    // 1.9.56's globals: '' until record.php has answered.
+    window.t202GetSubid = function() { return String(dcs.t202DataObj.t202Subid || ''); };
+    window.t202GetSubidOrig = function() { return String(dcs.t202DataObj.t202SubidOrig || ''); };
 	if (document.readyState === 'loading') {
 		document.addEventListener('DOMContentLoaded', function() { if (window.dcs === dcs) { render(dcs, null); } });
 	}
@@ -953,7 +1039,17 @@ if (document.readyState === 'loading') {
 	window.p202DcsClick = function(click) {
 		if (!click || typeof click.t202Subid !== 'string' || !consented() || window.dcs !== dcs) { return; }
 		dcs.t202DataObj.t202Subid = click.t202Subid;
-		render(dcs, ['t202Subid']);
+        if (/^[1-9][0-9]{0,18}$/.test(click.t202Subid)) {
+            // Kept t202ExpireSubidOrig days (7 when unset), as 1.9.56 kept it.
+            var orig = readCookie(P202_SUBID_ORIG);
+            if (!/^[1-9][0-9]{0,18}$/.test(orig || '')) {
+                orig = click.t202Subid;
+                createCookie(P202_SUBID_ORIG, orig, p202SubidOrigExpiry());
+            }
+            dcs.t202DataObj.t202SubidOrig = orig;
+        }
+        if (typeof click.t202SourceId === 'string') { dcs.t202DataObj.t202SourceId = click.t202SourceId; }
+        render(dcs, ['t202Subid', 't202SubidOrig', 't202SourceId']);
 		if (typeof click.updateProof === 'string' && click.updateProof !== '') {
 			updateProof = click.updateProof;
 			sendUpdate();
@@ -966,9 +1062,11 @@ if (document.readyState === 'loading') {
 		if (given === false && window.dcs === dcs) {
 			dcs.t202DataObj.t202IP = '';
 			dcs.t202DataObj.t202Subid = '';
+            dcs.t202DataObj.t202SubidOrig = '';
+            dcs.t202DataObj.t202SourceId = '';
 			updateProof = '';
 			pendingUpdate = null;
-			render(dcs, ['t202IP', 't202Subid']);
+            render(dcs, ['t202IP', 't202Subid', 't202SubidOrig', 't202SourceId']);
 		} else if (given === true && window.dcs === dcs && consented()) {
 			dcs.t202DataObj.t202IP = serverData.t202IP;
 			render(dcs, ['t202IP']);

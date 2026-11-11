@@ -26,6 +26,7 @@ final class CampaignTables
             self::ppcNetworks(),
             self::ppcAccountPixels(),
             self::landingPages(),
+            self::landingPageChecks(),
             self::textAds(),
         ];
     }
@@ -165,6 +166,30 @@ final class CampaignTables
                 KEY `landing_page_deleted` (`landing_page_deleted`),
                 KEY `user_id` (`user_id`),
                 KEY `landing_page_type` (`landing_page_type`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * What the last code check of a landing page found
+     * (Prosper202\Setup\LandingPageCheckStore): one row per page checked,
+     * from 1.9.80 on. checked_url is the URL the check fetched; a page whose
+     * URL has changed since reads as unchecked.
+     */
+    public static function landingPageChecks(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::LANDING_PAGE_CHECKS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::LANDING_PAGE_CHECKS . "` (
+                `landing_page_id` mediumint(8) unsigned NOT NULL,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `checked_url` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+                `check_status` varchar(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `check_message` text NOT NULL,
+                `checked_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`landing_page_id`),
+                KEY `user_id` (`user_id`),
+                KEY `checked_at` (`checked_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

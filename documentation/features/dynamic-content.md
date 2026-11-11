@@ -74,6 +74,54 @@ were recorded; changing them on the page says so once in the browser console.
 PurLinks use these values for their tokens (`[[c1]]` takes `t202C1`); call
 `updatePurLink()` after changing them. See [PurLinks](purlinks.md).
 
+### Setting values before the visit is recorded (`t202Settings`)
+
+A page can set values, or name the URL parameter a value is read from, in
+`window.t202Settings`, as in 1.9.56:
+
+```html
+<script>
+window.t202Settings = {
+    t202C1: 'homepage',
+    t202UrlVars: {t202Kw: 'q', t202C2: 'sub_id'}
+};
+</script>
+```
+
+Here `c1` is `homepage`, the keyword is read from `?q=…` and `c2` from
+`?sub_id=…`. A parameter named in `t202UrlVars` wins when the URL has it with
+a value; otherwise the value set in `t202Settings` is used, and otherwise the
+usual parameter (`t202kw`, `c2`).
+
+The keyword, c1–c4, the UTM values, the ad click ids (`t202GCLID`,
+`t202GBRAID`, `t202WBRAID`, `t202TTCLID`, `t202MSCLKID`, `t202FBCLID`) and
+`t202Pubid` are recorded on the click with these values, shown on the page
+and used in PurLinks. The click is recorded with them from the start, with no
+second request. Any other key (`t202Country`, a key of your own page) is
+shown on the page only. `t202Subid`, `t202SubidOrig`, `t202SourceId` and
+`t202IP` cannot be set.
+
+Put the script anywhere in the page's HTML: the settings are read once, when
+the page has finished loading and before the visit is sent. Settings added
+later are not read; use `dcs.updateDataObj()` for those.
+
+### The visitor's first click and the traffic source account
+
+Once the visit is recorded, two more keys are filled, as in 1.9.56:
+
+- `t202SubidOrig` is the SubID of the visitor's first visit to your site. It
+  is kept in a cookie on your landing page's site (`_t202SubidOrig`) for
+  `t202Settings.t202ExpireSubidOrig` days, 7 when left out. On a first visit
+  it equals `t202Subid`.
+- `t202SourceId` is the id of the click's traffic source account, the value
+  `[[sourceid]]` takes in a campaign URL. It is empty for a click with no
+  traffic source account.
+
+`t202GetSubid()` and `t202GetSubidOrig()` return the two SubIDs, and an empty
+string until the visit is recorded. All of these stay empty for a visitor who
+has refused tracking or whom your privacy setting holds back, and
+`p202.consent(false)` clears them and removes the cookie.
+
 ## Upgrading from 1.9.56
 
 - `name`, `t202attribute`, form fields and the `dcs` methods work as before,
@@ -86,7 +134,10 @@ PurLinks use these values for their tokens (`[[c1]]` takes `t202C1`); call
   recorded. `redirect/u.php` still answers, but a request without the
   pageview's proof, such as a page that calls it directly, changes nothing.
 - Values are shown as text. A `t202Default` holding HTML shows the markup.
-- The `t202SubidOrig` and `t202SourceId` segments are not restored: an
-  element named for either is not filled. `t202Settings`' `t202UseSubidOrig`
-  and `t202ExpireSubidOrig` are read again, for PurLinks; see
-  [PurLinks](purlinks.md).
+- `t202Settings` works again: values, `t202UrlVars`, and for PurLinks
+  `t202UseSubidOrig` and `t202ExpireSubidOrig` ([PurLinks](purlinks.md)).
+  `t202UrlVars` now applies to any key listed above; in 1.9.56 it applied only
+  to a key the settings also set. `t202Id` set this way changes the page only.
+- `t202SubidOrig`, `t202SourceId`, `t202GetSubid()` and `t202GetSubidOrig()`
+  are back. They are empty until the visit is recorded; 1.9.56 knew them when
+  the script loaded.

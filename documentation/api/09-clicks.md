@@ -216,6 +216,27 @@ one and not recorded. The endpoint needs read scope on both `clicks` and
 `conversions`. `p202 click conversions <id>` prints the same breakdown, and
 the Visitors and Spy pages open it from a click's row.
 
+## Not fraud — `POST /clicks/{id}/not-fraud`
+
+For a click IPQualityScore filtered (`filter_reason: "fraud_score"`), when the
+verdict is wrong. The click, and your other clicks from the same address that
+were filtered for their score (200 a call), count again in every report, and
+the address goes on the click filter list as always count
+(`GET /users/{id}/click-filter`), so it is not scored again. Visitors' **Not
+fraud** button and `p202 click not-fraud <id>` do the same.
+
+```json
+{"data": {"click_id": 940001, "ip_address": "203.0.113.50", "clicks_counted": 2,
+          "more_clicks_filtered": false, "address_always_counted": true,
+          "note": "The address is on the click filter list as always count, so it is not scored again."}}
+```
+
+No body. `404` for a click that is not yours or was not filtered for its fraud
+score. Needs `access_to_personal_settings` and `clicks:write`; not stageable,
+no dry run. To have the address scored again, remove its entry
+(`DELETE /users/{id}/click-filter/entries/{entryId}`,
+`p202 click-filter list remove`).
+
 ## Example
 
 ```bash

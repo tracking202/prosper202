@@ -128,6 +128,19 @@ final class ApiKeyHashUpgradeIntegrationTest extends TestCase
             self::assertSame(self::USER, Auth::fromRequest(['Authorization' => 'Bearer ' . self::PLAIN], $before)->userId());
             $this->assertRefused(strtolower(self::PLAIN), $before, 'a latin1 lookup is exact too');
 
+            // Before the rung a name the column cannot hold is refused as the
+            // name's fault, and makes no key.
+            $name = "Lager \u{0416} \u{1F6D2}";
+            try {
+                (new UsersController($before))->createApiKey(self::USER, ['label' => $name]);
+                self::fail('a latin1 label column cannot hold the name');
+            } catch (\Api\V3\Exception\ValidationException $e) {
+                self::assertSame('Invalid label', $e->getMessage());
+            }
+            $count = self::$db->query('SELECT COUNT(*) FROM 202_api_keys WHERE user_id = ' . self::USER);
+            self::assertInstanceOf(\mysqli_result::class, $count);
+            self::assertSame('1', (string) $count->fetch_row()[0]);
+
             [$out, $err] = self::upgrade();
             self::assertSame('RETURNED true', $out, $err);
             $rows = self::keyRows();
@@ -135,8 +148,32 @@ final class ApiKeyHashUpgradeIntegrationTest extends TestCase
             self::assertPlaceholders($rows);
 
             $after = self::connection();
-            self::assertSame(self::USER, Auth::fromRequest(['Authorization' => 'Bearer ' . self::PLAIN], $after)->userId());
+            // A client's name is any text: the columns the rung adds hold it
+            // in a latin1 table too, under the strict mode the API runs in.
+            $client = "store-sync/2.1 \u{1F6D2} \u{0416}";
+            $auth = Auth::fromRequest(['Authorization' => 'Bearer ' . self::PLAIN, 'User-Agent' => $client], $after);
+            self::assertSame(self::USER, $auth->userId());
+            $after->set_charset('utf8mb4');
+            $used = $after->query('SELECT last_used_at, last_used_api, last_used_client FROM 202_api_keys'
+                . ' WHERE user_id = ' . self::USER);
+            self::assertInstanceOf(\mysqli_result::class, $used);
+            $use = $used->fetch_assoc();
+            self::assertNotNull($use['last_used_at'], 'the use is recorded');
+            self::assertSame(['v3', $client], [$use['last_used_api'], $use['last_used_client']]);
             $this->assertRefused(strtolower(self::PLAIN), $after, 'a key differing in case is another key');
+
+            // After it the name saves, and reads back as given.
+            $charset = $after->query("SELECT CHARACTER_SET_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA ="
+                . " DATABASE() AND TABLE_NAME = '202_api_keys' AND COLUMN_NAME = 'label'");
+            self::assertInstanceOf(\mysqli_result::class, $charset);
+            self::assertSame('utf8mb4', $charset->fetch_row()[0]);
+            $users = new UsersController($after);
+            self::assertSame($name, $users->createApiKey(self::USER, ['label' => $name])['data']['label']);
+            self::assertContains($name, array_column($users->listApiKeys(self::USER)['data'], 'label'));
+
+            [$out, $err] = self::upgrade();
+            self::assertSame('RETURNED true', $out, $err);
+            self::assertStringNotContainsString('Prosper202 upgrade', $err);
         } finally {
             self::q('DROP TABLE IF EXISTS 202_api_keys');
             self::q('RENAME TABLE 202_api_keys_ca14_saved TO 202_api_keys');
@@ -219,7 +256,8 @@ final class ApiKeyHashUpgradeIntegrationTest extends TestCase
     private function asOf1979(): void
     {
         self::q('ALTER TABLE 202_api_keys DROP INDEX `202_api_keys_key_hash`, DROP COLUMN key_hash,'
-            . ' DROP COLUMN key_prefix, DROP COLUMN watcher_token');
+            . ' DROP COLUMN key_prefix, DROP COLUMN watcher_token, DROP COLUMN last_used_at,'
+            . ' DROP COLUMN last_used_api, DROP COLUMN last_used_client, DROP COLUMN ends_at');
         self::q('DELETE FROM 202_version');
         self::row('202_version', ['version' => '1.9.79']);
     }

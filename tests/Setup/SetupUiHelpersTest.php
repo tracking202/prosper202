@@ -159,4 +159,64 @@ final class SetupUiHelpersTest extends TestCase
         self::assertStringContainsString('Check my page</button>', $html);
         self::assertStringContainsString('<div id="lp-check-result"', $html, 'the answer has somewhere to go');
     }
+
+    public function testALandingPagesCodeCheckIsAPillThatAsksWhenItHasNoAnswer(): void
+    {
+        $unchecked = p202_setup_lp_check_pill(42, null);
+        self::assertStringContainsString('class="p202-pill" data-p202-lp-check-pill="42" data-p202-lp-check-due', $unchecked);
+        self::assertStringContainsString('>Not checked yet</span>', $unchecked);
+        self::assertStringNotContainsString('data-p202-lp-check-due', p202_setup_lp_check_pill(42, null, false), 'a page that is not the account\'s is not asked for again');
+
+        $absent = p202_setup_lp_check_pill(42, ['status' => 'absent', 'message' => 'Paste the code above right above </body>. "x"', 'checked_at' => 0]);
+        self::assertStringContainsString('class="p202-pill p202-pill--bad" data-p202-lp-check-pill="42" title="', $absent);
+        self::assertStringNotContainsString('data-p202-lp-check-due', $absent);
+        self::assertStringContainsString('the code from Get LP Code right above &lt;/body&gt;. &quot;x&quot;', $absent, 'the sentence is the list\'s, escaped');
+        self::assertStringContainsString('>Code not found</span>', $absent);
+    }
+
+    public function testEveryCheckStatusHasAPillOfItsOwn(): void
+    {
+        $statuses = (new \ReflectionClass(\Prosper202\Setup\LandingPageCheckResult::class))->getConstants();
+        self::assertCount(8, $statuses);
+        $labels = [];
+        foreach ($statuses as $status) {
+            [$classes, $label] = \Prosper202\Setup\LandingPageCheckStore::pill($status);
+            self::assertStringStartsWith('p202-pill p202-pill--', $classes, $status);
+            $labels[] = $label;
+        }
+        self::assertCount(8, array_unique($labels));
+        self::assertSame(['p202-pill', 'Not checked yet'], \Prosper202\Setup\LandingPageCheckStore::pill(null));
+        self::assertSame(['p202-pill', 'Not checked yet'], \Prosper202\Setup\LandingPageCheckStore::pill('something-new'));
+    }
+
+    public function testCheckMyPageShowsTheLastAnswerUntilTheNextOne(): void
+    {
+        $html = p202_setup_lp_check('/p202/', 'token', 42, ['status' => 'present', 'message' => 'Found: your page carries this code.', 'checked_at' => 0]);
+        self::assertStringContainsString('alert-success', $html);
+        self::assertStringContainsString('Found: your page carries this code.', $html);
+        self::assertStringContainsString('Last checked ', $html);
+    }
+
+    public function testASavedTrackingDomainIsReadAsItsHost(): void
+    {
+        self::assertSame('track.example.com', \Prosper202\Setup\LandingPageCheckStore::hostOf('https://Track.Example.com/'));
+        self::assertSame('track.example.com:8443', \Prosper202\Setup\LandingPageCheckStore::hostOf('track.example.com:8443/p202'));
+        self::assertSame('', \Prosper202\Setup\LandingPageCheckStore::hostOf(''));
+    }
+
+    public function testAFilteredClicksPillSaysWhy(): void
+    {
+        require_once dirname(__DIR__, 2) . '/202-config/functions-ui-overview.php';
+        $labels = [];
+        foreach (\Prosper202\Click\Filter\ClickFilterVerdict::STORED_REASONS as $reason) {
+            [$label, $why] = p202_click_filter_reason($reason);
+            self::assertStringStartsWith('Filtered: ', $label, $reason);
+            self::assertNotSame('', $why);
+            $labels[] = $label;
+        }
+        self::assertCount(count(\Prosper202\Click\Filter\ClickFilterVerdict::STORED_REASONS), array_unique($labels), 'each reason has its own words');
+        self::assertSame('Filtered: fraud score', p202_click_filter_reason('fraud_score')[0]);
+        self::assertSame('Filtered', p202_click_filter_reason(null)[0]);
+        self::assertSame('Filtered', p202_click_filter_reason('a-later-reason')[0]);
+    }
 }
