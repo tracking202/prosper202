@@ -593,6 +593,12 @@ if ($tsReview && $tsOwners['controller'] !== null && $tsOwners['report'] !== nul
     }
 }
 
+// The notice: sources that wait for a decision, or splits of the last 30 days.
+$tsReport = $tsOwners['report'];
+$tsSaid = $tsReport !== null && ($tsReport['sources'] !== [] || $tsReport['splits'] !== []);
+// The splits of the last 30 days, a panel in a column of its own under the open panel.
+$tsSplitsColumn = ($tsPanel['splits'] ?? '') === '' ? '' : '<div class="col-12">' . $tsPanel['splits'] . '</div>';
+
 template_top('Administration');
 ?>
 
@@ -612,7 +618,7 @@ if ($fieldErrors) {
 echo p202_account_render_flashes($extra);
 if ($tsOwners['error'] !== null) {
     echo p202_flash('bad', $tsOwners['error']);
-} elseif ($tsOwners['report'] !== null && $tsOwners['report']['sources'] !== []) {
+} elseif ($tsSaid) {
     echo p202_ts_owners_notice($tsOwners['report'], $self);
 }
 echo p202_postback_queue_notice($db, (int) ($_SESSION['user_own_id'] ?? $_SESSION['user_id'] ?? 0), get_absolute_url());
@@ -876,6 +882,7 @@ echo p202_postback_queue_notice($db, (int) ($_SESSION['user_own_id'] ?? $_SESSIO
     <div class="col-12">
         <?php echo $tsPanel['panel']; ?>
     </div>
+        <?php echo $tsSplitsColumn; ?>
     <?php } ?>
 
 	<div class="col-12">

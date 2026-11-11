@@ -167,6 +167,7 @@ final class ClickPathReadsIntegrationTest extends TestCase
         self::assertSame('https://own.example/2', $row['aff_campaign_url_2']);
         self::assertSame('7.25', $row['aff_campaign_payout']);
         self::assertSame('ownb,owna', $row['parameters'], 'the source\'s live variables, in id order');
+        self::assertSame((string) self::$id['ownNetwork'], $row['own_ppc_network_id'], 'the source is its own');
         self::assertSame('Europe/Paris', $row['user_timezone']);
         self::assertSame('bidded', $row['user_keyword_searched_or_bidded']);
         self::assertSame('1', $row['user_pref_dynamic_bid']);
@@ -255,6 +256,34 @@ final class ClickPathReadsIntegrationTest extends TestCase
 
         self::assertText($row);
         self::assertSame('ownb,owna', $row['parameters']);
+    }
+
+    /**
+     * A tracker's reads say whether its traffic source account's source is
+     * its own user's: the click path asks about lost variables only of one
+     * that is not, which then names the other user's source.
+     */
+    public function testATrackerSaysWhetherItsSourceIsItsAccountsOwn(): void
+    {
+        $reads = self::reads();
+        $own = (string) self::$id['ownNetwork'];
+
+        self::assertSame($own, $reads->tracker(self::PUBLIC + 1)['own_ppc_network_id']);
+        self::assertSame($own, $reads->accountTracker(self::OWNER, self::PUBLIC + 1)['own_ppc_network_id']);
+        // Tracker 3: this account's traffic source account under the other account's source.
+        $stray = $reads->tracker(self::PUBLIC + 3);
+        self::assertSame((string) self::$id['strayAccount'], $stray['ppc_account_id']);
+        self::assertSame('0', $stray['own_ppc_network_id']);
+        self::assertSame('0', $reads->accountTracker(self::OWNER, self::PUBLIC + 3)['own_ppc_network_id']);
+
+        $theirs = $reads->sourceOfAnotherUser(self::OWNER, self::$id['strayAccount']);
+        self::assertSame((string) self::$id['otherNetwork'], $theirs['ppc_network_id']);
+        self::assertSame((string) self::OTHER, $theirs['source_user_id']);
+        self::assertSame('otherb,othera', $theirs['parameters'], 'its live variables\' names');
+        $mine = $reads->sourceOfAnotherUser(self::OWNER, self::$id['ownAccount']);
+        self::assertNull($mine['source_user_id']);
+        self::assertNull($mine['parameters']);
+        self::assertNull($reads->sourceOfAnotherUser(self::OTHER, self::$id['strayAccount']), 'not their account');
     }
 
     public function testAVisitsTrackerGivesItsVariablesOnlyOnItsAccountsPage(): void

@@ -83,11 +83,63 @@ final class TrafficSourcePixels
                 // preg_quote: token names are fixed here, but a replacement
                 // string is taken literally only through a callback — "$1"
                 // in a value must not become a back-reference.
-                $url = (string) preg_replace_callback('/\[\[' . preg_quote($name, '/') . '\]\]/i', static fn (): string => $value, $url);
+                $url = (string) preg_replace_callback(self::pattern([$name]), static fn (): string => $value, $url);
             }
         }
 
         return $url;
+    }
+
+    /**
+     * The token spellings replaceTokens() would find in $url, lower-case
+     * (`referrer` and `referer` apart).
+     *
+     * @return list<string>
+     */
+    public static function tokensNamedIn(string $url): array
+    {
+        $found = [];
+        foreach (self::TOKENS as $names) {
+            foreach ($names as $name) {
+                if (preg_match(self::pattern([$name]), $url) === 1) {
+                    $found[] = $name;
+                }
+            }
+        }
+
+        return $found;
+    }
+
+    /**
+     * $url less each placeholder of $names (spellings tokensNamedIn()
+     * answers), found as replaceTokens() finds them, in one pass: what is
+     * left is text no listed token accounts for.
+     *
+     * @param list<string> $names
+     */
+    public static function withoutTokens(string $url, array $names): string
+    {
+        $known = array_merge(...array_values(self::TOKENS));
+        $names = array_values(array_intersect($known, $names));
+        if ($names === []) {
+            return $url;
+        }
+        $rest = preg_replace(self::pattern($names), '', $url);
+        if (!is_string($rest)) {
+            throw new \RuntimeException('Reading a URL for its tokens failed: ' . preg_last_error_msg());
+        }
+
+        return $rest;
+    }
+
+    /**
+     * The one pattern a placeholder is found by.
+     *
+     * @param non-empty-list<string> $names
+     */
+    private static function pattern(array $names): string
+    {
+        return '/\[\[(?:' . implode('|', array_map(static fn (string $n): string => preg_quote($n, '/'), $names)) . ')\]\]/i';
     }
 
     /** rawurlencode() that leaves "@" readable, as the tracker always has. */
