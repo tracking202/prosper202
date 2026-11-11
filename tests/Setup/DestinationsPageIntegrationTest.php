@@ -363,4 +363,26 @@ final class DestinationsPageIntegrationTest extends TestCase
         self::q("UPDATE 202_users_pref SET user_pref_privacy = 'all' WHERE user_id = " . self::USER);
         self::assertSame(2, substr_count(self::page(), 'Nothing is sent: your privacy setting (Enabled for All Traffic) holds back every visitor.'), 'said under each destination');
     }
+
+    public function testAQuietDestinationsRowsShowBesideABusyOneAndWhatIsQueuedSaysHowLong(): void
+    {
+        $this->delivery($this->ads, 'sent', null, 700);
+        $values = [];
+        for ($conv = 1000; $conv < 1450; $conv++) {
+            $values[] = '(' . self::USER . ', ' . $this->ga4 . ", $conv, 'conversion', 'pending', 0, 0, " . time() . ')';
+        }
+        self::q('INSERT INTO 202_destination_deliveries (user_id, destination_id, conv_id, kind, status, attempts, next_attempt_at, created_at) VALUES ' . implode(', ', $values));
+
+        $html = self::page();
+        self::assertStringContainsString('<td>700</td>', $html, 'the quiet destination\'s row is listed under it, 450 newer rows of another notwithstanding');
+        self::assertStringContainsString('450 still to send: about 3 minutes', $html);
+        self::assertSame(1, substr_count($html, 'still to send'), 'only under the destination that has some');
+
+        // Queued from the page: the notice says how many and how long.
+        self::q("UPDATE 202_destination_deliveries SET status = 'failed' WHERE destination_id = " . $this->ga4 . ' AND conv_id < 1400');
+        self::page([], ['action' => 'resend_all', 'destination_id' => (string) $this->ga4, 'status' => 'failed']);
+        $sessions = glob(self::$sessions . '/sess_*') ?: [];
+        self::assertCount(1, $sessions);
+        self::assertStringContainsString('"queued";i:400', (string) file_get_contents($sessions[0]), 'the count is kept for the page the browser lands on');
+    }
 }

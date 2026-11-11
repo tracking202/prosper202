@@ -200,14 +200,14 @@ if ($logId !== null && $canSeeLog) {
         $errors['destination'] = 'That destination is not one of yours, or was deleted.';
     }
 }
-// The latest deliveries of each, for a role that may see conversion values.
+// The latest deliveries of each destination, read per destination so a busy one cannot crowd out a quiet one's.
 $recent = [];
-if ($canSeeLog && $destinations !== []) {
-    $stmt = $conn->prepareRead('SELECT destination_id, conv_id, kind, status, attempts, last_status_code, last_error, created_at FROM 202_destination_deliveries
-        WHERE user_id = ? ORDER BY delivery_id DESC LIMIT 200');
-    $conn->bind($stmt, 'i', [$userId]);
-    foreach ($conn->fetchAll($stmt) as $row) {
-        $recent[(int) $row['destination_id']][] = $row;
+if ($canSeeLog) {
+    foreach ($destinations as $d) {
+        $rows = array_slice($queue->log($userId, (int) $d['destination_id'], null, 10, 0), 0, 10);
+        if ($rows !== []) {
+            $recent[(int) $d['destination_id']] = $rows;
+        }
     }
 }
 $value = static fn (string $key, string $default = ''): string => is_string($posted[$key] ?? null) ? (string) $posted[$key] : $default;
@@ -274,7 +274,7 @@ if ($queuedNotice !== null && ($_GET['done'] ?? '') === 'queued') {
     echo p202_flash($n > 0 ? 'ok' : 'info', (($queuedNotice['what'] ?? '') === 'earlier'
         ? ($n > 0 ? number_format($n) . ' earlier conversion(s) queued for this destination.' : 'No paid conversion of the last ' . (int) ($queuedNotice['days'] ?? 0) . ' day(s) was left to queue: each one already has a row in its log.')
         : number_format($n) . ' conversion(s) queued to be sent again, with all their tries.')
-        . ($n > 0 ? ' They go out with the next runs of the cron job, about 200 a minute.' : '')
+        . ($n > 0 ? ' Sending them takes ' . p202_destination_send_time($n) . ' at the cron job\'s rate (about ' . DestinationQueue::SENT_A_MINUTE . ' a minute); the destination\'s counts below show how many are still to send, sent and failed.' : '')
         . (($queuedNotice['more'] ?? false) === true ? ' More remain: press the button again for the next ' . number_format(DestinationQueue::RESEND_BATCH) . '.' : ''));
 }
 echo p202_setup_error_flashes($editedId !== null ? [] : $errors, $formFields);
@@ -349,7 +349,7 @@ if ($logDestination !== null) {
                         <table class="table p202-table">
                             <thead><tr><th>When</th><th>Conversion</th><th>Status</th><th class="num">Tries</th><th>Last answer</th></tr></thead>
                             <tbody>
-                                <?php foreach (array_slice($recent[$id], 0, 10) as $row) { ?>
+                                <?php foreach ($recent[$id] as $row) { ?>
                                 <tr>
                                     <td><?php echo p202_setup_e($when((int) $row['created_at'])); ?></td>
                                     <td><?php echo $row['conv_id'] === null ? 'test' : (int) $row['conv_id']; ?></td>

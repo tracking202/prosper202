@@ -541,6 +541,10 @@ final class DestinationsIntegrationTest extends TestCase
         self::assertCount(1, $health[$id]['reasons']);
         self::assertSame(['failed', 1], [$health[$id]['reasons'][0]['status'], $health[$id]['reasons'][0]['n']]);
         self::assertNotSame('', $health[$id]['reasons'][0]['reason']);
+        self::assertSame([0, 0], [$health[$id]['waiting'], $health[$quiet]['waiting']]);
+        self::assertSame(2, $this->worker()->resend(1, $id, null, 'failed', time())['queued']);
+        self::assertSame(2, $this->worker()->health(1, [$id], time() - 7 * 86400, time())[$id]['waiting'], 'still to send, the one older than the week included');
+        self::fixture("UPDATE 202_destination_deliveries SET status = 'failed' WHERE destination_id = $id AND status = 'pending'");
         self::assertSame(0, array_sum($health[$quiet]['counts']));
         self::assertSame(0, array_sum($this->worker()->health(2, [$id], 0, time())[$id]['counts']), 'another account reads none of them');
 

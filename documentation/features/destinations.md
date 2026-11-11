@@ -69,8 +69,10 @@ click in Conversion Logs.
   90 for Google Ads (which keeps the conversion it already holds, so one
   uploaded twice counts once).
 
-Both take 5,000 conversions a press and say when more remain; the cron job
-sends about 200 a minute.
+Both take 5,000 conversions a press and say when more remain. The cron job
+sends about 200 a minute for all destinations together, so the page says how
+many were queued and about how long they take, and each destination shows
+how many are still to send; reload the page to see the counts move.
 
 ## Editing a destination
 

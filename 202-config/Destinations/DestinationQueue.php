@@ -50,6 +50,8 @@ final class DestinationQueue
     public const RESEND_DAYS = 90;
     public const RESEND_BATCH = 5000;
     public const BACKFILL_BATCH = 5000;
+    /** About how many rows the cron job sends a minute, for every account together (202-cronjobs/index.php). */
+    public const SENT_A_MINUTE = 200;
     /** The minutely cron's budget. */
     public const RUN_SECONDS = 15;
 
@@ -333,13 +335,15 @@ final class DestinationQueue
      * many could be sent again (those of the last RESEND_DAYS).
      *
      * @param list<int> $destinationIds
-     * @return array<int, array{counts: array<string, int>, reasons: list<array{status: string, reason: string, n: int}>, resendable: array<string, int>}>
+     * `waiting` is every conversion still to be sent, whatever its age.
+     *
+     * @return array<int, array{counts: array<string, int>, reasons: list<array{status: string, reason: string, n: int}>, resendable: array<string, int>, waiting: int}>
      */
     public function health(int $userId, array $destinationIds, int $since, int $now): array
     {
         $out = [];
         foreach ($destinationIds as $id) {
-            $out[$id] = ['counts' => array_fill_keys(self::STATUSES, 0), 'reasons' => [], 'resendable' => array_fill_keys(self::RESENDABLE, 0)];
+            $out[$id] = ['counts' => array_fill_keys(self::STATUSES, 0), 'reasons' => [], 'resendable' => array_fill_keys(self::RESENDABLE, 0), 'waiting' => 0];
         }
         if ($out === []) {
             return [];
@@ -359,6 +363,11 @@ final class DestinationQueue
         $this->conn->bind($stmt, $types, [$userId, ...$ids, $now - self::RESEND_DAYS * 86400]);
         foreach ($this->conn->fetchAll($stmt) as $row) {
             $out[(int) $row['destination_id']]['resendable'][(string) $row['status']] = (int) $row['n'];
+        }
+        $stmt = $this->conn->prepareRead('SELECT destination_id, COUNT(*) AS n' . $where . "'pending') GROUP BY destination_id");
+        $this->conn->bind($stmt, substr($types, 0, -1), [$userId, ...$ids]);
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $out[(int) $row['destination_id']]['waiting'] = (int) $row['n'];
         }
         $stmt = $this->conn->prepareRead("SELECT destination_id, status, COALESCE(last_error, '') AS reason, COUNT(*) AS n" . $where
             . "'failed','withheld') AND created_at >= ? GROUP BY destination_id, status, reason ORDER BY n DESC, reason LIMIT 500");

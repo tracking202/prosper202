@@ -60,6 +60,22 @@ function p202_destination_privacy_note(string $setting, array $settings, string 
         . p202_setup_e($text) . ' Change it in ' . p202_destination_privacy_link($base) . '.</div></div>';
 }
 
+/** About how long the cron job takes to send $n rows. */
+function p202_destination_send_time(int $n): string
+{
+    $minutes = (int) ceil($n / DestinationQueue::SENT_A_MINUTE);
+
+    return $minutes < 90 ? 'about ' . $minutes . ($minutes === 1 ? ' minute' : ' minutes') : 'about ' . round($minutes / 60, 1) . ' hours';
+}
+
+/** How many conversions a destination still has to send, and how long that takes. */
+function p202_destination_waiting_sentence(int $waiting): string
+{
+    return number_format($waiting) . ' still to send: ' . p202_destination_send_time($waiting) . ' at the cron job\'s rate (about '
+        . DestinationQueue::SENT_A_MINUTE . ' a minute, shared with your other destinations), longer for a Google Ads click under 6 hours old.'
+        . ' Reload the page to see the counts move.';
+}
+
 /**
  * The last 7 days of a destination's conversions by status, why the failed
  * and withheld ones were, and the buttons that send them again.
@@ -85,6 +101,9 @@ function p202_destination_health(array $d, array $health, string $self, string $
         } ?>
         <?php echo $canSeeLog ? '· <a href="' . $log . '">full log</a>' : ''; ?>
     </div>
+    <?php if (($health['waiting'] ?? 0) > 0) { ?>
+    <div class="form-text mb-2"><?php echo p202_setup_e(p202_destination_waiting_sentence((int) $health['waiting'])); ?></div>
+    <?php } ?>
     <?php foreach ($health['reasons'] as $reason) { ?>
     <div class="form-text"><?php echo number_format($reason['n']) . ' ' . p202_setup_e($reason['status']); ?>: <?php echo p202_setup_e($reason['reason'] !== '' ? (string) preg_replace('/\A(withheld|not sent): /', '', $reason['reason']) : 'no reason recorded'); ?></div>
     <?php } ?>
