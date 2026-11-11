@@ -5021,6 +5021,9 @@ class UPGRADE
                 // sent for (Prosper202\Alerts).
                 \Prosper202\Database\Tables\UserTables::alertSettings(),
                 \Prosper202\Database\Tables\UserTables::alertState(),
+                // The alerts each account was raised, shown on Home and the
+                // settings card (MysqlAlertStore).
+                \Prosper202\Database\Tables\UserTables::alertLog(),
                 // 202_conversion_logs gains user_conv_time, the alerts' read of
                 // an account's last week of conversions.
                 \Prosper202\Database\Tables\ConversionTables::conversionLogs(),

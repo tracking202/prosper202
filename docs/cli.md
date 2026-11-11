@@ -1621,7 +1621,17 @@ p202 attribution breakdown --group-by traffic_source --model 3 --compare-model 4
 p202 attribution journeys --period last30
 p202 attribution journey 1234
 p202 attribution queue
+p202 attribution retry
 ```
+
+`queue` lists what is waiting and what is failing, each failing conversion,
+visitor merge and model change with its `last_error`. `retry` makes the
+account's failed ones due at once and runs the attribution worker once: it
+answers `made_due` (how many of each), `worker` (`ran`, `busy` when another
+run held the lock and takes them next, `failed` when the run itself failed
+and the cron job's next run takes them, `idle` when nothing was waiting on a
+failure, `waiting` when it was asked less than 30 seconds ago, with
+`retry_after_seconds`) and `queue`, the backlog after.
 
 | Flag              | Default  | Description |
 |-------------------|----------|-------------|

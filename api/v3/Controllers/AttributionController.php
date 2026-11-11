@@ -19,6 +19,7 @@ use Prosper202\Attribution\Model;
 use Prosper202\Attribution\ModelConfig;
 use Prosper202\Attribution\ModelRepository;
 use Prosper202\Attribution\ModelType;
+use Prosper202\Attribution\QueueRetry;
 use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookRefused;
 use Prosper202\Database\Connection;
@@ -392,6 +393,18 @@ class AttributionController
         $limit = self::positiveInt($params, 'limit') ?? 50;
 
         return ['data' => (new AttributionReports($this->conn))->queue($this->userId, min(500, $limit))];
+    }
+
+    /**
+     * POST /attribution/queue/retry — the account's failed conversions,
+     * merges and model changes made due and the worker run once
+     * (QueueRetry), then the backlog as it stands.
+     */
+    public function retryQueue(): array
+    {
+        $tried = QueueRetry::tryNow($this->conn, $this->userId);
+
+        return ['data' => $tried + ['queue' => (new AttributionReports($this->conn))->queue($this->userId, 50)]];
     }
 
     // --- Exports ---

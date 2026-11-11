@@ -69,6 +69,12 @@ template_top('Prosper202 ClickServer');  ?>
     </div>
 </div>
 
+<?php
+// The account's money-loss alerts of the last week, whatever became of their messages.
+require_once __DIR__ . '/../202-config/functions-alerts-ui.php';
+echo p202_alerts_home_panel($db, (int) ($_SESSION['user_id'] ?? 0), $base, time());
+?>
+
 <div class="row g-4">
     <div class="col-12 col-lg-7">
         <?php if (!$gs_all_done) { ?>
