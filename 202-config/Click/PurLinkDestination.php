@@ -82,6 +82,16 @@ final class PurLinkDestination
         }
     }
 
+    /** "&p202_to=…" for a hop that chooses the destination itself, or "" for a value choose() never takes. */
+    public static function query(mixed $requested): string
+    {
+        if (!is_string($requested) || $requested === '' || strlen($requested) > self::MAX_BYTES) {
+            return '';
+        }
+
+        return '&' . self::PARAM . '=' . rawurlencode($requested);
+    }
+
     /** scheme://host:port/path in one spelling, or null for a URL a redirect may not take. */
     private static function place(string $url): ?string
     {

@@ -148,6 +148,10 @@ $cloaking_on = \Prosper202\Click\ClickCloaking::isOn($tracker_row);
 if ($cloaking_on == true) {
 
 	$cloaking_site_url = \Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/lpc.php?lpip=' . $tracker_row['landing_page_id_public'];
+    // The cloaked hop chooses the destination: hand it the link's own URL.
+    $cloaking_site_url .= \Prosper202\Click\PurLinkDestination::query(
+        $vars[\Prosper202\Click\PurLinkDestination::PARAM] ?? null
+    );
 }
 
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
