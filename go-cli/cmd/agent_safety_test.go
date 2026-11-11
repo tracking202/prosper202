@@ -240,6 +240,47 @@ func TestApikeyCreateSendsScope(t *testing.T) {
 	}
 }
 
+func TestApikeyCreateSendsTheNameAsTheLabelAndRefusesAnEmptyOne(t *testing.T) {
+	var bodies []map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		bodies = append(bodies, body)
+		w.WriteHeader(201)
+		w.Write([]byte(`{"data":{"user_id":7,"api_key":"k","scope":"*","label":"Nightly store sync","created_at":1}}`))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("user", "apikey", "create", "7", "--name", "Nightly store sync")
+	if err != nil {
+		t.Fatalf("user apikey create --name error: %v", err)
+	}
+	if len(bodies) != 1 || bodies[0]["label"] != "Nightly store sync" || len(bodies[0]) != 1 {
+		t.Errorf("posted = %#v, want only the label", bodies)
+	}
+	if !strings.Contains(stdout, "Nightly store sync") {
+		t.Errorf("output should show the name, got:\n%s", stdout)
+	}
+
+	_, _, err = executeCommand("user", "apikey", "create", "7", "--name", "")
+	if err == nil {
+		t.Fatal("an empty --name must be refused")
+	}
+	if exitCodeForError(err) != ExitValidation {
+		t.Errorf("exit code = %d, want %d", exitCodeForError(err), ExitValidation)
+	}
+	if hint := hintFor(err); !strings.Contains(hint, "omit --name") {
+		t.Errorf("hint = %q, want it to say --name can be omitted", hint)
+	}
+	if len(bodies) != 1 {
+		t.Errorf("a refused create reached the server: %#v", bodies)
+	}
+}
+
 func TestDryRunRefusesWhenTheServerDoesNotAdvertiseSupport(t *testing.T) {
 	// A server predating dry-run ignores the unknown query parameter and
 	// performs the delete, so the flag must never reach it.

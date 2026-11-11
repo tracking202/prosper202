@@ -5537,6 +5537,15 @@ paths:
                     - type: array
                       items:
                         type: string
+                label:
+                  type: string
+                  nullable: true
+                  maxLength: 100
+                  description: >-
+                    What will use the key, shown in the key lists. Up to 100
+                    characters on one line, not starting with "AI:" (422
+                    otherwise). Omit, or send null or an empty string, for a
+                    key with no name.
       responses:
         "201":
           description: API key created
@@ -5556,6 +5565,10 @@ paths:
                       scope:
                         type: string
                         description: The stored scope; `*` for full access
+                      label:
+                        type: string
+                        nullable: true
+                        description: The name the key was given, or null
                       created_at:
                         type: integer
         "403":

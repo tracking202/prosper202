@@ -337,7 +337,10 @@ var userAPIKeyCreateCmd = &cobra.Command{
 		"`stage` for a propose-only key, or granular `<area>:read`/`<area>:write`/\n" +
 		"`<area>:stage` tokens (comma-separated), e.g.\n" +
 		"`reports:read,forecast-events:read`. Without --scope the key has full\n" +
-		"access (`*`). A scoped key cannot mint a key broader than itself.",
+		"access (`*`). A scoped key cannot mint a key broader than itself.\n\n" +
+		"--name says what will use the key (up to 100 characters on one line, not\n" +
+		"starting with \"AI:\"); it shows in `p202 user apikey list` and in My Account,\n" +
+		"and carries over when the key is rotated.",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Flag validation runs before the client is built: it needs no
@@ -362,9 +365,17 @@ var userAPIKeyCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		var body interface{}
+		name, _ := cmd.Flags().GetString("name")
+		fields := map[string]string{}
 		if scope != "" {
-			body = map[string]string{"scope": scope}
+			fields["scope"] = scope
+		}
+		if strings.TrimSpace(name) != "" {
+			fields["label"] = name
+		}
+		var body interface{}
+		if len(fields) > 0 {
+			body = fields
 		}
 		data, err := c.Post("users/"+args[0]+"/api-keys", body)
 		if err != nil {
@@ -682,6 +693,8 @@ func init() {
 	// API key flags
 	registerSingleDeleteFlags(userAPIKeyDeleteCmd)
 	userAPIKeyCreateCmd.Flags().String("scope", "", "Scope for the new key: *, read, write, stage, or comma-separated <area>:read/<area>:write/<area>:stage tokens (`read,stage` is the propose-only agent shape; default: full access)")
+	userAPIKeyCreateCmd.Flags().String("name", "", "What will use the key, e.g. \"Nightly store sync\" (up to 100 characters, one line, not starting with \"AI:\")")
+	emptyHint(userAPIKeyCreateCmd, "name", "Give the key a name, or omit --name to make it without one.")
 	emptyHint(userAPIKeyCreateCmd, "scope", "Name the scope (`read`, `write`, `stage`, or `<area>:read`/`<area>:write`/`<area>:stage`, comma-separated), "+
 		"or omit --scope entirely to mint a full-access key on purpose.")
 	// Taken until 1.9.80, when rotate made a key and deleted the old one;

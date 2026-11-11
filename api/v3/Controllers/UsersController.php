@@ -659,8 +659,22 @@ class UsersController
 
     public function createApiKey(int $userId, array $payload = [], ?\Api\V3\Auth $auth = null): array
     {
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['scope'], 'an API key');
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['scope', 'label'], 'an API key');
         $scopeTokens = $this->normalizeRequestedScope($payload['scope'] ?? null);
+        // The page's rule for a name (ApiKeyStore::labelFrom()); null or '' is no name.
+        $keyLabel = isset($payload['label']) ? ApiKeyStore::labelFrom($payload['label']) : null;
+        if ($keyLabel === false) {
+            throw new ValidationException('Invalid label', [
+                'label' => 'A key\'s name is text of up to ' . ApiKeyStore::LABEL_LENGTH
+                    . ' characters on one line, and does not start with "AI:".',
+            ]);
+        }
+        if ($keyLabel !== null && !\Api\V3\Auth::apiKeyLabelColumnExists($this->db)) {
+            throw new ConflictException(
+                'This install cannot name API keys yet (no label column on 202_api_keys). '
+                . 'Run the upgrade at /202-config/upgrade.php, or create the key without a label.'
+            );
+        }
 
         foreach ($scopeTokens ?? [] as $token) {
             if (!\Api\V3\Auth::isValidScopeToken($token)) {
@@ -711,7 +725,7 @@ class UsersController
         $storedScope = $scopeTokens === null ? null : implode(',', $scopeTokens);
 
         try {
-            ApiKeyStore::insert($this->db, $userId, $key, $storedScope, null, $now);
+            ApiKeyStore::insert($this->db, $userId, $key, $storedScope, $keyLabel, $now);
         } catch (QueryException $e) {
             throw new DatabaseException('Failed to create API key', $e);
         }
@@ -721,6 +735,7 @@ class UsersController
             'user_id' => $userId,
             'api_key' => $key,
             'scope' => $storedScope ?? '*',
+            'label' => $keyLabel,
             'created_at' => $now,
         ]];
     }

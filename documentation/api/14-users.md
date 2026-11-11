@@ -61,6 +61,8 @@ each refusal against a running instance.
 
 API keys are masked after the first 8 characters in list responses. The full key is only returned once, at creation time.
 
+A key can be named when it is created, for what will use it: `"label"` in the body of `POST /users/{id}/api-keys`, `--name` on `p202 user apikey create`, or the name field in My Account. A name is up to 100 characters on one line and does not start with "AI:"; anything else is refused with `422`. It shows in the key lists and carries over when the key is replaced.
+
 From 1.9.80 each key in the list also carries `last_used_at` (when it last authenticated a request, to within five minutes; `null` when no use is recorded), `last_used_api` (`v1`, `v2` or `v3`), `last_used_client` (the `User-Agent` that request sent, as the client named itself) and `ends_at`. `ends_at` is set on a key that was replaced, in My Account › Personal Settings › API keys, with `POST /users/{id}/api-keys/replace` (body `{"api_key": "<the old key>"}`) or with `p202 user apikey rotate`: the replaced key keeps working for 24 hours and is refused with `401` from then on, with a message saying it was replaced. It stays in the list for seven days after it ends and is then removed. To end a key at once, delete it. Replace answers `409` for a key already replaced and for an AI app's key (connect the app again), and `403` to a scoped caller for a key broader than its own.
 
 ## Preference Endpoints

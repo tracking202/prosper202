@@ -328,6 +328,30 @@ final class ApiKeyUseIntegrationTest extends TestCase
         $this->useRow($keys['ended']);
     }
 
+    public function testTheApiNamesAKeyByThePagesRule(): void
+    {
+        $users = new UsersController(self::$db);
+        $body = ['label' => ' Nightly store sync ', 'scope' => 'reports:read'];
+        $made = $users->createApiKey(self::USER, $body)['data'];
+        self::assertSame(['Nightly store sync', 'reports:read'], [$made['label'], $made['scope']]);
+        self::assertSame('Nightly store sync', $users->listApiKeys(self::USER)['data'][0]['label']);
+
+        foreach ([null, ''] as $none) {
+            self::assertNull($users->createApiKey(self::USER, ['label' => $none])['data']['label']);
+        }
+        self::assertNull($users->createApiKey(self::USER)['data']['label']);
+        $refused = [str_repeat('é', 101), "two\nlines", ['list'], 7, AiConnect::LABEL_PREFIX . 'Claude', 'ai: claude'];
+        foreach ($refused as $label) {
+            try {
+                $users->createApiKey(self::USER, ['label' => $label]);
+                self::fail('refused: ' . json_encode($label));
+            } catch (\Api\V3\Exception\ValidationException $e) {
+                self::assertSame('Invalid label', $e->getMessage());
+            }
+        }
+        self::assertSame(4, $this->keyCount(self::USER), 'a refused name makes no key');
+    }
+
     public function testAnAiAppsKeyIsNotReplacedHere(): void
     {
         ApiKeyStore::insert(self::$db, self::USER, self::KEY, 'reports:read', AiConnect::LABEL_PREFIX . 'Claude', 100);

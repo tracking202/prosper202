@@ -1247,7 +1247,7 @@ p202 user role assign <user_id> --role-id N [--json]
 p202 user role remove <user_id> <role_id> [--force] [--dry-run] [--json]
 
 p202 user apikey list   <user_id> [--json]                # includes each key's scope
-p202 user apikey create <user_id> [--scope S] [--json]    # S: *, read, write, or <area>:read/<area>:write tokens
+p202 user apikey create <user_id> [--scope S] [--name N] [--json]    # S: *, read, write, or <area>:read/<area>:write tokens; N: what will use the key
 p202 user apikey delete <user_id> <api_key> [--force] [--dry-run] [--json]
 p202 user apikey rotate <user_id> <old_api_key> [--update-config] [--force-config-update] [--json]
                        # new key with the old key's scope and label; the old key works 24 hours more

@@ -1790,6 +1790,7 @@ p202 user role remove 2 3             # Remove role 3 from user 2
 ```bash
 p202 user apikey list 1               # List keys for user 1
 p202 user apikey create 1             # Generate new key (shown once)
+p202 user apikey create 1 --name "Nightly store sync"   # Named for what will use it
 p202 user apikey delete 1 <key>       # Delete a specific key
 p202 user apikey rotate 1 <old-key>   # New key, same scope and label; the old one works 24 hours more
 p202 user apikey rotate 1 <old-key> --update-config

@@ -274,7 +274,10 @@ final class ScopeRefusalTest extends TestCase
         $labelled = array_values(array_unique($labelled));
         sort($labelled);
         // And ApiKeyStore::replace(), which calls self::insert() (below).
-        self::assertSame(['202-account/account.php', 'api/v3/Support/AiConnect.php'], $labelled);
+        self::assertSame(
+            ['202-account/account.php', 'api/v3/Controllers/UsersController.php', 'api/v3/Support/AiConnect.php'],
+            $labelled
+        );
 
         $root = dirname(__DIR__, 3);
         $page = (string) file_get_contents($root . '/202-account/account.php');
@@ -286,6 +289,14 @@ final class ScopeRefusalTest extends TestCase
         self::assertStringContainsString('$newKey, null, $newKeyLabel, $keyCreated);', $page);
         self::assertFalse(\Prosper202\User\ApiKeyStore::labelFrom(AiConnect::LABEL_PREFIX . 'Claude'));
         self::assertFalse(\Prosper202\User\ApiKeyStore::labelFrom(strtolower(AiConnect::LABEL_PREFIX) . 'claude'));
+
+        $api = (string) file_get_contents($root . '/api/v3/Controllers/UsersController.php');
+        self::assertSame(1, substr_count($api, 'ApiKeyStore::insert('));
+        self::assertStringContainsString(
+            "\$keyLabel = isset(\$payload['label']) ? ApiKeyStore::labelFrom(\$payload['label']) : null;",
+            $api
+        );
+        self::assertStringContainsString('$key, $storedScope, $keyLabel, $now);', $api);
 
         $store = (string) file_get_contents($root . '/202-config/User/ApiKeyStore.php');
         self::assertSame(1, substr_count($store, 'self::insert('));
