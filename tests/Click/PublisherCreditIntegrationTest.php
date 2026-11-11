@@ -96,6 +96,7 @@ final class PublisherCreditIntegrationTest extends TestCase
         foreach ([
             '202_clicks', '202_clicks_spy', '202_clicks_advance', '202_clicks_tracking', '202_clicks_record',
             '202_clicks_site', '202_clicks_publisher', '202_click_latest_visits', '202_attribution_rollup_dirty_clicks',
+            '202_google',
         ] as $table) {
             self::q("DELETE FROM $table WHERE click_id $range");
         }
@@ -165,6 +166,29 @@ final class PublisherCreditIntegrationTest extends TestCase
         self::assertNull(self::credit()->grantableById(self::OWNER, self::FOREIGN));
     }
 
+    public function testAUserTheApiCreatesHasAPublisherIdALinkCanCarry(): void
+    {
+        if (!function_exists('hash_user_pass')) {
+            require_once dirname(__DIR__, 2) . '/202-config/functions-auth.php';
+        }
+        $users = new \Api\V3\Controllers\UsersController(self::requireScratch());
+        $created = $users->create([
+            'user_name' => 'pc-api-publisher', 'user_email' => 'pc-api-publisher@example.com',
+            'user_pass' => 'a long enough password',
+        ])['data'];
+        try {
+            $publicId = $created['user_public_publisher_id'];
+            self::assertMatchesRegularExpression('/\A[0-9a-f]{10}\z/', (string) $publicId);
+            self::assertSame($publicId, PublisherCredit::requested([PublisherCredit::PARAMETER => $publicId]));
+            self::assertSame($publicId, $users->get((int) $created['user_id'])['data']['user_public_publisher_id']);
+        } finally {
+            $id = (int) $created['user_id'];
+            foreach (['202_users', '202_users_pref', '202_attribution_models'] as $table) {
+                self::q("DELETE FROM $table WHERE user_id = $id");
+            }
+        }
+    }
+
     public function testACreditedClickStaysTheAccountsAndNamesItsPublisher(): void
     {
         $repo = new MysqlClickRepository(new Connection(self::requireScratch()));
@@ -174,14 +198,17 @@ final class PublisherCreditIntegrationTest extends TestCase
             'user_id' => (string) self::OWNER,
             'click_time' => (string) time(),
             'publisher_user_id' => (string) self::PUBLISHER,
+            'publisher_tracker_id_public' => '4200000009',
         ], $credited));
         $repo->recordClick(new ClickRecord(clickId: $plain, userId: self::OWNER, clickTime: time()));
 
         $owner = self::$db->query("SELECT user_id FROM 202_clicks WHERE click_id = $credited")->fetch_row();
         self::assertSame((string) self::OWNER, (string) $owner[0], 'the click is the link\'s account\'s');
-        $credit = self::$db->query("SELECT publisher_user_id FROM 202_clicks_publisher WHERE click_id = $credited")
-            ->fetch_row();
+        $credit = self::$db->query(
+            "SELECT publisher_user_id, tracker_id_public FROM 202_clicks_publisher WHERE click_id = $credited"
+        )->fetch_row();
         self::assertSame((string) self::PUBLISHER, (string) $credit[0]);
+        self::assertSame('4200000009', (string) $credit[1], 'the link the click came on');
         self::assertSame('c0c0c0c0c0', self::credit()->publicIdOfClick($credited));
 
         self::assertSame(0, self::$db->query("SELECT 1 FROM 202_clicks_publisher WHERE click_id = $plain")->num_rows);

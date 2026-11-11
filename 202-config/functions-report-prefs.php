@@ -79,6 +79,7 @@ function p202_report_pref_fields(): array
         'device_id' => ['column' => 'user_pref_device_id', 'kind' => 'id', 'max' => $tiny, 'label' => 'Device type'],
         'browser_id' => ['column' => 'user_pref_browser_id', 'kind' => 'id', 'max' => $tiny, 'label' => 'Browser'],
         'platform_id' => ['column' => 'user_pref_platform_id', 'kind' => 'id', 'max' => $tiny, 'label' => 'Platform'],
+        'publisher_id' => ['column' => 'user_pref_publisher_id', 'kind' => 'id', 'max' => $medium, 'label' => 'Publisher'],
         'subid' => ['column' => 'user_pref_subid', 'kind' => 'id', 'max' => PHP_INT_MAX, 'label' => 'Subid'],
         'ip' => ['column' => 'user_pref_ip', 'kind' => 'text', 'max' => 100, 'label' => 'Visitor IP'],
         'referer' => ['column' => 'user_pref_referer', 'kind' => 'text', 'max' => 100, 'label' => 'Referer'],

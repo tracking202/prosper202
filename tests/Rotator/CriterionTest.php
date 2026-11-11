@@ -81,6 +81,10 @@ final class CriterionTest extends TestCase
         yield 'not an address' => ['ip', '203.0.113.500', IpCriterion::refusal('203.0.113.500'), ''];
         yield 'a country beside ALL' => ['country', 'US, ALL', null, 'US,ALL'];
         yield 'a country list' => ['country', 'United States(US), Canada(CA)', null, 'United States(US),Canada(CA)'];
+        yield 'a country as its code' => ['country', 'us, Canada(CA)', null, 'United States(US),Canada(CA)'];
+        yield 'a country as its name' => ['country', 'united kingdom', null, 'United Kingdom(GB)'];
+        yield 'a country nobody knows' => ['country', 'Narnia', null, 'Narnia'];
+        yield 'a device in capitals' => ['device', 'Mobile, TABLET', null, 'mobile,tablet'];
         yield 'IP ranges' => ['iprange', '203.0.113.0/24, 192.0.2.*', null, '203.0.113.0/24,192.0.2.*'];
         yield 'not an IP range' => ['iprange', '203.0.113.0/24, 198.51.100.0/99', IpRange::refusal('198.51.100.0/99'), ''];
         yield 'eu, as 1.9.56 stored it' => ['eu', 'true', null, 'true'];

@@ -203,6 +203,7 @@ var breakdownDimensions = []string{
 	"country", "city", "region", "browser", "platform", "device", "isp", "text_ad",
 	"ip", "referer", "referer_url", "device_type", "c1", "c2", "c3", "c4",
 	"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "rotator", "rotator_rule",
+	"publisher", "publisher_link",
 }
 
 // dimensionEnum is a --breakdown/--group-by flag's accepted values.
