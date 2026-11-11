@@ -615,6 +615,19 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
         ));
         self::assertSame((string) self::OWNER, self::scalar("SELECT user_id FROM 202_clicks WHERE click_id = $click"),
             'the click stays the account\'s, so its reports keep it');
+        self::assertSame((string) (self::TRACKER + self::PUBLIC_OFFSET), self::scalar(
+            "SELECT tracker_id_public FROM 202_clicks_publisher WHERE click_id = $click"
+        ), 'and the link it came on, for the report by link');
+
+        // A landing page's click records the link its visit named.
+        $lpip = self::LANDING_PAGE + self::PUBLIC_OFFSET;
+        [$status, $headers] = self::http("/tracking202/static/record_simple.php?lpip=$lpip&t202id="
+            . (self::LP_TRACKER + self::PUBLIC_OFFSET) . '&t202pubid=' . self::PUBLISHER_ID);
+        self::assertSame(200, $status, $headers . $this->serverLog());
+        self::assertSame((string) (self::LP_TRACKER + self::PUBLIC_OFFSET), self::scalar(
+            'SELECT tracker_id_public FROM 202_clicks_publisher WHERE publisher_user_id = ' . self::PUBLISHER
+            . ' ORDER BY click_id DESC LIMIT 1'
+        ));
 
         // A public id of a user without the Publisher role is a claim nobody granted.
         $plain = $this->directLinkClick('&t202pubid=' . self::MANAGER_ID);
@@ -850,6 +863,14 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
         self::assertMatchesRegularExpression('~^Location: https://shop\.example/newsletter~mi', $headers);
         [, $headers] = self::http("$path&c1=autumn", [], null, ['X-Forwarded-For: 198.51.100.22']);
         self::assertMatchesRegularExpression('~^Location: https://shop\.example/default~mi', $headers);
+
+        // A redirector link carrying a publisher records the link with the credit.
+        [$status, $headers] = self::http("$path&c1=spring&t202pubid=" . self::PUBLISHER_ID, [], null, ['X-Forwarded-For: 198.51.100.23']);
+        self::assertSame(302, $status, $headers . $this->serverLog());
+        self::assertSame((string) (self::ROTATOR_TRACKER + self::PUBLIC_OFFSET), self::scalar(
+            'SELECT tracker_id_public FROM 202_clicks_publisher WHERE publisher_user_id = ' . self::PUBLISHER
+            . ' ORDER BY click_id DESC LIMIT 1'
+        ));
     }
 
     /**

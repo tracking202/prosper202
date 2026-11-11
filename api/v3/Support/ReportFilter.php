@@ -349,7 +349,7 @@ final class ReportFilter
             $types .= 's';
         }
 
-        $credited = 'SELECT pc.click_id FROM 202_clicks_publisher pc';
+        $credited = \Prosper202\Click\PublisherCredit::CREDITED_CLICKS_SQL;
         if (($params['publisher_id'] ?? null) === 'none') {
             $where[] = $col('click_id') . " NOT IN ($credited)";
         } else {

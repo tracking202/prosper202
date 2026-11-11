@@ -113,7 +113,7 @@ func TestTheNewPeriodsAndDimensionsAreAccepted(t *testing.T) {
 			t.Errorf("--period %s sent %+v", period, got)
 		}
 	}
-	for _, dim := range []string{"ip", "referer", "referer_url", "device_type", "c1", "c4", "utm_source", "utm_content", "rotator", "rotator_rule", "publisher"} {
+	for _, dim := range []string{"ip", "referer", "referer_url", "device_type", "c1", "c4", "utm_source", "utm_content", "rotator", "rotator_rule", "publisher", "publisher_link"} {
 		_, requests := depthServer(t, nil)
 		if _, _, err := executeCommand("report", "breakdown", "--breakdown", dim, "--sort", "cpa", "--json"); err != nil {
 			t.Fatalf("--breakdown %s: %v", dim, err)

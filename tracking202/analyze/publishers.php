@@ -2,27 +2,29 @@
 
 /**
  * Analyze › Publishers: what each publisher's links did. The clicks a
- * publisher link credited (Prosper202\Click\PublisherCredit), by publisher
- * and under each by campaign, with the clicks on no publisher link last so
- * the totals are the account's.
+ * publisher link credited (Prosper202\Click\PublisherCredit), by publisher,
+ * under each by link (its t202id, stored with a credit since 1.9.80; older
+ * clicks are one "link not recorded" group) and campaign, with the clicks
+ * on no publisher link last so the totals are the account's.
  *
- * The figures are GET /reports/groups?by=publisher,campaign's, from the same
+ * The figures are GET /reports/groups?by=publisher,publisher_link,campaign's, from the same
  * controller, over the window the other Analyze reports share (read and
  * stored as ltv.php does it).
  */
 
 declare(strict_types=1);
 
-use Api\V3\Controllers\ReportsController;
 use Prosper202\Click\PublisherCredit;
 use Prosper202\Database\Connection;
 use Tracking202\Analyze\AnalyzeReportController;
+use Tracking202\Analyze\PublishersReport;
 use Tracking202\Report\ReportFilterInput;
 use Tracking202\Report\ReportPrefsStore;
 
 $rootPath = dirname(__DIR__, 2);
 include_once $rootPath . '/202-config/connect.php';
 require_once __DIR__ . '/AnalyzeReportController.php';
+require_once __DIR__ . '/PublishersReport.php';
 
 AUTH::require_user();
 AUTH::require_permissions('access_to_campaign_data');
@@ -51,31 +53,24 @@ $e = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, '
 // Whose clicks: the signed-in account's, as the other reports read them (DataScope).
 $accountId = (int) ($_SESSION['user_own_id'] ?? 0);
 $report = null;
-$currency = 'USD';
 $grantable = [];
 try {
-    $reports = new ReportsController($db, $accountId);
-    $report = $reports->groups([
-        'by' => 'publisher,campaign',
-        'time_from' => (string) (int) $time['from'],
-        'time_to' => (string) (int) $time['to'],
-    ]);
-    $currency = $reports->accountCurrency();
+    $report = PublishersReport::read($db, $accountId, (int) $time['from'], (int) $time['to']);
     $grantable = (new PublisherCredit(new Connection($db)))->grantable($accountId);
 } catch (\Throwable $failure) {
     error_log('Analyze publishers report failed: ' . $failure->getMessage());
     $report = null;
 }
+$publishers = $report['publishers'] ?? [];
+$uncredited = $report['uncredited'] ?? null;
+$unrecordedLinks = $report['unrecorded_links'] ?? false;
+$currency = $report['currency'] ?? 'USD';
 
-$publishers = [];
-$uncredited = null;
-foreach ($report['data'] ?? [] as $group) {
-    if ($group['id'] === null) {
-        $uncredited = $group;
-    } else {
-        $publishers[] = $group;
-    }
-}
+// The download exports this page's window: the link carries it (ReportView).
+require_once $rootPath . '/202-config/functions-report-prefs.php';
+$download = '<a class="btn btn-secondary btn-sm" href="'
+    . $e(p202_report_view_url($base . '/tracking202/analyze/publishers_download.php', p202_report_view_query([], [], $window)))
+    . '"><i class="bi bi-file-earmark-spreadsheet"></i> Download to Excel</a>';
 
 $metricLabels = ['Clicks', 'Click throughs', 'Leads', 'Conv. rate', 'Income', 'Cost', 'Net', 'ROI'];
 /** @param array<string, mixed> $row */
@@ -112,7 +107,7 @@ template_top('Analyze Your Publishers');
     <div class="p202-page-header__icon"><i class="bi bi-people"></i></div>
     <div class="p202-page-header__text">
         <h1 class="p202-page-header__title">Publishers</h1>
-        <p class="p202-page-header__desc">What each publisher's links did: clicks, leads and profit by publisher, and by campaign under each.</p>
+        <p class="p202-page-header__desc">What each publisher's links did: clicks, leads and profit by publisher, and by link and campaign under each.</p>
     </div>
 </div>
 
@@ -125,6 +120,7 @@ template_top('Analyze Your Publishers');
     'id' => 'publisher-range',
     'range' => $rangeSpec,
     'filters' => [],
+    'aside' => $publishers === [] ? '' : $download,
     'note' => 'A click counts for the publisher whose link it came on. The range is shared with your other reports.',
 ]); ?>
 
@@ -142,10 +138,10 @@ template_top('Analyze Your Publishers');
 <?php } else { ?>
     <div class="p202-table-wrap">
         <table class="table table-hover p202-table" id="publisher-table">
-            <caption class="visually-hidden">Publishers, each with the campaigns their links sent clicks to</caption>
+            <caption class="visually-hidden">Publishers, each with their links and the campaign each link sent clicks to</caption>
             <thead>
                 <tr>
-                    <th scope="col">Publisher and campaign</th>
+                    <th scope="col">Publisher, link and campaign</th>
                     <?php foreach ($metricLabels as $label) { ?>
                         <th scope="col" class="num"><?php echo $e($label); ?></th>
                     <?php } ?>
@@ -156,10 +152,13 @@ template_top('Analyze Your Publishers');
                     <tr class="p202-table__group">
                         <th scope="rowgroup" colspan="9"><?php echo $e($publisher['name']); ?></th>
                     </tr>
-                    <?php foreach ($publisher['children'] as $campaign) { ?>
+                    <?php foreach ($publisher['rows'] as $row) { ?>
                         <tr>
-                            <td><?php echo $campaign['id'] === null ? '<span class="text-secondary">No campaign</span>' : $e($campaign['name']); ?></td>
-                            <?php echo $metricCells($campaign); ?>
+                            <td>
+                                <?php echo $row['link'] === null ? '<span class="text-secondary">Link not recorded</span>' : 'Link ' . $e($row['link']); ?>
+                                <span class="text-secondary">&middot; <?php echo $row['campaign'] === null ? 'No campaign' : $e($row['campaign']); ?></span>
+                            </td>
+                            <?php echo $metricCells($row); ?>
                         </tr>
                     <?php } ?>
                     <tr class="fw-semibold">
@@ -182,6 +181,7 @@ template_top('Analyze Your Publishers');
             </tbody>
         </table>
     </div>
+    <p class="form-text">A link is named by the number after <code>t202id=</code> in it.<?php echo $unrecordedLinks ? ' Clicks from before this version did not record their link, so they are listed as &ldquo;Link not recorded&rdquo; under their campaign.' : ''; ?></p>
 <?php } ?>
 
 <?php template_bottom();
