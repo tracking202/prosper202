@@ -474,17 +474,18 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
     }
 
     /**
-     * The payment cards say what recorded nothing lately: a card whose
-     * notifications were refused for their currency names the currency and
-     * links the setting and the log, and the JVZoo card of an account whose
-     * 1.9.56 URL gets a vendor's notifications offers one button that reads
-     * it as a vendor's. With nothing in the log neither shows, and the
-     * 1.9.56 choice is closed.
+     * The payment cards say what recorded nothing: a card whose
+     * notifications are held for their currency names the currency and
+     * links the setting and the log, and once the account counts in it
+     * offers one button that records them; the JVZoo card of an account
+     * whose 1.9.56 URL gets a vendor's notifications offers one button that
+     * reads it as a vendor's. With nothing held or logged neither shows,
+     * and the 1.9.56 choice is closed.
      */
-    public function testThePaymentCardsSayWhatRecordedNothingAndTheJvzooButtonReadsTheUrlAsAVendors(): void
+    public function testThePaymentCardsSayWhatRecordedNothingAndTheirButtonsFixIt(): void
     {
-        $column = \Prosper202\PaymentNotification\JVZoo\JVZooRole::ROLELESS_COLUMN;
         self::requireScratch();
+        $column = \Prosper202\PaymentNotification\JVZoo\JVZooRole::ROLELESS_COLUMN;
         $log = new \Prosper202\InboundLog\InboundLog(self::$db);
         $append = static function (
             string $endpoint,
@@ -498,32 +499,90 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
                 new \Prosper202\InboundLog\Entry($endpoint, 'POST', $status, $outcome, $reason, $user, fields: $fields)
             ));
         };
+        $held = new \Prosper202\PaymentNotification\HeldNotifications(self::$db);
+        $hold = static function (string $id, int $click, int $user = self::USER) use ($held): void {
+            $order = new \Prosper202\PaymentNotification\Notification(
+                \Prosper202\PaymentNotification\NotificationKind::SALE,
+                'orders/paid',
+                $id,
+                null,
+                '25.00',
+                'EUR',
+                $click
+            );
+            $request = new \Prosper202\PaymentNotification\InboundRequest('POST', 'application/json', []);
+            $shopify = new \Prosper202\PaymentNotification\Shopify\ShopifyAdapter(self::$db);
+            self::assertTrue($held->hold($user, $shopify, $order, $request, time()));
+        };
         $disclosure = static fn (string $open): string
             => '~<details class="p202-disclosure mt-3"' . $open . ' data-jvzoo-roleless-disclosure>~';
         $setting = '202-account/account.php#currency">change the account currency to EUR</a>';
         $save = ['token' => 'SESSION', 'change_jvzoo_roleless_role' => '1', $column => 'vendor'];
         $field = \Prosper202\PaymentNotification\JVZoo\JVZooAdapter::ROLELESS_LOG_FIELD;
-        self::q('DELETE FROM 202_inbound_log WHERE user_id IN (' . self::USER . ', ' . self::OTHER . ')');
+        $users = self::USER . ', ' . self::OTHER;
+        $click = 99008101;
+        $clean = static function () use ($users, $click): void {
+            self::q("DELETE FROM 202_inbound_log WHERE user_id IN ($users)");
+            self::q("DELETE FROM 202_held_payment_notifications WHERE user_id IN ($users)");
+            self::q("DELETE FROM 202_conversion_logs WHERE click_id = $click");
+            foreach (['202_clicks', '202_clicks_record', '202_click_latest_visits', '202_dataengine'] as $table) {
+                self::q("DELETE FROM $table WHERE click_id = $click");
+            }
+        };
+        $clean();
         try {
             $out = self::page(self::PAGE);
             self::assertStringNotContainsString('data-currency-mismatch', $out);
+            self::assertStringNotContainsString('data-held-recordable', $out);
             self::assertStringNotContainsString('data-jvzoo-roleless-notice', $out);
             self::assertMatchesRegularExpression($disclosure(''), $out);
 
-            $eur = \Prosper202\PaymentNotification\CurrencyMismatch::message('EUR', 'USD');
-            $append('shopify', 200, 'currency_mismatch', $eur);
-            $append('shopify', 200, 'currency_mismatch', $eur);
-            // Another account's refusals and traffic are not this account's.
-            $append('paykickstart', 422, 'currency_mismatch', $eur, [], self::OTHER);
+            (new \Prosper202\Click\MysqlClickRepository(new \Prosper202\Database\Connection(self::$db)))->recordClick(
+                new \Prosper202\Click\ClickRecord(clickId: $click, userId: self::USER, clickTime: time() - 600)
+            );
+            $hold('SH-1001', $click);
+            $hold('SH-1002', $click);
+            // Another account's held notifications and traffic are not this account's.
+            $hold('SH-2001', $click, self::OTHER);
             $append('jvzoo', 400, 'malformed', 'refused', [$field => 'affiliate'], self::OTHER);
             $out = self::page(self::PAGE);
             self::assertSame(1, substr_count($out, 'data-currency-mismatch'));
             self::assertStringContainsString('data-currency-mismatch="shopify"', $out);
-            self::assertStringContainsString('<strong>2 Shopify notifications in EUR recorded nothing</strong>', $out);
+            $warning = '<strong>2 notifications from Shopify in EUR recorded nothing</strong>';
+            self::assertStringContainsString($warning, $out);
             self::assertStringContainsString('this account counts in USD', $out);
             self::assertStringContainsString($setting, $out);
             self::assertStringContainsString('inbound_log.php?outcome=currency_mismatch&amp;endpoint=shopify', $out);
+            self::assertStringNotContainsString('data-held-recordable', $out);
             self::assertStringNotContainsString('data-jvzoo-roleless-notice', $out);
+
+            // The account now counts in EUR: the warning goes, and the card offers to record them.
+            self::q("UPDATE 202_users_pref SET user_account_currency = 'EUR' WHERE user_id = " . self::USER);
+            $out = self::page(self::PAGE);
+            self::assertStringNotContainsString('data-currency-mismatch', $out);
+            self::assertStringContainsString('<strong>2 notifications in EUR are held</strong>', $out);
+            $button = '~<form method="post" action="[^"]*#shopify" class="mt-2" data-record-held>(.*?)</form>~s';
+            self::assertSame(1, preg_match($button, $out, $form));
+            self::assertStringContainsString('name="token"', $form[1]);
+            self::assertStringContainsString('name="record_held_notifications" value="shopify"', $form[1]);
+
+            // No token: nothing recorded. With it: both orders, on the click, once however often it is pressed.
+            self::page(self::PAGE, [], ['record_held_notifications' => 'shopify']);
+            self::assertSame(2, $held->counts(self::USER)['shopify']['EUR']['count']);
+            $record = ['token' => 'SESSION', 'record_held_notifications' => 'shopify'];
+            self::assertRedirected(self::page(self::PAGE, [], $record), 'the button records the held orders');
+            self::page(self::PAGE, [], $record);
+            $found = self::$db->query('SELECT transaction_id, user_id, source FROM 202_conversion_logs'
+                . " WHERE click_id = $click ORDER BY conv_id");
+            self::assertInstanceOf(\mysqli_result::class, $found);
+            self::assertSame(
+                [['SH-1001', (string) self::USER, 'shopify'], ['SH-1002', (string) self::USER, 'shopify']],
+                $found->fetch_all(MYSQLI_NUM)
+            );
+            self::assertSame([], $held->counts(self::USER));
+            self::assertSame(1, $held->counts(self::OTHER)['shopify']['EUR']['count']);
+            self::assertStringNotContainsString('data-held-recordable', self::page(self::PAGE));
+            self::page(self::PAGE, [], ['token' => 'SESSION', 'record_held_notifications' => 'jvzoo']);
 
             $append('jvzoo', 200, 'recorded', 'Recorded.', [$field => 'vendor_no_affiliate']);
             $append('jvzoo', 400, 'malformed', 'refused', [$field => 'affiliate']);
@@ -547,14 +606,10 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
             $out = self::page(self::PAGE);
             self::assertMatchesRegularExpression('~value="vendor" checked~', $out);
             self::assertStringNotContainsString('data-jvzoo-roleless-notice', $out);
-
-            // The account now counts in EUR: the Shopify card stops warning.
-            self::q("UPDATE 202_users_pref SET user_account_currency = 'EUR' WHERE user_id = " . self::USER);
-            self::assertStringNotContainsString('data-currency-mismatch', self::page(self::PAGE));
         } finally {
             self::q("UPDATE 202_users_pref SET $column = 'affiliate', user_account_currency = 'USD'"
                 . ' WHERE user_id = ' . self::USER);
-            self::q('DELETE FROM 202_inbound_log WHERE user_id IN (' . self::USER . ', ' . self::OTHER . ')');
+            $clean();
         }
     }
 

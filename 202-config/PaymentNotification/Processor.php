@@ -140,7 +140,7 @@ final class Processor
         if ($owner === null) {
             return self::unknownClick($n->clickId, $provider->clickField());
         }
-        $currency = $this->currency($n, $owner, $provider);
+        $currency = $this->currency($n, $owner, $provider, $request);
         if ($currency instanceof Outcome) {
             return $currency;
         }
@@ -261,7 +261,7 @@ final class Processor
         if ($owner === null) {
             return self::unknownClick($n->clickId, $provider->clickField());
         }
-        $currency = $this->currency($n, $owner, $provider);
+        $currency = $this->currency($n, $owner, $provider, $request);
         if ($currency instanceof Outcome) {
             return $currency;
         }
@@ -291,7 +291,8 @@ final class Processor
         // a duplicate of the one that stands, whatever amount it states.
         $ownId = $n->transactionId !== null && $n->transactionId !== $original;
         $exact = $provider instanceof FingerprintsNotifications;
-        $body = $exact ? $provider->fingerprint($request) : self::bodyFingerprint($request->fields);
+        $bodyKey = $request->heldKeys['body'] ?? self::bodyFingerprint($request->fields);
+        $body = $exact ? ($request->heldKeys['notification'] ?? $provider->fingerprint($request)) : $bodyKey;
         $reference = $ownId ? (string) $n->transactionId : 'body:' . $body;
         $on = 'Transaction ' . $original . ' on click ' . $clickId;
         // A refund is dated when it happened, the sale keeping its own day;
@@ -303,7 +304,7 @@ final class Processor
         if (!$ownId && $sale !== null && $provider instanceof KeyedRefundsByBodyBefore1980) {
             $before = $this->reversalUnderKey(
                 $clickId,
-                DedupeKey::reversal($sale['conv_id'], 'body:' . self::bodyFingerprint($request->fields)),
+                DedupeKey::reversal($sale['conv_id'], 'body:' . $bodyKey),
                 $owner
             );
             if ($before !== null) {
@@ -345,7 +346,7 @@ final class Processor
                 && $provider instanceof KeyedRefundsByBodyBefore1980
                 && $this->deletedReversalOfAnotherAmount($n, $result['conv_id'], $owner)
             ) {
-                $result = $write('body:' . self::bodyFingerprint($request->fields));
+                $result = $write('body:' . $bodyKey);
             }
         } catch (ReversalException $e) {
             $standing = !$ownId && $e->kind === ReversalException::CONFLICT
@@ -624,10 +625,16 @@ final class Processor
      * An amount in another currency than the account's: refused, since
      * nothing here converts it, or, from a provider that states every
      * account's amounts in one currency, kept as stated with the answer
-     * saying so ('' when the currencies agree or none is stated).
+     * saying so ('' when the currencies agree or none is stated). A refused
+     * one is held (HeldNotifications) to be recorded once the account counts
+     * in its currency.
      */
-    private function currency(Notification $n, int $owner, ProviderAdapter $provider): Outcome|string
-    {
+    private function currency(
+        Notification $n,
+        int $owner,
+        ProviderAdapter $provider,
+        InboundRequest $request
+    ): Outcome|string {
         $accountCurrency = $this->otherCurrency($n, $owner);
         if ($accountCurrency === null) {
             return '';
@@ -637,9 +644,22 @@ final class Processor
                 . $accountCurrency . '; Prosper202 does not convert it, so it stands as stated.';
         }
 
+        $held = false;
+        try {
+            $held = (new HeldNotifications($this->db))->hold($owner, $provider, $n, $request, time());
+        } catch (\Throwable $e) {
+            error_log(sprintf(
+                '%s notification: the %s refused for its currency could not be held for account %d: %s',
+                $provider->name(),
+                $n->event,
+                $owner,
+                $e->getMessage()
+            ));
+        }
+
         return new Outcome(
             OutcomeKind::CURRENCY_MISMATCH,
-            CurrencyMismatch::message((string) $n->currency, $accountCurrency),
+            CurrencyMismatch::message((string) $n->currency, $accountCurrency, $provider->name(), $held),
             null,
             $owner
         );

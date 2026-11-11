@@ -4,66 +4,54 @@ declare(strict_types=1);
 
 namespace Prosper202\PaymentNotification;
 
-use Prosper202\InboundLog\InboundLog;
-
 /**
- * A sale stated in another currency than the account's, which records
- * nothing: what the answer says to do about it, and the count of them the
- * integration's card shows until the account's currency is theirs.
+ * A notification stated in another currency than the account's, which
+ * records nothing and is held: what its answer says to do about it, and
+ * what the integration's card (and GET /system/integrations) says of the
+ * ones held.
  */
 final class CurrencyMismatch
 {
-    /** How far back a card counts. */
-    public const WINDOW = 30 * 86400;
-    /** The newest refusals read for the count; more than these read as "at least". */
-    public const READ = 500;
-
-    private const STATED = '/^The amount is in ([A-Z]{3}) and this account counts in [^;]*;/';
-
     private function __construct()
     {
     }
 
-    /** What the provider's delivery log and the inbound log say of the refused sale. */
-    public static function message(string $stated, string $accountCurrency): string
+    /** What the provider's delivery log and the inbound log say of the refused notification. */
+    public static function message(string $stated, string $accountCurrency, string $provider, bool $held): string
     {
         $stated = strtoupper($stated);
+        $refused = 'The amount is in ' . $stated . ' and this account counts in ' . $accountCurrency
+            . '; Prosper202 does not convert it, so nothing was recorded.';
+        $setting = 'Account > Personal Settings > Account currency';
 
-        return 'The amount is in ' . $stated . ' and this account counts in ' . $accountCurrency
-            . '; Prosper202 does not convert it, so nothing was recorded. If this account sells in ' . $stated
-            . ', set Account > Personal Settings > Account currency to ' . $stated . ', then send this'
-            . ' notification again. It is listed on Setup > Inbound Log.';
+        return $held
+            ? $refused . ' It is held: if this account sells in ' . $stated . ', set ' . $setting . ' to ' . $stated
+                . ', then record the held notifications on Account > API integrations > ' . $provider . '.'
+            : $refused . ' It could not be held: if this account sells in ' . $stated . ', set ' . $setting
+                . ' to ' . $stated . ', then send this notification again.';
     }
 
     /**
-     * The account's sales refused for their currency since $since, by
-     * endpoint: only those stated in another currency than the account
-     * counts in now, so a card stops warning once the currency is changed.
+     * What one source's card says, from the account's held notifications
+     * (HeldNotifications::counts()): those it can record now, stated in
+     * the currency the account counts in, and those still waiting.
      *
-     * @return array<string, array{count: int, currencies: list<string>, latest: int, more: bool}>
+     * @param array<string, array<string, array{count: int, latest: int}>> $counts
+     * @return array{recordable: int, waiting: int, waiting_currencies: list<string>}
      */
-    public static function recent(InboundLog $log, int $userId, string $accountCurrency, int $since): array
+    public static function held(array $counts, string $source, string $accountCurrency): array
     {
         $accountCurrency = strtoupper(trim($accountCurrency));
-        $rows = $log->list($userId, false, ['outcome' => OutcomeKind::CURRENCY_MISMATCH->value], self::READ);
-        $more = count($rows) === self::READ;
-        $found = [];
-        foreach ($rows as $row) {
-            if (
-                (int) $row['received_at'] < $since
-                || preg_match(self::STATED, (string) $row['reason'], $m) !== 1 || $m[1] === $accountCurrency
-            ) {
-                continue;
-            }
-            $endpoint = (string) $row['endpoint'];
-            $found[$endpoint] ??= ['count' => 0, 'currencies' => [], 'latest' => 0, 'more' => $more];
-            $found[$endpoint]['count']++;
-            $found[$endpoint]['latest'] = max($found[$endpoint]['latest'], (int) $row['received_at']);
-            if (!in_array($m[1], $found[$endpoint]['currencies'], true)) {
-                $found[$endpoint]['currencies'][] = $m[1];
+        $held = ['recordable' => 0, 'waiting' => 0, 'waiting_currencies' => []];
+        foreach ($counts[$source] ?? [] as $currency => $of) {
+            if ($currency === $accountCurrency) {
+                $held['recordable'] += $of['count'];
+            } else {
+                $held['waiting'] += $of['count'];
+                $held['waiting_currencies'][] = $currency;
             }
         }
 
-        return $found;
+        return $held;
     }
 }

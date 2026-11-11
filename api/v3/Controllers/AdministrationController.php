@@ -14,8 +14,13 @@ use Prosper202\Click\TrackingBaseUrl;
 use Prosper202\Database\Connection;
 use Prosper202\GeoIp\CityDatabase;
 use Prosper202\GeoIp\RefreshStore;
+use Prosper202\InboundLog\InboundLog;
+use Prosper202\PaymentNotification\CurrencyMismatch;
+use Prosper202\PaymentNotification\HeldNotifications;
+use Prosper202\PaymentNotification\HeldReplay;
 use Prosper202\PaymentNotification\JVZoo\JVZooKey;
 use Prosper202\PaymentNotification\JVZoo\JVZooRole;
+use Prosper202\PaymentNotification\JVZoo\RolelessTraffic;
 use Prosper202\PaymentNotification\Zaxaa\ZaxaaSignature;
 use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
 use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
@@ -683,11 +688,22 @@ final class AdministrationController
             $base = TrackingBaseUrl::buildForResponse((string) ($domain['user_tracking_domain'] ?? ''), $server ?? $_SERVER, dirname(__DIR__, 3));
             $prefs = $this->one(
                 'SELECT cb_key, cb_verified, jvzoo_ipn_secret_key, zaxaa_api_signature, user_slack_incoming_webhook,
-                        paykickstart_ipn_secret_keys, shopify_webhook_secret
+                        paykickstart_ipn_secret_keys, shopify_webhook_secret, user_account_currency,
+                        jvzoo_roleless_role
                  FROM 202_users_pref WHERE user_id = ? LIMIT 1',
                 'i',
                 [$this->userId]
             ) ?? [];
+
+            // What the page's payment cards say: the notifications held for their currency, and what
+            // JVZoo's 1.9.56 URL received lately.
+            $held = (new HeldNotifications($this->db))->counts($this->userId);
+            $noRole = RolelessTraffic::recent(
+                new InboundLog($this->db),
+                $this->userId,
+                time() - RolelessTraffic::WINDOW
+            );
+            $readAs = JVZooRole::fromQuery($prefs['jvzoo_roleless_role'] ?? null) ?? JVZooRole::AFFILIATE;
 
             $list = [];
             foreach (self::INTEGRATIONS as $key => $integration) {
@@ -722,6 +738,23 @@ final class AdministrationController
                     $keys = $prefs['paykickstart_ipn_secret_keys'] ?? null;
                     $entry['keys_stored'] = count(PayKickstartKeys::stored(is_string($keys) ? $keys : null)['keys']);
                     $entry['secret_stored'] = $entry['keys_stored'] > 0;
+                }
+                if (HeldReplay::provider($key, $this->db) !== null) {
+                    $entry['held_notifications'] = CurrencyMismatch::held(
+                        $held,
+                        $key,
+                        (string) ($prefs['user_account_currency'] ?? '')
+                    );
+                }
+                if ($key === 'jvzoo') {
+                    $entry['no_role_url'] = [
+                        'read_as' => $readAs->value,
+                        'vendor_no_affiliate' => $noRole->vendorNoAffiliate,
+                        'refused' => $noRole->refused,
+                        'as_affiliate' => $noRole->asAffiliate,
+                        'as_vendor' => $noRole->asVendor,
+                        'conflict' => $noRole->conflict,
+                    ];
                 }
                 $list[] = $entry;
             }

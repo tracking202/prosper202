@@ -371,11 +371,15 @@ minutes.
     "base_url": "https://track.example.com/",
     "integrations": [
       { "integration": "clickbank", "name": "ClickBank", "label": "INS URL", "url": "https://track.example.com/tracking202/static/cb202.php", "secret_stored": true, "verified": false },
-      { "integration": "jvzoo", "name": "JVZoo", "label": "Affiliate IPN URL", "url": "https://track.example.com/tracking202/static/jvzoo.php?role=affiliate", "secret_stored": true },
+      { "integration": "jvzoo", "name": "JVZoo", "label": "Affiliate IPN URL", "url": "https://track.example.com/tracking202/static/jvzoo.php?role=affiliate", "secret_stored": true,
+        "no_role_url": { "read_as": "affiliate", "vendor_no_affiliate": 0, "refused": 0, "as_affiliate": 0, "as_vendor": 0, "conflict": 0 } },
       { "integration": "jvzoo_vendor", "name": "JVZoo", "label": "Vendor JVZIPN URL", "url": "https://track.example.com/tracking202/static/jvzoo.php?role=vendor", "secret_stored": true },
-      { "integration": "zaxaa", "name": "Zaxaa", "label": "ZPN URL", "url": "https://track.example.com/tracking202/static/zpn.php", "secret_stored": false },
-      { "integration": "paykickstart", "name": "PayKickstart", "label": "IPN URL", "url": "https://track.example.com/tracking202/static/paykickstart.php", "secret_stored": true, "keys_stored": 2 },
-      { "integration": "shopify", "name": "Shopify", "label": "Webhook URL", "url": "https://track.example.com/tracking202/static/shopify.php", "secret_stored": false }
+      { "integration": "zaxaa", "name": "Zaxaa", "label": "ZPN URL", "url": "https://track.example.com/tracking202/static/zpn.php", "secret_stored": false,
+        "held_notifications": { "recordable": 0, "waiting": 0, "waiting_currencies": [] } },
+      { "integration": "paykickstart", "name": "PayKickstart", "label": "IPN URL", "url": "https://track.example.com/tracking202/static/paykickstart.php", "secret_stored": true, "keys_stored": 2,
+        "held_notifications": { "recordable": 0, "waiting": 0, "waiting_currencies": [] } },
+      { "integration": "shopify", "name": "Shopify", "label": "Webhook URL", "url": "https://track.example.com/tracking202/static/shopify.php", "secret_stored": true,
+        "held_notifications": { "recordable": 0, "waiting": 3, "waiting_currencies": ["EUR"] } }
     ]
   }
 }
@@ -388,6 +392,15 @@ none); PayKickstart's `keys_stored` counts its IPN secret keys, one for each
 PayKickstart campaign. The secrets are never served — `PUT
 /users/{id}/preferences` sets them, and its `GET` answers each only as
 `{"stored": true}` or `{"stored": false}`.
+
+`held_notifications` (PayKickstart, Shopify, Zaxaa) is what the page's card
+says: a notification stating another currency than the account counts in
+records nothing and is held. `waiting` are held in a currency the account
+does not count in (`waiting_currencies`); `recordable` are held in the one
+it counts in now, and Account › API integrations records them with one
+button. `no_role_url`, on the `jvzoo` entry, is the JVZoo card's count of
+what the URL Prosper202 1.9.56 showed (no `?role=`) received in the last 30
+days, and how the account reads that URL (`read_as`).
 
 PayKickstart's URL takes its **product (vendor) IPN**, which a vendor sets
 under each product's IPN Integration tab: a sale is recorded on the click the

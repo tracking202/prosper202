@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Prosper202\InboundLog\InboundLog;
 use Prosper202\PaymentNotification\CurrencyMismatch;
+use Prosper202\PaymentNotification\HeldNotifications;
 use Prosper202\PaymentNotification\JVZoo\JVZooRole;
 use Prosper202\PaymentNotification\JVZoo\RolelessTraffic;
 
@@ -13,57 +14,77 @@ use Prosper202\PaymentNotification\JVZoo\RolelessTraffic;
  */
 
 /**
- * @return array{currency: array<string, array{count: int, currencies: list<string>, latest: int, more: bool}>,
- *     jvzoo: ?RolelessTraffic} jvzoo is null when the log could not be read
+ * @return array{held: array<string, array<string, array{count: int, latest: int}>>, jvzoo: ?RolelessTraffic}
+ *     held: HeldNotifications::counts(); jvzoo is null when the log could not be read
  */
-function p202_payment_card_state(\mysqli $db, int $userId, string $accountCurrency, ?int $now = null): array
+function p202_payment_card_state(\mysqli $db, int $userId, ?int $now = null): array
 {
     $now ??= time();
-    $log = new InboundLog($db);
+    $state = ['held' => [], 'jvzoo' => null];
     try {
-        return [
-            'currency' => CurrencyMismatch::recent($log, $userId, $accountCurrency, $now - CurrencyMismatch::WINDOW),
-            'jvzoo' => RolelessTraffic::recent($log, $userId, $now - RolelessTraffic::WINDOW),
-        ];
+        $state['held'] = (new HeldNotifications($db))->counts($userId);
     } catch (\Throwable $e) {
-        error_log('API integrations: the inbound log could not be read for the payment cards: ' . $e->getMessage());
-
-        return ['currency' => [], 'jvzoo' => null];
+        error_log('API integrations: the held payment notifications could not be read: ' . $e->getMessage());
     }
+    try {
+        $state['jvzoo'] = RolelessTraffic::recent(new InboundLog($db), $userId, $now - RolelessTraffic::WINDOW);
+    } catch (\Throwable $e) {
+        error_log('API integrations: the inbound log could not be read for the JVZoo card: ' . $e->getMessage());
+    }
+
+    return $state;
 }
 
 /**
- * The warning on a card whose notifications were refused for their currency ('' for none).
+ * What a card says of the notifications held for their currency: a button
+ * that records the ones the account now counts in, and a warning naming the
+ * setting for the ones it does not ('' for none).
  *
- * @param array<string, array{count: int, currencies: list<string>, latest: int, more: bool}> $found
+ * @param array<string, array<string, array{count: int, latest: int}>> $counts HeldNotifications::counts()
  */
 function p202_currency_mismatch_notice(
-    array $found,
-    string $endpoint,
+    array $counts,
+    string $source,
     string $provider,
     string $accountCurrency,
-    string $base
+    string $base,
+    string $action,
+    string $tokenField
 ): string {
-    $mine = $found[$endpoint] ?? null;
-    if ($mine === null) {
-        return '';
-    }
+    $held = CurrencyMismatch::held($counts, $source, $accountCurrency);
     $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
-    $count = ($mine['more'] ? 'At least ' : '') . number_format($mine['count']);
-    $noun = $mine['count'] === 1 && !$mine['more'] ? ' notification' : ' notifications';
-    $all = $mine['currencies'];
-    $one = count($all) === 1 ? $all[0] : null;
-    $in = $one ?? implode(', ', array_slice($all, 0, -1)) . ' and ' . $all[count($all) - 1];
-    $log = $base . 'tracking202/setup/inbound_log.php?outcome=currency_mismatch&endpoint=' . rawurlencode($endpoint);
+    $noun = static fn (int $n): string => number_format($n) . ' ' . ($n === 1 ? 'notification' : 'notifications');
+    $html = '';
+    if ($held['recordable'] > 0) {
+        $html .= '<div class="alert alert-info p202-flash" role="status" data-held-recordable="' . $e($source) . '">'
+            . '<i class="bi bi-info-circle"></i><div class="p202-flash__body"><strong>'
+            . $e($noun($held['recordable']) . ' in ' . $accountCurrency) . ' '
+            . ($held['recordable'] === 1 ? 'is' : 'are') . ' held</strong> from when this account counted in another'
+            . ' currency. Recording them puts each sale on its click at the amount ' . $e($provider) . ' stated, dated'
+            . ' when it happened; one already on file is not recorded twice.'
+            . '<form method="post" action="' . $e($action) . '" class="mt-2" data-record-held>'
+            . '<input type="hidden" name="record_held_notifications" value="' . $e($source) . '">' . $tokenField
+            . '<button class="btn btn-secondary btn-sm" type="submit">Record '
+            . ($held['recordable'] === 1 ? 'it' : 'them') . '</button></form></div></div>';
+    }
+    if ($held['waiting'] > 0) {
+        $all = $held['waiting_currencies'];
+        $one = count($all) === 1 ? $all[0] : null;
+        $in = $one ?? implode(', ', array_slice($all, 0, -1)) . ' and ' . $all[count($all) - 1];
+        $log = $base . 'tracking202/setup/inbound_log.php?outcome=currency_mismatch&endpoint='
+            . rawurlencode($source);
+        $html .= '<div class="alert alert-warning p202-flash" role="status" data-currency-mismatch="'
+            . $e($source) . '">'
+            . '<i class="bi bi-exclamation-triangle"></i><div class="p202-flash__body"><strong>'
+            . $e($noun($held['waiting']) . ' from ' . $provider . ' in ' . $in) . ' recorded nothing</strong>: this'
+            . ' account counts in ' . $e($accountCurrency) . ', and Prosper202 does not convert amounts. They are'
+            . ' held. If you sell in ' . $e($one ?? 'one of them') . ', <a href="'
+            . $e($base . '202-account/account.php#currency') . '">change the account currency to '
+            . $e($one ?? 'it') . '</a>, then record them here. <a href="' . $e($log)
+            . '">See them in the Inbound Log</a>.</div></div>';
+    }
 
-    return '<div class="alert alert-warning p202-flash" role="status" data-currency-mismatch="' . $e($endpoint) . '">'
-        . '<i class="bi bi-exclamation-triangle"></i><div class="p202-flash__body"><strong>'
-        . $e($count . ' ' . $provider . $noun . ' in ' . $in) . ' recorded nothing</strong> in the last 30 days:'
-        . ' this account counts in ' . $e($accountCurrency) . ', and Prosper202 does not convert amounts.'
-        . ' If you sell in ' . $e($one ?? 'one of them') . ', <a href="'
-        . $e($base . '202-account/account.php#currency') . '">change the account currency to '
-        . $e($one ?? 'it') . '</a>, and the sales after that are recorded. <a href="' . $e($log)
-        . '">See the ones that were not</a>.</div></div>';
+    return $html;
 }
 
 /**

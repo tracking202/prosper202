@@ -957,6 +957,50 @@ paths:
                             keys_stored:
                               type: integer
                               description: PayKickstart only, how many IPN secret keys are stored
+                            held_notifications:
+                              type: object
+                              description: >-
+                                PayKickstart, Shopify and Zaxaa only. Notifications
+                                refused because they state another currency than the
+                                account counts in are held; Account › API integrations
+                                records the recordable ones.
+                              properties:
+                                recordable:
+                                  type: integer
+                                  description: Held and stated in the currency the account counts in now
+                                waiting:
+                                  type: integer
+                                  description: Held and stated in another currency
+                                waiting_currencies:
+                                  type: array
+                                  items:
+                                    type: string
+                            no_role_url:
+                              type: object
+                              description: >-
+                                The `jvzoo` entry only. What the URL Prosper202 1.9.56
+                                showed (jvzoo.php with no role) received in the last 30
+                                days, counting notifications that move money.
+                              properties:
+                                read_as:
+                                  type: string
+                                  enum: [affiliate, vendor]
+                                  description: How the account reads that URL (jvzoo_roleless_role)
+                                vendor_no_affiliate:
+                                  type: integer
+                                  description: Named no affiliate, so read as a vendor's whatever read_as is
+                                refused:
+                                  type: integer
+                                  description: Read as an affiliate's and recorded nothing
+                                as_affiliate:
+                                  type: integer
+                                  description: Read as an affiliate's and accepted
+                                as_vendor:
+                                  type: integer
+                                  description: Read as a vendor's because the account chose it
+                                conflict:
+                                  type: integer
+                                  description: Refused because accounts sharing the key read the URL differently
         "403":
           $ref: "#/components/responses/Forbidden"
 

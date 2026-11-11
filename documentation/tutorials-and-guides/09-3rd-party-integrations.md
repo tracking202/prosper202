@@ -109,7 +109,7 @@ is answered with a 2xx):
 | a tracking code (or `extclid`) that is not a click of the account | nothing; the answer names the field, and the HopLink's `tid=[[subid]]` or `extclid=[[subid]]` that fills it | `404` |
 | a notification no stored key decrypts | nothing | `403` |
 | a key more than one account stores | nothing | `409` |
-| an account that counts in a currency other than USD | nothing: ClickBank's amounts are USD, and Prosper202 does not convert them | `422` |
+| an account that counts in a currency other than USD | the sale as ClickBank states it: its amounts are USD, Prosper202 does not convert them, and the answer says the amount stands unconverted | `200 recorded` |
 | a malformed field (a tracking code such as `42.9`, an amount such as `1,000.00`, a `transactionTime` without its offset) | nothing | `400`, naming the field |
 | a legacy notification (version 4.0 or earlier, signed with `cverify`) | nothing | `415`, saying to choose version 8.0 |
 | a notification that arrives while the database's upgrade has not run | nothing | `503`, naming the upgrade |
@@ -287,12 +287,21 @@ the buyer's details.
 
 PayKickstart, Shopify and Zaxaa state each amount's currency, and Prosper202
 does not convert amounts: a notification in another currency than the
-account's records nothing. Its answer (and its line on Setup › Inbound Log)
-names both currencies and the setting to change, Account › Personal Settings ›
-Account currency, and the integration's card on Account › API integrations
-counts the ones refused in the last 30 days until the account counts in their
-currency. A notification refused before the change is not recorded by it; send
-it again from the platform if it can.
+account's records nothing. It is not lost: Prosper202 holds what it read of
+it (the transaction, the amount and currency, the click and the time; never
+the body, a secret or the buyer), and its answer and its line on Setup ›
+Inbound Log name both currencies and the setting to change, Account ›
+Personal Settings › Account currency.
+
+The integration's card on Account › API integrations shows how many are held
+and in which currency. Once the account counts in that currency, the card
+offers **Record them**: each held notification goes through the same checks
+as one arriving now, for your account only, in the order it arrived, dated
+when it happened. Pressing twice records each once; one the checks refuse
+as they would refuse it arriving now (its click was deleted since, say) is
+held no longer, and the page says why.
+`GET /system/integrations` reports the same counts as `held_notifications`.
+ClickBank is different: its amounts are always USD and are recorded as stated.
 
 ## Shopify
 
