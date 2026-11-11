@@ -52,14 +52,14 @@ var reportFilterArgs = []string{
 	"--text-ad-id", "3", "--region-id", "4", "--isp-id", "5", "--browser-id", "6", "--platform-id", "7",
 	"--device-type", "2", "--method-of-promotion", "directlink", "--show", "real",
 	"--keyword", "blue widgets", "--ip", "2001:db8::1", "--referer", "news.example",
-	"--aff-campaign-id", "11", "--ppc-account-id", "12",
+	"--aff-campaign-id", "11", "--ppc-account-id", "12", "--publisher-id", "none",
 }
 
 var reportFilterQuery = map[string]string{
 	"text_ad_id": "3", "region_id": "4", "isp_id": "5", "browser_id": "6", "platform_id": "7",
 	"device_type": "2", "method_of_promotion": "directlink", "show": "real",
 	"keyword": "blue widgets", "ip": "2001:db8::1", "referer": "news.example",
-	"aff_campaign_id": "11", "ppc_account_id": "12",
+	"aff_campaign_id": "11", "ppc_account_id": "12", "publisher_id": "none",
 }
 
 // Every report command that reads the reports takes the Analyze pages'
@@ -113,7 +113,7 @@ func TestTheNewPeriodsAndDimensionsAreAccepted(t *testing.T) {
 			t.Errorf("--period %s sent %+v", period, got)
 		}
 	}
-	for _, dim := range []string{"ip", "referer", "referer_url", "device_type", "c1", "c4", "utm_source", "utm_content", "rotator", "rotator_rule"} {
+	for _, dim := range []string{"ip", "referer", "referer_url", "device_type", "c1", "c4", "utm_source", "utm_content", "rotator", "rotator_rule", "publisher", "publisher_link"} {
 		_, requests := depthServer(t, nil)
 		if _, _, err := executeCommand("report", "breakdown", "--breakdown", dim, "--sort", "cpa", "--json"); err != nil {
 			t.Fatalf("--breakdown %s: %v", dim, err)

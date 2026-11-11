@@ -114,26 +114,12 @@ $detect = new DeviceDetect();
 $ua = $detect->getUserAgent();
 $result = $parser->parse($ua);
 
-if( !$detect->isMobile() && !$detect->isTablet() ){
-
-	switch ($result->device->family) {
-		//Is Bot
-		case 'Bot':
-			$result->device->family = "Bot";
-		break;
-		//Is Desktop
-		case 'Other':
-			$result->device->family = "Desktop";
-		break;
-	}
-} else {
-	if ($detect->isTablet()) {
-		$result->device->family = "Tablet";
-		//If mobile	
-	} else {
-		$result->device->family = "Mobile";
-	}
-}
+// Tablet, Mobile, Bot or Desktop, as the click is recorded: what a device rule names.
+$result->device->family = \Prosper202\Rotator\VisitorDevice::of(
+	$detect->isTablet(),
+	$detect->isMobile(),
+	(string) $result->device->family
+);
 
 $default = true;
 

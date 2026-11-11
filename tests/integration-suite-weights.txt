@@ -9,6 +9,7 @@
 22 tests/Auth/SessionGenerationIntegrationTest.php
 22 tests/Ltv/WebhookDispatchIntegrationTest.php
 18 tests/DataEngine/ReClickRollupIntegrationTest.php
+20 tests/Setup/DestinationsPageIntegrationTest.php
 56 tests/Attribution/RollupMatchesFullComputationTest.php ::testClickRetentionLeavesTheRollupExact$
 43 tests/Attribution/RollupMatchesFullComputationTest.php ::testRandomizedTenantsReadTheSameFromTheRollup with data set "(dense|sparse)
 42 tests/Attribution/RollupMatchesFullComputationTest.php ::testRandomizedTenantsReadTheSameFromTheRollup with data set "medium|::testChangesAfterTheRollupWasSummedAreReadExactlyUntilItIsSummedAgain$

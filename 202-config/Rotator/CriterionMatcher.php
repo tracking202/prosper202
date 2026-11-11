@@ -10,7 +10,10 @@ namespace Prosper202\Rotator;
  * paid 1.9.56 redirector did, so a stored rule of another type never
  * matched and its visitors went on to the next rule or the default.
  *
- * Semantics are 1.9.56's, with two of its slips read as meant: an `is` IP
+ * A country is matched by its code and a device in any case, so a rule
+ * stored as "US" or "Mobile" matches as it was meant to (CLAUDE.md #25).
+ *
+ * Otherwise semantics are 1.9.56's, with two of its slips read as meant: an `is` IP
  * range or referer list matches when any value does (1.9.56 needed every
  * range, and counted a referer list once per value), and `is_not` when none
  * does. A c1-c4 criterion needs the value on the link, whatever the
@@ -137,6 +140,10 @@ final class CriterionMatcher
                 return $param !== null && self::listed($param, $values, $visitor->recorded) === $is;
             case 't202kw':
                 return $visitor->keyword !== null && self::listed($visitor->keyword, $values, $visitor->recorded) === $is;
+            case 'country':
+                return self::countryListed($visitor, $values) === $is;
+            case 'device':
+                return self::listed(strtolower($visitor->device), $values, true) === $is;
         }
 
         $actual = self::visitorValue($type, $visitor);
@@ -154,15 +161,36 @@ final class CriterionMatcher
         $code = (string) ($visitor->geo['country_code'] ?? '');
 
         return match ($type) {
-            'country' => (string) ($visitor->geo['country'] ?? '') . '(' . $code . ')',
             'region' => (string) ($visitor->geo['region'] ?? '') . '(' . $code . ')',
             'city' => (string) ($visitor->geo['city'] ?? '') . '(' . $code . ')',
             'isp' => $visitor->isp,
             'platform' => $visitor->os,
             'browser' => $visitor->browser,
-            'device' => strtolower($visitor->device),
             default => null,
         };
+    }
+
+    /**
+     * Whether a country criterion lists the visitor's country. A value that
+     * names a country by code (Criterion::countryCode(): "United States(US)",
+     * or "US" as rows were stored before the writers wrote Name(CC)) is
+     * compared by the code, whatever name the GeoIP database gives; any
+     * other is compared whole, as it always was.
+     *
+     * @param list<string> $values
+     */
+    private static function countryListed(VisitorFacts $visitor, array $values): bool
+    {
+        $code = (string) ($visitor->geo['country_code'] ?? '');
+        $whole = (string) ($visitor->geo['country'] ?? '') . '(' . $code . ')';
+        foreach ($values as $value) {
+            $named = Criterion::countryCode($value);
+            if ($named === null ? $value === $whole : $named === strtoupper($code)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @param list<string> $values */

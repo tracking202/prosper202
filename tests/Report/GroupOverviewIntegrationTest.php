@@ -66,6 +66,7 @@ final class GroupOverviewIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         self::$db->query('DELETE FROM 202_dataengine WHERE user_id = ' . self::USER);
+        self::$db->query('DELETE FROM 202_clicks_publisher WHERE click_id BETWEEN 573101 AND 573199');
         self::$db->query('DELETE FROM 202_aff_campaigns WHERE user_id = ' . self::USER);
         self::$db->query("DELETE FROM 202_keywords WHERE keyword LIKE 'go5731%'");
         self::$db->query("DELETE FROM 202_site_urls WHERE site_url_address LIKE 'https://go5731.example/%'");
@@ -126,6 +127,19 @@ final class GroupOverviewIntegrationTest extends TestCase
         $click([]);
     }
 
+    /** @return array<string, string> every stored filter, unset */
+    private static function noFilters(): array
+    {
+        $prefs = [];
+        foreach (['aff_campaign_id', 'aff_network_id', 'browser_id', 'country_id', 'device_id', 'ip', 'isp_id', 'keyword',
+            'landing_page_id', 'platform_id', 'ppc_account_id', 'ppc_network_id', 'referer', 'region_id', 'show', 'subid',
+            'text_ad_id'] as $k) {
+            $prefs['user_pref_' . $k] = '';
+        }
+
+        return $prefs;
+    }
+
     /**
      * The groups of a one-level report: title => [clicks, payout].
      *
@@ -134,13 +148,7 @@ final class GroupOverviewIntegrationTest extends TestCase
      */
     private function groups(int $level, array $filters = []): array
     {
-        $prefs = [];
-        foreach (['aff_campaign_id', 'aff_network_id', 'browser_id', 'country_id', 'device_id', 'ip', 'isp_id', 'keyword',
-            'landing_page_id', 'platform_id', 'ppc_account_id', 'ppc_network_id', 'referer', 'region_id', 'show', 'subid',
-            'text_ad_id'] as $k) {
-            $prefs['user_pref_' . $k] = '';
-        }
-        $prefs = $filters + $prefs;
+        $prefs = $filters + self::noFilters();
         $form = new \ReportSummaryForm();
         $form->setDetails([$level]);
         $form->setDetailsSort([\ReportBasicForm::SORT_NAME]);
@@ -184,6 +192,27 @@ final class GroupOverviewIntegrationTest extends TestCase
         self::assertSame(['go5731 kw' => 3], array_map(
             static fn (array $g): int => $g[0],
             $this->groups(\ReportBasicForm::DETAIL_LEVEL_KEYWORD, ['user_pref_referer' => 'go5731.example/ref'])
+        ));
+    }
+
+    public function testThePublisherFilterKeepsTheClicksCreditedToThatPublisher(): void
+    {
+        self::q('INSERT INTO 202_clicks_publisher (click_id, publisher_user_id) VALUES (573101, 990777), (573104, 990777),'
+            . ' (573105, 990778)');
+        self::assertSame(['go5731 kw' => 2], array_map(
+            static fn (array $g): int => $g[0],
+            $this->groups(\ReportBasicForm::DETAIL_LEVEL_KEYWORD, ['user_pref_publisher_id' => '990777'])
+        ));
+        // A level the report groups before it joins: the filter is applied to the clicks first.
+        $form = new \ReportSummaryForm();
+        $form->setDetails([\ReportBasicForm::DETAIL_LEVEL_CAMPAIGN]);
+        $form->setStartTime(1767225600 - 60);
+        $form->setEndTime(1767225600 + 60);
+        $sql = $form->getQuery((string) self::USER, ['user_pref_publisher_id' => '990777'] + self::noFilters());
+        self::assertStringNotContainsString('2c.click_id', $sql, 'the grouped source is not grouped by click');
+        self::assertSame(['go5731 ten' => 2], array_map(
+            static fn (array $g): int => $g[0],
+            $this->groups(\ReportBasicForm::DETAIL_LEVEL_CAMPAIGN, ['user_pref_publisher_id' => '990777'])
         ));
     }
 
