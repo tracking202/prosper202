@@ -1204,7 +1204,7 @@ if (!function_exists('_upgrade_measurement_tables')) {
                 if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::CLICKS_AD_IDS) {
                     if (!_upgrade_fill_click_ad_ids()) {
                         $ok = false;
-                        error_log('Prosper202 upgrade: failed to record which clicks carry each ad click id');
+                        _upgrade_note('failed to record which clicks carry each ad click id');
                     }
                     break;
                 }
