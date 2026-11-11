@@ -63,9 +63,7 @@ final class SystemControllerBehaviorTest extends TestCase
             $stmt->method('bind_param')->willReturn(true);
             $stmt->method('execute')->willReturn(true);
             $stmt->method('get_result')->willReturn($this->createResultMock([
-                str_contains($sql, '202_notification_pending')
-                    ? ['overdue' => '0', 'oldest' => null]
-                    : ['last_execution_time' => '1700001234'],
+                ...(str_contains($sql, '202_notification_pending') ? [] : [['last_execution_time' => '1700001234']]),
             ]));
 
             return $stmt;

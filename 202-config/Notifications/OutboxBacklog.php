@@ -36,9 +36,8 @@ final class OutboxBacklog
      */
     public static function read(Connection $conn, int $now, ?int $userId = null): array
     {
-        // The oldest COUNT_CAP + 1 overdue rows: a queue left for weeks is not counted whole on every page.
-        $sql = "SELECT COUNT(*) AS overdue, MIN(next_attempt_at) AS oldest FROM (SELECT next_attempt_at FROM 202_notification_pending"
-            . " WHERE status = 'pending' AND next_attempt_at <= ?";
+        // The oldest COUNT_CAP + 1 overdue rows, counted here: a queue left for weeks is not counted whole on every page.
+        $sql = "SELECT next_attempt_at FROM 202_notification_pending WHERE status = 'pending' AND next_attempt_at <= ?";
         $types = 'i';
         $binds = [$now - self::OVERDUE_SECONDS];
         if ($userId !== null) {
@@ -46,11 +45,11 @@ final class OutboxBacklog
             $types .= 'i';
             $binds[] = $userId;
         }
-        $stmt = $conn->prepareRead($sql . ' ORDER BY next_attempt_at LIMIT ' . (self::COUNT_CAP + 1) . ') AS due');
+        $stmt = $conn->prepareRead($sql . ' ORDER BY next_attempt_at LIMIT ' . (self::COUNT_CAP + 1));
         $conn->bind($stmt, $types, $binds);
-        $row = $conn->fetchOne($stmt);
-        $overdue = (int) ($row['overdue'] ?? 0);
-        $oldest = ($row['oldest'] ?? null) === null ? null : (int) $row['oldest'];
+        $due = $conn->fetchAll($stmt);
+        $overdue = count($due);
+        $oldest = $due === [] ? null : (int) $due[0]['next_attempt_at'];
 
         $stmt = $conn->prepareRead('SELECT last_execution_time FROM 202_cronjob_logs WHERE id = 1');
         $run = $conn->fetchOne($stmt);
