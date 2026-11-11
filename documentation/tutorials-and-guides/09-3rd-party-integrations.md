@@ -300,7 +300,9 @@ as one arriving now, for your account only, in the order it arrived, dated
 when it happened. Pressing twice records each once; one the checks refuse
 as they would refuse it arriving now (its click was deleted since, say) is
 held no longer, and the page says why.
-`GET /system/integrations` reports the same counts as `held_notifications`.
+`GET /system/integrations` reports the same counts as `held_notifications`,
+and `POST /system/integrations/record-held` (`p202 system integrations
+record-held shopify`) is the same button.
 ClickBank is different: its amounts are always USD and are recorded as stated.
 
 ## Shopify

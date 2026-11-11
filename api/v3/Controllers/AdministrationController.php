@@ -43,6 +43,8 @@ use Prosper202\User\SignInOutcome;
  * - GET  /system/integrations             the IPN / postback URLs to paste
  *                                         into ClickBank, JVZoo, Zaxaa,
  *                                         PayKickstart and Shopify
+ * - POST /system/integrations/record-held record the caller's notifications
+ *                                         held for their currency
  *
  * The role permissions are the pages' (access_to_settings, and
  * access_to_api_integrations for the integrations), checked by the routes on
@@ -761,6 +763,32 @@ final class AdministrationController
 
             return ['base_url' => $base, 'integrations' => $list];
         })];
+    }
+
+    // ─── POST /system/integrations/record-held ──────────────────────────
+
+    /**
+     * The page's Record button: the caller's held notifications of one
+     * integration, stated in the currency the account counts in now, go
+     * through the processor (HeldReplay), at most HeldReplay::BATCH a
+     * request. Sent twice, each is recorded once.
+     *
+     * @param array<string, mixed> $payload {integration: paykickstart|shopify|zaxaa}
+     * @return array{data: array<string, mixed>}
+     */
+    public function recordHeld(array $payload): array
+    {
+        PayloadKeys::refuseUnknown($payload, ['integration'], 'recording held notifications', self::NO_PREVIEW);
+        $integration = $payload['integration'] ?? null;
+        if (!is_string($integration) || !in_array($integration, HeldReplay::SOURCES, true)) {
+            throw new ValidationException('integration is required', [
+                'integration' => 'must be one of ' . implode(', ', HeldReplay::SOURCES)
+                    . ': the integrations that hold a notification stated in another currency',
+            ]);
+        }
+
+        return ['data' => $this->guard(fn (): array => ['integration' => $integration]
+            + (new HeldReplay($this->db))->replay($this->userId, $integration))];
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────

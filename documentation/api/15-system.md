@@ -402,6 +402,17 @@ button. `no_role_url`, on the `jvzoo` entry, is the JVZoo card's count of
 what the URL Prosper202 1.9.56 showed (no `?role=`) received in the last 30
 days, and how the account reads that URL (`read_as`).
 
+`POST /system/integrations/record-held` with `{"integration": "shopify"}`
+(or `paykickstart`, `zaxaa`) is the card's Record button: the caller's held
+notifications of that integration stated in the currency the account counts
+in now go through the checks one arriving now goes through, in the order
+they arrived, at most 200 a request. It answers
+`{"data": {"integration": "shopify", "recorded": 3, "on_file": 0, "refused": 0, "failed": 0, "left": 0, "first_refusal": ""}}`;
+send it again while `left` is above 0. Sent twice, each is recorded once.
+`refused` ones would be refused arriving now too and are held no longer
+(`first_refusal` says why); `failed` ones stay held. Any other `integration`
+is a `422`. Not stageable, and it has no preview.
+
 PayKickstart's URL takes its **product (vendor) IPN**, which a vendor sets
 under each product's IPN Integration tab: a sale is recorded on the click the
 checkout link's `subid=[[subid]]` names, and a refund reverses it (see

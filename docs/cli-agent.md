@@ -1327,7 +1327,8 @@ p202 system traffic-source-owners repair <ppc_network_id> [--to-user-id N] [--fo
 p202 system traffic-source-owners repair --all [--force]                             # every source the report names a user for
 p202 system traffic-source-owners split <ppc_network_id> [--force]                  # a copy of its own for each named_by user; their accounts move onto it
 # Admin and a role with access_to_api_integrations:
-p202 system integrations [--json]   # notification URLs per integration; secret_stored, never the secret
+p202 system integrations [--json]   # notification URLs per integration; secret_stored, never the secret; held_notifications (recordable, waiting) and jvzoo no_role_url
+p202 system integrations record-held <paykickstart|shopify|zaxaa> [--json]   # record the notifications held for their currency, once the account counts in it; run again while left > 0
 ```
 
 - A key whose user is not an Admin or the Super user gets exit 2 with

@@ -693,11 +693,48 @@ final class AccountAdministrationIntegrationTest extends TestCase
                 ['recordable' => 1, 'waiting' => 0, 'waiting_currencies' => []],
                 $after['shopify']['held_notifications']
             );
+
+            // POST /system/integrations/record-held: the held order names a click that is not there, so the
+            // processor refuses it as it would arriving now, and it is held no longer; sent again, nothing.
+            $done = $this->admin()->recordHeld(['integration' => 'shopify'])['data'];
+            self::assertSame('shopify', $done['integration']);
+            self::assertNotSame('', $done['first_refusal']);
+            $zero = ['recorded' => 0, 'on_file' => 0, 'refused' => 0, 'failed' => 0, 'left' => 0];
+            unset($done['integration'], $done['first_refusal']);
+            self::assertSame(['refused' => 1] + $zero, ['refused' => $done['refused']] + $done);
+            $again = $this->admin()->recordHeld(['integration' => 'shopify'])['data'];
+            unset($again['integration'], $again['first_refusal']);
+            self::assertSame($zero, $again);
+            self::assertSame($none, $this->heldOf('shopify'));
+            $holdNothing = [[], ['integration' => 'jvzoo'], ['integration' => ['shopify']]];
+            $holdNothing[] = ['integration' => 'Shopify'];
+            foreach ($holdNothing as $bad) {
+                try {
+                    $this->admin()->recordHeld($bad);
+                    self::fail('an integration that holds nothing is refused: ' . json_encode($bad));
+                } catch (ValidationException $refused) {
+                    self::assertArrayHasKey('integration', $refused->getFieldErrors());
+                }
+            }
+            try {
+                $this->admin()->recordHeld(['integration' => 'shopify', 'dry_run' => true]);
+                self::fail('a key the route does not take is refused');
+            } catch (ValidationException $refused) {
+                self::assertArrayHasKey('dry_run', $refused->getFieldErrors());
+            }
         } finally {
             self::q('DELETE FROM 202_held_payment_notifications WHERE user_id = ' . self::ADMIN);
             self::q('DELETE FROM 202_inbound_log WHERE user_id = ' . self::ADMIN . " AND endpoint = 'jvzoo'");
             self::q("UPDATE 202_users_pref SET jvzoo_roleless_role = 'affiliate', user_account_currency = 'USD'"
                 . ' WHERE user_id = ' . self::ADMIN);
         }
+    }
+
+    /** @return array<string, mixed> */
+    private function heldOf(string $integration): array
+    {
+        $byKey = array_column($this->admin()->integrations([])['data']['integrations'], null, 'integration');
+
+        return $byKey[$integration]['held_notifications'];
     }
 }

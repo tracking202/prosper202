@@ -30,6 +30,8 @@ final class HeldReplay
     /** Rows recorded per press; the answer says how many are left. */
     public const BATCH = 200;
     public const USER_AGENT = 'Prosper202 held notification';
+    /** The ledger sources (and integration names) whose notifications are held. */
+    public const SOURCES = ['paykickstart', 'shopify', 'zaxaa'];
 
     public function __construct(private readonly \mysqli $db)
     {

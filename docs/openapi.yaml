@@ -1004,6 +1004,74 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /system/integrations/record-held:
+    post:
+      tags: [System]
+      summary: Record the notifications held for their currency
+      description: |
+        The Record button of Account › API integrations. A PayKickstart,
+        Shopify or Zaxaa notification that states another currency than the
+        account counts in records nothing and is held (`held_notifications`
+        on `GET /system/integrations`). This records the caller's held
+        notifications of one integration that are stated in the currency the
+        account counts in now: each goes through the checks a notification
+        arriving now goes through, in the order it arrived, at most 200 a
+        request (`left` says how many remain; send it again). Sent twice,
+        each is recorded once. One the checks refuse for good is held no
+        longer (`refused`, and `first_refusal` says why); one that failed
+        stays held (`failed`).
+
+        Admin (or Super user) with `access_to_api_integrations`, and
+        `system:write`. Not stageable, and no preview.
+      operationId: systemRecordHeldNotifications
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [integration]
+              additionalProperties: false
+              properties:
+                integration:
+                  type: string
+                  enum: [paykickstart, shopify, zaxaa]
+      responses:
+        "200":
+          description: What was recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      integration:
+                        type: string
+                      recorded:
+                        type: integer
+                        description: Conversions and reversals written
+                      on_file:
+                        type: integer
+                        description: On file already, so nothing was added
+                      refused:
+                        type: integer
+                        description: Refused as one arriving now would be, and held no longer
+                      failed:
+                        type: integer
+                        description: Could not be recorded just now; still held
+                      left:
+                        type: integer
+                        description: Held, recordable and not reached by this request
+                      first_refusal:
+                        type: string
+                        description: What the first refused one was told
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /system/traffic-source-owners:
     get:
       tags: [System]

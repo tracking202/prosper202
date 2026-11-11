@@ -1974,6 +1974,10 @@ p202 system login-log --status not_completed  # right password, but a database f
                                     # sign-in (the throttle counts failed attempts alone)
 p202 system integrations --wide     # the INS/IPN/ZPN URLs to paste into ClickBank, JVZoo,
                                     # Zaxaa, PayKickstart; secret_stored, never the secret
+p202 system integrations --json     # also held_notifications: sales held because they state
+                                    # another currency than the account counts in
+p202 system integrations record-held shopify   # record the held ones now stated in the account's
+                                    # currency (paykickstart, shopify or zaxaa); safe to run twice
 
 p202 system retention show          # auto_delete_days, and any scheduled one-off deletion
 p202 system retention set --days 180          # asks when it keeps less than now; --force skips
