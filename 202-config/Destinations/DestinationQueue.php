@@ -32,7 +32,8 @@ use Prosper202\Report\AccountZone;
  * (not named by click id or cookie) is withheld; so is every visitor under
  * privacy 'all', and a visitor who may be in the EEA or UK (EuropeanVisitor)
  * unless the setting is 'disabled' and the destination states both consent
- * signals granted. Withheld rows are never retried.
+ * signals granted. Withheld rows are never retried by the worker; the
+ * operator can send one again (resend()), and it is checked again.
  *
  * A send that says to wait (SendResult::$waitUntil: a click too recent for
  * the platform, a destination not yet authorised) is not a try: the row
@@ -43,6 +44,14 @@ final class DestinationQueue
     public const KIND_CONVERSION = 'conversion';
     public const KIND_TEST = 'test';
     public const STATUSES = ['pending', 'sent', 'failed', 'withheld', 'cancelled'];
+    /** The statuses a row can be sent again from. */
+    public const RESENDABLE = ['failed', 'withheld'];
+    /** Rows a bulk send-again takes are at most this old: no platform takes an older click. */
+    public const RESEND_DAYS = 90;
+    public const RESEND_BATCH = 5000;
+    public const BACKFILL_BATCH = 5000;
+    /** About how many rows the cron job sends a minute, for every account together (202-cronjobs/index.php). */
+    public const SENT_A_MINUTE = 200;
     /** The minutely cron's budget. */
     public const RUN_SECONDS = 15;
 
@@ -232,6 +241,169 @@ final class DestinationQueue
             'reason' => $result->reason !== '' ? $result->reason : null,
             'sent' => $result->summary,
         ];
+    }
+
+    /**
+     * Put rows that ended failed or withheld back in the queue with all their
+     * tries: one ($deliveryId), or the destination's of $status made in the
+     * last RESEND_DAYS, at most RESEND_BATCH a call. The send's checks run
+     * again, so a row still held back is withheld again. Null when the
+     * account has no such destination.
+     *
+     * @return array{queued: int, more: bool}|null
+     */
+    public function resend(int $userId, int $destinationId, ?int $deliveryId, string $status, int $now): ?array
+    {
+        if ($deliveryId === null && !in_array($status, self::RESENDABLE, true)) {
+            throw new DestinationInputException('status', 'status must be one of: ' . implode(', ', self::RESENDABLE) . '.');
+        }
+        if ($this->store->get($userId, $destinationId) === null) {
+            return null;
+        }
+        $set = "` SET status = 'pending', attempts = 0, next_attempt_at = ?, last_status_code = NULL, last_error = NULL, sent_at = NULL
+             WHERE user_id = ? AND destination_id = ? AND kind = 'conversion'";
+        if ($deliveryId !== null) {
+            $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATION_DELIVERIES . $set . " AND status IN ('failed', 'withheld') AND delivery_id = ?");
+            $this->conn->bind($stmt, 'iiii', [$now, $userId, $destinationId, $deliveryId]);
+
+            return ['queued' => $this->conn->executeUpdate($stmt), 'more' => false];
+        }
+        $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATION_DELIVERIES . $set . ' AND status = ? AND created_at >= ? ORDER BY delivery_id LIMIT ' . self::RESEND_BATCH);
+        $this->conn->bind($stmt, 'iiisi', [$now, $userId, $destinationId, $status, $now - self::RESEND_DAYS * 86400]);
+        $queued = $this->conn->executeUpdate($stmt);
+
+        return ['queued' => $queued, 'more' => $queued === self::RESEND_BATCH];
+    }
+
+    /**
+     * Queue the paid conversions of the last $days that the destination has
+     * no row for (recorded before it existed, or while it was off), oldest
+     * first, at most BACKFILL_BATCH a call. Null when the account has no such
+     * destination.
+     *
+     * @return array{queued: int, more: bool}|null
+     */
+    public function backfill(int $userId, int $destinationId, int $days, int $now): ?array
+    {
+        $destination = $this->store->get($userId, $destinationId);
+        if ($destination === null) {
+            return null;
+        }
+        $most = self::backfillDays((string) $destination['type']);
+        if ($days < 1 || $days > $most) {
+            throw new DestinationInputException('days', 'days must be 1 to ' . $most . ' for this destination: its platform takes nothing older.');
+        }
+        $campaigns = ((array) $destination['settings'])['campaign_ids'] ?? [];
+        if (!is_array($campaigns)) {
+            throw new DestinationInputException('settings.campaign_ids', 'This destination\'s campaign filter cannot be read; save its campaigns again.');
+        }
+        $campaigns = array_values(array_filter($campaigns, 'is_int'));
+        $queued = 0;
+        $after = 0;
+        while ($queued < self::BACKFILL_BATCH) {
+            // Read, then written by key: an INSERT ... SELECT would hold the ledger's rows while it ran (CLAUDE.md #36).
+            $stmt = $this->conn->prepareWrite('SELECT cl.conv_id FROM 202_conversion_logs cl
+                WHERE cl.user_id = ? AND cl.conv_time >= ? AND cl.conv_id > ? AND cl.deleted = 0 AND cl.superseded_by IS NULL
+                  AND cl.reverses_conv_id IS NULL AND cl.payable = 1 AND cl.click_payout >= 0'
+                . ($campaigns === [] ? '' : ' AND cl.campaign_id IN (' . implode(',', array_fill(0, count($campaigns), '?')) . ')') . '
+                  AND NOT EXISTS (SELECT 1 FROM 202_destination_deliveries q
+                      WHERE q.destination_id = ? AND q.conv_id = cl.conv_id AND q.kind = \'conversion\' AND q.user_id = cl.user_id)
+                ORDER BY cl.conv_id LIMIT 500');
+            $this->conn->bind($stmt, 'iii' . str_repeat('i', count($campaigns)) . 'i', [$userId, $now - $days * 86400, $after, ...$campaigns, $destinationId]);
+            $rows = $this->conn->fetchAll($stmt);
+            foreach ($rows as $row) {
+                $after = (int) $row['conv_id'];
+                $queued += $this->insert($userId, $destinationId, $after, self::KIND_CONVERSION, 'pending', $now);
+            }
+            if (count($rows) < 500) {
+                return ['queued' => $queued, 'more' => false];
+            }
+        }
+
+        return ['queued' => $queued, 'more' => true];
+    }
+
+    /** How far back a type's platform takes a conversion, in days. */
+    public static function backfillDays(string $type): int
+    {
+        return $type === Ga4Destination::TYPE ? intdiv(Ga4Destination::MAX_AGE_SECONDS, 86400) : intdiv(GoogleAdsDestination::CLICK_MAX_AGE, 86400);
+    }
+
+    /**
+     * What each destination's conversions came to since $since, and why the
+     * failed and withheld ones were (the commonest reasons first), with how
+     * many could be sent again (those of the last RESEND_DAYS).
+     *
+     * @param list<int> $destinationIds
+     * `waiting` is every conversion still to be sent, whatever its age.
+     *
+     * @return array<int, array{counts: array<string, int>, reasons: list<array{status: string, reason: string, n: int}>, resendable: array<string, int>, waiting: int}>
+     */
+    public function health(int $userId, array $destinationIds, int $since, int $now): array
+    {
+        $out = [];
+        foreach ($destinationIds as $id) {
+            $out[$id] = ['counts' => array_fill_keys(self::STATUSES, 0), 'reasons' => [], 'resendable' => array_fill_keys(self::RESENDABLE, 0), 'waiting' => 0];
+        }
+        if ($out === []) {
+            return [];
+        }
+        // Every key part named, so the index is read by range and the log's length does not matter.
+        $in = implode(',', array_fill(0, count($out), '?'));
+        $ids = array_keys($out);
+        $where = ' FROM `' . TableRegistry::DESTINATION_DELIVERIES . "` WHERE user_id = ? AND destination_id IN ($in) AND kind = 'conversion' AND status IN (";
+        $types = 'i' . str_repeat('i', count($ids)) . 'i';
+        $all = "'" . implode("','", self::STATUSES) . "'";
+        $stmt = $this->conn->prepareRead('SELECT destination_id, status, COUNT(*) AS n' . $where . $all . ') AND created_at >= ? GROUP BY destination_id, status');
+        $this->conn->bind($stmt, $types, [$userId, ...$ids, $since]);
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $out[(int) $row['destination_id']]['counts'][(string) $row['status']] = (int) $row['n'];
+        }
+        $stmt = $this->conn->prepareRead('SELECT destination_id, status, COUNT(*) AS n' . $where . "'failed','withheld') AND created_at >= ? GROUP BY destination_id, status");
+        $this->conn->bind($stmt, $types, [$userId, ...$ids, $now - self::RESEND_DAYS * 86400]);
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $out[(int) $row['destination_id']]['resendable'][(string) $row['status']] = (int) $row['n'];
+        }
+        $stmt = $this->conn->prepareRead('SELECT destination_id, COUNT(*) AS n' . $where . "'pending') GROUP BY destination_id");
+        $this->conn->bind($stmt, substr($types, 0, -1), [$userId, ...$ids]);
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $out[(int) $row['destination_id']]['waiting'] = (int) $row['n'];
+        }
+        $stmt = $this->conn->prepareRead("SELECT destination_id, status, COALESCE(last_error, '') AS reason, COUNT(*) AS n" . $where
+            . "'failed','withheld') AND created_at >= ? GROUP BY destination_id, status, reason ORDER BY n DESC, reason LIMIT 500");
+        $this->conn->bind($stmt, $types, [$userId, ...$ids, $since]);
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $id = (int) $row['destination_id'];
+            if (count($out[$id]['reasons']) < 5) {
+                $out[$id]['reasons'][] = ['status' => (string) $row['status'], 'reason' => (string) $row['reason'], 'n' => (int) $row['n']];
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * A page of a destination's log, newest first, each conversion with its
+     * click; $limit + 1 rows when there are more. With a status, conversions
+     * only (a test is listed in the unfiltered log).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function log(int $userId, int $destinationId, ?string $status, int $limit, int $offset): array
+    {
+        $select = 'SELECT q.delivery_id, q.conv_id, q.kind, q.status, q.attempts, q.last_status_code, q.last_error, q.created_at, cl.click_id
+            FROM `' . TableRegistry::DESTINATION_DELIVERIES . '` q LEFT JOIN 202_conversion_logs cl ON cl.conv_id = q.conv_id AND cl.user_id = q.user_id
+            WHERE q.user_id = ? AND q.destination_id = ?';
+        if ($status === null) {
+            $stmt = $this->conn->prepareRead($select . ' ORDER BY q.delivery_id DESC LIMIT ? OFFSET ?');
+            $this->conn->bind($stmt, 'iiii', [$userId, $destinationId, $limit + 1, $offset]);
+        } else {
+            // In the order of user_destination_status, so a long log is not sorted to show a page.
+            $stmt = $this->conn->prepareRead($select . " AND q.kind = 'conversion' AND q.status = ? ORDER BY q.created_at DESC, q.delivery_id DESC LIMIT ? OFFSET ?");
+            $this->conn->bind($stmt, 'iisii', [$userId, $destinationId, $status, $limit + 1, $offset]);
+        }
+
+        return $this->conn->fetchAll($stmt);
     }
 
     /**
