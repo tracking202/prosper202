@@ -134,9 +134,9 @@ final class ClickByAdClickId
      * @param string $transactionId the sale's, '' for none
      * @param string|null $eventId the event's id as the goals engine keys it, null for no event
      * @return array{status: string, click_id: int|null, matched: list<string>, why: string, of: int,
-     *         owners: list<int>|null}
+     *         account: int|null, owners: list<int>|null}
      *         matched: the parameters whose id the click carries. of: how
-     *         many clicks carry them. owners: the accounts the click may
+     *         many clicks carry them. account: decide()'s. owners: the accounts the click may
      *         belong to, null for any (an id under its own name found it);
      *         the caller holds the click's owner to it
      * @throws \RuntimeException when a read fails: the caller answers 5xx, not "no click"
@@ -191,7 +191,11 @@ final class ClickByAdClickId
      *        per parameter, the clicks carrying its id; null when there are
      *        more than can be told apart
      * @param list<int> $holding the clicks that already hold this sale
-     * @return array{status: string, click_id: int|null, matched: list<string>, why: string, of: int}
+     * @return array{status: string, click_id: int|null, matched: list<string>, why: string, of: int,
+     *         account: int|null}
+     *         account: the one account every click found is of, which can
+     *         settle a conflict among them; null when they span accounts or
+     *         none was read
      */
     public static function decide(array $clicks, array $holding = []): array
     {
@@ -211,12 +215,14 @@ final class ClickByAdClickId
             return self::answer(self::NONE, null, [], '');
         }
         $sent = implode(', ', array_keys($clicks));
+        $accounts = array_values(array_unique(array_column($all, 'user_id')));
+        $account = count($accounts) === 1 ? (int) $accounts[0] : null;
         // What a report puts the sale under: none of them is decided by which click came last.
         $shown = ['user_id' => 'account', 'campaign_id' => 'campaign', 'ppc_account_id' => 'traffic source account'];
         foreach ($shown as $key => $what) {
             if (count(array_unique(array_column($all, $key))) > 1) {
                 return self::answer(self::AMBIGUOUS, null, [], 'The clicks carrying the ' . $sent
-                    . ' sent are on more than one ' . $what . ', so they do not say which one converted.');
+                    . ' sent are on more than one ' . $what . ', so they do not say which one converted.', 0, $account);
             }
         }
         $candidates = array_intersect_key($all, array_flip($holding)) ?: $all;
@@ -234,16 +240,26 @@ final class ClickByAdClickId
             $matched += $carriedBy;
         }
 
-        return self::answer(self::ONE, $latest['click_id'], array_keys($matched), '', count($all));
+        return self::answer(self::ONE, $latest['click_id'], array_keys($matched), '', count($all), $account);
     }
 
     /**
      * @param list<string> $matched
-     * @return array{status: string, click_id: int|null, matched: list<string>, why: string, of: int}
+     * @return array{status: string, click_id: int|null, matched: list<string>, why: string, of: int,
+     *         account: int|null}
      */
-    private static function answer(string $status, ?int $clickId, array $matched, string $why, int $of = 0): array
-    {
-        return ['status' => $status, 'click_id' => $clickId, 'matched' => $matched, 'why' => $why, 'of' => $of];
+    private static function answer(
+        string $status,
+        ?int $clickId,
+        array $matched,
+        string $why,
+        int $of = 0,
+        ?int $account = null
+    ): array {
+        return [
+            'status' => $status, 'click_id' => $clickId, 'matched' => $matched, 'why' => $why, 'of' => $of,
+            'account' => $account,
+        ];
     }
 
     /**

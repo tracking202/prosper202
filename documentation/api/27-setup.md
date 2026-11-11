@@ -200,8 +200,9 @@ What it will and will not match:
 - **Never a choice a report would show.** When the clicks carrying the ids
   sent are on more than one campaign, from more than one traffic source
   account, or of more than one account, nothing says which converted: the
-  postback is answered `409` and nothing is recorded; Setup › Inbound Log
-  says which of those it was. Send the SubID to settle those.
+  postback is answered `409` and nothing is recorded; when the clicks are
+  all your account's, your Setup › Inbound Log says which of those it was.
+  Send the SubID to settle those.
 - **An id, not a placeholder.** A value no platform issues, written where
   the id was meant to go (`undefined`, `null`, `(not set)`, an unfilled
   `__GCLID__`), is not looked up: every visitor whose page wrote it shares

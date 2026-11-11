@@ -806,8 +806,9 @@ if (!function_exists('p202ClickByAdClickId')) {
      * Null when the SubID is not missing or the request sends no ad click
      * id: the caller answers as it always has. Otherwise the click, or the
      * request ends here: no click carries the id (404), the clicks carrying
-     * it do not say which one converted (409, the reason in the inbound log
-     * only: the request is not authenticated yet), the 1.9.80 upgrade has
+     * it do not say which one converted (409, the reason only in the inbound
+     * log of the account every one of them is of, or unattributed when they
+     * span accounts: the request is not authenticated yet), the 1.9.80 upgrade has
      * not run, so the lookup is missing or not yet filled (503), or the
      * lookup failed (500, so a sender that retries failures does). The ids'
      * values go to no log.
@@ -872,8 +873,14 @@ if (!function_exists('p202ClickByAdClickId')) {
         }
         $status = $found['status'] ?? \Prosper202\Click\ClickByAdClickId::NONE;
         if ($status === \Prosper202\Click\ClickByAdClickId::AMBIGUOUS) {
-            // Which clicks carry an id is not told to a request no account has authenticated.
-            \Prosper202\InboundLog\RequestLog::current()?->clickFoundBy($found['why'] ?? '');
+            // Which clicks carry an id is not told to a request no account has authenticated. The reason
+            // goes to the log of the one account the clicks are all of, which can settle it; across
+            // accounts, to no account's.
+            $log = \Prosper202\InboundLog\RequestLog::current();
+            $log?->clickFoundBy($found['why'] ?? '');
+            if (($found['account'] ?? null) !== null) {
+                $log?->account($found['account']);
+            }
             p202RespondJsonError(409, 'SubID not found, and the ad click id sent does not name one click.'
                 . ' No conversion was recorded. Fill in the SubID in the postback URL.');
         }

@@ -419,9 +419,13 @@ final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
         self::assertSame(409, $status, $body);
         self::assertSame(self::AMBIGUOUS, json_decode($body, true)['msg'] ?? null, 'the answer names no account');
         self::assertSame([], self::conversions());
-        $logged = self::all('SELECT outcome, reason FROM 202_inbound_log WHERE user_id = 0');
-        self::assertSame('refused', $logged[0][0] ?? null);
-        self::assertStringContainsString('are on more than one ' . $what . ',', $logged[0][1], 'the log says why');
+        // One account's clicks: its own log says why, as it can settle it. Across accounts: no account's log.
+        $owner = $what === 'account' ? 0 : self::USER;
+        $logged = self::all('SELECT user_id, outcome, reason FROM 202_inbound_log WHERE user_id IN (0, '
+            . self::USER . ', ' . self::OTHER_USER . ')');
+        self::assertCount(1, $logged);
+        self::assertSame([(string) $owner, 'refused'], [$logged[0][0], $logged[0][1]]);
+        self::assertStringContainsString('are on more than one ' . $what . ',', $logged[0][2], 'the log says why');
     }
 
     public function testIdsNamingClicksOfDifferentCampaignsRecordNothing(): void
@@ -434,7 +438,7 @@ final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
         self::assertSame(409, $status, $body);
         self::assertSame(self::AMBIGUOUS, json_decode($body, true)['msg'] ?? null);
         $said = 'The clicks carrying the gclid, msclkid sent are on more than one campaign';
-        $logged = self::all('SELECT reason FROM 202_inbound_log WHERE user_id = 0');
+        $logged = self::all('SELECT reason FROM 202_inbound_log WHERE user_id = ' . self::USER);
         self::assertStringContainsString($said, $logged[0][0] ?? '');
         self::assertSame([], self::conversions());
     }
@@ -548,7 +552,7 @@ final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
         self::assertSame(self::AMBIGUOUS, json_decode($body, true)['msg'] ?? null);
         self::assertStringContainsString(
             'The clicks carrying the aff_sub3 sent are on more than one campaign',
-            self::all('SELECT reason FROM 202_inbound_log WHERE user_id = 0')[0][0]
+            self::all('SELECT reason FROM 202_inbound_log WHERE user_id = ' . self::USER)[0][0]
         );
         self::assertSame([], self::conversions());
     }

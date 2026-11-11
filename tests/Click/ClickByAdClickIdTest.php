@@ -94,7 +94,10 @@ final class ClickByAdClickIdTest extends TestCase
         $found = ClickByAdClickId::decide(['gclid' => [self::click(41)]]);
 
         self::assertSame(
-            ['status' => ClickByAdClickId::ONE, 'click_id' => 41, 'matched' => ['gclid'], 'why' => '', 'of' => 1],
+            [
+                'status' => ClickByAdClickId::ONE, 'click_id' => 41, 'matched' => ['gclid'], 'why' => '', 'of' => 1,
+                'account' => 1,
+            ],
             $found
         );
     }
@@ -183,6 +186,7 @@ final class ClickByAdClickIdTest extends TestCase
         self::assertSame(ClickByAdClickId::AMBIGUOUS, $found['status']);
         self::assertNull($found['click_id']);
         self::assertStringContainsString('are on more than one ' . $what . ',', $found['why']);
+        self::assertSame($what === 'account' ? null : 1, $found['account'], 'the one account that can settle it');
     }
 
     public function testIdsNamingClicksOfDifferentCampaignsNameNone(): void
@@ -204,6 +208,7 @@ final class ClickByAdClickIdTest extends TestCase
 
         self::assertSame(ClickByAdClickId::AMBIGUOUS, $found['status']);
         self::assertStringContainsString('Too many clicks', $found['why']);
+        self::assertNull($found['account'], 'no click was read');
     }
 
     public function testAConversionFoundThisWayIsOneItsRequestNamedAndHasItsOwnLabel(): void
