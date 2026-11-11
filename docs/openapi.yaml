@@ -2286,6 +2286,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
         - name: click_lead
           in: query
           description: "0 = clicks only, 1 = conversions only"
@@ -3148,6 +3149,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
       responses:
         "200":
           description: Summary metrics
@@ -3220,6 +3222,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
       responses:
         "200":
           description: The groups as a tree (`data`, each with `children` but the innermost), `totals`, and `by`
@@ -3266,7 +3269,9 @@ paths:
         summary and in no row. `ip` is the visitor's address (IPv6 decoded),
         `referer` the referring domain, `referer_url` the whole URL,
         `device_type` Desktop/Mobile/Tablet/Bot, `rotator_rule` the rule that
-        matched (its rows also carry `rotator_id`). Names of visitor-authored
+        matched (its rows also carry `rotator_id`), `publisher` the publisher
+        a publisher link credited the click to (its user id and name; a click
+        on no publisher link is in no row). Names of visitor-authored
         dimensions (keyword, city, region, isp, browser, platform, device,
         ip, referer, referer_url, c1-c4, utm_*) are sanitized on the way out.
       operationId: reportBreakdown
@@ -3307,6 +3312,7 @@ paths:
               - utm_content
               - rotator
               - rotator_rule
+              - publisher
         - name: sort
           in: query
           description: Any metric a row carries; anything else is a 422 naming them.
@@ -3354,6 +3360,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
       responses:
         "200":
           description: Breakdown results
@@ -3440,6 +3447,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
       responses:
         "200":
           description: Timeseries data
@@ -3550,6 +3558,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
       responses:
         "200":
           description: Day-parting rows
@@ -3718,6 +3727,7 @@ paths:
         - $ref: "#/components/parameters/filterKeyword"
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
+        - $ref: "#/components/parameters/filterPublisherId"
       responses:
         "200":
           description: The rotator's figures
@@ -7627,6 +7637,7 @@ paths:
       - $ref: '#/components/parameters/filterKeyword'
       - $ref: '#/components/parameters/filterIp'
       - $ref: '#/components/parameters/filterReferer'
+      - $ref: '#/components/parameters/filterPublisherId'
       responses:
         '200':
           description: One row per weekday (`day_of_week` 0 = Monday … 6 = Sunday, `day_name`) with the same metrics
@@ -11853,6 +11864,15 @@ components:
       schema:
         type: string
         maxLength: 255
+    filterPublisherId:
+      name: publisher_id
+      in: query
+      description: >-
+        Clicks a publisher link credited to this publisher (a user id, the `id` of a
+        `breakdown=publisher` row), or `none` for the clicks credited to no publisher. 0 is no filter.
+      schema:
+        type: string
+        pattern: '^([0-9]+|none)$'
 
     # App postback filters (list + report)
     postbackRegistrationId:

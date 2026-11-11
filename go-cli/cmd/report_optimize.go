@@ -434,7 +434,7 @@ var filterDimension = map[string]string{
 	"aff_campaign_id": "campaign", "ppc_account_id": "ppc_account", "landing_page_id": "landing_page",
 	"country_id": "country", "aff_network_id": "", "ppc_network_id": "",
 	"text_ad_id": "", "region_id": "", "isp_id": "", "browser_id": "", "platform_id": "", "device_type": "",
-	"method_of_promotion": "", "show": "", "keyword": "", "ip": "", "referer": "",
+	"method_of_promotion": "", "show": "", "keyword": "", "ip": "", "referer": "", "publisher_id": "",
 }
 
 // loadAttributionCheck fetches the attribution breakdown rows for keys (the ids of the classic rows being checked) over

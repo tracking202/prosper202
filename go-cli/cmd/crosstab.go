@@ -26,6 +26,7 @@ var dimensionFilterParam = map[string]string{
 	"browser":      "browser_id",
 	"platform":     "platform_id",
 	"device_type":  "device_type",
+	"publisher":    "publisher_id",
 }
 
 // crosstabRowDimensions are the dimensions with an id filter, the only

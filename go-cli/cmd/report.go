@@ -33,7 +33,7 @@ var reportWindowFlags = []string{"period", "time_from", "time_to"}
 var reportFilterFlags = []string{
 	"aff_campaign_id", "aff_network_id", "ppc_account_id", "ppc_network_id", "landing_page_id", "country_id",
 	"text_ad_id", "region_id", "isp_id", "browser_id", "platform_id", "device_type",
-	"method_of_promotion", "show", "keyword", "ip", "referer",
+	"method_of_promotion", "show", "keyword", "ip", "referer", "publisher_id",
 }
 
 // reportShowValues are the Analyze pages' "show" menu (ReportFilter::SHOW).
@@ -84,6 +84,7 @@ func addReportFilterFlags(cmd *cobra.Command) {
 	cmd.Flags().String("keyword", "", "Only clicks whose keyword contains this text (case-insensitive)")
 	cmd.Flags().String("ip", "", "Only clicks from this one IP address, IPv4 or IPv6")
 	cmd.Flags().String("referer", "", "Only clicks whose referring URL contains this text (case-insensitive)")
+	cmd.Flags().String("publisher_id", "", "Only clicks credited to this publisher (a `--breakdown publisher` row's id), or none for clicks on no publisher link")
 }
 
 var reportSummaryCmd = &cobra.Command{

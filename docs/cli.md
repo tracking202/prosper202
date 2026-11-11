@@ -1181,6 +1181,7 @@ All report commands (`report summary|breakdown|timeseries|daypart|weekpart|cross
 | `--keyword`         | Keyword contains this text (case-insensitive; `%` and `_` are literal) |
 | `--ip`              | One IPv4 or IPv6 address, exactly |
 | `--referer`         | Referring URL contains this text (case-insensitive) |
+| `--publisher-id`    | Clicks a publisher link credited to this publisher (the id of a `--breakdown publisher` row), or `none` for clicks on no publisher link |
 
 A filter the server does not know, or a malformed value (`--ip 999.1.1.1`), is a
 validation error naming it; `--show`, `--method-of-promotion` and `--period` are
@@ -1273,7 +1274,7 @@ p202 report groups --by ppc_network,campaign,keyword --period last7   # the Grou
 | `-l, --limit`      | 50            | Maximum results (1–500)    |
 | `-o, --offset`     | 0             | Pagination offset          |
 
-**Breakdown dimensions:** campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, region, browser, platform, device, isp, text_ad, ip, referer (the referring domain), referer_url (the whole URL), device_type (Desktop/Mobile/Tablet/Bot), c1, c2, c3, c4, utm_source, utm_medium, utm_campaign, utm_term, utm_content, rotator, rotator_rule (aliases: lp, source, network, offer, geo, referrer, referrer_url, rule). The server advertises its own list as `features.report_breakdowns` in `/capabilities`; a value missing from the CLI's list is sent when the server lists it.
+**Breakdown dimensions:** campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, region, browser, platform, device, isp, text_ad, ip, referer (the referring domain), referer_url (the whole URL), device_type (Desktop/Mobile/Tablet/Bot), c1, c2, c3, c4, utm_source, utm_medium, utm_campaign, utm_term, utm_content, rotator, rotator_rule, publisher (the publisher a publisher link credited the click to) (aliases: lp, source, network, offer, geo, referrer, referrer_url, rule). The server advertises its own list as `features.report_breakdowns` in `/capabilities`; a value missing from the CLI's list is sent when the server lists it.
 
 A row is one stored value; clicks with no value for the dimension (no referer, no c1, no rotator rule) are in `report summary` only. A rotator's default is not a rule: `p202 rotator stats <id>` shows it.
 
