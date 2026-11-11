@@ -17,6 +17,8 @@
  *   [data-p202-breakdown="<url>"] on a click history row: open the click's
  *                                conversions (#p202-click-conversions) and
  *                                draw their breakdown into it
+ *   [data-p202-filter-reason]    the select above the click history: a
+ *                                reason reloads the page at ?filter_reason=
  *   [data-p202-not-fraud="<click id>"] on a row filtered for its fraud
  *                                score: post it to data-p202-not-fraud-url
  *                                and say the answer in the row
@@ -490,6 +492,22 @@
                 var sent = xhr && xhr.responseJSON && xhr.responseJSON.message;
                 say(sent || 'The click was not changed (' + (xhr && xhr.status ? 'HTTP ' + xhr.status : 'no answer from the server') + '). Reload the page and try again.', false);
             });
+    });
+
+    /* "Show" above the click history: a filter reason reloads the page at
+       ?filter_reason=, keeping its other filters; "Any click" drops it. */
+    document.addEventListener('change', function (event) {
+        var select = event.target;
+        if (!select || !select.hasAttribute || !select.hasAttribute('data-p202-filter-reason')) {
+            return;
+        }
+        var address = new URL(window.location.href);
+        if (select.value === '') {
+            address.searchParams.delete('filter_reason');
+        } else {
+            address.searchParams.set('filter_reason', select.value);
+        }
+        window.location.assign(address.toString());
     });
 
     var breakdownAsked = null;

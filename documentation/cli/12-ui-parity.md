@@ -69,6 +69,7 @@ record links only to the caller's own records
 
 | Page | API | CLI | |
 | ---- | --- | --- | - |
+| Visitors › Not fraud (a click IPQualityScore filtered) | `POST /clicks/{id}/not-fraud` | `p202 click not-fraud <id>` | ✅ |
 | Visitors: each click with its campaign, source, keyword, IP, location, device, referrer and landing URLs | `/clicks`, `/clicks/{id}`, `/clicks/{id}/conversions` | `p202 click list`, `click get`, `click conversions` | ✅ the same filters and periods as the reports |
 | Spy: the newest clicks, then each new one | `/clicks` polled | `p202 click list --follow` | ✅ |
 

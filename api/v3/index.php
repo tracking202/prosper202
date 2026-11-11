@@ -554,6 +554,16 @@ try {
             return $campaignFigures($crud(\Api\V3\Controllers\ClicksController::class)->conversions(PathId::of($ctx)), $recordMoney);
         });
 
+        // "Not fraud" on a click IPQualityScore filtered (Visitors' button):
+        // the click and the account's other clicks from its address count
+        // again, and the address goes on the click filter list as always
+        // count. It writes that list, so it asks what Personal Settings'
+        // Click filter card asks. Not stageable, and no preview.
+        $router->post('/clicks/{id}/not-fraud', function ($ctx) use ($crud, $auth, $db, $payload) {
+            $auth->requirePermission($db, 'access_to_personal_settings');
+            return $crud(\Api\V3\Controllers\ClicksController::class)->notFraud(PathId::of($ctx), $payload);
+        });
+
         // ── Conversions ──────────────────────────────────────────────────
         // Reading is the click's conversions panel's (no permission; money
         // masked). Recording one is what Update › Subids does, and removing

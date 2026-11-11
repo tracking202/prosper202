@@ -2339,6 +2339,56 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /clicks/{id}/not-fraud:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    post:
+      tags: [Clicks]
+      summary: Count a click IPQualityScore filtered again
+      description: |
+        Visitors' Not fraud button. For a click filtered for its fraud score
+        (`filter_reason: fraud_score`): the click, and the caller's other
+        clicks from the same address that were filtered for their score (at
+        most 200 a call; `more_clicks_filtered` says when some remain), count
+        again, each one's report row is rolled up again, and the address is
+        put on the click filter list as always count
+        (`GET /users/{id}/click-filter`), so it is not scored again. Remove
+        the entry there to have the address scored again.
+
+        `address_always_counted` is false, with the reason in `note`, when
+        the address could not be listed (the list is full); the clicks count
+        again all the same.
+
+        404 for a click that is not the caller's, or was not filtered for its
+        fraud score: a click one of the account's own rules filtered is
+        changed through the click filter. Takes no body; one is a 422. Needs
+        `access_to_personal_settings` and `clicks:write`. Not stageable, and
+        it has no dry run. Sending it again is safe.
+      operationId: markClickNotFraud
+      responses:
+        "200":
+          description: What was counted again
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      click_id: {type: integer}
+                      ip_address: {type: string, example: "203.0.113.50"}
+                      clicks_counted: {type: integer, description: "Clicks that count again, this one included."}
+                      more_clicks_filtered: {type: boolean, description: "True when more than 200 clicks from the address were filtered; send the request again."}
+                      address_always_counted: {type: boolean}
+                      note: {type: string}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /clicks/{id}/conversions:
     parameters:
       - $ref: "#/components/parameters/resourceId"
@@ -13325,8 +13375,10 @@ components:
           maxLength: 255
           description: >-
             Starts with http:// or https://. A host sent without its scheme
-            (lp.example.com/x) is a 422 whose message names the URL to send
-            (https://lp.example.com/x).
+            (lp.example.com/x, //lp.example.com/x) is stored with https://,
+            as Setup > Landing Pages stores it, and the answer says so in
+            meta.normalized; any other value is a 422. Sync compares landing
+            pages on the stored form.
         aff_campaign_id:
           type: integer
         landing_page_nickname:
@@ -13360,6 +13412,21 @@ components:
       properties:
         data:
           $ref: "#/components/schemas/LandingPage"
+        meta:
+          type: object
+          description: Present on a create or update that completed a URL.
+          properties:
+            normalized:
+              type: object
+              description: >-
+                Each URL field (landing_page_url, leave_behind_page_url) that
+                was sent as a host without its scheme, with what was sent and
+                what is stored for it.
+              additionalProperties:
+                type: object
+                properties:
+                  sent: {type: string, example: "lp.example.com/x"}
+                  stored: {type: string, example: "https://lp.example.com/x"}
 
     LandingPageListResponse:
       type: object

@@ -48,6 +48,7 @@ final class ClicksAndSetupPagesIntegrationTest extends TestCase
         if (!self::connectScratch()) {
             return;
         }
+        require_once $root . '/202-config/functions-ui-overview.php';
         require_once $root . '/202-config/version.php';
         $found = self::$db->query('SELECT version FROM 202_version');
         self::$versions = array_column($found instanceof \mysqli_result ? $found->fetch_all(MYSQLI_ASSOC) : [], 'version');
@@ -183,6 +184,46 @@ final class ClicksAndSetupPagesIntegrationTest extends TestCase
         self::assertStringContainsString('must start with http:// or https://', $refused);
         self::assertSame('0', self::one("SELECT COUNT(*) FROM 202_landing_pages WHERE user_id = $u AND landing_page_nickname = 'Summer sale'"));
 
+        // An edit rewrites the page it names, keeps its public id, and leaves the others.
+        $springId = (int) self::one("SELECT landing_page_id FROM 202_landing_pages WHERE user_id = $u AND landing_page_nickname = 'Spring sale'");
+        $publicId = self::one("SELECT landing_page_id_public FROM 202_landing_pages WHERE landing_page_id = $springId");
+        self::assertMatchesRegularExpression('/^[1-9]' . $springId . '[1-9]$/', (string) $publicId, 'a new page gets its public id');
+        $others = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OTHER . ", aff_campaign_id = 0, landing_page_nickname = 'Not mine',"
+            . " landing_page_url = 'https://store.example.net/', landing_page_id_public = 7125, landing_page_time = 0, landing_page_type = 1");
+        self::page('tracking202/setup/landing_pages.php', ['edit_landing_page_id' => (string) $springId], [
+            'token' => 'SESSION', 'landing_page_id' => (string) $springId, 'landing_page_type' => '1', 'landing_page_nickname' => "Spring's sale",
+            'landing_page_url' => 'https://lp.example.com/spring?c=[[c1]]',
+        ]);
+        self::assertSame("Spring's sale", self::one("SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = $springId"));
+        self::assertSame($publicId, self::one("SELECT landing_page_id_public FROM 202_landing_pages WHERE landing_page_id = $springId"));
+        self::assertSame('1', self::one("SELECT COUNT(*) FROM 202_landing_pages WHERE user_id = $u"));
+        foreach ([(string) $others, $springId . 'abc'] as $named) {
+            self::page('tracking202/setup/landing_pages.php', ['edit_landing_page_id' => $named], [
+                'token' => 'SESSION', 'landing_page_id' => $named, 'landing_page_type' => '1', 'landing_page_nickname' => 'Taken',
+                'landing_page_url' => 'https://lp.example.com/taken',
+            ]);
+        }
+        self::assertSame('Not mine', self::one("SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = $others"), 'another account\'s page is not rewritten');
+        self::assertSame('0', self::one("SELECT COUNT(*) FROM 202_landing_pages WHERE landing_page_nickname = 'Taken'"), 'and "12abc" names no page');
+        self::q("UPDATE 202_landing_pages SET landing_page_nickname = 'Spring sale' WHERE landing_page_id = $springId");
+        self::q("DELETE FROM 202_landing_pages WHERE landing_page_id = $others");
+
+        // A simple page is saved with its campaign; a campaign id that is no id is refused.
+        $network = self::insert("INSERT INTO 202_aff_networks SET user_id = $u, aff_network_name = 'Store', aff_network_time = 0");
+        $campaign = self::insert("INSERT INTO 202_aff_campaigns SET user_id = $u, aff_network_id = $network, aff_campaign_name = 'Autumn sale',"
+            . " aff_campaign_url = 'https://shop.example.com', aff_campaign_payout = 3, aff_campaign_foreign_payout = 0, aff_campaign_time = 0");
+        self::page('tracking202/setup/landing_pages.php', [], [
+            'token' => 'SESSION', 'landing_page_type' => '0', 'aff_campaign_id' => (string) $campaign, 'landing_page_nickname' => 'Autumn page',
+            'landing_page_url' => 'https://lp.example.com/autumn',
+        ]);
+        self::assertSame((string) $campaign, self::one("SELECT aff_campaign_id FROM 202_landing_pages WHERE user_id = $u AND landing_page_nickname = 'Autumn page'"));
+        self::page('tracking202/setup/landing_pages.php', [], [
+            'token' => 'SESSION', 'landing_page_type' => '0', 'aff_campaign_id' => $campaign . 'abc', 'landing_page_nickname' => 'Autumn page 2',
+            'landing_page_url' => 'https://lp.example.com/autumn2',
+        ]);
+        self::assertSame('0', self::one("SELECT COUNT(*) FROM 202_landing_pages WHERE landing_page_nickname = 'Autumn page 2'"));
+        self::q("DELETE FROM 202_landing_pages WHERE user_id = $u AND landing_page_nickname = 'Autumn page'");
+
         // The list: a page with no answer asks for one; a page with one shows it.
         $loopback = self::insert("INSERT INTO 202_landing_pages SET user_id = $u, aff_campaign_id = 0, landing_page_nickname = 'Local page',"
             . " landing_page_url = 'http://127.0.0.1:9/lp', landing_page_id_public = 7123, landing_page_time = 0, landing_page_type = 1");
@@ -237,6 +278,28 @@ final class ClicksAndSetupPagesIntegrationTest extends TestCase
         self::assertSame(2, substr_count($spy, 'data-p202-not-fraud="'), 'only a click filtered for its score can be undone here');
         self::assertStringContainsString('data-p202-not-fraud="' . $scored . '" data-p202-not-fraud-url="', $spy);
         self::assertStringContainsString('ajax/click_not_fraud.php"', $spy);
+
+        // The list by reason: only the clicks filtered for it, and the choice shown selected.
+        $byReason = self::page('tracking202/ajax/click_history.php', ['spy' => '1', 'filter_reason' => 'repeat_visit']);
+        self::assertSame(1, substr_count($byReason, 'data-click-id="'), 'one click was filtered as a repeat visit');
+        self::assertStringContainsString('data-click-id="' . $ruled . '"', $byReason);
+        self::assertStringContainsString('<option value="repeat_visit" selected>Filtered: repeat visit</option>', $byReason);
+        $visitors = self::page('tracking202/ajax/click_history.php', ['filter_reason' => 'fraud_score'], ['offset' => '0']);
+        self::assertSame(2, substr_count($visitors, 'data-click-id="'), 'Visitors lists the two filtered for their score');
+        self::assertStringContainsString('Clicks <strong>1&ndash;2</strong> of <strong>2</strong>', $visitors, 'and counts them');
+        $none = self::page('tracking202/ajax/click_history.php', ['spy' => '1', 'filter_reason' => 'crawler_range']);
+        self::assertSame(0, substr_count($none, 'data-click-id="'));
+        self::assertStringContainsString('data-p202-filter-reason', $none, 'an empty list still offers the choice');
+        self::assertStringContainsString('No clicks filtered for this reason', $none);
+        $bad = self::page('tracking202/ajax/click_history.php', ['spy' => '1', 'filter_reason' => "x' OR '1'='1"]);
+        self::assertStringContainsString('filter_reason must be one of', $bad);
+        self::assertSame(0, substr_count($bad, 'data-click-id="'));
+        self::assertStringContainsString('<option value="">Any click</option>', $spy);
+        // The page hands its ?filter_reason= to the list it draws.
+        self::assertSame('/x/click_history.php?spy=1&filter_reason=fraud_score', p202_click_history_fragment('/x/click_history.php?spy=1', ['filter_reason' => 'fraud_score']));
+        self::assertSame('/x/click_history.php?filter_reason=filter_list', p202_click_history_fragment('/x/click_history.php', ['filter_reason' => 'filter_list']));
+        self::assertSame('/x/click_history.php', p202_click_history_fragment('/x/click_history.php', ['filter_reason' => 'nonsense']));
+        self::assertSame('/x/click_history.php', p202_click_history_fragment('/x/click_history.php', ['filter_reason' => ['fraud_score']]));
 
         $refused = [
             [['click_id' => (string) $scored], 'token'],

@@ -229,7 +229,9 @@ abstract class Controller
      *    500), and without it stored 0000-00-00. A DATE column that can hold
      *    NULL is cleared with null, as any nullable field is.
      *  - 's' with 'format' => 'http_url': starts with http:// or https://,
-     *    the rule the setup page holds the same field to (HttpUrlPrefix).
+     *    the rule the setup page holds the same field to (HttpUrlPrefix). A
+     *    host sent without its scheme is completed with https:// first, as
+     *    the page completes it, and completedUrls() names it.
      *
      * @param array<array-key, mixed> $payload the request body as decoded
      * @param array<string, mixed>|null $current the record an update changes
@@ -238,8 +240,38 @@ abstract class Controller
      * @throws ValidationException
      * @throws ConflictException when the body's version is not the record's
      */
+    /** @var array<string, array{sent: string, stored: string}> the URL fields the last validatePayload() completed */
+    private array $completedUrls = [];
+
+    /**
+     * The URL fields the last validatePayload() completed with https://:
+     * field => what was sent and what is stored for it.
+     *
+     * @return array<string, array{sent: string, stored: string}>
+     */
+    protected function completedUrls(): array
+    {
+        return $this->completedUrls;
+    }
+
+    /**
+     * $clean[$col] with https:// when it is a host sent without its scheme
+     * (HttpUrlPrefix::complete()), noted for completedUrls().
+     *
+     * @param array<string, mixed> $clean
+     */
+    protected function completeUrl(string $col, array &$clean): void
+    {
+        $sent = (string) $clean[$col];
+        $clean[$col] = \Prosper202\Http\HttpUrlPrefix::complete($sent);
+        if ($clean[$col] !== $sent) {
+            $this->completedUrls[$col] = ['sent' => $sent, 'stored' => $clean[$col]];
+        }
+    }
+
     protected function validatePayload(array $payload, bool $requireRequired = false, ?array $current = null): array
     {
+        $this->completedUrls = [];
         $fields = $this->resolveFields();
         $errors = [];
         $clean = [];
@@ -324,6 +356,11 @@ abstract class Controller
                         break;
                     }
                     $clean[$col] = (string) $value;
+                    // A host sent without its scheme is stored with https://, as the page stores it (HttpUrlPrefix);
+                    // completedUrls() says which, for the answer.
+                    if (($def['format'] ?? null) === 'http_url') {
+                        $this->completeUrl($col, $clean);
+                    }
                     if (isset($def['max_length']) && mb_strlen($clean[$col]) > $def['max_length']) {
                         $errors[$col] = "Field '$col' exceeds max length of {$def['max_length']}";
                         unset($clean[$col]);
@@ -331,10 +368,7 @@ abstract class Controller
                     }
                     // The page's rule for the same field (HttpUrlPrefix), so the two accept the same values.
                     if (($def['format'] ?? null) === 'http_url' && !\Prosper202\Http\HttpUrlPrefix::accepts($clean[$col])) {
-                        // A host sent without its scheme: the refusal names the value the page would have saved.
-                        $completed = \Prosper202\Http\HttpUrlPrefix::complete($clean[$col]);
-                        $errors[$col] = "Field '$col' " . \Prosper202\Http\HttpUrlPrefix::MESSAGE
-                            . ($completed === $clean[$col] ? '' : '; send ' . $completed);
+                        $errors[$col] = "Field '$col' " . \Prosper202\Http\HttpUrlPrefix::MESSAGE;
                         unset($clean[$col]);
                     }
                     break;

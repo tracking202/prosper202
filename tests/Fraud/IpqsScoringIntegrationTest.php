@@ -249,6 +249,47 @@ final class IpqsScoringIntegrationTest extends TestCase
         self::assertSame(1, (int) self::one('SELECT COUNT(*) FROM 202_click_filter_entries WHERE user_id = ' . self::OWNER));
     }
 
+    /** POST /clicks/{id}/not-fraud: the same undo, as the API answers it. */
+    public function testTheApiCountsAClickAgainAndRefusesWhatIsNotAVerdict(): void
+    {
+        self::$stub->scores(['203.0.113.50' => 95]);
+        $first = $this->click(self::OWNER, '203.0.113.50', 'US', 400);
+        $second = $this->click(self::OWNER, '203.0.113.50', 'US', 300);
+        $counted = $this->click(self::OWNER, '203.0.113.51', 'US', 280);
+        $theirs = $this->click(self::OTHER, '203.0.113.50', 'US', 260);
+        $this->score();
+        $api = new \Api\V3\Controllers\ClicksController(self::$db, self::OWNER);
+
+        foreach ([$counted, $theirs, 999999999] as $click) {
+            try {
+                $api->notFraud($click, []);
+                self::fail("click $click has no verdict of the caller's to undo");
+            } catch (\Api\V3\Exception\NotFoundException $e) {
+                self::assertStringContainsString('fraud_score', $e->getMessage());
+            }
+        }
+        try {
+            $api->notFraud($first, ['address' => '203.0.113.60']);
+            self::fail('took a body it does not read');
+        } catch (\Api\V3\Exception\ValidationException) {
+        }
+        self::assertSame(self::FRAUD, self::filtered($first), 'a refused request changes nothing');
+        self::assertSame(self::FRAUD, self::filtered($theirs));
+
+        $answer = $api->notFraud($first, [])['data'];
+        self::assertSame(
+            [$first, '203.0.113.50', 2, false, true],
+            [$answer['click_id'], $answer['ip_address'], $answer['clicks_counted'], $answer['more_clicks_filtered'], $answer['address_always_counted']]
+        );
+        self::assertStringContainsString('always count', $answer['note']);
+        self::assertSame(self::COUNTED, self::filtered($first));
+        self::assertSame(self::COUNTED, self::filtered($second));
+        self::assertSame(self::FRAUD, self::filtered($theirs));
+        // The entry it made is the click filter's own: listed there, and removable there.
+        $entries = (new \Prosper202\Click\Filter\MysqlClickFilterStore(new Connection(self::$db)))->entries(self::OWNER);
+        self::assertSame([['203.0.113.50', 'count']], array_map(static fn ($e): array => [$e->range->text(), $e->action], $entries));
+    }
+
     /** With the list full the clicks still count again, and the answer says the address is not exempt. */
     public function testNotFraudWithAFullListStillCountsTheClickAndSaysSo(): void
     {

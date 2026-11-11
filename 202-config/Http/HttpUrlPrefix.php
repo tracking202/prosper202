@@ -13,10 +13,11 @@ namespace Prosper202\Http;
  * http:// behind a TLS proxy.
  *
  * A URL written without its scheme ('lp.example.com/x', '//lp.example.com/x')
- * is completed with https:// (complete()): the page saves the completed URL
- * and says so, and the API, whose caller sends exactly what it means,
- * refuses it naming the completed URL to send. The value stored is the same
- * either way, which the sync's match of landing pages by URL relies on.
+ * is completed with https:// (complete()) by both, and each says what it
+ * stored: the page in a flash, the API in its answer's meta.normalized.
+ * Sync matches landing pages by their URL, so it compares the completed
+ * form on both sides (SyncEngine, and the CLI's diff with its own copy of
+ * the rule, held to this one by tests/fixtures/http-url-prefix-cases.json).
  */
 final class HttpUrlPrefix
 {

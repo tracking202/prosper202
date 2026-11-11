@@ -31,8 +31,13 @@ final class LandingPageCheckStoreIntegrationTest extends TestCase
     private const USER = 990451;
     private const OTHER = 990452;
     private const NOW = 1794300000;
-    /** An address the guard takes as public (it refuses the documentation ranges); never connected to. */
-    private const PUBLIC = '93.184.216.34';
+    /**
+     * The address every host resolves to here: a documentation one, which
+     * the guard refuses unless the operator's allowlist names its network,
+     * so each guard below is given ALLOW. Never connected to.
+     */
+    private const PUBLIC = '203.0.113.10';
+    private const ALLOW = '203.0.113.0/24';
 
     /** @var list<string> the URLs fetched, in order */
     private array $fetched = [];
@@ -82,7 +87,7 @@ final class LandingPageCheckStoreIntegrationTest extends TestCase
     /** A store whose fetches answer $html for every URL, at a public address. */
     private function store(string $html, int $now = self::NOW): LandingPageCheckStore
     {
-        $guard = new WebhookGuard(static fn (string $host): array => [self::PUBLIC], '');
+        $guard = new WebhookGuard(static fn (string $host): array => [self::PUBLIC], self::ALLOW);
         $transport = function (array $options) use ($html): array {
             $this->fetched[] = (string) $options[CURLOPT_URL];
 
@@ -216,7 +221,7 @@ final class LandingPageCheckStoreIntegrationTest extends TestCase
         $id = self::page(self::USER, 'https://shop.example.com/spring?c=[[c1]]');
         $theirs = self::page(self::OTHER, 'https://store.example.net/offer');
         $public = '7' . $id . '3';
-        $guard = new WebhookGuard(static fn (string $host): array => [self::PUBLIC], '');
+        $guard = new WebhookGuard(static fn (string $host): array => [self::PUBLIC], self::ALLOW);
         $checker = fn (string $html): LandingPageCheck => new LandingPageCheck($guard, function (array $options) use ($html): array {
             $this->fetched[] = (string) $options[CURLOPT_URL];
 

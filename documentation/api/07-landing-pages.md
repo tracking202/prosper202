@@ -18,10 +18,10 @@ Manage landing pages used between the traffic source and the destination.
 
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
-| `landing_page_url` | string | Yes | Landing page URL (max 255), starting with `http://` or `https://`. A host sent without its scheme (`lp.example.com/x`) is a `422` whose message names the URL to send (`https://lp.example.com/x`), the one Setup › Landing Pages saves when it is typed there |
+| `landing_page_url` | string | Yes | Landing page URL (max 255), starting with `http://` or `https://`. A host sent without its scheme (`lp.example.com/x`, `//lp.example.com/x`) is stored with `https://`, as Setup › Landing Pages stores it, and the answer says so: `meta.normalized.landing_page_url` holds `sent` and `stored`. Any other value is a `422`. Sync (`p202 sync`, `POST /sync`) compares landing pages on the stored form, so a source that still holds the bare host matches the page it made |
 | `aff_campaign_id` | integer | Yes | Campaign this page belongs to; `0` for an advanced page (`landing_page_type: 1`), which has none |
 | `landing_page_nickname` | string | Yes | Friendly name (max 50) |
-| `leave_behind_page_url` | string | No | Leave-behind URL (max 255; `null` clears it) |
+| `leave_behind_page_url` | string | No | Leave-behind URL (max 255; `null` clears it). A host sent without its scheme is stored with `https://` and named in `meta.normalized` |
 | `landing_page_type` | integer | No | Page type identifier (default 0) |
 
 Auto-generated on create: `landing_page_time` (unix timestamp) and

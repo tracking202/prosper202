@@ -88,6 +88,12 @@ class StubController extends Controller
         return $this->validatePayload($payload, $requireRequired, $current);
     }
 
+    /** @return array<string, array{sent: string, stored: string}> */
+    public function testCompletedUrls(): array
+    {
+        return $this->completedUrls();
+    }
+
     public function testTransaction(callable $fn): mixed
     {
         return $this->transaction($fn);
@@ -450,8 +456,8 @@ final class ControllerTest extends TestCase
      */
     public static function urlsThePageRefuses(): iterable
     {
-        yield 'no scheme' => ['lp.example.com/x'];
-        yield 'protocol-relative' => ['//lp.example.com/x'];
+        yield 'no host' => ['/x'];
+        yield 'a host with no dot' => ['localhost/x'];
         yield 'another scheme' => ['ftp://lp.example.com/x'];
         yield 'a leading space' => [' https://lp.example.com/x'];
         yield 'empty' => [''];
@@ -465,22 +471,23 @@ final class ControllerTest extends TestCase
             $ctrl->testValidatePayload(['site' => $url]);
             self::fail('accepted ' . var_export($url, true));
         } catch (ValidationException $e) {
-            self::assertStringStartsWith("Field 'site' must start with http:// or https://", $e->getFieldErrors()['site'] ?? '');
-            self::assertCount(1, $e->getFieldErrors());
+            self::assertSame(["Field 'site' must start with http:// or https://"], array_values($e->getFieldErrors()));
+            self::assertArrayHasKey('site', $e->getFieldErrors());
         }
     }
 
     /**
-     * A host sent without its scheme is refused naming the URL the page
-     * would have saved for it (HttpUrlPrefix::complete()); a value that is
-     * no bare host gets no suggestion.
+     * A host sent without its scheme is stored with https://, as the page
+     * stores it (HttpUrlPrefix::complete()); a value that is no bare host is
+     * refused.
      *
      * @return iterable<string, array{string, string|null}>
      */
-    public static function urlSuggestions(): iterable
+    public static function urlsSentWithoutAScheme(): iterable
     {
         yield 'no scheme' => ['lp.example.com/x', 'https://lp.example.com/x'];
         yield 'protocol-relative' => ['//lp.example.com/x', 'https://lp.example.com/x'];
+        yield 'a host alone' => ['www.example.com', 'https://www.example.com'];
         yield 'a port and placeholders' => ['lp.example.com:8443/x?c=[[c1]]#top', 'https://lp.example.com:8443/x?c=[[c1]]#top'];
         yield 'an address' => ['192.0.2.5/x', 'https://192.0.2.5/x'];
         yield 'another scheme' => ['ftp://lp.example.com/x', null];
@@ -489,25 +496,35 @@ final class ControllerTest extends TestCase
         yield 'a user before the host' => ['user@lp.example.com/x', null];
         yield 'a host with no dot' => ['localhost/x', null];
         yield 'a path' => ['/x', null];
+        yield 'a leading space' => [' lp.example.com/x', null];
     }
 
-    /** @dataProvider urlSuggestions */
-    public function testARefusedHostWithoutASchemeNamesTheUrlToSend(string $sent, ?string $suggested): void
+    /** @dataProvider urlsSentWithoutAScheme */
+    public function testAnHttpUrlFieldCompletesAHostSentWithoutItsScheme(string $sent, ?string $stored): void
     {
         [$ctrl] = $this->createControllerWithDb();
-        try {
-            $ctrl->testValidatePayload(['site' => $sent]);
-            self::fail('accepted ' . $sent);
-        } catch (ValidationException $e) {
-            self::assertSame(
-                "Field 'site' must start with http:// or https://" . ($suggested === null ? '' : '; send ' . $suggested),
-                $e->getFieldErrors()['site']
-            );
+        if ($stored === null) {
+            try {
+                $ctrl->testValidatePayload(['site' => $sent]);
+                self::fail('accepted ' . $sent);
+            } catch (ValidationException $e) {
+                self::assertSame("Field 'site' must start with http:// or https://", $e->getFieldErrors()['site']);
+            }
+
+            return;
         }
-        if ($suggested !== null) {
-            self::assertSame(['site' => $suggested], $ctrl->testValidatePayload(['site' => $suggested]), 'the suggestion is accepted');
-            self::assertSame($suggested, \Prosper202\Http\HttpUrlPrefix::complete($suggested), 'completing twice changes nothing');
-        }
+        self::assertSame(['site' => $stored], $ctrl->testValidatePayload(['site' => $sent]));
+        self::assertSame(['site' => ['sent' => $sent, 'stored' => $stored]], $ctrl->testCompletedUrls());
+        self::assertSame(['site' => $stored], $ctrl->testValidatePayload(['site' => $stored]), 'completing twice changes nothing');
+        self::assertSame([], $ctrl->testCompletedUrls(), 'and a whole URL is not reported as completed');
+    }
+
+    public function testACompletedUrlIsHeldToTheFieldsLength(): void
+    {
+        [$ctrl] = $this->createControllerWithDb();
+        self::assertNotEmpty($ctrl->testValidatePayload(['site' => 'lp.example.com/' . str_repeat('a', 232)]));
+        $this->expectException(ValidationException::class);
+        $ctrl->testValidatePayload(['site' => 'lp.example.com/' . str_repeat('a', 233)]);
     }
 
     public function testAnHttpUrlFieldTakesWhatThePageTakes(): void
@@ -525,7 +542,7 @@ final class ControllerTest extends TestCase
         self::assertSame('http_url', $fields['landing_page_url']['format'] ?? null);
         $page = (string) file_get_contents(dirname(__DIR__, 3) . '/tracking202/setup/landing_pages.php');
         self::assertStringContainsString('\\Prosper202\\Http\\HttpUrlPrefix::accepts(', $page, 'the page reads the same rule');
-        self::assertStringContainsString('\\Prosper202\\Http\\HttpUrlPrefix::complete(', $page, 'after completing a URL typed without its scheme');
+        self::assertStringContainsString('\\Prosper202\\Http\\HttpUrlPrefix::complete(', $page, 'after completing a URL typed without its scheme, as the API does');
     }
 
     public function testCreateMaxLengthValidation(): void

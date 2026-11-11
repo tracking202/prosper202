@@ -857,6 +857,7 @@ p202 click list --follow [--limit 10] [--interval 5s] [--stop-after 10m] [--ndjs
 p202 click get <id> [--json]           # filter_reason: why a filtered click is (null before 1.9.79)
 p202 click list --filter-reason sign_in_address|crawler_range|repeat_visit|filter_list|fraud_score|bot|not_recorded
 p202 click conversions <id> [--json]   # every conversion on the click, counted or not and why
+p202 click not-fraud <id> [--json]     # a fraud_score click and its address's others count again; the address is always counted
 p202 click update-cpc --from YYYY-MM-DD --to YYYY-MM-DD --cpc D
                 [--aff-network-id N] [--aff-campaign-id N] [--ppc-network-id N] [--ppc-account-id N]
                 [--landing-page-id N] [--text-ad-id N] [--method-of-promotion directlink|landingpage]

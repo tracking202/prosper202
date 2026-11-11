@@ -417,6 +417,40 @@ class ClicksController
     }
 
     /**
+     * POST /clicks/{id}/not-fraud: IPQualityScore's verdict on the click
+     * was wrong (Prosper202\Fraud\FraudVerdictUndo, which Visitors' Not
+     * fraud button runs too). 404 for a click that is not the caller's or
+     * was not filtered for its fraud score.
+     *
+     * @param array<array-key, mixed> $payload the body, as decoded
+     * @return array{data: array<string, mixed>}
+     */
+    public function notFraud(int $id, array $payload): array
+    {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, [], 'a not-fraud request');
+        try {
+            $undone = (new \Prosper202\Fraud\FraudVerdictUndo(new \Prosper202\Database\Connection($this->db)))->undo($this->userId, $id);
+        } catch (\Throwable $e) {
+            // Clicks before the failing one may count again already; a repeat takes up where this stopped.
+            throw new DatabaseException('Counting the click again failed part way; send the request again', $e);
+        }
+        if ($undone === null) {
+            throw new NotFoundException('No click ' . $id . ' of yours is filtered for its fraud score (filter_reason fraud_score)');
+        }
+
+        return ['data' => [
+            'click_id' => $id,
+            'ip_address' => $undone['address'],
+            'clicks_counted' => $undone['clicks'],
+            'more_clicks_filtered' => $undone['more'],
+            'address_always_counted' => $undone['exempted'],
+            'note' => $undone['exempted']
+                ? 'The address is on the click filter list as always count, so it is not scored again.'
+                : ucfirst((string) $undone['exempt_problem']) . '.',
+        ]];
+    }
+
+    /**
      * GET /clicks/{id}/conversions: every conversion row of the click, with
      * whether it counts toward the click's value and why not when it does
      * not, and the click's value from its rows beside the figure the
