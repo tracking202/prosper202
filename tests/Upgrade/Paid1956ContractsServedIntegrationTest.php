@@ -778,9 +778,26 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
      */
     public function testTheOldGoogleFeedUrlNamesItsReplacement(): void
     {
+        self::q('DELETE FROM 202_legacy_google_feed_fetches');
         [$status, , $body] = self::http('/tracking202/static/feeds/google/offlineconversions/?cn=Purchase&ac=--');
         self::assertSame(410, $status);
         self::assertStringContainsString('Setup > Offline Conversions', $body);
+        // The fetch is noted, so Setup > Offline Conversions lists the schedule to move over.
+        [$status] = self::http('/tracking202/static/feeds/google/offlineconversions/?cn=Purchase&ac=' . self::CAMPAIGN);
+        self::assertSame(410, $status);
+        [$status] = self::http('/tracking202/static/feeds/google/offlineconversions/?cn=Purchase&ac=' . self::CAMPAIGN);
+        self::assertSame(410, $status);
+        // One that names no schedule is answered the same and noted nowhere.
+        [$status] = self::http('/tracking202/static/feeds/google/offlineconversions/?cn=Purchase&ac=12abc');
+        self::assertSame(410, $status);
+        $noted = self::$db->query('SELECT aff_campaign_id, conversion_name, fetches FROM 202_legacy_google_feed_fetches ORDER BY fetch_id');
+        self::assertInstanceOf(\mysqli_result::class, $noted);
+        self::assertSame(
+            [['0', 'Purchase', '1'], [(string) self::CAMPAIGN, 'Purchase', '2']],
+            $noted->fetch_all(MYSQLI_NUM),
+            $this->serverLog()
+        );
+        self::q('DELETE FROM 202_legacy_google_feed_fetches');
     }
 
     /**

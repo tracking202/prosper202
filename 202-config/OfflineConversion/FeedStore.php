@@ -128,20 +128,36 @@ final class FeedStore
     /**
      * Make a feed. Its URL is the one time the key is known.
      *
+     * With $once, an account that already has a feed of this format for this
+     * conversion name is handed that feed and no key: read under the same
+     * lock the count takes, so two requests at once make one feed.
+     *
      * @param FeedSettings $settings
-     * @return array{0: Feed, 1: string} the feed and its key
+     * @return ($once is true ? array{0: Feed, 1: string|null} : array{0: Feed, 1: string}) the feed and its key
      * @throws \OverflowException when the account has MAX_FEEDS already
      */
-    public function create(int $userId, array $settings, int $now): array
+    public function create(int $userId, array $settings, int $now, bool $once = false): array
     {
         $key = self::newKey();
 
-        return $this->conn->transaction(function () use ($userId, $settings, $now, $key): array {
+        return $this->conn->transaction(function () use ($userId, $settings, $now, $key, $once): array {
             $count = $this->conn->prepareWrite(
                 'SELECT COUNT(*) AS feeds FROM 202_offline_conversion_feeds WHERE user_id = ? FOR UPDATE'
             );
             $this->conn->bind($count, 'i', [$userId]);
-            if (StoredRow::int($this->conn->fetchOne($count) ?? [], 'feeds') >= self::MAX_FEEDS) {
+            $feeds = StoredRow::int($this->conn->fetchOne($count) ?? [], 'feeds');
+            if ($once && $feeds > 0) {
+                $same = $this->conn->prepareWrite(
+                    'SELECT ' . self::COLUMNS . ' FROM 202_offline_conversion_feeds'
+                    . ' WHERE user_id = ? AND format = ? AND conversion_name <=> ? ORDER BY feed_id LIMIT 1'
+                );
+                $this->conn->bind($same, 'iss', [$userId, $settings['format']->value, $settings['conversion_name']]);
+                $row = $this->conn->fetchOne($same);
+                if ($row !== null) {
+                    return [self::feed($row), null];
+                }
+            }
+            if ($feeds >= self::MAX_FEEDS) {
                 throw new \OverflowException(
                     'An account can have ' . self::MAX_FEEDS . ' fetch URLs. Delete one first.'
                 );

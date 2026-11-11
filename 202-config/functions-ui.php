@@ -206,6 +206,39 @@ function p202_flash(string $kind, string $text): string
 }
 
 /**
+ * Home's and Account Overview's notice that Google Ads is still fetching
+ * paid 1.9.56's retired feed (Prosper202\OfflineConversion\
+ * LegacyGoogleFeedFetches), linking to where each schedule is moved over.
+ * '' when there is none to move, or for a role that could not move one.
+ * A notice is not worth a failed page: a read that fails is logged and
+ * nothing is shown.
+ */
+function p202_old_google_feed_notice(mixed $db, int $userId, bool $mayMove, string $base, ?int $now = null): string
+{
+    if (!$mayMove || !$db instanceof \mysqli || $userId <= 0) {
+        return '';
+    }
+    try {
+        $waiting = (new \Prosper202\OfflineConversion\LegacyGoogleFeedFetches(new \Prosper202\Database\Connection($db)))
+            ->waiting($userId, $now ?? time());
+    } catch (\Throwable $e) {
+        error_log('Prosper202: the old Google Ads feed notice could not be read: ' . $e->getMessage());
+
+        return '';
+    }
+    if ($waiting === 0) {
+        return '';
+    }
+    $href = htmlspecialchars($base . 'tracking202/setup/offline_conversions.php#old-feed', ENT_QUOTES, 'UTF-8');
+
+    return '<div class="alert alert-warning p202-flash" role="status"><i class="bi bi-exclamation-triangle"></i>'
+        . '<div class="p202-flash__body"><strong>Your Google Ads conversion uploads have stopped.</strong> Google Ads is still fetching '
+        . ($waiting === 1 ? 'a scheduled feed' : $waiting . ' scheduled feeds')
+        . ' from before your upgrade, which no longer ' . ($waiting === 1 ? 'sends' : 'send') . ' conversions. '
+        . '<a href="' . $href . '">Move ' . ($waiting === 1 ? 'it' : 'them') . ' over</a></div></div>';
+}
+
+/**
  * The warning every page that starts a database upgrade shows inside its
  * form, directly above its button: the upgrade page (202-config/upgrade.php)
  * and both 1-click pages (202-account/auto-upgrade.php,

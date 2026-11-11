@@ -140,10 +140,40 @@ Paid 1.9.56's Google Ads schedule URL,
 `…/tracking202/static/feeds/google/offlineconversions/?cn=…&ac=…`, answers
 `410 Gone` from 1.9.80, with these steps in its body, so the schedule shows
 as failed in Google Ads. Its user name and password are not carried over.
-Under *Conversion names*, enter the schedule's `cn` value on the row of the
-campaign its `ac` named, or on *Every other campaign* for `ac=--`; make a
-fetch URL in the Google Ads Uploads template
-format (90 days matches the old feed), and replace the schedule's URL with it.
+
+Prosper202 notes each fetch of the old address. While Google Ads keeps
+fetching it and a schedule is not moved yet, Home and Account Overview say
+that your Google Ads conversion uploads have stopped, with a link to where
+it is moved. Setup › Offline Conversions opens with **Your old Google Ads
+feed**: each schedule by the conversion action (`cn`) and campaign (`ac`) its
+address carries, and when Google Ads last tried it. **Move it over** saves
+that conversion action as the Google name of the campaign (of *Every other
+campaign* for `ac=--`) and makes a fetch URL for that name in the Google Ads
+Uploads template format, last 90 days, as the old feed sent. The URL is shown
+once: paste it into the schedule in Google Ads in place of the old address.
+The schedule stays listed, as moved, until Google Ads stops fetching the old
+address; **hide** takes it off the page until it is fetched again. When the
+campaign already has another Google name, the button asks before replacing
+it.
+
+The old address takes no sign-in, so the list repeats what a request to it
+said: a schedule naming one of your campaigns is shown to you, one naming
+every campaign to each user who may export, and nothing changes until you
+press the button. Home and Account Overview mention a schedule naming every
+campaign only to an account that already sends conversions to Google (it has
+a Google conversion name or a Google fetch URL). At most 50 schedules are
+noted, 5 for one campaign, each shown for 35 days after its last fetch; when
+there is no room, one not fetched for 2 days gives its place up, and an
+address naming a campaign this install does not have is not noted. **hide**
+on a schedule naming every campaign hides it for every user. A campaign has
+one Google name, so moving a second schedule of the same campaign replaces
+the first one's name (the button asks first).
+
+By hand it is the same two steps: under *Conversion names*, enter the
+schedule's `cn` value on the row of the campaign its `ac` named, or on
+*Every other campaign* for `ac=--`; make a fetch URL in the Google Ads
+Uploads template format (90 days matches the old feed), and replace the
+schedule's URL with it.
 
 ## What a fetch does not do
 

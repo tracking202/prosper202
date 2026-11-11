@@ -5043,6 +5043,9 @@ class UPGRADE
                 // attribution worker's run carries on (AttributionWorker::
                 // fanOutModelRecomputes()). Every model already there is at 0.
                 \Prosper202\Database\Tables\AttributionTables::attributionModels(),
+                // The schedules still fetching paid 1.9.56's retired Google Ads
+                // feed (Prosper202\OfflineConversion\LegacyGoogleFeedFetches).
+                \Prosper202\Database\Tables\ConversionTables::legacyGoogleFeedFetches(),
                 // What each landing page's last code check found
                 // (Prosper202\Setup\LandingPageCheckStore).
                 \Prosper202\Database\Tables\CampaignTables::landingPageChecks(),
