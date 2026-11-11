@@ -422,6 +422,29 @@ final class LedgerCurrencyIntegrationTest extends TestCase
         self::assertNull(ExchangeRateCache::rate($this->conn, 'GBP', 'USD', $now + ExchangeRateCache::MAX_AGE), 'a rate a week old is no rate');
     }
 
+    public function testPairsThatNeverAnswerDoNotKeepTheOthersFromBeingAsked(): void
+    {
+        $this->campaign(7, 'accumulate', 'AUD');
+        $this->campaign(8, 'accumulate', 'EUR');
+        $this->campaign(9, 'accumulate', 'GBP');
+        $starts = [];
+        foreach ([3, 4, 5] as $hour) {
+            $log = [];
+            $result = ExchangeRateCache::refresh($this->conn, static function (string $from) use (&$log): ?string {
+                $log[] = $from;
+
+                return null;
+            }, $hour * 3600 + 5, 2);
+            self::assertCount(2, $result['failed'], 'at most the limit a run');
+            $starts[] = $log;
+        }
+        self::assertSame(
+            [['AUD', 'EUR'], ['EUR', 'GBP'], ['GBP', 'AUD']],
+            $starts,
+            'each hour starts at another pair, so every pair is asked within three hours'
+        );
+    }
+
     public function testBeforeTheUpgradeAddsTheColumnsARowIsStillWritten(): void
     {
         $this->campaign(7);

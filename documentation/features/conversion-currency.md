@@ -99,11 +99,18 @@ Before 1.9.80 no conversion kept its currency, and every page showed it in
 the account's currency of the moment. The upgrade gives each earlier
 conversion a currency where it can tell:
 
-- **An account whose currency was not changed**: its conversions are
-  recorded in the account's currency.
+- **An account whose currency shows no sign of having changed**: its
+  conversions are recorded in the account's currency. The only sign the
+  upgrade can read is the one a change leaves on the campaigns' payouts, and
+  a change can leave none (every campaign was already in the new currency,
+  or the account had no campaign): such an account's earlier conversions are
+  recorded in its current currency whichever currency they were in. If your
+  account changed currency before the upgrade, check the currency shown on
+  its earlier conversions.
 - **An account whose currency was changed before the upgrade** (the change
   left its mark on the campaigns' payouts), or that has a campaign paid in
-  another currency: Prosper202 cannot tell which conversions were recorded
+  another currency (a campaign paid in another currency counts even if the
+  account never changed currency): Prosper202 cannot tell which conversions were recorded
   under which currency, so it records none for them. They show with
   "currency not recorded", are counted apart in the reports' notice, and
   are left out of offline conversion files.

@@ -290,14 +290,19 @@ if (!function_exists('_upgrade_ledger_currency_backfill')) {
      * Nothing recorded which currency an amount was written in; every reader
      * labelled it with the account's at the time of reading. For an account
      * whose currency shows no sign of having changed, that is the currency
-     * its rows were written in, and they take it. A change of currency left
-     * a sign: it kept each campaign's payout as it was in
+     * its rows were written in, and they take it. A change of currency
+     * usually left a sign: it kept each campaign's payout as it was in
      * aff_campaign_foreign_payout (CurrencyChange). An account with such a
-     * campaign counted in more than one currency over its history, and
-     * which rows were written under which cannot be known, so its rows keep
-     * '' (not recorded, RowCurrency): they are shown without a currency, and
-     * Personal settings lets the owner say which one they were. So does a
-     * row whose account has no preferences row.
+     * campaign, a deleted one too, may have counted in more than one
+     * currency over its history, and which rows were written under which
+     * cannot be known, so its rows keep '' (not recorded, RowCurrency): they
+     * are shown without a currency, and Personal settings lets the owner say
+     * which one they were. So does a row whose account has no preferences
+     * row. The sign is not reliable either way, and nothing else records a
+     * change: a change that cleared it (every campaign already in the new
+     * currency, or none left) is not seen, and those rows take the current
+     * currency; one foreign-paid campaign with no change at all leaves the
+     * rows unrecorded. Both are said in the upgrade's changelog entry.
      *
      * Only rows with no currency are touched, so a re-run changes nothing
      * (0.05 s a range), and rows the new code wrote are left alone. In

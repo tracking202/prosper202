@@ -32,6 +32,7 @@ final class LedgerCurrencyUpgradeIntegrationTest extends TestCase
     private const CHANGED = 7872;
     private const NO_PREFS = 7873;
     private const UNREADABLE = 7874;
+    private const DELETED_CAMPAIGN = 7875;
 
     /** @var list<string>|null 202_version as this class found it, put back after */
     private static ?array $versions = null;
@@ -68,7 +69,7 @@ final class LedgerCurrencyUpgradeIntegrationTest extends TestCase
 
     private static function clear(): void
     {
-        $users = implode(',', [self::STEADY, self::CHANGED, self::NO_PREFS, self::UNREADABLE]);
+        $users = implode(',', [self::STEADY, self::CHANGED, self::NO_PREFS, self::UNREADABLE, self::DELETED_CAMPAIGN]);
         self::q("DELETE FROM 202_conversion_logs WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_aff_campaigns WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_users_pref WHERE user_id IN ($users)");
@@ -93,7 +94,7 @@ final class LedgerCurrencyUpgradeIntegrationTest extends TestCase
     /** @return array<int, string> click_id => currency */
     private static function currencies(): array
     {
-        $users = implode(',', [self::STEADY, self::CHANGED, self::NO_PREFS, self::UNREADABLE]);
+        $users = implode(',', [self::STEADY, self::CHANGED, self::NO_PREFS, self::UNREADABLE, self::DELETED_CAMPAIGN]);
         $rows = self::$db->query("SELECT click_id, currency FROM 202_conversion_logs WHERE user_id IN ($users) ORDER BY click_id");
         self::assertInstanceOf(\mysqli_result::class, $rows);
 
@@ -120,6 +121,14 @@ final class LedgerCurrencyUpgradeIntegrationTest extends TestCase
         // A stored value no page could print reads as USD everywhere, so that is what its rows were shown in.
         self::q('INSERT INTO 202_users_pref SET user_id = ' . self::UNREADABLE . ", user_account_currency = 'XYZ'");
         self::conversion(978740001, self::UNREADABLE);
+        // The sign on a campaign since deleted still stands: nothing else says the currency changed.
+        $deleted = self::DELETED_CAMPAIGN;
+        self::q('INSERT INTO 202_users_pref SET user_id = ' . $deleted . ", user_account_currency = 'GBP'");
+        self::q('INSERT INTO 202_aff_campaigns SET user_id = ' . $deleted . ', aff_network_id = 1,'
+            . " aff_campaign_name = 'old', aff_campaign_url = 'http://x', aff_campaign_payout = 8.00,"
+            . " aff_campaign_currency = 'USD', aff_campaign_foreign_payout = 10.00,"
+            . ' aff_campaign_deleted = 1, aff_campaign_time = 1');
+        self::conversion(978750001, self::DELETED_CAMPAIGN);
 
         [$out, $err] = self::upgrade();
 
@@ -127,7 +136,10 @@ final class LedgerCurrencyUpgradeIntegrationTest extends TestCase
         self::assertStringNotContainsString('Prosper202 upgrade', $err, 'a rung that converged logs nothing');
         self::assertSame($installed, self::shapes(), 'each table is the installed one');
         self::assertSame(
-            [978710001 => 'EUR', 978710002 => 'EUR', 978720001 => '', 978730001 => '', 978740001 => 'USD'],
+            [
+                978710001 => 'EUR', 978710002 => 'EUR', 978720001 => '', 978730001 => '',
+                978740001 => 'USD', 978750001 => '',
+            ],
             self::currencies(),
             'the account\'s currency where nothing says it changed; none where it did, or where there is no account to ask'
         );
