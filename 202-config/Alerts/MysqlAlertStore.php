@@ -178,6 +178,39 @@ final class MysqlAlertStore
         $this->conn->executeUpdate($stmt);
     }
 
+    /**
+     * Takes the account's turn at something it may do once every $every
+     * seconds (its test alert, its attribution retry): 0 when the turn is
+     * taken, otherwise the seconds until the next one. The time is kept in
+     * the account's own row of 202_alert_state under campaign 0.
+     */
+    public function claimTurn(int $userId, string $what, int $every, int $now): int
+    {
+        $stmt = $this->conn->prepareWrite(
+            'INSERT IGNORE INTO 202_alert_state (user_id, aff_campaign_id, alert_kind, incident_key, alerted_at)'
+            . ' VALUES (?, 0, ?, 0, 0)'
+        );
+        $this->conn->bind($stmt, 'is', [$userId, $what]);
+        $this->conn->executeUpdate($stmt);
+
+        $stmt = $this->conn->prepareWrite(
+            'UPDATE 202_alert_state SET alerted_at = ?'
+            . ' WHERE user_id = ? AND aff_campaign_id = 0 AND alert_kind = ? AND alerted_at <= ?'
+        );
+        $this->conn->bind($stmt, 'iisi', [$now, $userId, $what, $now - $every]);
+        if ($this->conn->executeUpdate($stmt) > 0) {
+            return 0;
+        }
+
+        $stmt = $this->conn->prepareRead(
+            'SELECT alerted_at FROM 202_alert_state WHERE user_id = ? AND aff_campaign_id = 0 AND alert_kind = ?'
+        );
+        $this->conn->bind($stmt, 'is', [$userId, $what]);
+        $row = $this->conn->fetchOne($stmt);
+
+        return max(1, (int) ($row['alerted_at'] ?? $now) + $every - $now);
+    }
+
     public static function incidentId(Alert $alert): string
     {
         return $alert->kind->stateKey() . ':' . $alert->campaignId;
@@ -271,7 +304,7 @@ final class MysqlAlertStore
     /**
      * The account's alerts last seen at or after $since, the latest first.
      *
-     * @return list<array{kind: AlertKind, campaign_id: int, message: string, first_seen_at: int,
+     * @return list<array{kind: ?AlertKind, campaign_id: int, message: string, first_seen_at: int,
      *     last_seen_at: int, delivery: int, attempts: int, sent_by: list<string>, delivery_note: string}>
      */
     public function recent(int $userId, int $since, int $limit): array
@@ -284,14 +317,9 @@ final class MysqlAlertStore
         $this->conn->bind($stmt, 'iii', [$userId, $since, $limit]);
         $alerts = [];
         foreach ($this->conn->fetchAll($stmt) as $row) {
-            $kind = AlertKind::tryFrom('alert.' . $row['alert_kind']);
-            if ($kind === null) {
-                throw new \UnexpectedValueException(
-                    "Account $userId's alert log holds an alert of no known kind: " . $row['alert_kind']
-                );
-            }
+            // A kind this code does not know (a later version's) is still an alert to show.
             $alerts[] = [
-                'kind' => $kind,
+                'kind' => AlertKind::tryFrom('alert.' . $row['alert_kind']),
                 'campaign_id' => (int) $row['aff_campaign_id'],
                 'message' => (string) $row['message'],
                 'first_seen_at' => (int) $row['first_seen_at'],

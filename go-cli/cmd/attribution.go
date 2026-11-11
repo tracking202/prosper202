@@ -414,8 +414,10 @@ Every conversion, visitor merge and model change that failed is made due at
 once and the attribution worker is run once, briefly. The answer says how
 many of each were made due (made_due), what became of the run (worker: ran,
 busy when another run held the lock and takes them next, failed when the run
-itself failed and the cron job's next run takes them) and the backlog as it
-now stands (queue, as "p202 attribution queue" shows it).
+itself failed and the cron job's next run takes them, idle when nothing was
+waiting on a failure, waiting when it was asked less than 30 seconds ago, with
+retry_after_seconds) and the backlog as it now stands (queue, as
+"p202 attribution queue" shows it).
 
 Read why something fails first with "p202 attribution queue": each failing
 row carries last_error. Fix what it names, then run this.`,

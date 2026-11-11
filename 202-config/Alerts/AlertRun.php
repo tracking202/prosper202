@@ -126,11 +126,16 @@ final class AlertRun
     ): void {
         $activity = AccountActivity::read($this->conn, $userId, $now);
         $sent = $store->sentIncidents($userId);
-        $store->pruneLog($userId, $now - self::LOG_DAYS * 86400);
+        try {
+            $store->pruneLog($userId, $now - self::LOG_DAYS * 86400);
+        } catch (\Throwable $e) {
+            error_log('Money-loss alerts: account ' . $userId . '\'s alert list could not be pruned: '
+                . get_class($e) . ': ' . $e->getMessage());
+        }
         $contact = null;
         foreach ($this->detectors as $detector) {
             foreach ($detector->detect($this->conn, $activity, $settings) as $alert) {
-                $store->logSeen($alert, $now);
+                $logged = self::logged($alert, static fn () => $store->logSeen($alert, $now));
                 [$key, $delivered, $attempts] = $sent[MysqlAlertStore::incidentId($alert)] ?? [null, false, 0];
                 $tries = $key === $alert->incidentKey ? $attempts : 0;
                 if ($key === $alert->incidentKey && ($delivered || $tries >= self::MAX_ATTEMPTS)) {
@@ -138,19 +143,40 @@ final class AlertRun
                 }
                 $contact ??= $this->notifier->contact($userId);
                 $result = $this->notifier->deliver($alert, $settings, $contact);
-                $store->logDelivery($alert, $result, $tries + 1);
                 foreach ($result['failed'] as $channel => $why) {
                     error_log('Money-loss alerts: the ' . $alert->kind->stateKey() . ' alert for campaign '
                         . $alert->campaignId . ' of account ' . $userId . ' was not sent by ' . $channel . ': ' . $why);
                 }
-                if ($result['taken'] === [] && $result['failed'] !== []) {
-                    $report['failed']++;
-                    $store->recordAttempt($alert, false, $tries + 1, $now);
-                    continue;
+                // What the channels did is recorded before the list hears of it:
+                // the next run decides whether to send again by this alone.
+                $failed = $result['taken'] === [] && $result['failed'] !== [];
+                $report[$failed ? 'failed' : ($result['taken'] === [] ? 'unsent' : 'sent')]++;
+                $store->recordAttempt($alert, !$failed, $tries + 1, $now);
+                if ($logged) {
+                    self::logged($alert, static fn () => $store->logDelivery($alert, $result, $tries + 1));
                 }
-                $report[$result['taken'] === [] ? 'unsent' : 'sent']++;
-                $store->recordAttempt($alert, true, $tries + 1, $now);
             }
+        }
+    }
+
+    /**
+     * A write to the account's alert list, which never stops an alert from
+     * being sent: a failure is logged and answered false.
+     *
+     * @param callable(): void $write
+     */
+    private static function logged(Alert $alert, callable $write): bool
+    {
+        try {
+            $write();
+
+            return true;
+        } catch (\Throwable $e) {
+            error_log('Money-loss alerts: the ' . $alert->kind->stateKey() . ' alert for campaign '
+                . $alert->campaignId . ' of account ' . $alert->userId . ' could not be listed in the app: '
+                . get_class($e) . ': ' . $e->getMessage());
+
+            return false;
         }
     }
 

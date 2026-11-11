@@ -108,36 +108,50 @@ final class QueueRetryIntegrationTest extends TestCase
         $this->click(10, 1, time() - 600);
         $conv = $this->convert(10, '5.00', 'mine');
         $this->work();
-        self::fixture("INSERT INTO 202_attribution_pending
+        $fail = "INSERT INTO 202_attribution_pending
             (conv_id, enqueued_at, reason, attempts, last_error, retry_at)
-            VALUES ($conv, 1, 'recorded', 3, 'Lock wait timeout exceeded', " . self::LATER . ')');
-        $api = new \Api\V3\Controllers\AttributionController(self::$db, 1);
+            VALUES ($conv, 1, 'recorded', 3, 'Lock wait timeout exceeded', " . self::LATER . ')';
+        self::fixture($fail);
+        self::fixture('DELETE FROM 202_alert_state WHERE user_id = 1');
+        $none = ['conversions' => 0, 'merges' => 0, 'models' => 0];
+        $early = time() - 600;
 
         // Another run holds the worker's lock: the rows are due, and the answer says who takes them.
         $other = self::secondConnection();
         $lock = $other->real_escape_string(AttributionWorker::lockName($this->conn));
         self::assertSame('1', $other->query("SELECT GET_LOCK('$lock', 0)")->fetch_row()[0]);
         try {
-            $busy = $api->retryQueue()['data'];
+            $busy = QueueRetry::tryNow($this->conn, 1, 5, $early);
         } finally {
             $other->close();
         }
-        self::assertSame(
-            [['conversions' => 1, 'merges' => 0, 'models' => 0], QueueRetry::BUSY, 1],
-            [$busy['made_due'], $busy['worker'], $busy['queue']['pending']]
-        );
-        self::assertSame(0, $busy['queue']['rows'][0]['retry_at'], 'due now');
+        self::assertSame([['conversions' => 1] + $none, QueueRetry::BUSY], [$busy['made_due'], $busy['worker']]);
 
+        // Asked again at once, nothing is done and the answer says when the next turn is.
+        self::assertSame(
+            ['made_due' => $none, 'worker' => QueueRetry::WAITING, 'retry_after_seconds' => 20],
+            QueueRetry::tryNow($this->conn, 1, 5, $early + 10)
+        );
+        // With nothing waiting on a failure, the worker is not run.
+        $idle = QueueRetry::tryNow($this->conn, 1, 5, $early + 60);
+        self::assertSame([$none, QueueRetry::IDLE], [$idle['made_due'], $idle['worker']]);
+        self::assertSame(1, (int) self::scalar('SELECT COUNT(*) FROM 202_attribution_pending'), 'left for the cron job');
+
+        // The route: made due, run, and the backlog after.
+        self::fixture('UPDATE 202_attribution_pending SET retry_at = ' . self::LATER);
+        $api = new \Api\V3\Controllers\AttributionController(self::$db, 1);
         $ran = $api->retryQueue()['data'];
         self::assertSame(
-            [['conversions' => 0, 'merges' => 0, 'models' => 0], QueueRetry::RAN, 0, 0],
-            [$ran['made_due'], $ran['worker'], $ran['queue']['pending'], $ran['queue']['failing']]
+            [['conversions' => 1] + $none, QueueRetry::RAN, 0, 0, 0],
+            [$ran['made_due'], $ran['worker'], $ran['retry_after_seconds'], $ran['queue']['pending'],
+                $ran['queue']['failing']]
         );
+        self::assertSame(QueueRetry::WAITING, $api->retryQueue()['data']['worker'], 'and not twice in a row');
 
         // The page says the same in its words.
         [$kind, $text] = p202_attr_retry_failed(self::$db, 1);
-        self::assertSame('ok', $kind);
-        self::assertStringContainsString('nothing is failing or waiting now', $text);
+        self::assertSame('warn', $kind);
+        self::assertStringContainsString('Try again in', $text);
     }
 
     private static function secondConnection(): \mysqli

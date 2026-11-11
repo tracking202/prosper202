@@ -589,16 +589,16 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
         self::assertSame(['test', 0, 1], [$data['alert'], $data['campaign_id'], $data['test']]);
         $store = new MysqlAlertStore($conn);
         self::assertSame([], $store->recent(self::OWNER, 0, 10), 'a test is not an alert');
-        self::assertSame([], $store->sentIncidents(self::OWNER));
+        self::assertSame(['test:0'], array_keys($store->sentIncidents(self::OWNER)), 'only the test\'s own turn');
 
         // A webhook subscribed to the alerts by name hears the test too; one that takes none of them does not.
         $this->settings(self::OTHER, new AlertSettings(true, false, false, true, 5, 10, '0.00'));
-        [$kind, $text] = $this->sendTest(self::OTHER);
+        [$kind, $text] = $this->sendTest(self::OTHER, 60);
         self::assertSame('ok', $kind, $text);
         self::assertSame([self::OWNER, self::OTHER], array_map('intval', array_column(self::deliveries(), 'user_id')));
         self::q("UPDATE 202_ltv_webhooks SET subscribed_events = 'revenue.recorded' WHERE user_id = " . self::OTHER);
         try {
-            [$kind, $text] = $this->sendTest(self::OTHER);
+            [$kind, $text] = $this->sendTest(self::OTHER, 120);
             self::assertSame('bad', $kind);
             self::assertStringContainsString('reached no channel', $text);
             self::assertStringContainsString('Webhooks: not tried, no webhook subscribes to the alerts.', $text);
@@ -610,17 +610,74 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
 
         // A channel that fails is named with why, beside the ones that took it.
         $this->slackStatus = 500;
-        [$kind, $text] = $this->sendTest(self::OWNER);
+        [$kind, $text] = $this->sendTest(self::OWNER, 180);
         self::assertSame('warn', $kind);
         self::assertStringContainsString('Slack: failed, the webhook answered 500', $text);
+
+        // A second test inside the same half minute is not sent, and the answer says when the next may be.
+        $posted = count($this->posted);
+        [$kind, $text] = $this->sendTest(self::OWNER, 190);
+        self::assertSame('warn', $kind);
+        self::assertStringContainsString('Send the next in 20 seconds', $text);
+        self::assertCount($posted, $this->posted);
+        [$kind] = $this->sendTest(self::OWNER, 210);
+        self::assertSame('warn', $kind, 'sent again once the half minute is over (Slack still fails)');
+        self::assertCount($posted + 1, $this->posted);
 
         // With alerts off nothing is sent, and the answer says why.
         $this->settings(self::OTHER, new AlertSettings(false, true, true, true, 5, 10, '0.00'));
         $mailed = count($this->mailed);
-        [$kind, $text] = $this->sendTest(self::OTHER);
+        [$kind, $text] = $this->sendTest(self::OTHER, 240);
         self::assertSame('warn', $kind);
         self::assertStringContainsString('money-loss alerts are off', $text);
         self::assertCount($mailed, $this->mailed);
+    }
+
+    public function testAnAlertListThatCannotBeWrittenNeverStopsOrRepeatsAnAlert(): void
+    {
+        $this->settings(self::OWNER, new AlertSettings(true, true, false, false, 5, 10, '100.00'));
+
+        // The list's table is not there: the alerts are sent all the same, once.
+        self::q('RENAME TABLE 202_alert_log TO 202_alert_log_away');
+        try {
+            $first = $this->runAlerts(self::$now);
+            $again = $this->runAlerts(self::$now + 30);
+        } finally {
+            self::q('RENAME TABLE 202_alert_log_away TO 202_alert_log');
+        }
+        self::assertSame(['accounts' => 2, 'sent' => 2, 'failed' => 0, 'unsent' => 1, 'errors' => 0], $first);
+        self::assertSame([0, 0], [$again['sent'], $again['errors']]);
+        self::assertCount(2, $this->posted, 'each alert reached Slack once');
+        self::assertStringContainsString('could not be listed in the app', (string) file_get_contents($this->log));
+
+        // The row is made but what the channels did cannot be written to it: still sent once.
+        self::q('DELETE FROM 202_alert_state WHERE user_id = ' . self::OWNER);
+        self::q("CREATE TRIGGER p202_test_refuse_alert_log BEFORE UPDATE ON 202_alert_log FOR EACH ROW
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'refused for the test'");
+        try {
+            self::assertSame(2, $this->runAlerts(self::$now + 60)['sent']);
+            self::assertSame(0, $this->runAlerts(self::$now + 120)['sent'], 'what was sent is not sent again');
+        } finally {
+            self::q('DROP TRIGGER IF EXISTS p202_test_refuse_alert_log');
+        }
+        self::assertCount(4, $this->posted);
+    }
+
+    public function testAnAlertOfAKindThisCodeDoesNotKnowIsListedWithTheRest(): void
+    {
+        $this->runAlerts(self::$now);
+        self::q('INSERT INTO 202_alert_log SET user_id = ' . self::OWNER . ", aff_campaign_id = 0, incident_key = 1,
+            alert_kind = 'from_a_later_version', message = 'Checkout stopped answering.', delivery = 1,
+            sent_by = 'email', first_seen_at = " . self::$now . ', last_seen_at = ' . (self::$now + 1));
+
+        $listed = (new MysqlAlertStore(new Connection(self::$db)))->recent(self::OWNER, 0, 10);
+
+        self::assertCount(3, $listed);
+        self::assertNull($listed[0]['kind']);
+        $html = p202_alerts_list($listed, 'https://p202.example.com/', self::$now);
+        self::assertStringContainsString('<strong>Alert</strong><div>Checkout stopped answering.</div>', $html);
+        self::assertStringContainsString('Spring Sale', $html, 'the alerts beside it are still listed');
+        self::assertSame(2, substr_count($html, '<a href='), 'and no link is made up for it');
     }
 
     public function testACommandLineRunLinksOnceABrowserHasShownWhereTheInstallIs(): void
@@ -690,17 +747,17 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
         $this->runAlerts(self::$now + 3600);
         self::assertSame([], $this->mailed, 'and not tried again');
 
-        [$kind, $text] = $this->sendTest(self::OWNER);
+        [$kind, $text] = $this->sendTest(self::OWNER, 7200);
         self::assertSame('warn', $kind);
         self::assertStringContainsString('shown only on Home and on this card', $text);
     }
 
     /** @return array{0: string, 1: string} */
-    private function sendTest(int $user): array
+    private function sendTest(int $user, int $at = 0): array
     {
         $notifier = $this->notifier(new Connection(self::$db));
 
-        return p202_alerts_send_test(self::$db, $user, [], dirname(__DIR__, 2), self::$now, $notifier);
+        return p202_alerts_send_test(self::$db, $user, [], dirname(__DIR__, 2), self::$now + $at, $notifier);
     }
 
     /** @return array{accounts: int, sent: int, failed: int, unsent: int, errors: int} */

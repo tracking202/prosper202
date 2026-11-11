@@ -360,6 +360,16 @@ function p202_attr_retry_failed(\mysqli $db, int $userId): array
         . ' and ' . $count($due['models'], 'model change');
     $pending = (int) $left['pending'];
     $stillFailing = (int) $left['failing'] + (int) $left['merges_failing'] + (int) $left['models_failing'];
+    if ($tried['worker'] === \Prosper202\Attribution\QueueRetry::WAITING) {
+        return ['warn', 'Nothing was tried again: it was tried less than '
+            . \Prosper202\Attribution\QueueRetry::EVERY . ' seconds ago. Try again in '
+            . $tried['retry_after_seconds'] . ' seconds.'];
+    }
+    if ($tried['worker'] === \Prosper202\Attribution\QueueRetry::IDLE) {
+        return ['ok', 'Nothing was waiting on a failure to be tried again'
+            . ($stillFailing > 0 ? '; what is listed as failing is already due, and the worker\'s next run,'
+                . ' within a minute, takes it.' : '.')];
+    }
     if ($tried['worker'] === \Prosper202\Attribution\QueueRetry::BUSY) {
         return ['ok', $what . ' are due again. The attribution worker is running right now and takes them next;'
             . ' reload in a minute.'];

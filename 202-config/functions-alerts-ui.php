@@ -18,6 +18,8 @@ use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
 
 const P202_ALERTS_RETURN = '202-account/account.php#money-loss-alerts';
+/** The seconds between an account's test alerts. */
+const P202_ALERTS_TEST_EVERY = 30;
 
 /**
  * A POST of the card: saved and redirected, or answered with the refusals
@@ -113,6 +115,11 @@ function p202_alerts_send_test(
             return ['warn', 'No test alert was sent: money-loss alerts are off for your account. Turn them on and'
                 . ' save, then send the test.'];
         }
+        $wait = (new MysqlAlertStore($conn))->claimTurn($userId, 'test', P202_ALERTS_TEST_EVERY, $now);
+        if ($wait > 0 && $settings->anyChannel()) {
+            return ['warn', 'No test alert was sent: one was sent less than ' . P202_ALERTS_TEST_EVERY
+                . ' seconds ago. Send the next in ' . $wait . ' seconds.'];
+        }
         if (!$settings->anyChannel()) {
             return ['warn', 'No test alert was sent: Slack, email and webhooks are all off in your saved settings,'
                 . ' so your alerts are shown only on Home and on this card.'];
@@ -166,7 +173,7 @@ function p202_alerts_send_test(
  * the page that shows the problem, and what each channel did with it. ''
  * when there are none.
  *
- * @param list<array{kind: AlertKind, campaign_id: int, message: string, first_seen_at: int, last_seen_at: int,
+ * @param list<array{kind: ?AlertKind, campaign_id: int, message: string, first_seen_at: int, last_seen_at: int,
  *     delivery: int, attempts: int, sent_by: list<string>, delivery_note: string}> $alerts MysqlAlertStore::recent()
  * @param string $base the install's address (get_absolute_url())
  */
@@ -192,11 +199,12 @@ function p202_alerts_list(array $alerts, string $base, int $now): string
             MysqlAlertStore::NOWHERE => 'Shown here only: no channel had anywhere to send it.' . $note,
             default => 'Not sent yet.',
         };
+        $kind = $alert['kind'];
         $rows .= '<tr><td class="text-nowrap">' . $e(date('Y-m-d H:i', $alert['first_seen_at'])) . '</td>'
             . '<td><span class="p202-pill' . ($active ? ' p202-pill--bad">Going on' : '">Earlier') . '</span> '
-            . '<strong>' . $e($alert['kind']->title()) . '</strong><div>' . $e($alert['message']) . '</div>'
-            . '<div><a href="' . $e($base . $alert['kind']->page($alert['campaign_id'])) . '">'
-            . $e($alert['kind']->pageLabel()) . '</a></div></td>'
+            . '<strong>' . $e($kind === null ? 'Alert' : $kind->title()) . '</strong><div>' . $e($alert['message'])
+            . '</div>' . ($kind === null ? '' : '<div><a href="' . $e($base . $kind->page($alert['campaign_id']))
+                . '">' . $e($kind->pageLabel()) . '</a></div>') . '</td>'
             . '<td' . ($alert['delivery'] === MysqlAlertStore::FAILED ? ' class="text-danger"' : '') . '>'
             . $e($delivery) . '</td></tr>';
     }

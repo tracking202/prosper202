@@ -430,7 +430,9 @@ final class UserTables
      * incident every channel failed for, tried again until attempts reaches
      * AlertRun::MAX_ATTEMPTS. The run's own rows are user 0's: its cursor,
      * and where the install is served (detail holds its path under the
-     * document root), which a command-line run cannot tell. From 1.9.80.
+     * document root), which a command-line run cannot tell. An account's
+     * rows under campaign 0 with no detector's kind time what it may do
+     * once in a while (MysqlAlertStore::claimTurn()). From 1.9.80.
      */
     public static function alertState(): SchemaDefinition
     {

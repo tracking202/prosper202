@@ -101,7 +101,8 @@ the page then says what each did: Slack took it or why it did not, whether
 the server's mail system accepted the email (and what to do when it does not
 arrive), and whether a webhook was queued. Webhooks receive it as the event
 `alert.test`, on every webhook subscribed to any of the alerts or to every
-event. A test is not listed as an alert.
+event. A test is not listed as an alert, and an account can send one every
+30 seconds.
 
 Every email and Slack message ends with a line saying how to turn the alerts
 off. The line, and the link to the problem, carry this install's address when

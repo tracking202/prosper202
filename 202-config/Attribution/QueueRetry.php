@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Attribution;
 
+use Prosper202\Alerts\MysqlAlertStore;
 use Prosper202\Database\Connection;
 
 /**
@@ -19,17 +20,38 @@ final class QueueRetry
     public const BUSY = 'busy';
     /** The run threw (logged); the rows stay due for the cron job. */
     public const FAILED = 'failed';
+    /** Nothing of the account's was failing, so nothing was run. */
+    public const IDLE = 'idle';
+    /** The account retried less than EVERY seconds ago; nothing was done. */
+    public const WAITING = 'waiting';
+    public const EVERY = 30;
 
     private function __construct()
     {
     }
 
     /**
-     * @return array{made_due: array{conversions: int, merges: int, models: int}, worker: 'ran'|'busy'|'failed'}
+     * The account's turn comes once every EVERY seconds, and the worker is
+     * run only when something was made due: a repeated call holds neither
+     * the worker's lock nor the failed rows' waits back.
+     *
+     * @return array{made_due: array{conversions: int, merges: int, models: int},
+     *     worker: 'ran'|'busy'|'failed'|'idle'|'waiting', retry_after_seconds: int}
      */
-    public static function tryNow(Connection $conn, int $userId, int $budgetSeconds = 5): array
+    public static function tryNow(Connection $conn, int $userId, int $budgetSeconds = 5, ?int $now = null): array
     {
+        $wait = (new MysqlAlertStore($conn))->claimTurn($userId, 'attribution_retry', self::EVERY, $now ?? time());
+        if ($wait > 0) {
+            return [
+                'made_due' => ['conversions' => 0, 'merges' => 0, 'models' => 0],
+                'worker' => self::WAITING,
+                'retry_after_seconds' => $wait,
+            ];
+        }
         $due = self::makeDue($conn, $userId);
+        if (array_sum($due) === 0) {
+            return ['made_due' => $due, 'worker' => self::IDLE, 'retry_after_seconds' => 0];
+        }
         try {
             $worker = AttributionWorker::runExclusive($conn, $budgetSeconds) === null ? self::BUSY : self::RAN;
         } catch (\Throwable $e) {
@@ -39,7 +61,7 @@ final class QueueRetry
             $worker = self::FAILED;
         }
 
-        return ['made_due' => $due, 'worker' => $worker];
+        return ['made_due' => $due, 'worker' => $worker, 'retry_after_seconds' => 0];
     }
 
     /** @return array{conversions: int, merges: int, models: int} what was made due */
