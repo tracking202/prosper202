@@ -15,6 +15,24 @@ address below on a database shaped like a paid 1.9.56 one, after the upgrade.
 - **Landing-page code.** Pages that load
   `tracking202/static/landing.js?lpip=…` (Get LP Code in 1.9.56) still record
   their visits. You don't need to paste the code again.
+- **PurLinks.** Landing-page links that carry `[[subid]]` or another tracking
+  token go straight to the offer again, and the click-out is still recorded.
+  The PurLink SubID a 1.9.56 page handed out (`<click>-<campaign>`) is
+  accepted on postbacks to `gpb.php` and `pb.php`, for a click on that
+  campaign. A snippet's `defpixel=1` turns the deferred pixel on. PurLink
+  clicks from the 90 days before the upgrade that had not converted yet still
+  convert when their postback arrives. See [PurLinks](../features/purlinks.md);
+  three behaviours are [not back yet](#not-working-yet-after-the-upgrade).
+- **Dynamic landing-page content.** Elements and form fields that name a
+  1.9.56 segment (`t202Kw`, `t202C1`, the visit's SubID and the others) are
+  filled again, and `window.dcs` is back. See
+  [Dynamic content](../features/dynamic-content.md) for what
+  `updateDataObj()` changes now and the two segments that are not restored.
+- **Google Ads parallel tracking templates.** A template that points at
+  `tracking202/redirect/pt.php?t202id=…` records the click with its keyword,
+  cost and traffic source, then sends Google on to the landing page. Keep
+  auto-tagging on in Google Ads: the page's script finds the click by its
+  `gclid`.
 - **Pixels and postbacks with an order number.** `gpb.php`, `gpx.php` and
   `upx.php` read the order number from `t202txid`, as 1.9.56 code sends it.
   Each new order number on a click is recorded as its own sale. `gpb.php`
@@ -80,7 +98,7 @@ These differ from 1.9.56 on purpose and stay that way.
   scheduled Google feed URL answers `410 Gone` and names its replacement.
 - **The daily email report is retired.** Its cron address,
   `202-cronjobs/daily-email.php`, now answers `410 Gone`.
-- **The `landing.js` loader ignores `defpixel` and `rsid`** in old snippets.
+- **The `landing.js` loader ignores `rsid`** in old snippets.
 - **Update › CPC previews before it applies.** It shows how many clicks will
   change and refuses a confirmation that no longer matches that preview.
 
@@ -90,16 +108,22 @@ These differ from 1.9.56 on purpose and stay that way.
   `GeoIPISP.dat` file, it needs PHP's `geoip` extension to read it. The Docker
   image doesn't include that extension, so those installs record "Unknown
   ISP/Carrier". A `GeoIP2-ISP.mmdb` file works without it.
-- **Some paid-only tables are kept but not read**, among them
-  `202_clicks_purlink`. The upgrade doesn't drop them.
+- **Paid-only tables are kept.** The upgrade doesn't drop them. It reads
+  `202_clicks_purlink` once, to carry over PurLink clicks that have not
+  converted; nothing reads it afterwards.
 
 ## Not working yet after the upgrade
 
-These 1.9.56 features don't work on 1.9.80 yet. Each one is being restored,
-and its line comes off this list when the fix ships.
+These 1.9.56 PurLink behaviours don't work on 1.9.80 yet. Each one is being
+restored, and its line comes off this list when the fix ships.
 
-- PurLinks (landing-page links straight to the offer), the PurLink SubID
-  format (`<click>-<campaign>`) on postbacks, and the deferred pixel
-  (`defpixel=1`).
-- Dynamic landing-page content, such as the visit's SubID.
-- Google Ads parallel tracking templates (`tracking202/redirect/pt.php`).
+- **Keeping a visitor's original SubID.** A page's `t202Settings`
+  (`t202UseSubidOrig`, `t202ExpireSubidOrig`) is ignored, so a returning
+  visitor's PurLinks carry the new visit's SubID.
+- **Refreshing PurLinks after Back.** When a visitor returns to the landing
+  page with the browser's Back or Forward button, its PurLinks are not
+  updated again.
+- **A link's own deep link while the SubID is prepared.** For a moment after
+  the page loads a PurLink goes through the tracker's redirect. A visitor who
+  clicks in that moment lands on the campaign's URL, not the deeper URL the
+  link itself names.
