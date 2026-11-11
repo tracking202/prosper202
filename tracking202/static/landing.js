@@ -3,7 +3,13 @@
 // It loads landing.php exactly as the current Get LP Code snippet does.
 (function (d) {
   var me = d.currentScript || d.getElementById('t202js');
-  if (!me || !me.src || d.getElementById('upxif')) {
+  if (!me || !me.src) {
+    return;
+  }
+  // Loaded again (1.9.56 pages reload it on pageshow after Back): the page is
+  // already tracked, so only its PurLinks are refreshed. No second pageview.
+  if (d.getElementById('upxif')) {
+    if (typeof window.updatePurLink === 'function') { window.updatePurLink(); }
     return;
   }
   var m = me.src.match(/^(.*\/tracking202\/static\/)landing\.js(?:\?([^#]*))?/i);
