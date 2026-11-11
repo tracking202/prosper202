@@ -31,7 +31,11 @@ use Api\V3\Exception\ValidationException;
  *    written (it is compared packed, as it is stored);
  *  - show is the pages' "show" menu: all, real (not filtered), filtered,
  *    filtered_bot, leads (clicks that converted);
- *  - method_of_promotion is directlink (no landing page) or landingpage.
+ *  - method_of_promotion is directlink (no landing page) or landingpage;
+ *  - publisher_id is the user id of a publisher (the id of a
+ *    `breakdown=publisher` row): the clicks its publisher links were
+ *    credited (202_clicks_publisher), or `none` for the clicks credited to
+ *    no publisher.
  *
  * The pages' keyword, referer and IP filters are now these very terms
  * (Prosper202\DataEngine\TextFilterSql builds them through this class).
@@ -83,6 +87,7 @@ final class ReportFilter
         'keyword_id'                => ['keyword'],
         'ip_id'                     => ['ip'],
         'click_referer_site_url_id' => ['referer'],
+        'click_id'                  => ['publisher_id'],
     ];
 
     /** The window: TimeBound's forms, and its named periods. */
@@ -140,7 +145,7 @@ final class ReportFilter
     {
         return [
             ...array_keys(self::ID_FILTERS),
-            'device_type', 'method_of_promotion', 'show', 'keyword', 'ip', 'referer',
+            'device_type', 'method_of_promotion', 'show', 'keyword', 'ip', 'referer', 'publisher_id',
         ];
     }
 
@@ -343,6 +348,18 @@ final class ReportFilter
             $binds[] = self::contains($referer);
             $types .= 's';
         }
+
+        $credited = 'SELECT pc.click_id FROM 202_clicks_publisher pc';
+        if (($params['publisher_id'] ?? null) === 'none') {
+            $where[] = $col('click_id') . " NOT IN ($credited)";
+        } else {
+            $publisher = self::id($params, 'publisher_id');
+            if ($publisher !== null) {
+                $where[] = $col('click_id') . " IN ($credited WHERE pc.publisher_user_id = ?)";
+                $binds[] = $publisher;
+                $types .= 'i';
+            }
+        }
     }
 
     /** `none`, or the pages' 16777215: the clicks with no traffic source. */
@@ -363,7 +380,11 @@ final class ReportFilter
             return null;
         }
         if ((!is_string($value) && !is_int($value)) || preg_match('/^[1-9][0-9]{0,17}$/D', (string) $value) !== 1) {
-            $none = $name === 'ppc_network_id' ? ', or none for the clicks with no traffic source' : '';
+            $none = match ($name) {
+                'ppc_network_id' => ', or none for the clicks with no traffic source',
+                'publisher_id' => ', or none for the clicks credited to no publisher',
+                default => '',
+            };
             throw new ValidationException('Invalid ' . $name, [
                 $name => 'A positive whole number (an id), or 0 for no filter' . $none . '; got ' . self::shown($value),
             ]);

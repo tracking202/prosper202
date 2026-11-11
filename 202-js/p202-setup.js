@@ -726,6 +726,50 @@
         }
         var ruleList = document.getElementById('rule-list');
         var errors = form.querySelector('[data-rules-error]');
+        // Why a type's rule matches no visitor on this account, whatever its value (NeverMatches::types()).
+        var typeWarnings = {};
+        try {
+            typeWarnings = JSON.parse(form.getAttribute('data-type-warnings') || '{}') || {};
+        } catch (error) {
+            typeWarnings = {};
+        }
+        // What the last save stored in another form than typed, said once the page has reloaded.
+        var notesKey = 'p202-rotator-rewrites-' + form.getAttribute('data-rotator-id');
+        try {
+            var kept = window.sessionStorage.getItem(notesKey);
+            window.sessionStorage.setItem(notesKey, '');
+            (kept ? JSON.parse(kept) : []).forEach(function (sentence) {
+                errors.appendChild(flashHtml('info', String(sentence)));
+            });
+        } catch (error) {
+            // Without storage the save still happened; the rows show what is stored.
+        }
+
+        // A row's warning: the type's own while that type is chosen, else the
+        // one the page rendered, kept until the row is changed.
+        function syncWarning(row, edited) {
+            var box = row.querySelector('[data-criterion-warning]');
+            if (!box) {
+                return;
+            }
+            var type = row.querySelector('[data-rule-field="type"]').value;
+            var warning = typeWarnings[type];
+            if (warning) {
+                box.textContent = warning.text;
+                if (warning.href) {
+                    var link = document.createElement('a');
+                    link.href = warning.href;
+                    link.textContent = warning.link || 'Open the setting';
+                    box.appendChild(document.createTextNode(' '));
+                    box.appendChild(link);
+                }
+                box.hidden = false;
+            } else if (edited || box.getAttribute('data-warning-type') !== type) {
+                box.textContent = '';
+                box.hidden = true;
+            }
+            box.setAttribute('data-warning-type', type);
+        }
 
         function syncDestination(scope) {
             var type = scope.querySelector('[data-rule-field="redirect_type"], select[name="default_type"]');
@@ -770,9 +814,11 @@
             if (!value.hasAttribute('data-suggest-template')) {
                 value.setAttribute('data-suggest-template', value.getAttribute('data-p202-suggest-url') || '');
             }
-            // The page lists a fixed set's values; the hosted list knows the geo and user-agent ones.
+            // The page lists a fixed set's values; the server suggests the rest but an IP's:
+            // countries, the geo and user-agent lists, and the values the account's own clicks carried.
             var lists = { device: 'rotator-devices', eu: 'rotator-eu', fraud: 'rotator-fraud', visitor: 'rotator-visitor' };
-            var hosted = ['country', 'region', 'city', 'isp', 'browser', 'platform'];
+            var hosted = ['country', 'region', 'city', 'isp', 'browser', 'platform', 'c1', 'c2', 'c3', 'c4', 't202kw', 'referer',
+                'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'];
             if ((value.getAttribute('list') || '').indexOf('rotator-') === 0) {
                 value.removeAttribute('list');
             }
@@ -784,7 +830,16 @@
             } else {
                 value.setAttribute('data-p202-suggest-url', value.getAttribute('data-suggest-template').replace('%TYPE%', encodeURIComponent(type)));
             }
+            syncWarning(row, false);
         }
+
+        form.addEventListener('input', function (event) {
+            var target = event.target;
+            if (target.getAttribute('data-rule-field') === 'value') {
+                target.classList.remove('is-invalid');
+                syncWarning(target.closest('[data-criteria]'), true);
+            }
+        });
 
         function syncRule(rule) {
             $$('[data-criteria]', rule).forEach(syncCriterion);
@@ -802,6 +857,7 @@
                 syncSplit(target.closest('[data-rule]'));
             } else if (field === 'type') {
                 syncCriterion(target.closest('[data-criteria]'));
+                syncWarning(target.closest('[data-criteria]'), true);
             }
         });
 
@@ -840,6 +896,9 @@
         form.addEventListener('submit', function (event) {
             event.preventDefault();
             errors.innerHTML = '';
+            $$('.is-invalid', ruleList).forEach(function (field) {
+                field.classList.remove('is-invalid');
+            });
             var defaults = destination(form.querySelector('[data-defaults]'), 'default');
             var rules = $$('[data-rule]', ruleList).map(function (rule) {
                 var split = rule.querySelector('[data-rule-field="split"]').checked;
@@ -889,8 +948,20 @@
                 token: form.querySelector('input[name="token"]').value
             }).done(function (answer) {
                 var result = String(answer).trim();
-                if (result === 'DONE') {
-                    window.location.href = form.getAttribute('data-done-url');
+                if (result === 'DONE' || result.indexOf('DONE\n') === 0) {
+                    // "DONE" and, on the next line, what was stored in another form than typed.
+                    try {
+                        window.sessionStorage.setItem(notesKey, result.slice(5));
+                    } catch (error) {
+                        // The save happened; the reloaded rows show what is stored.
+                    }
+                    var done = new URL(form.getAttribute('data-done-url'), window.location.href);
+                    if (done.href === window.location.href) {
+                        // The same address, fragment included, would only scroll.
+                        window.location.reload();
+                    } else {
+                        window.location.href = done.href;
+                    }
                     return;
                 }
                 save.disabled = false;
@@ -898,6 +969,17 @@
                 // "ERROR" is the general check.
                 var reason = result.indexOf('ERROR: ') === 0 ? result.slice(7) : '';
                 errors.appendChild(flashHtml('bad', reason !== '' ? 'The rules were not saved. ' + reason : 'The rules were not saved. Every rule needs a name, a criterion with a value and a destination, and a split test needs a weight for each destination.'));
+                // A refusal names its rule and criterion: mark those values.
+                var named = /Rule (\d+), criterion (\d+)/g;
+                var cards = $$('[data-rule]', ruleList);
+                var match;
+                while ((match = named.exec(reason)) !== null) {
+                    var card = cards[Number(match[1]) - 1];
+                    var row = card ? $$('[data-criteria]', card)[Number(match[2]) - 1] : null;
+                    if (row) {
+                        row.querySelector('[data-rule-field="value"]').classList.add('is-invalid');
+                    }
+                }
                 errors.scrollIntoView({ block: 'center' });
             }).fail(function (xhr) {
                 save.disabled = false;

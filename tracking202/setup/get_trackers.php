@@ -337,7 +337,7 @@ $nothingToLink = $campaignOptions === [] && $advancedPageOptions === [] && $rota
 							<select class="form-select" id="publisher_id" name="publisher_id">
 								<?php echo p202_setup_options($publisherOptions, '', 'None', ''); ?>
 							</select>
-							<div class="form-text">For a link you hand to a publisher: each click on it records the publisher, and [[t202pubid]] in your offer URL sends their publisher id. Publishers are users with the Publisher role in User management.</div>
+							<div class="form-text">For a link you hand to a publisher: each click on it records the publisher, and [[t202pubid]] in your offer URL sends their publisher id. Analyze &rsaquo; Publishers shows what the link did. Publishers are users with the Publisher role in User management.</div>
 						</div>
 					<?php } ?>
 

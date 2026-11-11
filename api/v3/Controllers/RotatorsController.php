@@ -13,14 +13,70 @@ use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\QueryInt;
 use Prosper202\Rotator\Criterion;
 use Prosper202\Rotator\IpCriterion;
+use Prosper202\Rotator\NeverMatches;
 use Prosper202\Rotator\RuleOrder;
 
 class RotatorsController
 {
     use StatementHelpers;
 
+    /**
+     * The criterion values this request's write stored in another form than
+     * sent (Criterion::rewritten()), each by its place in the answer.
+     *
+     * @var list<array{field: string, sent: string, stored: string}>
+     */
+    private array $rewritten = [];
+
     public function __construct(private readonly \mysqli $db, private readonly int $userId)
     {
+    }
+
+    /**
+     * A redirector as get() answers it, with `meta.warnings` when a rule of
+     * it sends no visitor anywhere (NeverMatches).
+     */
+    public function read(int $id): array
+    {
+        $rotator = $this->get($id);
+
+        return $rotator + $this->ruleMeta($rotator['data']['rules'], $this->account());
+    }
+
+    /**
+     * What a write of rules has to say beside its data: `normalized`, the
+     * values stored in another form than sent, and `warnings`, the rules
+     * and criteria that match no visitor. Each names its place among
+     * $rules, the redirector's rules in the order they are tried; [] when
+     * there is nothing to say.
+     *
+     * A write reads $account before its transaction: a read that fails
+     * after it would answer a 500 for rules already written.
+     *
+     * @param list<array<string, mixed>> $rules
+     * @param array{ipqs_key: bool, privacy_all: bool, isp: bool} $account account()
+     * @return array{meta?: array<string, list<array<string, string>>>}
+     */
+    private function ruleMeta(array $rules, array $account): array
+    {
+        $meta = [];
+        if ($this->rewritten !== []) {
+            $meta['normalized'] = $this->rewritten;
+        }
+        foreach (NeverMatches::rules($rules, $account) as $warning) {
+            $meta['warnings'][] = [
+                'field' => 'rules.' . $warning['rule'] . ($warning['criterion'] === null ? '' : '.criteria.' . $warning['criterion']),
+                'message' => $warning['message'],
+            ];
+        }
+
+        return $meta === [] ? [] : ['meta' => $meta];
+    }
+
+    /** @return array{ipqs_key: bool, privacy_all: bool, isp: bool} */
+    private function account(): array
+    {
+        return NeverMatches::account(new \Prosper202\Database\Connection($this->db), $this->userId);
     }
 
     public function list(array $params): array
@@ -576,10 +632,11 @@ class RotatorsController
      * written. Each entry must be an object: an update that skipped a
      * malformed entry wrote the rest and said nothing (CLAUDE.md #4).
      *
-     * A criterion's values are stored as Criterion::normalize() writes
-     * them, as Setup › Redirectors stores them: split on commas, each
-     * trimmed, the empty ones dropped, and every visitor as `ALL` in
-     * whatever case it was sent. The redirects compared each value whole, so
+     * A criterion's values are stored as Criterion::stored() writes them,
+     * as Setup › Redirectors stores them: split on commas, each trimmed,
+     * the empty ones dropped, every visitor as `ALL` in whatever case it
+     * was sent, a country as Name(CC) and a device in lower case (what
+     * that changed is answered in `meta.normalized`). The redirects compared each value whole, so
      * `United States(US), Canada(CA)` stored as sent never matched Canada.
      *
      * A redirect read with GET from one the Setup page made the
@@ -633,6 +690,9 @@ class RotatorsController
                     $before = count($errors);
                     $criterion = self::criterion($c, $at, $refuse);
                     if ($criterion !== null && count($errors) === $before) {
+                        foreach (Criterion::rewritten($criterion['type'], (string) $c['value']) as [$typed, $stored]) {
+                            $this->rewritten[] = ['field' => "$at.value", 'sent' => $typed, 'stored' => $stored];
+                        }
                         $heldCriterion = self::heldEntry($c, $heldCriteria);
                         $out['criteria'][] = ['id' => $heldCriterion === null ? null : (int) $heldCriterion['id']] + $criterion;
                     }
@@ -692,7 +752,7 @@ class RotatorsController
         }
         $values = (is_string($value) || is_int($value)) ? Criterion::values(Criterion::normalize((string) $value)) : [];
         if ($values === []) {
-            $refuse('A criterion needs a value', ["$at.value" => 'Comma-separated values, e.g. "United States(US)" (`p202 rotator criteria-values`), or ALL for every visitor']);
+            $refuse('A criterion needs a value', ["$at.value" => 'Comma-separated values, e.g. "United States(US)" or "US" for a country, or ALL for every visitor']);
             return null;
         }
         if (!$typed) {
@@ -703,26 +763,6 @@ class RotatorsController
         // the redirects read as every visitor, was refused as no address.
         if (Criterion::matchesEveryone($values)) {
             return $stated ? ['type' => $type, 'statement' => $statement, 'value' => implode(',', $values)] : null;
-        }
-        // The redirects compare a country as "Name(CC)". A bare code — the
-        // form these docs once showed — never matches, so the rule would sit
-        // there matching nothing.
-        if ($type === 'country') {
-            foreach ($values as $country) {
-                if (preg_match('/^[A-Za-z]{2}$/D', $country) === 1) {
-                    $refuse('A country is written Name(CC)', ["$at.value" => '"' . $country . '" never matches: write it as the redirects compare it, e.g. "United States(US)" (`p202 rotator criteria-values --search ' . $country . '`)']);
-                    return null;
-                }
-            }
-        }
-        // The redirects compare the visitor's device in lower case.
-        if ($type === 'device') {
-            foreach ($values as $device) {
-                if ($device !== strtolower($device)) {
-                    $refuse('A device is written in lower case', ["$at.value" => '"' . $device . '" never matches: the redirects compare a device in lower case, e.g. "' . strtolower($device) . '" (desktop, mobile, tablet, bot)']);
-                    return null;
-                }
-            }
         }
         $value = implode(',', $values);
         // An IP criterion is a list of single addresses, stored in canonical
@@ -741,7 +781,9 @@ class RotatorsController
             return null;
         }
 
-        return $stated ? ['type' => $type, 'statement' => $statement, 'value' => $value] : null;
+        // A country typed as a code or a name is stored as Name(CC), a
+        // device in lower case: the forms the redirects have always matched.
+        return $stated ? ['type' => $type, 'statement' => $statement, 'value' => Criterion::stored($type, $value)] : null;
     }
 
     /**
@@ -940,18 +982,21 @@ class RotatorsController
         PayloadKeys::refuseUnknown($payload, ['rules'], 'a redirector rule set');
         $sent = $this->sentRules($rotatorId, $payload);
 
+        $account = $this->account();
+
         if ($dryRun) {
             $plan = $this->planRuleSet($rotatorId, $sent, $mayRemoveRules);
+            $rules = self::plannedRules($rotatorId, $plan['rules']);
 
             return ['data' => [
                 'dry_run' => true,
                 'rotator_id' => $rotatorId,
-                'rules' => self::plannedRules($rotatorId, $plan['rules']),
+                'rules' => $rules,
                 'changes' => $plan['changes'],
-            ]];
+            ]] + $this->ruleMeta($rules, $account);
         }
 
-        return $this->transaction(function () use ($mayRemoveRules, $rotatorId, $sent): array {
+        $answer = $this->transaction(function () use ($mayRemoveRules, $rotatorId, $sent): array {
             // Before the first plain read, so the set is planned from the
             // rules as the last writer left them.
             $this->lockRotator($rotatorId);
@@ -964,6 +1009,8 @@ class RotatorsController
 
             return ['data' => ['dry_run' => false, 'rotator_id' => $rotatorId, 'rules' => $rules, 'changes' => $plan['changes']]];
         });
+
+        return $answer + $this->ruleMeta($answer['data']['rules'], $account);
     }
 
     /**
@@ -996,14 +1043,16 @@ class RotatorsController
      *
      * @param array<string, mixed> $payload
      * @param callable(): void $mayRemoveRules refuses a caller who may not remove a rule
-     * @return array{data: array{rotator_id: int, before: array<string, mixed>, rotator: array<string, mixed>, changes: array<string, mixed>}}
+     * `meta.normalized` lists the values stored in another form than sent.
+     *
+     * @return array{data: array{rotator_id: int, before: array<string, mixed>, rotator: array<string, mixed>, changes: array<string, mixed>}, meta: array{normalized: list<array{field: string, sent: string, stored: string}>}}
      */
     public function setDefaultAndRules(int $rotatorId, array $payload, callable $mayRemoveRules): array
     {
         PayloadKeys::refuseUnknown($payload, [...array_values(self::DEFAULT_KEYS), 'rules'], "a redirector's default and rule set");
         $sent = $this->sentRules($rotatorId, $payload);
 
-        return $this->transaction(function () use ($mayRemoveRules, $payload, $rotatorId, $sent): array {
+        $answer = $this->transaction(function () use ($mayRemoveRules, $payload, $rotatorId, $sent): array {
             $this->lockRotator($rotatorId);
             $before = (array) $this->get($rotatorId)['data'];
             $default = $this->plannedDefault($payload, $before);
@@ -1024,6 +1073,8 @@ class RotatorsController
                 'changes' => $plan['changes'],
             ]];
         });
+
+        return $answer + ['meta' => ['normalized' => $this->rewritten]];
     }
 
     /**
@@ -1054,6 +1105,7 @@ class RotatorsController
      */
     private function planRuleSet(int $rotatorId, array $sent, callable $mayRemoveRules): array
     {
+        $this->rewritten = [];
         $current = $this->get($rotatorId)['data']['rules'];
         $errors = [];
         $planned = [];
@@ -1080,7 +1132,11 @@ class RotatorsController
                 $kept[(string) $held['id']] = $i;
             }
             try {
+                $noted = count($this->rewritten);
                 $planned[] = $this->planRule($rotatorId, $rule, $held, $i + 1);
+                for ($n = $noted; $n < count($this->rewritten); $n++) {
+                    $this->rewritten[$n]['field'] = "$at." . $this->rewritten[$n]['field'];
+                }
             } catch (ValidationException $e) {
                 $fieldErrors = $e->getFieldErrors();
                 if ($fieldErrors === []) {
@@ -1597,8 +1653,10 @@ class RotatorsController
             'a redirector rule'
         );
         self::refuseChangedReadOnly($payload, null, self::RULE_READ_ONLY);
+        $account = $this->account();
 
-        return $this->transaction(function () use ($payload, $rotatorId): array {
+        $answer = $this->transaction(function () use ($payload, $rotatorId): array {
+            $this->rewritten = [];
             $this->lockRotator($rotatorId);
             // A rule added on its own is tried after the others.
             $stmt = $this->prepare('SELECT COALESCE(MAX(position), 0) + 1 AS next FROM 202_rotator_rules WHERE rotator_id = ?');
@@ -1616,10 +1674,21 @@ class RotatorsController
 
             $this->insertCriteria($rotatorId, $ruleId, $rule['criteria']);
             $this->insertRedirects($ruleId, $rule['redirects']);
+            $this->placeRewritten(count($this->get($rotatorId)['data']['rules']) - 1);
 
             // Read back under the lock, as setRules() does.
             return $this->get($rotatorId);
         });
+
+        return $answer + $this->ruleMeta($answer['data']['rules'], $account);
+    }
+
+    /** Name each noted rewrite of a single rule's write by the rule's place in the answer. */
+    private function placeRewritten(int $ruleIndex): void
+    {
+        foreach ($this->rewritten as $n => $note) {
+            $this->rewritten[$n]['field'] = "rules.$ruleIndex." . $note['field'];
+        }
     }
 
     public function updateRule(int $rotatorId, int $ruleId, array $payload): array
@@ -1629,8 +1698,10 @@ class RotatorsController
             [...self::RULE_FIELDS, ...self::RULE_READ_ONLY],
             'a redirector rule'
         );
+        $account = $this->account();
 
-        return $this->transaction(function () use ($payload, $rotatorId, $ruleId): array {
+        $answer = $this->transaction(function () use ($payload, $rotatorId, $ruleId): array {
+            $this->rewritten = [];
             // The locks before the first read (CLAUDE.md #36), so the rule is
             // read as the last writer left it: a set that removed it while
             // this waited leaves nothing to update, and the call is a 404.
@@ -1655,6 +1726,7 @@ class RotatorsController
             // The rule as this write would leave it, checked as a set checks
             // one, before the first write.
             $planned = $this->planRule($rotatorId, $payload, $rule, (int) $rule['position'], false);
+            $this->placeRewritten((int) $rule['position'] - 1);
 
             if (array_intersect_key($payload, array_flip(['rule_name', 'splittest', 'status'])) !== []) {
                 $update = $this->prepare(
@@ -1686,6 +1758,8 @@ class RotatorsController
             // Read back under the locks, as setRules() does.
             return $this->get($rotatorId);
         });
+
+        return $answer + $this->ruleMeta($answer['data']['rules'], $account);
     }
 
     /**

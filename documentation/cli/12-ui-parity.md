@@ -60,6 +60,7 @@ record links only to the caller's own records
 | ---- | --- | --- | - |
 | Keywords, Text Ads, Countries, Cities, Regions, ISP/Carrier, Landing Pages, Devices, Browsers, Platforms | `/reports/breakdown?breakdown=…` | `p202 report breakdown --breakdown …`, `p202 analytics --group-by …` | ✅ |
 | Referers, IPs, Custom Variables (`c1`–`c4`, UTM), device type, rotator and rule | `/reports/breakdown?breakdown=referer\|referer_url\|ip\|c1…c4\|utm_*\|device_type\|rotator\|rotator_rule` | `p202 report breakdown --breakdown …` | ✅ |
+| Analyze › Publishers (what each publisher's links did) | `/reports/breakdown?breakdown=publisher`, `/reports/groups?by=publisher,campaign`, `publisher_id` on every `/reports/*` | `p202 report breakdown --breakdown publisher`, `p202 report groups --by publisher,campaign`, `--publisher-id` | ✅ |
 | The pages' filters (text ad, region, ISP, browser, platform, device type, keyword, IP, referer, "show") and periods | every `/reports/*` | every `p202 report …` command | ✅ |
 | Customer LTV (customers, companies, subscriptions, products, fields, webhooks, integrations, merges) | `/ltv/…` | `p202 ltv …` | ✅ |
 | Mobile Apps | `/apps/report`, `/apps/postbacks` | `p202 app report`, `app postbacks` | ✅ |

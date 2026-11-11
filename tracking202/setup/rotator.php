@@ -23,7 +23,7 @@ $copying = false;
 $slack = false;
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-$user_sql = "SELECT 2u.user_name as username, 2up.maxmind_isp FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '".$mysql['user_own_id']."'";
+$user_sql = "SELECT 2u.user_name as username FROM 202_users AS 2u WHERE 2u.user_id = '".$mysql['user_own_id']."'";
 $user_results = $db->query($user_sql);
 if ($user_results === false) {
     record_mysql_error($user_sql);
@@ -187,7 +187,6 @@ $base = get_absolute_url();
 $self = $base . 'tracking202/setup/rotator.php';
 $token = (string) ($_SESSION['token'] ?? '');
 $uid = (int) $_SESSION['user_id'];
-$ispEnabled = isset($user_row['maxmind_isp']) && $user_row['maxmind_isp'] == '1';
 
 $rotators = p202_setup_rows($db, "SELECT * FROM `202_rotators` WHERE `user_id`='" . $uid . "' ORDER BY `name` ASC");
 $rulesByRotator = [];
@@ -227,6 +226,37 @@ foreach (p202_setup_rows($db, "SELECT lp.landing_page_id, lp.landing_page_nickna
 }
 
 $criterionTypes = \Prosper202\Rotator\CriterionMatcher::TYPES;
+
+// What each rule would do with a visitor that its maker should hear before the traffic does (NeverMatches).
+try {
+	$matchAccount = \Prosper202\Rotator\NeverMatches::account(new \Prosper202\Database\Connection($db), $uid);
+} catch (\Throwable $matchAccountError) {
+	record_mysql_error($db, 'reading what the redirector rules of account ' . $uid . ' can ask', $matchAccountError->getMessage());
+}
+// The account's own MaxMind ISP setting, the one its redirects read (ClickPathReads::redirectorTracker()).
+$ispEnabled = $matchAccount['isp'];
+$integrationsUrl = $base . '202-account/api-integrations.php#ipqs';
+$typeWarnings = [];
+foreach (\Prosper202\Rotator\NeverMatches::types($matchAccount) as $warnedType => $warnedText) {
+	$typeWarnings[$warnedType] = ['text' => $warnedText]
+		+ ($warnedType === 'fraud' && !$matchAccount['ipqs_key'] ? ['href' => $integrationsUrl, 'link' => 'Add a key'] : []);
+}
+/** @var array<int, array<int, array{rule: ?string, criteria: array<int, string>}>> $ruleWarnings by redirector, then the rule's place */
+$ruleWarnings = [];
+foreach ($rulesByRotator as $warnedRotator => $warnedRules) {
+	$read = [];
+	foreach ($warnedRules as $warnedRule) {
+		$read[] = $warnedRule + ['criteria' => $criteriaByRule[(int) $warnedRule['id']] ?? []];
+	}
+	foreach (\Prosper202\Rotator\NeverMatches::rules($read, $matchAccount) as $warning) {
+		$ruleWarnings[$warnedRotator][$warning['rule']] ??= ['rule' => null, 'criteria' => []];
+		if ($warning['criterion'] === null) {
+			$ruleWarnings[$warnedRotator][$warning['rule']]['rule'] = $warning['message'];
+		} else {
+			$ruleWarnings[$warnedRotator][$warning['rule']]['criteria'][$warning['criterion']] = $warning['message'];
+		}
+	}
+}
 $suggestUrl = $base . 'tracking202/ajax/rotator.php?autocomplete=true&type=%TYPE%&query=%QUERY';
 
 /** Where a redirect or default goes, in words, for the list. */
@@ -260,8 +290,13 @@ foreach ($rotators as $rotator) {
 }
 
 // ── The editor's parts, rendered for saved rules and as <template>s ──────
-$criterionRow = static function (array $criterion) use ($criterionTypes, $ispEnabled, $suggestUrl): string {
+$criterionRow = static function (array $criterion, ?string $warning = null) use ($criterionTypes, $ispEnabled, $suggestUrl, $typeWarnings): string {
 	$type = (string) ($criterion['type'] ?? 'country');
+	// The script keeps a warning while the row is as it was saved, and shows a type's own as the type is chosen.
+	$typeWarning = $typeWarnings[$type] ?? null;
+	$warningHtml = $warning === null ? '' : p202_setup_e($warning)
+		. ($typeWarning !== null && $typeWarning['text'] === $warning && isset($typeWarning['href'])
+			? ' <a href="' . p202_setup_e($typeWarning['href']) . '">' . p202_setup_e($typeWarning['link']) . '</a>' : '');
 	$typeOptions = '';
 	// A stored type the redirects do not read is shown as it is, not as the first option.
 	if (!isset($criterionTypes[$type])) {
@@ -278,6 +313,7 @@ $criterionRow = static function (array $criterion) use ($criterionTypes, $ispEna
 		. '<div class="col-10 col-md-6"><label class="form-label small w-100">Values, comma separated'
 		. '<input type="text" class="form-control form-control-sm" data-rule-field="value" required value="' . p202_setup_e($criterion['value'] ?? '') . '" data-p202-suggest-url="' . p202_setup_e($suggestUrl) . '" autocomplete="off"></label></div>'
 		. '<div class="col-2 col-md-1"><button type="button" class="btn btn-link btn-sm text-danger" data-p202-remove-row aria-label="Remove this criterion"><i class="bi bi-x-lg"></i></button></div>'
+		. '<div class="col-12 small text-warning-emphasis" role="status" data-criterion-warning data-warning-type="' . p202_setup_e($type) . '"' . ($warningHtml === '' ? ' hidden' : '') . '>' . $warningHtml . '</div>'
 		. '</div>';
 };
 
@@ -298,7 +334,7 @@ $redirectRow = static function (array $redirect) use ($campaignOptions, $pageOpt
 		. '</div>';
 };
 
-$ruleCard = static function (array $rule, array $criteria, array $redirects, bool $removable) use ($criterionRow, $redirectRow, $isSplit): string {
+$ruleCard = static function (array $rule, array $criteria, array $redirects, bool $removable, array $warnings = []) use ($criterionRow, $redirectRow, $isSplit): string {
 	$ruleKey = isset($rule['id']) ? (string) $rule['id'] : 'new';
 	$split = $isSplit($rule, $redirects);
 	$inactive = isset($rule['status']) && (string) $rule['status'] === '0';
@@ -309,8 +345,8 @@ $ruleCard = static function (array $rule, array $criteria, array $redirects, boo
 		$redirects = [[]];
 	}
 	$criteriaHtml = '';
-	foreach ($criteria as $criterion) {
-		$criteriaHtml .= $criterionRow($criterion);
+	foreach (array_values($criteria) as $place => $criterion) {
+		$criteriaHtml .= $criterionRow($criterion, $warnings['criteria'][$place] ?? null);
 	}
 	$redirectsHtml = '';
 	foreach ($redirects as $redirect) {
@@ -325,6 +361,7 @@ $ruleCard = static function (array $rule, array $criteria, array $redirects, boo
 		. ($removable ? '<button type="button" class="btn btn-outline-danger btn-sm" data-p202-remove-row>Remove rule</button>' : '')
 		. '</div></div>'
 		. '<div class="p202-panel__body">'
+		. (isset($warnings['rule']) ? p202_flash('warn', $warnings['rule']) : '')
 		. '<div class="mb-3"><label class="form-label" for="rule-name-' . $ruleKey . '">Rule name</label>'
 		. '<input type="text" class="form-control" id="rule-name-' . $ruleKey . '" data-rule-field="rule_name" required value="' . p202_setup_e($rule['rule_name'] ?? '') . '" placeholder="US mobile visitors"></div>'
 		. '<div class="form-label">When a visitor matches every criterion</div>'
@@ -416,8 +453,10 @@ if ($error) {
 								<span class="p202-list__meta">Default: <?php echo p202_setup_e($destination($rotator, 'default_')); ?></span>
 								<?php if ($rules !== []) { ?>
 									<ul class="p202-list__children">
-										<?php foreach ($rules as $rule) {
+										<?php foreach (array_values($rules) as $rulePlace => $rule) {
 											$ruleId = (int) $rule['id'];
+											$warned = $ruleWarnings[$rid][$rulePlace] ?? null;
+											$warnedTexts = $warned === null ? [] : array_merge($warned['rule'] === null ? [] : [$warned['rule']], array_values($warned['criteria']));
 											$conditions = array_map(
 												static fn (array $c): string => \Prosper202\Rotator\Criterion::describe((string) $c['type'], (string) $c['statement'], $c['value'], $criterionTypes),
 												$criteriaByRule[$ruleId] ?? []
@@ -431,7 +470,9 @@ if ($error) {
 												<span class="p202-list__name"><?php echo p202_setup_e($rule['rule_name']); ?></span>
 												<?php if ((string) $rule['status'] === '0') { ?><span class="p202-pill p202-pill--warn">inactive</span><?php } ?>
 												<?php if ($split) { ?><span class="p202-pill">split test</span><?php } ?>
+												<?php if ($warnedTexts !== [] && (string) $rule['status'] !== '0') { ?><span class="p202-pill p202-pill--warn">check this rule</span><?php } ?>
 												<span class="p202-list__meta">If <?php echo p202_setup_e($conditions === [] ? 'any visitor (no criteria)' : implode(' and ', $conditions)); ?> · to <?php echo p202_setup_e($targets === [] ? 'nowhere yet' : implode(', ', $targets)); ?></span>
+												<?php foreach ($warnedTexts as $warnedText) { ?><span class="p202-list__meta text-warning-emphasis"><?php echo p202_setup_e($warnedText); ?></span><?php } ?>
 											</li>
 										<?php } ?>
 									</ul>
@@ -467,7 +508,7 @@ if ($error) {
 	<?php } else {
 		$rules = $rulesByRotator[(int) $selected['id']] ?? [];
 		$defaultType = !empty($selected['default_lp']) ? 'lp' : (!empty($selected['default_url']) ? 'url' : 'campaign'); ?>
-		<form id="rules-form" data-rules-url="<?php echo p202_setup_e($base . 'tracking202/ajax/rotator.php'); ?>" data-rotator-id="<?php echo (int) $selected['id']; ?>" data-done-url="<?php echo p202_setup_e($self . '?rotator_id=' . (int) $selected['id'] . '&rules_added=1#rules'); ?>">
+		<form id="rules-form" data-rules-url="<?php echo p202_setup_e($base . 'tracking202/ajax/rotator.php'); ?>" data-rotator-id="<?php echo (int) $selected['id']; ?>" data-done-url="<?php echo p202_setup_e($self . '?rotator_id=' . (int) $selected['id'] . '&rules_added=1#rules'); ?>" data-type-warnings="<?php echo p202_setup_e((string) json_encode($typeWarnings, JSON_INVALID_UTF8_SUBSTITUTE)); ?>">
 			<?php echo p202_setup_token_field($token); ?>
 			<div data-rules-error></div>
 			<section class="p202-panel mb-3">
@@ -498,7 +539,7 @@ if ($error) {
 					echo $ruleCard([], [], [], false);
 				} else {
 					foreach ($rules as $index => $rule) {
-						echo $ruleCard($rule, $criteriaByRule[(int) $rule['id']] ?? [], $redirectsByRule[(int) $rule['id']] ?? [], $index > 0 && $userObj->hasPermission("remove_rotator_rule"));
+						echo $ruleCard($rule, $criteriaByRule[(int) $rule['id']] ?? [], $redirectsByRule[(int) $rule['id']] ?? [], $index > 0 && $userObj->hasPermission("remove_rotator_rule"), $ruleWarnings[(int) $selected['id']][$index] ?? []);
 					}
 				} ?>
 			</div>
@@ -510,7 +551,7 @@ if ($error) {
 			<datalist id="rotator-<?php echo p202_setup_e($fixedType); ?>"><?php foreach ($fixedValues as $fixedValue) { ?><option value="<?php echo p202_setup_e($fixedValue); ?>"></option><?php } ?></datalist>
 			<?php } ?>
 
-			<p class="form-text">To split-test every visitor, give a rule one criterion with the value <code>ALL</code>.</p>
+			<p class="form-text">To split-test every visitor, give a rule one criterion with the value <code>ALL</code>. A country can be typed as its code (<code>US</code>) or its name; it is saved as <code>United States(US)</code>.</p>
 			<div class="p202-form-actions">
 				<button type="button" class="btn btn-secondary" data-add-rule><i class="bi bi-plus"></i> Add a rule</button>
 				<button type="submit" class="btn btn-primary" id="post_rules">Save rules</button>

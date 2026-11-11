@@ -9,7 +9,7 @@ $slack = false;
 
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-$user_sql = "SELECT 202_users.user_name AS username, 202_users_pref.maxmind_isp FROM 202_users_pref LEFT JOIN 202_users ON (202_users.user_id = '".$mysql['user_own_id']."') WHERE 202_users_pref.user_id='1'";
+$user_sql = "SELECT 202_users.user_name AS username FROM 202_users WHERE 202_users.user_id = '".$mysql['user_own_id']."'";
 $user_result = $db->query($user_sql);
 if ($user_result === false) {
     record_mysql_error($user_sql);
@@ -30,8 +30,31 @@ if (isset($_GET['autocomplete']) && isset($_GET['type']) && isset($_GET['query']
 
 	header("Content-type: application/json; charset=utf-8");
 
-	$data = rotator_data(urlencode($_GET['query']), $_GET['type']);
-	print_r($data);
+	// A country from the list the save normalizes with; a link's values and the
+	// referer from the account's own clicks; the other lists are hosted.
+	$suggestType = is_string($_GET['type']) ? $_GET['type'] : '';
+	$suggestQuery = is_string($_GET['query']) ? $_GET['query'] : '';
+	$suggestions = null;
+	if ($suggestType === 'country') {
+		$suggestions = \Prosper202\Rotator\CountryNames::matching($suggestQuery);
+	} elseif (\Prosper202\Rotator\SeenValues::suggests($suggestType)) {
+		try {
+			$suggestions = \Prosper202\Rotator\SeenValues::matching(
+				new \Prosper202\Database\Connection($db), (int) $mysql['user_id'], $suggestType, $suggestQuery, time()
+			);
+		} catch (\Throwable $suggestError) {
+			error_log('rotator.php: the seen ' . $suggestType . ' values could not be read: ' . $suggestError->getMessage());
+			http_response_code(500);
+			die('[]');
+		}
+	} elseif (in_array($suggestType, ['region', 'city', 'isp', 'browser', 'platform'], true)) {
+		print_r(rotator_data(urlencode($suggestQuery), $suggestType));
+	} else {
+		$suggestions = [];
+	}
+	if ($suggestions !== null) {
+		echo json_encode($suggestions, JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE);
+	}
 }
 
 if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST['data'])) {
@@ -120,7 +143,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 	};
 	try {
 		$saved = (new \Api\V3\Controllers\RotatorsController($db, (int) $mysql['user_id']))
-			->setDefaultAndRules($rotator_id, $payload, $mayRemoveRules)['data'];
+			->setDefaultAndRules($rotator_id, $payload, $mayRemoveRules);
 	} catch (\Api\V3\Exception\ValidationException $e) {
 		$refuse(p202_rotator_refusal($e));
 	} catch (\Api\V3\Exception\NotFoundException) {
@@ -133,14 +156,36 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 		record_mysql_error($db, 'saving the rules of redirector ' . $rotator_id, $cause);
 	}
 
-	if ($slack && (string) $saved['rotator']['name'] !== '') {
-		foreach (\Prosper202\Rotator\SaveNotices::of($saved['before'], $saved['rotator'], $names) as [$notice, $fields]) {
+	if ($slack && (string) $saved['data']['rotator']['name'] !== '') {
+		foreach (\Prosper202\Rotator\SaveNotices::of($saved['data']['before'], $saved['data']['rotator'], $names) as [$notice, $fields]) {
 			$slack->push($notice, $fields + ['user' => $user_row['username']]);
 		}
 	}
 
-    echo "DONE";
+	// What the save stored in another form than typed, for the page to say once it has reloaded.
+	$rewrites = p202_rotator_rewrites($saved['meta']['normalized'] ?? []);
+	$rewritesJson = $rewrites === [] ? false : json_encode($rewrites, JSON_INVALID_UTF8_SUBSTITUTE);
+	header('Content-Type: text/plain; charset=utf-8'); // the list repeats what was typed
+	echo $rewritesJson === false ? 'DONE' : "DONE\n" . $rewritesJson;
 
+}
+
+/**
+ * The values a save rewrote, in the page's words.
+ *
+ * @param list<array{field: string, sent: string, stored: string}> $normalized setDefaultAndRules()'s meta.normalized
+ * @return list<string>
+ */
+function p202_rotator_rewrites(array $normalized): array
+{
+	$sentences = [];
+	foreach ($normalized as $note) {
+		$path = explode('.', $note['field']);
+		$sentences[] = 'Rule ' . ((int) ($path[1] ?? 0) + 1) . ': "' . $note['sent'] . '" was saved as "' . $note['stored']
+			. '", the form the redirects match.';
+	}
+
+	return array_values(array_unique($sentences));
 }
 
 /**
