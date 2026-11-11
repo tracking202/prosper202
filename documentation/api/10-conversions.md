@@ -12,6 +12,9 @@ List, inspect, manually create, and delete conversions.
 | `GET` | `/conversions/offline-export` | The conversions as Google Ads' or Microsoft Advertising's offline conversion import CSV ([below](#offline-conversion-files)) |
 | `GET` | `/conversions/offline-export/summary` | What that file holds, and why each other conversion is left out |
 | `GET` | `/conversions/inbound-log` | The postbacks, pixels and payment notifications received, and why each was refused ([below](#inbound-log)) |
+| `GET` | `/conversions/shopify-refunds` | The Shopify refunds not recorded while their order's sale is ([below](#shopify-refunds-left-to-settle)) |
+| `POST` | `/conversions/shopify-refunds/{id}/record` | Record one as a reversal of its order's sale |
+| `POST` | `/conversions/shopify-refunds/{id}/close` | Close one with nothing recorded |
 | `GET` | `/offline-conversions/{key}` | A fetch URL made on Setup › Offline Conversions: the file, with no API key |
 | `POST` | `/conversions` | Manually log a conversion |
 | `DELETE` | `/conversions/{id}` | Delete a conversion |
@@ -110,6 +113,64 @@ to campaign data gets the three figures as `null` and `masked: true`. Group
 Overview's **Match method** level shows the same split by click time, with
 each group's clicks and cost.
 
+## Shopify refunds left to settle
+
+A Shopify refund that is waiting for its transaction to settle, or that was
+refused for good, is still counted in its order's sale. `GET
+/conversions/shopify-refunds` lists them, oldest first (at most 200; `more`
+says when others are left): the list above the log on Setup › Inbound Log.
+It needs the role's access to the Setup section and takes no parameter.
+
+```json
+{
+  "data": [
+    {
+      "refund_id": "9100001",
+      "order_id": "5550001234567",
+      "refunded_at": 1793714401,
+      "state": "waiting",
+      "stale": true,
+      "reason": null,
+      "amount": 12.5,
+      "currency": "USD",
+      "other_currency": false,
+      "click_ids": [4821]
+    }
+  ],
+  "more": false,
+  "transaction_webhook_seen": false,
+  "account_currency": "USD"
+}
+```
+
+`state` is `waiting` or `refused` (`reason` says why). `stale` is a refund
+that has waited more than a day. `amount` is what the refund returns as far
+as is known: its transactions added up, less every one Shopify reported as
+failed. `transaction_webhook_seen` is false when Shopify's Transaction
+creation webhook has never arrived for the account, without which a waiting
+refund is never settled by itself.
+
+`POST /conversions/shopify-refunds/{id}/record` with `{"amount": 12.5}`
+takes that amount, in the account's currency, back from the order's sale, at
+most what is left of it, and closes the refund. When the order is recorded
+on more than one click (`click_ids`), send `click_id` too; without it the
+answer is a `422` naming the clicks. It answers `200` with `outcome`
+(`reversed`, or `duplicate` when the refund was on file already) and the
+reversal's `conversion_id`. Nothing converts money: when Shopify states the
+refund in another currency than the account's (`other_currency` is true;
+`currency` is Shopify's, `account_currency` the account's), the list's
+`amount` is not what to record. Send what the refund returned in the
+account's currency, with `"currency"` naming that currency; without it, or
+with any other currency, the answer is a `422` on `currency` and nothing is
+recorded. The refund is recorded once under its id, so
+Shopify settling it later records nothing more. `POST
+/conversions/shopify-refunds/{id}/close` removes a refund from the list with
+nothing recorded, for one that returned no money. Both need the role's
+access to the Setup and Update sections, answer `404` for a refund that is
+not listed for the account, and write a line to the inbound log. Recording
+answers `409` with the reason when the sale is gone or the refund is on
+file at another amount.
+
 ## Inbound log
 
 `GET /conversions/inbound-log` lists the requests the postback (`pb`,
@@ -118,7 +179,10 @@ each group's clicks and cost.
 the sender got and why: the same list as Setup › Inbound Log. It needs the
 role's access to the Setup section. An admin also gets the requests no
 account could be found for (an unknown campaign, a signature no stored key
-verifies), with `user_id` null. Each account's newest 5,000 accepted
+verifies), with `user_id` null. An account that stores a Shopify webhook
+secret also gets the Shopify webhooks no stored secret verified, with
+`user_id`, `fields` and `transaction_id` null: one may be its own, and
+nothing proves whose it is. Each account's newest 5,000 accepted
 requests are kept, and apart from them its newest 5,000 refused ones, so a
 flood of refusals cannot push out a recorded conversion; and the newest 1,000
 no account was found for. A request no account

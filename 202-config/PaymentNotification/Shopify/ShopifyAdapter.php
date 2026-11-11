@@ -71,6 +71,33 @@ final class ShopifyAdapter implements ProviderAdapter, AnswersWithItsOwnStatus
         return $this->settlement;
     }
 
+    /** @var array{id: string, order_id: string, occurred_at: int, amount: string, currency: ?string}|null */
+    private ?array $refundRead = null;
+
+    /**
+     * The money refund parse() last read from the verified request, whether
+     * or not it went on to name a click, or null when it read none.
+     *
+     * @return array{id: string, order_id: string, occurred_at: int, amount: string, currency: ?string}|null
+     */
+    public function refundRead(): ?array
+    {
+        return $this->refundRead;
+    }
+
+    /**
+     * What the inbound log keeps of a Shopify request: its topic, which the
+     * JSON body's form fields (none) do not say.
+     *
+     * @return array<string, string>
+     */
+    public static function logged(InboundRequest $request): array
+    {
+        $topic = trim((string) $request->header(self::TOPIC_HEADER));
+
+        return $topic === '' ? [] : ['topic' => self::shown($topic)];
+    }
+
     /**
      * @param \mysqli|null $db where a refund finds the click its order was recorded on (null: not looked up)
      * @param int|null $now the time deliveryStatus() compares a refund's with (null: the clock's)
@@ -189,6 +216,7 @@ final class ShopifyAdapter implements ProviderAdapter, AnswersWithItsOwnStatus
         }
         $this->refundAt = null;
         $this->settlement = null;
+        $this->refundRead = null;
         $topic = trim((string) $request->header(self::TOPIC_HEADER));
         if ($topic === '') {
             throw self::malformed('The webhook carries no ' . self::TOPIC_HEADER . ' header naming its topic.');
@@ -347,6 +375,8 @@ final class ShopifyAdapter implements ProviderAdapter, AnswersWithItsOwnStatus
         $at = self::time($refund['processed_at'] ?? null, 'processed_at')
             ?? self::time($refund['created_at'] ?? null, 'created_at');
         $this->refundAt = $at;
+        $this->refundRead = ['id' => $refundId, 'order_id' => $orderId, 'occurred_at' => $at ?? 0,
+            'amount' => self::plain(Amount::fromUnits($units)), 'currency' => $currency];
 
         return new Notification(
             NotificationKind::REFUND,

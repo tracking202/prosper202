@@ -593,9 +593,29 @@ try {
             $r->get('/inbound-log', fn() => (new \Api\V3\Controllers\InboundLogController(
                 $db,
                 $actorUserId,
-                $auth->hasPermission($db, 'add_users')
+                $auth->hasPermission($db, 'add_users'),
+                \Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret::accountStores(
+                    new \Prosper202\Database\Connection($db),
+                    $actorUserId
+                )
             ))->list($queryParams));
+            // The Shopify refunds Setup › Inbound Log lists above the log. Before /{id}.
+            $r->get('/shopify-refunds', fn() => (new \Api\V3\Controllers\ShopifyRefundsController($db, $actorUserId))
+                ->list($queryParams));
         }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'access_to_setup_section'); }]);
+        // Recording a refund writes a conversion, so it asks what recording one asks too, as the page does.
+        $router->group('/conversions', function (Router $r) use ($db, $actorUserId, $payload) {
+            $cls = \Api\V3\Controllers\ShopifyRefundsController::class;
+            $r->post('/shopify-refunds/{id}/record', fn($ctx) => (new $cls($db, $actorUserId))
+                ->takeBack(PathId::of($ctx), $payload));
+            $r->post('/shopify-refunds/{id}/close', fn($ctx) => (new $cls($db, $actorUserId))
+                ->close(PathId::of($ctx), $payload));
+        }, [
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_setup_section');
+            },
+            $updateSection,
+        ]);
         $router->group('/conversions', function (Router $r) use ($crud, $queryParams, $campaignFigures, $recordMoney, $matchFigures) {
             $cls = \Api\V3\Controllers\ConversionsController::class;
             $r->get('',        fn() => $campaignFigures($crud($cls)->list($queryParams), $recordMoney));
