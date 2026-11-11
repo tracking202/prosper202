@@ -67,6 +67,10 @@ if ($p202Nav2 === 'setup') {
         ['Custom Variables', 'tracking202/analyze/variables.php', ['variables.php']],
         ['Customer LTV', 'tracking202/analyze/ltv.php', ['ltv.php']],
     ];
+    // The page asks for the permission; without it the entry is a dead end.
+    if (isset($userObj) && $userObj->hasPermission('access_to_campaign_data')) {
+        $p202StripItems[] = ['Publishers', 'tracking202/analyze/publishers.php', ['publishers.php']];
+    }
     // Gated like every other attribution link (202-config/template.php) and
     // like Delete Subids below: the page itself redirects anyone without the
     // permission, so an ungated entry is a visible dead end that also tells

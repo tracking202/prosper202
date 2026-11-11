@@ -31,7 +31,7 @@ final class ServedPreferences
         'user_pref_text_ad_id', 'user_pref_method_of_promotion',
         'user_pref_landing_page_id', 'user_pref_country_id',
         'user_pref_region_id', 'user_pref_device_id', 'user_pref_browser_id',
-        'user_pref_platform_id', 'user_pref_isp_id', 'user_pref_subid',
+        'user_pref_platform_id', 'user_pref_isp_id', 'user_pref_subid', 'user_pref_publisher_id',
         'user_pref_ip', 'user_pref_dynamic_bid', 'user_pref_referer',
         'user_pref_keyword', 'user_pref_breakdown', 'user_pref_chart',
         'user_cpc_or_cpv', 'user_keyword_searched_or_bidded',
