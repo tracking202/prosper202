@@ -203,6 +203,8 @@ final readonly class ClickRecord
         public int $clickFilterEntryId = 0,
         // 202_clicks_publisher: the publisher a publisher link credits (PublisherCredit), 0 for none
         public int $publisherUserId = 0,
+        // 202_clicks_publisher: the public id (t202id) of the link a credited click came on, 0 when not known
+        public int $publisherTrackerPublicId = 0,
     ) {
         foreach (['clickId' => $clickId, 'userId' => $userId, 'clickTime' => $clickTime] as $field => $value) {
             if ($value < 1) {
@@ -251,6 +253,11 @@ final readonly class ClickRecord
         if ($publisherUserId < 0 || $publisherUserId === $userId) {
             throw new InvalidArgumentException(
                 "A click's publisherUserId is another user's id or 0, not $publisherUserId"
+            );
+        }
+        if ($publisherTrackerPublicId < 0 || ($publisherTrackerPublicId !== 0 && $publisherUserId === 0)) {
+            throw new InvalidArgumentException(
+                "A click's publisherTrackerPublicId is a credited click's link or 0, not $publisherTrackerPublicId"
             );
         }
         if (!in_array($clickCloaking, [-1, 0, 1], true)) {

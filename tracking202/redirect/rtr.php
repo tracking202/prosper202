@@ -501,6 +501,9 @@ $mysql['user_id'] = $db->real_escape_string((string)$user_id);
 // ignored. A re-click keeps its first visit's credit.
 $rtrPublisher = $reClick === null ? p202ClickPublisher($db, (int) $user_id, $_GET) : null;
 $mysql['publisher_user_id'] = (string) ($rtrPublisher['user_id'] ?? 0);
+$mysql['publisher_tracker_id_public'] = $rtrPublisher === null
+	? '0'
+	: (string) (\Prosper202\Click\PublicId::parse($_GET['t202id'] ?? '') ?? 0);
 
 //lets determine if cloaking is on
 $cloaking_on = false;

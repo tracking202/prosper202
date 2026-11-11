@@ -22,7 +22,8 @@ use Prosper202\DataEngine\ClickRollupSql;
  * The store's account has two publishers. Dana's links took three clicks
  * (two on Running Shoes, one a sale; one on Rain Jackets, clicked twice),
  * the second publisher's one, and one click came on no publisher link.
- * Another account credited a click of its own to Dana.
+ * Another account credited a click of its own to Dana. Dana's clicks came
+ * on two links; the second publisher's was recorded before links were.
  *
  * @group integration
  */
@@ -35,6 +36,8 @@ final class PublisherReportIntegrationTest extends TestCase
     private const DANA = 990913;
     private const UNNAMED = 990914;
     private const FIRST_CLICK = 99091101;
+    private const SHOE_LINK = 4200000001;
+    private const JACKET_LINK = 4200000002;
 
     /** @var array<string, int> */
     private static array $ids = [];
@@ -103,18 +106,18 @@ final class PublisherReportIntegrationTest extends TestCase
         self::$now = time() - 7200;
 
         $i = self::$ids;
-        // click => [account, campaign, publisher or 0, lead, payout]
+        // click => [account, campaign, publisher or 0, lead, payout, the link's public id or 0]
         $clicks = [
-            [self::OWNER, $i['shoes'], self::DANA, 1, '12.50'],
-            [self::OWNER, $i['shoes'], self::DANA, 0, '0'],
-            [self::OWNER, $i['jackets'], self::DANA, 0, '0'],
-            [self::OWNER, $i['shoes'], self::UNNAMED, 0, '0'],
-            [self::OWNER, $i['jackets'], 0, 0, '0'],
-            [self::OTHER, $i['theirs'], self::DANA, 0, '0'],
+            [self::OWNER, $i['shoes'], self::DANA, 1, '12.50', self::SHOE_LINK],
+            [self::OWNER, $i['shoes'], self::DANA, 0, '0', self::SHOE_LINK],
+            [self::OWNER, $i['jackets'], self::DANA, 0, '0', self::JACKET_LINK],
+            [self::OWNER, $i['shoes'], self::UNNAMED, 0, '0', 0],
+            [self::OWNER, $i['jackets'], 0, 0, '0', 0],
+            [self::OTHER, $i['theirs'], self::DANA, 0, '0', self::SHOE_LINK],
         ];
         $conn = new Connection(self::$db);
         $repo = new MysqlClickRepository($conn);
-        foreach ($clicks as $n => [$user, $campaignId, $publisher, $lead, $payout]) {
+        foreach ($clicks as $n => [$user, $campaignId, $publisher, $lead, $payout, $link]) {
             $clickId = self::FIRST_CLICK + $n;
             $repo->recordClick(ClickRecordBuilder::fromLegacyArray([
                 'user_id' => (string) $user,
@@ -122,6 +125,7 @@ final class PublisherReportIntegrationTest extends TestCase
                 'click_time' => (string) (self::$now + $n),
                 'click_cpc' => '0.25',
                 'publisher_user_id' => (string) $publisher,
+                'publisher_tracker_id_public' => (string) $link,
             ], $clickId));
             if ($lead === 1) {
                 self::q("UPDATE 202_clicks SET click_lead = 1, click_payout = $payout WHERE click_id = $clickId");
@@ -195,6 +199,44 @@ final class PublisherReportIntegrationTest extends TestCase
         self::assertSame(12.5, $r['totals']['total_income']);
     }
 
+    public function testABreakdownByLinkCountsTheClicksThatRecordedTheirLink(): void
+    {
+        $r = self::reports()->breakdown(['breakdown' => 'publisher_link'] + self::window());
+
+        self::assertSame(
+            [[self::SHOE_LINK, (string) self::SHOE_LINK, 2, 12.5], [self::JACKET_LINK, (string) self::JACKET_LINK, 1, 0.0]],
+            array_map(
+                static fn (array $row): array => [(int) $row['id'], $row['name'], $row['total_clicks'], $row['total_income']],
+                $r['data']
+            ),
+            'another account\'s click on a link with the same id is not here, nor a click that recorded no link'
+        );
+    }
+
+    public function testGroupsNestLinksUnderEachPublisherWithTheUnrecordedOnesKept(): void
+    {
+        $r = self::reports()->groups(['by' => 'publisher,publisher_link,campaign'] + self::window());
+
+        $shape = [];
+        foreach ($r['data'] as $publisher) {
+            foreach ($publisher['children'] as $link) {
+                $shape[$publisher['name'] ?? 'none'][$link['id'] ?? 'none'] = [
+                    $link['total_clicks'],
+                    array_column($link['children'], 'total_clicks', 'name'),
+                ];
+            }
+        }
+        self::assertSame([
+            'Dana Reyes' => [
+                self::SHOE_LINK => [2, ['Running Shoes' => 2]],
+                self::JACKET_LINK => [1, ['Rain Jackets' => 1]],
+            ],
+            'rp' . self::UNNAMED => ['none' => [1, ['Running Shoes' => 1]]],
+            'none' => ['none' => [1, ['Rain Jackets' => 1]]],
+        ], $shape);
+        self::assertSame(5, $r['totals']['total_clicks']);
+    }
+
     public function testThePublisherFilterNarrowsEveryReport(): void
     {
         $dana = ['publisher_id' => (string) self::DANA] + self::window();
@@ -213,6 +255,19 @@ final class PublisherReportIntegrationTest extends TestCase
             0,
             self::reports(self::OTHER)->summary(['publisher_id' => (string) self::UNNAMED] + self::window())['data']['total_clicks']
         );
+    }
+
+    public function testTheReportPagesStoredPublisherFilterSelectsTheSameClicks(): void
+    {
+        $filter = \Prosper202\DataEngine\UserPrefFilters::build(
+            ['user_pref_publisher_id' => (string) self::DANA],
+            0,
+            true,
+            static fn (string $text): string => self::$db->real_escape_string($text)
+        )['filter'];
+        $count = self::$db->query('SELECT COUNT(*) FROM 202_dataengine 2st WHERE 2st.user_id = ' . self::OWNER . $filter);
+
+        self::assertSame('3', (string) $count->fetch_row()[0]);
     }
 
     public function testTheClickListTakesThePublisherFilter(): void

@@ -103,7 +103,7 @@ Next to `data`, `breakdown` and `available_breakdowns` the response carries `lim
 {"data": [...50 rows...], "breakdown": "keyword", "available_breakdowns": [...], "truncated": true, "limit": 50, "offset": 0}
 ```
 
-**Breakdown dimensions:** `campaign`, `aff_network`, `ppc_account`, `ppc_network`, `landing_page`, `keyword`, `country`, `city`, `region`, `browser`, `platform`, `device`, `isp`, `text_ad`, `ip`, `referer`, `referer_url`, `device_type`, `c1`, `c2`, `c3`, `c4`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `rotator`, `rotator_rule`, `publisher`.
+**Breakdown dimensions:** `campaign`, `aff_network`, `ppc_account`, `ppc_network`, `landing_page`, `keyword`, `country`, `city`, `region`, `browser`, `platform`, `device`, `isp`, `text_ad`, `ip`, `referer`, `referer_url`, `device_type`, `c1`, `c2`, `c3`, `c4`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `rotator`, `rotator_rule`, `publisher`, `publisher_link`.
 
 | Dimension | `name` is | Page it mirrors |
 | --------- | --------- | --------------- |
@@ -116,6 +116,7 @@ Next to `data`, `breakdown` and `available_breakdowns` the response carries `lim
 | `rotator` | The rotator's name | Group overview › Rotator |
 | `rotator_rule` | The rule's name; the row also carries `rotator_id` | Group overview › Rotator Rule |
 | `publisher` | The publisher a publisher link (`t202pubid`) credited the click to: the user's name, `id` their user id | Analyze › Publishers |
+| `publisher_link` | The tracking link a publisher's click came on: its public id, the `t202id` in the link. Stored with new clicks since 1.9.80; an older credited click is in no row | Analyze › Publishers |
 
 Each row is one stored value (its `id`); a click that has no value for the
 dimension — no referer, no `c1`, not matched by a rotator rule — is in

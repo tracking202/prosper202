@@ -137,6 +137,8 @@ var searchTasks = []searchTask{
 		Phrases: []string{"c1 c2 c3 c4", "custom variable breakdown"}},
 	{Run: "p202 report breakdown --breakdown publisher", Pages: []string{"Analyze › Publishers"},
 		Phrases: []string{"publisher link report", "clicks and conversions by publisher", "what a publisher's links did"}},
+	{Run: "p202 report breakdown --breakdown publisher_link",
+		Phrases: []string{"clicks per publisher link", "links of a publisher", "tracking link of a publisher's clicks"}},
 	{Run: "p202 ltv summary", Pages: []string{"Analyze › Customer LTV"},
 		Phrases: []string{"customer lifetime value"}},
 	{Run: "p202 ltv webhooks revive",

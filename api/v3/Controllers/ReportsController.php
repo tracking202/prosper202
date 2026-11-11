@@ -55,6 +55,11 @@ class ReportsController
      *    id, named as Get Links names it. The click is the link's account's,
      *    so its figures are that account's; a click credited to nobody is in
      *    no row.
+     *  - publisher_link: the tracking link a publisher's click came on, by
+     *    the link's public id (its t202id), which the click writer stores
+     *    with the credit since 1.9.80. No join onto 202_trackers: the public
+     *    id is not unique, and a link since removed still names its clicks.
+     *    A credited click from before the id was stored is in no row.
      */
     private const array BREAKDOWNS = [
         'campaign'     => ['table' => '202_aff_campaigns',      'id' => 'aff_campaign_id',  'name' => 'aff_campaign_name',  'de_id' => 'aff_campaign_id'],
@@ -145,6 +150,12 @@ class ReportsController
                 . '            INNER JOIN 202_users ref ON ref.user_id = cp.publisher_user_id',
             'name_sql' => "COALESCE(NULLIF(TRIM(CONCAT_WS(' ', ref.user_fname, ref.user_lname)), ''), ref.user_name)",
             'group' => 'ref.user_id, ref.user_fname, ref.user_lname, ref.user_name',
+        ],
+        'publisher_link' => [
+            'table' => '202_clicks_publisher', 'id' => 'tracker_id_public', 'name' => 'tracker_id_public',
+            'de_id' => 'click_id',
+            'join' => 'INNER JOIN 202_clicks_publisher ref ON ref.click_id = de.click_id AND ref.tracker_id_public <> 0',
+            'name_sql' => 'CAST(ref.tracker_id_public AS CHAR)',
         ],
     ];
 

@@ -104,6 +104,7 @@ $mysql['user_id'] = $db->real_escape_string((string) ($tracker_row['user_id'] ??
 // A publisher link credits a publisher the account granted; any other id is ignored.
 $rsPublisher = p202ClickPublisher($db, (int) ($tracker_row['user_id'] ?? 0), $_GET);
 $mysql['publisher_user_id'] = (string) ($rsPublisher['user_id'] ?? 0);
+$mysql['publisher_tracker_id_public'] = $rsPublisher !== null && ($tracker_row2 ?? null) !== null ? (string) $rsTrackerId : '0';
 $mysql['aff_campaign_id'] = $db->real_escape_string((string) ($tracker_row['aff_campaign_id'] ?? '0'));
 $mysql['ppc_account_id'] = $db->real_escape_string((string) ($tracker_row['ppc_account_id'] ?? '0'));
 
