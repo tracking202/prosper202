@@ -17,12 +17,16 @@
  * Everything that claims a move reads the database.
  */
 
+const path = require('path');
 const checks = require('../lib/checks');
 
 const OWNER = 'tso_browser_owner';
 const TAKER = 'tso_browser_taker';
 const SOURCE = 'TSO Browser Source';
+// 50 characters, the column's width, with one long word: it must wrap or scroll in its own box.
+const LONG = 'TSO Browser Extraordinarilylongsourcenamenospaces1';
 const NOTICE = '#traffic-source-owners-notice';
+const SPLITS = '#traffic-source-splits-table';
 const PANEL = '#traffic-source-owners';
 
 function userIds(db) {
@@ -31,8 +35,11 @@ function userIds(db) {
 
 function drop(db) {
   const ids = userIds(db);
+  db.write("DELETE FROM 202_change_log WHERE entity IN ('traffic_source_split', 'unrecorded_variables_said')");
   db.write("DELETE FROM 202_ppc_accounts WHERE ppc_account_name LIKE 'TSO Browser %'");
-  db.write("DELETE FROM 202_ppc_networks WHERE ppc_network_name = '" + SOURCE + "'");
+  db.write('DELETE v FROM 202_ppc_network_variables AS v INNER JOIN 202_ppc_networks AS n'
+    + " ON n.ppc_network_id = v.ppc_network_id WHERE n.ppc_network_name LIKE 'TSO Browser %'");
+  db.write("DELETE FROM 202_ppc_networks WHERE ppc_network_name LIKE 'TSO Browser %'");
   if (ids) {
     for (const table of ['202_dirty_hours', '202_user_role', '202_users_pref', '202_users']) {
       db.write('DELETE FROM ' + table + ' WHERE user_id IN (' + ids + ')');
@@ -57,6 +64,43 @@ function plant(db, state) {
 
 function holder(db, state) {
   return db.value('SELECT user_id FROM 202_ppc_networks WHERE ppc_network_id = ' + state.source);
+}
+
+/**
+ * Two sources listed and three splits said: the first source taken as plant()
+ * leaves it, with a custom variable (it waits for a decision, and its
+ * variables are not recorded); a second with a 50-character name that an
+ * account of the owner's was put on after it was saved (the cron job's to
+ * split); and three splits of the last 30 days, two automatic, one of the
+ * long-named source with two copies.
+ */
+function plantMany(db, state) {
+  db.write("DELETE FROM 202_change_log WHERE entity = 'traffic_source_split'");
+  db.write("DELETE FROM 202_ppc_accounts WHERE ppc_account_name IN ('TSO Browser Taker', 'TSO Browser Put On')");
+  db.write('DELETE v FROM 202_ppc_network_variables AS v INNER JOIN 202_ppc_networks AS n'
+    + " ON n.ppc_network_id = v.ppc_network_id WHERE n.ppc_network_name LIKE 'TSO Browser %'");
+  db.write("DELETE FROM 202_ppc_networks WHERE ppc_network_name LIKE 'TSO Browser %' AND ppc_network_id <> " + state.source);
+  db.write('UPDATE 202_ppc_accounts SET ppc_network_id = ' + state.source + ' WHERE user_id = ' + state.owner
+    + " AND ppc_account_name LIKE 'TSO Browser %'");
+  plant(db, state);
+  db.write('INSERT INTO 202_ppc_network_variables (ppc_network_id, name, parameter, placeholder) VALUES ('
+    + state.source + ", 'Placement', 'placement', '{placement}')");
+  db.write('INSERT INTO 202_ppc_networks (user_id, ppc_network_name, ppc_network_time) VALUES ('
+    + state.taker + ", '" + LONG + "', UNIX_TIMESTAMP() - 7200)");
+  state.putOn = db.value("SELECT ppc_network_id FROM 202_ppc_networks WHERE ppc_network_name = '" + LONG + "'");
+  db.write('INSERT INTO 202_ppc_accounts (user_id, ppc_network_id, ppc_account_name, ppc_account_time) VALUES ('
+    + state.owner + ', ' + state.putOn + ", 'TSO Browser Put On', UNIX_TIMESTAMP() - 60)");
+  const split = (source, name, actor, ago, copies) => db.write(
+    'INSERT INTO 202_change_log (entity, entity_id, operation, natural_key_digest, actor_user_id, changed_at, payload)'
+    + " VALUES ('traffic_source_split', '" + source + "', 'create', SHA1('tso-browser-" + source + '-' + ago + "'), "
+    + actor + ', UNIX_TIMESTAMP() - ' + ago + ", '" + JSON.stringify({ ppc_network_name: name, removed: false,
+      owner_user_id: Number(state.taker), copies }) + "')"
+  );
+  const copy = (user, id, accounts) => ({ user_id: Number(user), ppc_network_id: id, ppc_account_ids: accounts,
+    custom_variables: 2 });
+  split(state.putOn, LONG, 0, 600, [copy(state.owner, 900001, [900011, 900012, 900013]), copy(1, 900002, [900014])]);
+  split(state.source, SOURCE, 1, 86400, [copy(state.owner, 900003, [900015])]);
+  split(900099, 'TSO Browser Gone Since', 0, 172800, [copy(state.owner, 900004, [900016])]);
 }
 
 /** Sources the report lists, of anyone's: the notice counts them all. */
@@ -249,7 +293,7 @@ module.exports = {
     },
 
     {
-      name: 'A source both users\' accounts name is split from the panel, saying no copies nothing, and the notice goes',
+      name: 'A source both users\' accounts name is split from the panel, saying no copies nothing, and the split stays said',
       async run(ctx) {
         const { app, ui, db, expect, state } = ctx;
         plantShared(db, state);
@@ -291,9 +335,129 @@ module.exports = {
 
         if (listed(db) === 0) {
           await app.goto('/202-account/administration.php');
-          expect.notOk(await ui.exists(NOTICE), 'Settings no longer shows the notice');
+          // Nothing waits any more; the split stays said for 30 days.
+          expect.ok(await ui.visible(NOTICE + '.alert-info'), 'Settings says the split, as information');
+          const told = (await ui.text(NOTICE)).replace(/\s+/g, ' ');
+          expect.ok(told.includes('1 traffic source was split in the last 30 days.'), 'it counts what was split', told);
+          expect.ok(told.includes('Nothing was taken from the other user'), 'and says what a split did', told);
+          await ui.clickThrough(NOTICE + ' a');
+          expect.ok(await ui.visible(PANEL + ' .p202-empty__title'), 'the panel says nothing is left to review');
+          expect.eq(await ui.count(SPLITS + ' tbody tr'), 1, 'and lists the split');
+          const listedSplit = (await ui.text(SPLITS + ' tbody tr')).replace(/\s+/g, ' ');
+          expect.ok(listedSplit.includes(SOURCE) && listedSplit.includes(TAKER) && listedSplit.includes(OWNER)
+            && listedSplit.includes('2 traffic source accounts') && listedSplit.includes('by user 1'),
+          'with who kept it, who got a copy for which accounts, and who split it', listedSplit);
+          await checks.baseline(ctx);
+          await checks.componentClassesAreStyled(ctx);
+          await checks.flexContainersKeepTheirSpaces(ctx);
+          await checks.tablesScrollThemselves(ctx);
         } else {
-          expect.skip('the notice goes', 'another source on this instance is still listed');
+          expect.skip('the notice says only the split', 'another source on this instance is still listed');
+        }
+      },
+    },
+
+    {
+      name: 'What the cron job splits, what was split and what waits: many, one and none, at 1280x800 and 390x844, light and dark',
+      async run(ctx) {
+        const { db, expect, state, withSession, config } = ctx;
+        const combos = [
+          { viewport: { width: 1280, height: 800 }, colorScheme: 'light' },
+          { viewport: { width: 1280, height: 800 }, colorScheme: 'dark' },
+          { viewport: { width: 390, height: 844 }, colorScheme: 'light' },
+          { viewport: { width: 390, height: 844 }, colorScheme: 'dark' },
+        ];
+        for (const options of combos) {
+          const at = options.viewport.width + 'x' + options.viewport.height + ' ' + options.colorScheme + ': ';
+          plantMany(db, state);
+          await withSession(options, async ({ app, ui, session }) => {
+            const inner = { app, ui, session, expect, db, state };
+            const look = async (label) => {
+              await session.page.screenshot({
+                path: path.join(config.shots, 'settings-traffic-source-owners-' + options.viewport.width + '-'
+                  + options.colorScheme + '-' + label + '.png'),
+                fullPage: true,
+              });
+              await checks.baseline(inner);
+              await checks.componentClassesAreStyled(inner);
+              await checks.flexContainersKeepTheirSpaces(inner);
+              await checks.tablesScrollThemselves(inner);
+              if (options.colorScheme === 'dark') { await checks.darkThemeApplies(inner); }
+            };
+            const noticeFits = async (what) => {
+              const box = await ui.page.evaluate((selector) => {
+                const r = document.querySelector(selector).getBoundingClientRect();
+                return { left: Math.round(r.left), right: Math.round(r.right), width: window.innerWidth };
+              }, NOTICE);
+              expect.ok(box.left >= 0 && box.right <= box.width, at + what + ' fits the screen', JSON.stringify(box));
+            };
+
+            // Many: two sources listed, three splits said.
+            await app.goto('/202-account/administration.php');
+            expect.ok(await ui.visible(NOTICE + '.alert-warning'), at + 'the notice warns while a source waits');
+            const many = (await ui.text(NOTICE)).replace(/\s+/g, ' ');
+            expect.ok(many.includes('1 can be moved back as it is.'), at + 'it counts only what waits for a decision', many);
+            expect.ok(many.includes('1 of them is split by the cron job within the hour, with nothing for you to do'),
+              at + 'says what the cron job does by itself', many);
+            expect.ok(many.includes('3 traffic sources were split in the last 30 days, 2 of them automatically.'),
+              at + 'what was split', many);
+            expect.ok(many.includes('Custom variable values are not being recorded'), at + 'and what is being lost', many);
+            await noticeFits('the notice');
+            await look('many-notice');
+
+            await ui.clickThrough(NOTICE + ' a');
+            const waits = 'tr[data-ppc-network-id="' + state.source + '"]';
+            const auto = 'tr[data-ppc-network-id="' + state.putOn + '"]';
+            expect.ok(await ui.visible(waits + ' .p202-pill--warn:has-text("custom variables not recorded")'),
+              at + 'the source that waits is marked as losing its variables');
+            expect.ok((await ui.text(waits)).includes('Not split automatically'), at + 'and says why it is left to you');
+            expect.ok(await ui.visible(auto + ' .p202-pill--good:has-text("split automatically within the hour")'),
+              at + 'the source the cron job splits says so');
+            expect.notOk((await ui.text(auto)).includes('you choose'), at + 'and does not ask you to choose');
+            expect.eq(await ui.count(SPLITS + ' tbody tr'), 3, at + 'three splits are listed');
+            const heads = await ui.page.evaluate(() => {
+              const first = document.getElementById('traffic-source-owners');
+              const second = document.getElementById('traffic-source-splits');
+              const size = (el) => getComputedStyle(el.querySelector('.p202-panel__title')).fontSize;
+              return { owners: size(first), splits: size(second),
+                gap: Math.round(second.getBoundingClientRect().top - first.getBoundingClientRect().bottom) };
+            });
+            expect.ok(heads.owners === heads.splits && heads.gap >= 8,
+              at + 'the split list is a panel of its own, titled as the panel above it and apart from it', JSON.stringify(heads));
+            expect.eq(await ui.count(SPLITS + ' .p202-pill--good:has-text("automatically")'), 2, at + 'two as automatic');
+            const longCell = await ui.page.evaluate((selector) => {
+              const wrap = document.querySelector(selector).closest('.p202-table-wrap');
+              const panel = document.getElementById('traffic-source-owners').getBoundingClientRect();
+              const r = wrap.getBoundingClientRect();
+              return { wrapRight: Math.round(r.right), panelRight: Math.round(panel.right), page: document.documentElement.scrollWidth,
+                screen: window.innerWidth };
+            }, SPLITS);
+            expect.ok(longCell.wrapRight <= longCell.panelRight && longCell.page <= longCell.screen,
+              at + 'a 50-character name stays inside the panel', JSON.stringify(longCell));
+            await look('many-panel');
+
+            // One: nothing waits, one split is said.
+            db.write("UPDATE 202_ppc_networks SET user_id = " + state.owner + " WHERE ppc_network_name LIKE 'TSO Browser %'");
+            db.write("DELETE FROM 202_change_log WHERE entity = 'traffic_source_split' AND entity_id <> '" + state.putOn + "'");
+            await app.goto('/202-account/administration.php');
+            expect.ok(await ui.visible(NOTICE + '.alert-info'), at + 'with nothing waiting the notice is information');
+            const one = (await ui.text(NOTICE)).replace(/\s+/g, ' ');
+            expect.ok(one.includes('1 traffic source was split in the last 30 days, automatically.'), at + 'one split', one);
+            await noticeFits('the one-split notice');
+            await ui.clickThrough(NOTICE + ' a');
+            expect.ok(await ui.visible(PANEL + ' .p202-empty__title'), at + 'the panel says nothing is left to review');
+            expect.eq(await ui.count(SPLITS + ' tbody tr'), 1, at + 'and lists the one split');
+            await look('one-split');
+
+            // None: nothing waits and nothing was split.
+            db.write("DELETE FROM 202_change_log WHERE entity = 'traffic_source_split'");
+            await app.goto('/202-account/administration.php');
+            if (listed(db) === 0) {
+              expect.notOk(await ui.exists(NOTICE), at + 'with nothing to say there is no notice');
+            } else {
+              expect.skip(at + 'no notice', 'another source on this instance is still listed');
+            }
+          });
         }
       },
     },

@@ -450,8 +450,11 @@ A row of another account named by id reads as naming nothing.
   first (`AccountScopedWriteTest`; SQL only).
 - When a fix closes a hole, ask what the hole left behind. A sign with two
   origins is a report, not a repair (`TrafficSourceOwners`: moved only on an
-  admin's say-so, never in the upgrade). Run each repair to its fixed point
-  (`TrafficSourceSplitIntegrationTest`).
+  admin's say-so, never in the upgrade). Only an act that is right
+  whichever origin made the sign, and takes nothing from anyone, runs
+  unasked, and is listed afterwards
+  (`TrafficSourceAutomaticSplitIntegrationTest`). Run each repair to its
+  fixed point (`TrafficSourceSplitIntegrationTest`).
 
 ### 28. A field's JSON type is part of the contract, and its readers are not in the server's tests
 A type change breaks readers no PHP suite runs: Go structs and their test
