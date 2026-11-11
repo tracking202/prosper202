@@ -85,7 +85,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$error['landing_page_nickname'] = '<div class="error">Give this landing page a nickname</div>';
 	}
 
+	// A URL typed without its scheme (lp.example.com/x) is saved with https://, as the API saves it, and the page says so.
+	$schemeAdded = false;
+	foreach (['landing_page_url', 'leave_behind_page_url'] as $urlField) {
+		if (is_string($_POST[$urlField] ?? null)) {
+			$typedUrl = trim($_POST[$urlField]);
+			$_POST[$urlField] = \Prosper202\Http\HttpUrlPrefix::complete($typedUrl);
+			$schemeAdded = $schemeAdded || $_POST[$urlField] !== $typedUrl;
+		}
+	}
+	if (is_string($_POST['leave_behind_page_url'] ?? null) && mb_strlen($_POST['leave_behind_page_url']) > 255) {
+		$error['leave_behind_page_url'] = '<div class="error">The leave-behind URL can be at most 255 characters.</div>';
+	}
+
 	$landing_page_url = isset($_POST['landing_page_url']) ? trim((string) $_POST['landing_page_url']) : '';
+	if (mb_strlen($landing_page_url) > 255) {
+		$error['landing_page_url'] = '<div class="error">The landing page URL can be at most 255 characters.</div>';
+	}
 	if (empty($landing_page_url)) {
 		$error['landing_page_url'] = '<div class="error">What is the URL of your landing page?</div>';
 	}
@@ -128,44 +144,74 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 	}
 
+	// The ids and the type the save writes, read exactly: "12abc" is no campaign and no page.
+	$postedType = is_string($_POST['landing_page_type'] ?? null) ? $_POST['landing_page_type'] : '';
+	$postedCampaignId = \Prosper202\Http\PostedId::read($_POST['aff_campaign_id'] ?? null);
+	$postedPageId = \Prosper202\Http\PostedId::read($_POST['landing_page_id'] ?? null);
+	if ($postedType === '0' && $postedCampaignId === null && !isset($error['aff_campaign_id'])) {
+		$error['aff_campaign_id'] = '<div class="error">What campaign is this landing page for?</div>';
+	}
+	if ($editing == true && $postedPageId === null && !isset($error['wrong_user'])) {
+		$error['wrong_user'] = '<div class="error">You are not authorized to modify another users campaign</div>';
+	}
+
 	// Bot202 Facebook Pixel Assistant: a simple page's settings, refused here before anything is saved.
 	$fbpaSettings = \Prosper202\Setup\FacebookPixelAssistantSettings::fromForm(
 		($_POST['landing_page_type'] ?? '') === '0' ? $_POST : [],
 		$error
 	);
 
+	$savedId = 0;
+	$saveCampaignId = 0;
+	$saveUserId = (int) $_SESSION['user_id'];
 	if (!$error) {
-		$mysql['landing_page_id'] = $db->real_escape_string((string)($_POST['landing_page_id'] ?? ''));
-		$mysql['aff_campaign_id'] = $db->real_escape_string((string)($_POST['aff_campaign_id'] ?? ''));
-		$mysql['landing_page_nickname'] = $db->real_escape_string((string)($_POST['landing_page_nickname'] ?? ''));
-		$mysql['landing_page_url'] = $db->real_escape_string((string)($_POST['landing_page_url'] ?? ''));
-		$mysql['leave_behind_page_url'] = $db->real_escape_string((string)($_POST['leave_behind_page_url'] ?? ''));
-		$mysql['landing_page_type'] = $db->real_escape_string((string)($_POST['landing_page_type'] ?? ''));
-		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-		$mysql['landing_page_time'] = time();
+		// One statement for the page and, for a new one, its public id, in one transaction:
+		// prepared, and a failure is said on the page with nothing written.
+		$saveType = (int) $postedType;
+		$saveCampaignId = $saveType === 0 ? (int) $postedCampaignId : 0;
+		$saveLeaveBehind = isset($_SESSION['user_mods_lb']) && $_SESSION['user_mods_lb'] == '1';
+		$saveValues = [$saveCampaignId, $landing_page_nickname, $landing_page_url];
+		$saveTypes = 'iss';
+		$saveSet = '`aff_campaign_id` = ?, `landing_page_nickname` = ?, `landing_page_url` = ?';
+		if ($saveLeaveBehind) {
+			$saveSet .= ', `leave_behind_page_url` = ?';
+			$saveValues[] = is_string($_POST['leave_behind_page_url'] ?? null) ? $_POST['leave_behind_page_url'] : '';
+			$saveTypes .= 's';
+		}
+		$saveSet .= ', `landing_page_type` = ?, `landing_page_time` = ?';
+		array_push($saveValues, $saveType, time());
+		$saveTypes .= 'ii';
+		$saveConn = new \Prosper202\Database\Connection($db);
+		try {
+			$savedId = $saveConn->transaction(static function () use ($saveConn, $editing, $postedPageId, $saveUserId, $saveSet, $saveTypes, $saveValues): int {
+				if ($editing) {
+					$stmt = $saveConn->prepareWrite('UPDATE `202_landing_pages` SET ' . $saveSet . ' WHERE `landing_page_id` = ? AND `user_id` = ?');
+					$saveConn->bind($stmt, $saveTypes . 'ii', [...$saveValues, (int) $postedPageId, $saveUserId]);
+					$saveConn->executeUpdate($stmt);
 
-		if ($editing == true) {
-			$landing_page_sql  = "UPDATE `202_landing_pages` SET";
-		} else {
-			$landing_page_sql  = "INSERT INTO `202_landing_pages` SET";
-		}
-		$landing_page_sql .= "`aff_campaign_id`='" . $mysql['aff_campaign_id'] . "',
-			                                                  `landing_page_nickname`='" . $mysql['landing_page_nickname'] . "',
-			                                                  `landing_page_url`='" . $mysql['landing_page_url'] . "'";
-		if (isset($_SESSION['user_mods_lb']) && $_SESSION['user_mods_lb'] == '1') {
-			$landing_page_sql .=  ", `leave_behind_page_url`='" . $mysql['leave_behind_page_url'] . "' ";
-		}
-		$landing_page_sql .=  " ,
-											  `landing_page_type`='" . $mysql['landing_page_type'] . "',
-											  `user_id`='" . $mysql['user_id'] . "',
-											  `landing_page_time`='" . $mysql['landing_page_time'] . "' ";
+					return (int) $postedPageId;
+				}
+				$stmt = $saveConn->prepareWrite('INSERT INTO `202_landing_pages` SET ' . $saveSet . ', `user_id` = ?');
+				$saveConn->bind($stmt, $saveTypes . 'i', [...$saveValues, $saveUserId]);
+				$newId = $saveConn->executeInsert($stmt);
+				// A new page's public id, which its code carries (lpip=): a digit, the id, a digit.
+				$public = $saveConn->prepareWrite('UPDATE `202_landing_pages` SET `landing_page_id_public` = ? WHERE `landing_page_id` = ? AND `user_id` = ?');
+				$saveConn->bind($public, 'iii', [(int) (random_int(1, 9) . $newId . random_int(1, 9)), $newId, $saveUserId]);
+				$saveConn->executeUpdate($public);
 
-		if ($editing == true) {
-			$landing_page_sql  .= "WHERE `landing_page_id`='" . $mysql['landing_page_id'] . "'"
-                . " AND `user_id`='" . $mysql['user_id'] . "'";
+				return $newId;
+			});
+		} catch (\Throwable $saveFailure) {
+			error_log('landing_pages.php: the landing page could not be saved: ' . $saveFailure->getMessage());
+			$error['save'] = '<div class="error">The landing page could not be saved, and nothing was changed. Try again.</div>';
 		}
-		//die($landing_page_sql);
-		$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
+	}
+
+	if (!$error) {
+		$mysql['landing_page_id'] = (string) $savedId;
+		$mysql['aff_campaign_id'] = (string) $saveCampaignId;
+		$mysql['user_id'] = (string) $saveUserId;
+		$landing_page_row['landing_page_id'] = $savedId;
 		$add_success = true;
 
 		if ($editing == true) {
@@ -200,20 +246,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			}
 		}
 
-		if ($editing != true) {
-			//if this landing page is brand new, add on a landing_page_id_public
-			$landing_page_row['landing_page_id'] = $db->insert_id;
-			$landing_page_id_public = random_int(1, 9) . $landing_page_row['landing_page_id'] . random_int(1, 9);
-			$mysql['landing_page_id_public'] = $db->real_escape_string((string)$landing_page_id_public);
-			$mysql['landing_page_id'] = $db->real_escape_string((string)$landing_page_row['landing_page_id']);
-
-			$landing_page_sql = "	UPDATE       `202_landing_pages`
-								 	SET          	 `landing_page_id_public`='" . $mysql['landing_page_id_public'] . "'
-								 	WHERE        `landing_page_id`='" . $mysql['landing_page_id'] . "'"
-                . " AND `user_id`='" . $mysql['user_id'] . "'";
-			$landing_page_result = $db->query($landing_page_sql) or record_mysql_error($landing_page_sql);
-		}
-
 		// The page's Bot202 Facebook Pixel Assistant settings; an advanced page never runs it.
 		$fbpaStore = new \Prosper202\Setup\FacebookPixelAssistantSettings(new \Prosper202\Database\Connection($db));
 		if (($_POST['landing_page_type'] ?? '') === '0') {
@@ -224,7 +256,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		// Landing Page Optimizer (segments-v2 G10): flag this user's dimension
 		// snapshot dirty; the hourly cron pushes it. DB-only — no HTTP here.
-		// (After the public-id block above: markDirty's queries reset insert_id.)
 		\Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
 	}
 }
@@ -329,7 +360,8 @@ if ((($editing == true) or ($add_success != true)) and (isset($mysql['aff_campai
 // Post-redirect-get: a saved or removed landing page answers with a redirect,
 // so a reload cannot submit the form (or the remove link) a second time.
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && $add_success == true) {
-	header('location: ' . get_absolute_url() . 'tracking202/setup/landing_pages.php?' . ($editing ? 'saved=1' : 'added=1'));
+	header('location: ' . get_absolute_url() . 'tracking202/setup/landing_pages.php?' . ($editing ? 'saved=1' : 'added=1')
+		. (($schemeAdded ?? false) ? '&https=1' : ''));
 	exit;
 }
 if ($delete_success == true) {
@@ -408,7 +440,9 @@ foreach (p202_setup_rows($db, "SELECT landing_page_id, landing_page_nickname, la
 	$simplePagesByCampaign[(int) $page['aff_campaign_id']][] = $page;
 }
 
-$pageItem = static function (array $page, bool $advanced) use ($self, $token, $canRemove, $editId, $optimizeLink): string {
+// What each page's last code check found; a page with none for its present URL is checked as the list loads.
+$codeChecks = (new \Prosper202\Setup\LandingPageCheckStore(new \Prosper202\Database\Connection($db)))->forAccount((int) $_SESSION['user_id']);
+$pageItem = static function (array $page, bool $advanced) use ($self, $token, $canRemove, $editId, $optimizeLink, $codeChecks): string {
 	$id = (int) $page['landing_page_id'];
 	$name = (string) $page['landing_page_nickname'];
 	$out = '<li class="p202-list__item' . ($editId === $id ? ' is-active' : '') . '" data-p202-filter-text="' . p202_setup_e($name) . '">'
@@ -416,6 +450,7 @@ $pageItem = static function (array $page, bool $advanced) use ($self, $token, $c
 		. '<span class="p202-list__actions">'
 		. '<a class="p202-list__action" href="' . p202_setup_e($self . '?edit_landing_page_id=' . $id) . '">edit</a>'
 		. '<a class="p202-list__action" href="' . p202_setup_e($self . '?copy_landing_page_id=' . $id) . '">copy</a>'
+		. '<a class="p202-list__action" href="#" role="button" data-p202-lp-check-now="' . $id . '" title="Fetch the page and look for its code again">check code</a>'
 		. ($advanced ? $optimizeLink($page) : '');
 	if ($canRemove) {
 		$out .= p202_setup_remove_form($self, [
@@ -425,7 +460,8 @@ $pageItem = static function (array $page, bool $advanced) use ($self, $token, $c
 			'token' => $token,
 		], 'Remove the landing page "' . $name . '"? Clicks already tracked keep their history.');
 	}
-	return $out . '</span><span class="p202-list__meta">' . p202_setup_e($page['landing_page_url'] ?? '') . '</span></li>';
+	return $out . '</span><span class="p202-list__meta">' . p202_setup_lp_check_pill($id, $codeChecks[$id] ?? null)
+		. ' ' . p202_setup_e($page['landing_page_url'] ?? '') . '</span></li>';
 };
 
 template_top('Landing Page Setup'); ?>
@@ -444,8 +480,11 @@ echo p202_setup_query_flashes([
 	'saved' => 'Landing page saved.',
 	'deleted' => 'Landing page removed. Clicks already tracked keep their history.',
 ], $_GET);
+if (isset($_GET['https']) && (string) $_GET['https'] === '1') {
+	echo p202_flash('info', 'The URL was typed without http:// or https://, so it was saved with https://. If the page is served over plain http, edit it and write http://.');
+}
 if ($error) {
-	echo p202_setup_error_flashes($error, ['landing_page_type', 'aff_campaign_id', 'landing_page_nickname', 'landing_page_url', 'fbpa_content_name', 'fbpa_content_type', 'fbpa_outbound_clicks']);
+	echo p202_setup_error_flashes($error, ['landing_page_type', 'aff_campaign_id', 'landing_page_nickname', 'landing_page_url', 'leave_behind_page_url', 'fbpa_content_name', 'fbpa_content_type', 'fbpa_outbound_clicks']);
 }
 ?>
 
@@ -536,7 +575,8 @@ if ($error) {
 							<summary>Advanced <span class="p202-disclosure__hint">leave-behind page</span></summary>
 							<div class="p202-disclosure__body">
 								<label class="form-label" for="leave_behind_page_url">Leave-behind URL</label>
-								<textarea class="form-control font-monospace" id="leave_behind_page_url" name="leave_behind_page_url" rows="2" placeholder="https://"><?php echo p202_setup_e($form['leave_behind_page_url']); ?></textarea>
+								<textarea class="form-control font-monospace<?php echo p202_setup_invalid($error, 'leave_behind_page_url'); ?>" id="leave_behind_page_url" name="leave_behind_page_url" rows="2" placeholder="https://"><?php echo p202_setup_e($form['leave_behind_page_url']); ?></textarea>
+								<?php echo p202_setup_feedback($error, 'leave_behind_page_url'); ?>
 								<div class="form-text">None by default. A page loaded behind the offer once a visitor clicks out of your landing page.</div>
 							</div>
 						</details>
@@ -618,5 +658,6 @@ if ($error) {
 	</div>
 </div>
 
+<span hidden data-p202-lp-check-url="<?php echo p202_setup_e($base . 'tracking202/ajax/check_landing_code.php'); ?>"></span>
 <?php echo p202_setup_script_tag($base); ?>
 <?php template_bottom();

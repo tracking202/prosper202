@@ -189,6 +189,71 @@ func newLandingPageCodeCmd(entity crudEntity) *cobra.Command {
 	return cmd
 }
 
+func newLandingPageCheckCmd(entity crudEntity) *cobra.Command {
+	return &cobra.Command{
+		Use:   "check <id>",
+		Short: "Check that a landing page carries its tracking code (Setup > Get LP Code's Check my page)",
+		Long: "Has the server fetch the landing page's saved URL and read its HTML for the code\n" +
+			"`p202 landing-page code` prints. The answer says what was found:\n" +
+			"  present        the current code for this landing page\n" +
+			"  legacy         the older landing.js code, which still works\n" +
+			"  mixed          this page's code and another landing page's\n" +
+			"  other_tracker  this page's id, loaded from another tracking domain\n" +
+			"  wrong_id       only another landing page's code\n" +
+			"  commented      the code only inside an HTML comment\n" +
+			"  absent         no code\n" +
+			"  error          the page could not be fetched (the message says why)\n\n" +
+			"The answer is kept, and Setup > Landing Pages shows it beside the page. Only public\n" +
+			"addresses are fetched. Code a tag manager adds after the page loads is not seen.\n" +
+			"The command exits 0 whatever was found; read `found` or `status` under --json.\n" +
+			"Accepts the internal landing_page_id, or the public id the code carries (lpip=).\n" +
+			"Needs a role with access_to_setup_section; a read-only key may run it.",
+		Example: "  p202 landing-page check 12\n" +
+			"  p202 landing-page check 12 --json",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := validateID(args[0])
+			if err != nil {
+				return err
+			}
+			c, err := api.NewFromConfig()
+			if err != nil {
+				return err
+			}
+			data, err := c.Post("landing-pages/"+id+"/check", nil)
+			if err != nil && isNotFoundErr(err) {
+				if internal := resolvePublicID(c, entity, id); internal != "" && internal != id {
+					fmt.Fprintf(os.Stderr, "No landing page has id %s; checking landing page %s, whose public %s is %s.\n",
+						id, internal, entity.PublicIDField, id)
+					data, err = c.Post("landing-pages/"+internal+"/check", nil)
+				}
+			}
+			if err != nil {
+				return setupRequestError(c, err, "Setup > Get LP Code")
+			}
+			if setupMachineOutput() || quietOutput {
+				render(data)
+				return nil
+			}
+			var check struct {
+				Data struct {
+					LandingPageID int    `json:"landing_page_id"`
+					URL           string `json:"landing_page_url"`
+					Status        string `json:"status"`
+					Message       string `json:"message"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(data, &check); err != nil || check.Data.Status == "" {
+				return &CLIError{Category: "server", ExitCode: ExitServer,
+					Message: fmt.Sprintf("the server's answer is not a landing page check (%v)", err),
+					Hint:    "Check the server with `p202 system health`; rerun with --json to see what it sent."}
+			}
+			fmt.Printf("Landing page %d (%s): %s\n%s\n", check.Data.LandingPageID, check.Data.URL, check.Data.Status, check.Data.Message)
+			return nil
+		},
+	}
+}
+
 type landingPageCode struct {
 	Data struct {
 		LandingPageID      int             `json:"landing_page_id"`

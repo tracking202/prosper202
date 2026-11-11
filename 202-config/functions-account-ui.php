@@ -524,7 +524,8 @@ function p202_ipqs_card_desc(): string
 {
     return 'Score your clicks for fraud. A few minutes after a click arrives, IPQualityScore scores its visitor’s'
         . ' IP address, and a click scoring ' . \Prosper202\Fraud\IpqsScoring::FRAUD_THRESHOLD . ' or more (out'
-        . ' of 100) is filtered out of your reports: it shows under Filtered clicks, with the reason fraud_score.';
+        . ' of 100) is filtered out of your reports: Visitors shows it as "Filtered: fraud score", and its Not fraud'
+        . ' button counts it again and always counts that address from then on.';
 }
 
 /**
@@ -554,6 +555,17 @@ function p202_ipqs_card_note(\mysqli $db, int $userId, bool $keySaved): string
             . $failed->getMessage());
 
         return $note . p202_flash('warn', 'The scoring status could not be read.');
+    }
+    // What scoring did in the last day, so a key that scores nothing, or filters a lot, shows.
+    try {
+        $day = \Prosper202\Fraud\FraudVerdictUndo::lastDay(new \Prosper202\Database\Connection($db), $userId);
+        $note .= '<p class="small">In the last 24 hours: <strong>' . number_format($day['scored']) . '</strong> '
+            . ($day['scored'] === 1 ? 'address' : 'addresses') . ' scored, <strong>' . number_format($day['filtered']) . '</strong> '
+            . ($day['filtered'] === 1 ? 'click' : 'clicks') . ' filtered for the score.'
+            . ' A filtered click says so in Visitors, where <em>Not fraud</em> counts it again.</p>';
+    } catch (\Throwable $failed) {
+        error_log('api-integrations.php: the IPQualityScore counts could not be read: ' . $failed->getMessage());
+        $note .= p202_flash('warn', 'The scoring counts could not be read.');
     }
     if ($status !== null && $status['failures'] > 0 && $status['last_error'] !== null) {
         $failedAt = date('Y-m-d H:i', (int) $status['last_error_at']);

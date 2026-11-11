@@ -28,7 +28,7 @@ p202_overview_run([
     'desc' => 'Every click in the window you choose, newest first: where it came from, what it saw and whether it converted.',
     'icon' => 'bi-people',
     'action' => $base . 'tracking202/visitors/',
-    'fragment' => $base . 'tracking202/ajax/click_history.php',
+    'fragment' => p202_click_history_fragment($base . 'tracking202/ajax/click_history.php', $_GET),
     'panel' => 'Clicks',
     'names' => [...P202_OVERVIEW_CLICK_FILTERS, 'user_pref_limit'],
     'download' => $base . 'tracking202/visitors/download/',

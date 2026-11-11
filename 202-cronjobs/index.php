@@ -283,6 +283,12 @@ function RunHourlyCronJob()
 
         cronQuery($db, $insert_sql, 'the hourly tier\'s record of this hour\'s run');
 
+        // Each landing page's code check, kept current: a few of the pages
+        // not checked in a day are fetched again, so a page that lost its
+        // code says so on Setup › Landing Pages. After the hour is
+        // recorded, as the GeoIP refresh is: these are outbound fetches.
+        RecheckLandingPageCode();
+
         // The GeoIP database, refreshed with the operator's MaxMind account
         // when a refresh is due (weekly once one has succeeded). After the
         // hour is recorded: a download that outlasts this run's lock must not
@@ -449,6 +455,24 @@ function PruneEndedApiKeys(): void
         }
     } catch (\Throwable $e) {
         error_log('Ended API key removal failed: ' . $e->getMessage());
+    }
+}
+
+/**
+ * The landing page code check (Prosper202\Setup\LandingPageCheckStore) for
+ * the pages longest unchecked, for up to 30 seconds. A failure is logged
+ * and the tier goes on.
+ */
+function RecheckLandingPageCode(): void
+{
+    try {
+        $checks = (new \Prosper202\Setup\LandingPageCheckStore(new \Prosper202\Database\Connection(getDatabaseConnection())))
+            ->recheckDue(time() + 30);
+        if ($checks['checked'] + $checks['failed'] > 0) {
+            echo 'Landing page code checks: ' . (int) $checks['checked'] . ' checked, ' . (int) $checks['failed'] . ' failed<br>';
+        }
+    } catch (\Throwable $error) {
+        error_log('Landing page code checks failed: ' . $error->getMessage());
     }
 }
 
