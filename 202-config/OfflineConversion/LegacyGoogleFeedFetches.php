@@ -104,8 +104,8 @@ final class LegacyGoogleFeedFetches
             }
         }
         if (
-            !$this->makeRoom(' WHERE aff_campaign_id = ?', 'i', [$schedule['campaign_id']], self::PER_CAMPAIGN, $now)
-            || !$this->makeRoom('', '', [], self::MAX_ROWS, $now)
+            !$this->makeRoom($schedule['campaign_id'], self::PER_CAMPAIGN, $now)
+            || !$this->makeRoom(null, self::MAX_ROWS, $now)
         ) {
             return false;
         }
@@ -122,26 +122,36 @@ final class LegacyGoogleFeedFetches
     }
 
     /**
-     * Whether the rows $where selects leave room for one more under $cap,
-     * after the one fetched longest ago is removed if it has gone IDLE_FOR
-     * without a fetch.
-     *
-     * @param list<int> $values
+     * Whether one more fits under $cap among the rows of $campaignId (all
+     * rows when null), after the one fetched longest ago is removed if it
+     * has gone IDLE_FOR without a fetch.
      */
-    private function makeRoom(string $where, string $types, array $values, int $cap, int $now): bool
+    private function makeRoom(?int $campaignId, int $cap, int $now): bool
     {
-        $count = $this->conn->prepareWrite('SELECT COUNT(*) AS n FROM ' . TableRegistry::LEGACY_GOOGLE_FEED_FETCHES . $where);
-        if ($values !== []) {
-            $this->conn->bind($count, $types, $values);
+        if ($campaignId === null) {
+            $count = $this->conn->prepareWrite('SELECT COUNT(*) AS n FROM ' . TableRegistry::LEGACY_GOOGLE_FEED_FETCHES);
+        } else {
+            $count = $this->conn->prepareWrite(
+                'SELECT COUNT(*) AS n FROM ' . TableRegistry::LEGACY_GOOGLE_FEED_FETCHES . ' WHERE aff_campaign_id = ?'
+            );
+            $this->conn->bind($count, 'i', [$campaignId]);
         }
         if (StoredRow::int($this->conn->fetchOne($count) ?? [], 'n') < $cap) {
             return true;
         }
-        $idle = $this->conn->prepareWrite(
-            'DELETE FROM ' . TableRegistry::LEGACY_GOOGLE_FEED_FETCHES . ($where === '' ? ' WHERE' : $where . ' AND')
-            . ' last_fetched_at < ? ORDER BY last_fetched_at, fetch_id LIMIT 1'
-        );
-        $this->conn->bind($idle, $types . 'i', [...$values, $now - self::IDLE_FOR]);
+        if ($campaignId === null) {
+            $idle = $this->conn->prepareWrite(
+                'DELETE FROM ' . TableRegistry::LEGACY_GOOGLE_FEED_FETCHES
+                . ' WHERE last_fetched_at < ? ORDER BY last_fetched_at, fetch_id LIMIT 1'
+            );
+            $this->conn->bind($idle, 'i', [$now - self::IDLE_FOR]);
+        } else {
+            $idle = $this->conn->prepareWrite(
+                'DELETE FROM ' . TableRegistry::LEGACY_GOOGLE_FEED_FETCHES
+                . ' WHERE aff_campaign_id = ? AND last_fetched_at < ? ORDER BY last_fetched_at, fetch_id LIMIT 1'
+            );
+            $this->conn->bind($idle, 'ii', [$campaignId, $now - self::IDLE_FOR]);
+        }
 
         return $this->conn->executeUpdate($idle) === 1;
     }
