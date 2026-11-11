@@ -541,6 +541,8 @@ final class ConversionTables
                 `fields` text,
                 `auth` varchar(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',
                 `replayed_at` int(10) unsigned DEFAULT NULL,
+                `replay_done` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `match_method` varchar(16) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
                 PRIMARY KEY (`inbound_id`),
                 KEY `user_recent` (`user_id`,`inbound_id`),
                 KEY `user_kind_recent` (`user_id`,`accepted`,`inbound_id`)

@@ -150,15 +150,22 @@ class SystemController
             $logs[] = $row;
         }
 
-        // Queued traffic-source postbacks the cron job has not sent (every account's).
-        $backlog = OutboxBacklog::read(new Connection($this->db), time());
+        // Queued traffic-source postbacks the cron job has not sent (every account's). The cron's own
+        // status is still answered when this reading fails: null says it is not known, never "none".
+        $postbacks = null;
+        try {
+            $backlog = OutboxBacklog::read(new Connection($this->db), time());
+            $postbacks = [
+                'stuck' => $backlog['stuck'],
+                'overdue' => $backlog['overdue'],
+                'oldest_due_at' => $backlog['oldest_due_at'],
+                'warning' => $backlog['warning'],
+            ];
+        } catch (\Throwable $e) {
+            error_log('GET /system/cron: the traffic-source postback queue could not be read: ' . $e->getMessage());
+        }
 
-        return ['data' => ['jobs' => $jobs, 'recent_logs' => $logs, 'traffic_source_postbacks' => [
-            'stuck' => $backlog['stuck'],
-            'overdue' => $backlog['overdue'],
-            'oldest_due_at' => $backlog['oldest_due_at'],
-            'warning' => $backlog['warning'],
-        ]]];
+        return ['data' => ['jobs' => $jobs, 'recent_logs' => $logs, 'traffic_source_postbacks' => $postbacks]];
     }
 
     public function errors(array $params): array

@@ -96,6 +96,10 @@ if (is_numeric($mysql['click_id'])) {
 	// The click's account owns this request's log row, the event path's included.
 	\Prosper202\InboundLog\RequestLog::current()?->account($cpa_row['user_id'] ?? null);
 	\Prosper202\InboundLog\RequestLog::current()?->click((int) $mysql['click_id']);
+	if ($purLinkSubid === null) {
+		// Kept with how it was found, so a refused request can be recorded from the log.
+		\Prosper202\InboundLog\RequestLog::current()?->matched((int) $mysql['click_id'], $matchedBy);
+	}
 
 	// Postback authentication: the click's account's token or signature,
 	// before anything is written. The image went out first, so a refusal is logged.

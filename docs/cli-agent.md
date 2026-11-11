@@ -907,7 +907,8 @@ p202 conversion inbound-log [--outcome refused|accepted|<outcome>] [--endpoint p
                        # Setup › Inbound Log: postbacks, pixels and IPNs received, newest first, with why each was refused,
                        # what to do about it (fix) and whether it can be recorded now (can_record)
 p202 conversion inbound-log record <inbound_id> [--json]
-                       # record a refused pb/gpb postback's conversion from the log; run twice, it records once
+                       # record a refused postback's or pixel's conversion or event from the log (rows with can_record);
+                       # run twice, it records once
 p202 conversion get    <id> [--json]
 p202 conversion create --click-id N [--payout F] [--transaction-id S] [--conv-time T] [--idempotency-key S]
                        [--status reversed [--reversal-id S]]      # a reversal of the sale with --transaction-id

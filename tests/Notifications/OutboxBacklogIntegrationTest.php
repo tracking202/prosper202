@@ -128,6 +128,23 @@ final class OutboxBacklogIntegrationTest extends TestCase
         self::assertStringContainsString('AutoCron', (string) $api['warning']);
     }
 
+    public function testALongQueueIsCountedToItsCapAndSaidAsMoreThan(): void
+    {
+        $values = [];
+        for ($i = 0; $i < OutboxBacklog::COUNT_CAP + 40; $i++) {
+            $values[] = '(' . self::ACCOUNT . ', ' . (99080000 + $i) . ", 1, 'reached', 'pending', 'https://ads.example/p', "
+                . (self::NOW - 90000 - $i) . ', ' . (self::NOW - 90000) . ')';
+        }
+        self::q('INSERT INTO 202_notification_pending (user_id, conv_id, pixel_id, kind, status, url, next_attempt_at, created_at) VALUES '
+            . implode(', ', $values));
+
+        $backlog = self::read();
+
+        self::assertSame([true, OutboxBacklog::COUNT_CAP + 1, self::NOW - 90000 - OutboxBacklog::COUNT_CAP - 39],
+            [$backlog['stuck'], $backlog['overdue'], $backlog['oldest_due_at']], 'the oldest is still the oldest');
+        self::assertStringStartsWith('More than 1,000 conversion postbacks', (string) $backlog['warning']);
+    }
+
     public function testRowsWaitingWhileTheCronJobRunsAreNotReported(): void
     {
         self::queued(self::ACCOUNT, self::NOW - 7200);

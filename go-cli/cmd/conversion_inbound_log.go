@@ -118,11 +118,12 @@ func renderInboundLog(data []byte) error {
 
 var conversionInboundLogRecordCmd = &cobra.Command{
 	Use:   "record <inbound_id>",
-	Short: "Record the conversion of a refused postback from the log",
-	Long: "Records the conversion a refused server postback (pb.php or gpb.php) would have recorded,\n" +
-		"from the request the log kept: the same click, amount and transaction id, dated when it\n" +
-		"arrived, with the checks a postback meets (the click and campaign must be the account's, a\n" +
-		"transaction id on file is a duplicate, and without one a click converts once). For a request\n" +
+	Short: "Record a refused postback or pixel from the log",
+	Long: "Records what a refused postback or pixel (pb, gpb, px, gpx, upx) would have recorded, from\n" +
+		"the request the log kept: the same click, amount and transaction id, dated when it arrived,\n" +
+		"or its event, handed to the click's goals. The endpoint's own checks apply (the click and\n" +
+		"campaign must be the account's, a transaction id or event id on file is a duplicate, and\n" +
+		"without one a click converts once). For a request\n" +
 		"refused for its token or signature, or by an error on the server; rows that qualify show\n" +
 		"can_record in `p202 conversion inbound-log --outcome refused`. Running it twice records once:\n" +
 		"the second run answers already_recorded with the same conversion. Needs a role that may open\n" +

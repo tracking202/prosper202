@@ -71,6 +71,8 @@ if (($_GET['download'] ?? null) === 'csv' && $errors === [] && !$readFailed) {
     if ($out === false) {
         throw new \RuntimeException('Conversion Logs: the download could not be opened');
     }
+    // A long list is read in batches and streamed; the request's time limit is the list's length, not a fault.
+    set_time_limit(0);
     $cell = \Prosper202\Attribution\ExportCsv::cell(...);
     $stamp = static fn (int $ts): string => $ts > 0 ? date('Y-m-d H:i:s', $ts) : '';
     fputcsv($out, ['conversion_id', 'subid', 'campaign', 'click_time', 'conversion_time', 'elapsed', 'ip_address', 'type',
@@ -84,10 +86,10 @@ if (($_GET['download'] ?? null) === 'csv' && $errors === [] && !$readFailed) {
                 $masked ? '?' : (string) $row['amount'], $row['deleted'] ? 'yes' : 'no', $cell($row['user_agent']),
             ], ',', '"', '');
         });
-    } catch (\Prosper202\Database\Exceptions\QueryException $failed) {
+    } catch (\Throwable $failed) {
         // The headers are sent: the file says it is not whole, never ends as if it were.
         error_log('Conversion Logs: the download stopped: ' . $failed->getMessage());
-        fputcsv($out, ['The download stopped here because the list could not be read. Download it again.'], ',', '"', '');
+        fputcsv($out, ['The download stopped here and is not the whole list. Download it again.'], ',', '"', '');
     }
     exit;
 }

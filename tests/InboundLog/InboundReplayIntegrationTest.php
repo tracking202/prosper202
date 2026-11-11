@@ -130,14 +130,18 @@ final class InboundReplayIntegrationTest extends TestCase
         self::q("DELETE FROM 202_users WHERE user_id IN ($users)");
     }
 
-    /** A refused request in the log, as the endpoint would have left it; answers its id. */
+    /**
+     * A refused request in the log, as the endpoint would have left it; answers its id.
+     * $click and $match are what an endpoint says of the click it found before it can refuse.
+     */
     private static function refused(
         string $endpoint,
         array $fields,
         string $outcome = 'unauthenticated',
         int $user = self::ACCOUNT,
         string $method = 'GET',
-        string $auth = 'none',
+        ?int $click = null,
+        ?string $match = null,
     ): int {
         $written = (new InboundLog(self::requireScratch()))->append(new Entry(
             $endpoint,
@@ -146,11 +150,12 @@ final class InboundReplayIntegrationTest extends TestCase
             $outcome,
             'This account accepts only authenticated postbacks and pixels.',
             $user,
-            null,
+            $click,
             null,
             null,
             \Prosper202\InboundLog\Redactor::fields($fields, $endpoint),
-            $auth,
+            'none',
+            $match,
         ), self::ARRIVED);
         self::assertTrue($written);
 
@@ -160,7 +165,7 @@ final class InboundReplayIntegrationTest extends TestCase
     /** @return list<array<string, mixed>> the click's conversion rows, oldest first */
     private static function conversions(int $click = self::CLICK): array
     {
-        $result = self::$db->query('SELECT conv_id, user_id, campaign_id, transaction_id, click_payout, conv_time, source, user_agent'
+        $result = self::$db->query('SELECT conv_id, user_id, campaign_id, transaction_id, click_payout, conv_time, source, user_agent, pixel_type, match_method, event_name'
             . " FROM 202_conversion_logs WHERE click_id = $click ORDER BY conv_id");
 
         return $result->fetch_all(MYSQLI_ASSOC);
@@ -207,7 +212,7 @@ final class InboundReplayIntegrationTest extends TestCase
         $keyed = self::refused('gpb', ['subid' => (string) self::CLICK, 'txid' => 'NW-1002']);
         self::assertSame('recorded', $replay->replay(self::ACCOUNT, $keyed)['status']);
         // As after a failure that hid the write: the row is free again and the conversion is there.
-        self::q("UPDATE 202_inbound_log SET replayed_at = NULL, conversion_id = NULL WHERE inbound_id = $keyed");
+        self::q("UPDATE 202_inbound_log SET replayed_at = NULL, replay_done = 0, conversion_id = NULL WHERE inbound_id = $keyed");
 
         $again = $replay->replay(self::ACCOUNT, $keyed);
 
@@ -286,18 +291,22 @@ final class InboundReplayIntegrationTest extends TestCase
         (new InboundLogController(self::requireScratch(), self::OTHER, true))->recordNow($id);
     }
 
-    public function testOnlyAWholeServerPostbackRefusedForAFixableReasonIsOffered(): void
+    public function testOnlyAWholeRequestRefusedForAFixableReasonIsOffered(): void
     {
         $subid = ['subid' => (string) self::CLICK];
         $notOffered = [
-            'a pixel' => self::refused('gpx', $subid),
+            'a pixel logged without its click' => self::refused('gpx', $subid),
             'a payment notification' => self::refused('jvzoo', ['ctransreceipt' => 'NW-9']),
             'a refusal the recorder would repeat' => self::refused('gpb', $subid, 'unknown_click'),
-            'a form post' => self::refused('gpb', $subid, 'unauthenticated', self::ACCOUNT, 'POST'),
+            'a form post logged without its body' => self::refused('gpb', $subid, 'unauthenticated', self::ACCOUNT, 'POST'),
             'a redacted value' => self::refused('gpb', $subid + ['txid' => 'buyer@example.com']),
             'a cut value' => self::refused('gpb', $subid + ['txid' => str_repeat('9', 200)]),
-            'an event' => self::refused('gpb', $subid + ['event' => 'signup']),
+            'event properties not kept' => self::refused('gpb', $subid + ['event' => 'signup', 'event_props' => '{"email":"x"}']),
             'a signed subid' => self::refused('gpb', ['subid' => '1-2-abc']),
+            // The customer's reference is never kept, so recording would drop the sale's link to its customer.
+            'a customer reference' => self::refused('gpb', $subid + ['amount' => '12.50', 'cust' => 'C-20391']),
+            'a customer reference under its other name' => self::refused('gpx', ['customer_ref' => 'C-20391'], 'unauthenticated', self::ACCOUNT, 'GET', self::CLICK, 'cookie'),
+            'a signed customer' => self::refused('pb', $subid + ['acip' => (string) self::CAMPAIGN_PUBLIC, 'cust_sig' => 'abc']),
             'no campaign' => self::refused('pb', $subid),
         ];
         $replay = new InboundReplay(self::requireScratch());
@@ -308,6 +317,8 @@ final class InboundReplayIntegrationTest extends TestCase
         self::assertSame([], self::conversions());
 
         self::assertTrue(self::logRow(self::refused('gpb', $subid, 'failed'))['can_record'], 'an error here is fixable');
+        $blank = self::logRow(self::refused('gpb', $subid + ['cust' => '', 'cust_type' => '']));
+        self::assertSame(['', true], [$blank['fields']['cust'], $blank['can_record']], 'an unfilled customer macro names nobody');
         // A request no account was found for is nobody's to record.
         $unattributed = self::refused('gpb', $subid, 'unauthenticated', 0);
         $listed = (new InboundLog(self::requireScratch()))->list(self::ACCOUNT, true, ['search' => (string) self::CLICK]);
@@ -316,11 +327,153 @@ final class InboundReplayIntegrationTest extends TestCase
         self::assertSame('not_found', $replay->replay(self::ACCOUNT, $unattributed)['status']);
 
         try {
-            (new InboundLogController(self::requireScratch(), self::ACCOUNT, false))->recordNow($notOffered['a pixel']);
+            (new InboundLogController(self::requireScratch(), self::ACCOUNT, false))->recordNow($notOffered['a payment notification']);
             self::fail('the API refuses a row that is not offered');
         } catch (ValidationException $refused) {
-            self::assertStringContainsString('server postback', $refused->getMessage());
+            self::assertStringContainsString('payment notification', $refused->getMessage());
         }
+    }
+
+    /** @return array<string, array{0: string, 1: array<string, string>, 2: string, 3: int, 4: string, 5: float, 6: string|null, 7: int}> */
+    public static function pixels(): array
+    {
+        $click = (string) self::CLICK;
+
+        return [
+            // endpoint, fields, match, pixel type, source, payout, transaction id, traffic-source postbacks queued
+            'the global pixel, by its cookie' => ['gpx', ['amount' => '7.25', 'txid' => 'NW-3001'], 'cookie', 1, 'pixel', 7.25, 'NW-3001', 0],
+            'the global pixel, guessed from the address' => ['gpx', [], 'same_ip', 1, 'pixel', 30.0, null, 0],
+            'the universal pixel, by its subid' => ['upx', ['subid' => $click, 'amount' => '9'], 'click_id', 3, 'universal_pixel', 9.0, null, 1],
+            // px.php reads neither an amount nor a transaction id.
+            'the campaign pixel' => ['px', ['acip' => (string) self::CAMPAIGN_PUBLIC, 'amount' => '99', 'txid' => 'NW-3002'],
+                'cookie', 1, 'legacy_pixel', 30.0, null, 0],
+        ];
+    }
+
+    /**
+     * @dataProvider pixels
+     * @param array<string, string> $fields
+     */
+    public function testARefusedPixelIsRecordedAsItsOwnEndpointRecords(
+        string $endpoint,
+        array $fields,
+        string $match,
+        int $pixelType,
+        string $source,
+        float $payout,
+        ?string $txid,
+        int $queued,
+    ): void {
+        self::trafficSourcePostback();
+        $id = self::refused($endpoint, $fields, 'unauthenticated', self::ACCOUNT, 'GET', self::CLICK, $match);
+        self::assertTrue(self::logRow($id)['can_record']);
+        $replay = new InboundReplay(self::requireScratch());
+
+        $answer = $replay->replay(self::ACCOUNT, $id);
+
+        self::assertSame('recorded', $answer['status'], $answer['message']);
+        $rows = self::conversions();
+        self::assertCount(1, $rows);
+        self::assertSame(
+            [$pixelType, $source, $match, $payout, $txid, self::ARRIVED],
+            [(int) $rows[0]['pixel_type'], $rows[0]['source'], $rows[0]['match_method'], (float) $rows[0]['click_payout'],
+                $rows[0]['transaction_id'] === '' ? null : $rows[0]['transaction_id'], (int) $rows[0]['conv_time']]
+        );
+        $pending = self::$db->query('SELECT COUNT(*) FROM 202_notification_pending WHERE conv_id = ' . (int) $rows[0]['conv_id'])->fetch_row();
+        self::assertSame($queued, (int) $pending[0], 'the traffic source is told only where the endpoint tells it');
+
+        self::assertSame('already_recorded', $replay->replay(self::ACCOUNT, $id)['status']);
+        self::assertCount(1, self::conversions());
+    }
+
+    /** A traffic source account on the click with one server postback, so a queued notification can be counted. */
+    private static function trafficSourcePostback(): void
+    {
+        self::q('DELETE FROM 202_ppc_account_pixels WHERE ppc_account_id = 990781');
+        self::q('DELETE FROM 202_ppc_accounts WHERE ppc_account_id = 990781');
+        self::q('DELETE FROM 202_ppc_networks WHERE ppc_network_id = 990781');
+        self::q("INSERT INTO 202_ppc_networks SET ppc_network_id = 990781, user_id = " . self::ACCOUNT . ", ppc_network_name = 'Search ads', ppc_network_time = 1");
+        self::q("INSERT INTO 202_ppc_accounts SET ppc_account_id = 990781, user_id = " . self::ACCOUNT
+            . ", ppc_network_id = 990781, ppc_account_name = 'Search ads main', ppc_account_time = 1");
+        self::q("INSERT INTO 202_ppc_account_pixels SET ppc_account_id = 990781, pixel_type_id = 4,"
+            . " pixel_code = 'https://ads.example/postback?id=[[subid]]'");
+        self::q('UPDATE 202_clicks SET ppc_account_id = 990781 WHERE click_id = ' . self::CLICK);
+    }
+
+    public function testAPixelsClickOfAnotherAccountIsRefused(): void
+    {
+        $id = self::refused('gpx', [], 'unauthenticated', self::ACCOUNT, 'GET', self::OTHER_CLICK, 'cookie');
+
+        $answer = (new InboundReplay(self::requireScratch()))->replay(self::ACCOUNT, $id);
+
+        self::assertSame('refused', $answer['status']);
+        self::assertStringContainsString('another account', $answer['message']);
+        self::assertSame([], self::conversions(self::OTHER_CLICK));
+    }
+
+    public function testAFormPostLoggedWithItsBodyIsRecordedFromIt(): void
+    {
+        // What gpb.php leaves from now on: the body's values with the query's, and the click it read.
+        $id = self::refused('gpb', ['subid' => (string) self::CLICK, 'amount' => '18.40', 'txid' => 'NW-4001'],
+            'unauthenticated', self::ACCOUNT, 'POST', self::CLICK, 'click_id');
+
+        $answer = (new InboundReplay(self::requireScratch()))->replay(self::ACCOUNT, $id);
+
+        self::assertSame('recorded', $answer['status'], $answer['message']);
+        $rows = self::conversions();
+        self::assertSame([18.4, 'NW-4001', 'postback'], [(float) $rows[0]['click_payout'], $rows[0]['transaction_id'], $rows[0]['source']]);
+    }
+
+    public function testAnEventOnACampaignWithoutGoalsRecordsItsConversionWithTheEventsName(): void
+    {
+        $id = self::refused('gpb', ['subid' => (string) self::CLICK, 'event' => 'signup', 'event_props' => '{"plan":"pro"}', 'txid' => 'NW-5001']);
+        self::assertTrue(self::logRow($id)['can_record']);
+
+        $answer = (new InboundReplay(self::requireScratch()))->replay(self::ACCOUNT, $id);
+
+        self::assertSame('recorded', $answer['status'], $answer['message']);
+        self::assertSame(['signup', 'NW-5001'], [self::conversions()[0]['event_name'], self::conversions()[0]['transaction_id']]);
+
+        // A malformed event is the recorder's refusal, and the row is given back.
+        $bad = self::refused('gpb', ['subid' => (string) self::CLICK, 'event' => 'sign up!']);
+        $answer = (new InboundReplay(self::requireScratch()))->replay(self::ACCOUNT, $bad);
+        self::assertSame('refused', $answer['status'], $answer['message']);
+        self::assertNull(self::logRow($bad)['record_started_at']);
+        self::assertCount(1, self::conversions());
+    }
+
+    public function testTheEndpointsNotesAreKeptOnTheRow(): void
+    {
+        $db = self::requireScratch();
+        $_SERVER['QUERY_STRING'] = 'subid=' . self::CLICK;
+        $log = RequestLog::watch($db, 'gpb', 'POST', ['subid' => (string) self::CLICK]);
+        // As gpb.php: the request with its form body, then the click it read, then the refusal.
+        $log->request(['subid' => (string) self::CLICK, 'amount' => '18.40', 'card' => '4111111111111111', 'p202_token' => 'x']);
+        $log->matched(self::CLICK, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
+        $log->account(self::ACCOUNT);
+        $log->refuse('unauthenticated', 'This account accepts only authenticated postbacks and pixels.', 403);
+        $log->write();
+
+        $row = (new InboundLog($db))->list(self::ACCOUNT, false)[0];
+
+        self::assertSame([self::CLICK, 'click_id', '18.40', '[redacted]', '[redacted]', true], [
+            $row['click_id'], $row['match_method'], $row['fields']['amount'], $row['fields']['card'], $row['fields']['p202_token'],
+            $row['can_record'],
+        ], 'the body\'s amount is kept, and nothing the recorder does not read');
+    }
+
+    public function testEventPropertiesAreKeptOnlyWhole(): void
+    {
+        $kept = static fn (string $props): string => \Prosper202\InboundLog\Redactor::fields(['event' => 'signup', 'event_props' => $props], 'gpb')['event_props'];
+
+        self::assertSame('{"plan":"pro","seats":3}', $kept('{"plan":"pro","seats":3}'));
+        foreach ([
+            '{"email":"buyer@example.com"}', '{"note":"from 203.0.113.9"}', '{"api_key":"abc"}', '{"plan":{"customer_name":"x"}}',
+            'not json', '["a"]', '{"plan":"' . str_repeat('p', 1100) . '"}',
+        ] as $props) {
+            self::assertSame('[redacted]', $kept($props), $props);
+        }
+        self::assertSame('[redacted]', \Prosper202\InboundLog\Redactor::fields(['event_props' => '{"plan":"pro"}'], 'jvzoo')['event_props']);
     }
 
     public function testTheApiRecordsAndAnswersTheSecondCallWithTheSameConversion(): void
@@ -353,6 +506,10 @@ final class InboundReplayIntegrationTest extends TestCase
         self::assertSame([$recorded], $ids('812'), 'the conversion id');
         self::assertSame([$other], $ids('ORD-778'));
         self::assertSame([], $ids('ORD-7%'), 'a wildcard is a character');
+        self::assertSame([], $ids('ORD_77'), 'so is an underscore');
+        $odd = self::refused('gpb', ['subid' => '9', 'txid' => 'A_B\\C|D%']);
+        self::assertSame([$odd], $ids('A_B\\C|D%'), 'and a backslash and the escape character are found as sent');
+        self::assertSame([], $ids('AxB\\C|D%'));
         self::assertSame([], $ids('ORD'));
 
         $page = (new InboundLogController(self::requireScratch(), self::ACCOUNT, false))->list(['search' => ' 4410 ']);
@@ -459,12 +616,37 @@ final class InboundReplayIntegrationTest extends TestCase
                 $named[0]['requests'], $named[0]['conversions']]
         );
 
+        // Requests that recorded nothing are named too: by the campaign the URL names, or the click's.
+        self::q('DELETE FROM 202_inbound_log');
+        $bare = static fn (string $endpoint, array $fields, ?int $click = null): Entry => new Entry(
+            $endpoint, 'GET', 403, 'unauthenticated', 'x', self::ACCOUNT, $click, null, null,
+            \Prosper202\InboundLog\Redactor::fields($fields, $endpoint), 'none'
+        );
+        $store->append($bare('pb', ['acip' => (string) self::SECOND_PUBLIC, 'subid' => '77']), self::ARRIVED);
+        $store->append($bare('gpb', ['subid' => (string) self::CLICK]), self::ARRIVED);
+        $store->append($bare('gpx', [], self::CLICK), self::ARRIVED);
+        // Another account's campaign and click name nothing here; the subid is what there is to go by.
+        $store->append($bare('pb', ['acip' => (string) self::OTHER_PUBLIC, 'subid' => '4410']), self::ARRIVED);
+        $store->append($bare('gpb', ['subid' => (string) self::OTHER_CLICK]), self::ARRIVED);
+        $told = [];
+        foreach ($readiness->forAccount(self::ACCOUNT, $now)['senders'] as $sender) {
+            $told[$sender['endpoint'] . ':' . ($sender['campaign_name'] ?? '-')] = $sender['subids'];
+        }
+        ksort($told);
+        self::assertSame([
+            'gpb:-' => [(string) self::OTHER_CLICK],
+            'gpb:Northwind Coffee subscription' => [],
+            'gpx:Northwind Coffee subscription' => [],
+            'pb:-' => ['4410'],
+            'pb:Northwind Tea sampler' => [],
+        ], $told);
+
         // A request whose credentials were not read keeps the answer from being "safe".
         self::q('DELETE FROM 202_inbound_log WHERE auth IN (\'none\', \'invalid\')');
         $store->append($entry('gpb', '', null), self::ARRIVED);
         self::assertNull($readiness->forAccount(self::ACCOUNT, $now)['safe_to_require_token']);
 
         $api = (new PostbackAuthController($db, self::ACCOUNT))->readiness($now);
-        self::assertSame(['token', 2, 1], [$api['data']['mode'], $api['data']['requests'], $api['data']['unread']]);
+        self::assertSame(['token', 1, 1], [$api['data']['mode'], $api['data']['requests'], $api['data']['unread']]);
     }
 }

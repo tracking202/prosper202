@@ -22,6 +22,8 @@ use Prosper202\Database\Connection;
 final class OutboxBacklog
 {
     public const OVERDUE_SECONDS = 900;
+    /** Overdue rows counted; past this the answer is "more than". */
+    public const COUNT_CAP = 1000;
 
     private function __construct()
     {
@@ -30,10 +32,12 @@ final class OutboxBacklog
     /**
      * @param int|null $userId one account's rows, or every account's
      * @return array{stuck: bool, overdue: int, oldest_due_at: int|null, cron_last_run: int|null, warning: string|null}
+     *         overdue is at most COUNT_CAP + 1, which reads "more than COUNT_CAP"
      */
     public static function read(Connection $conn, int $now, ?int $userId = null): array
     {
-        $sql = "SELECT COUNT(*) AS overdue, MIN(next_attempt_at) AS oldest FROM 202_notification_pending"
+        // The oldest COUNT_CAP + 1 overdue rows: a queue left for weeks is not counted whole on every page.
+        $sql = "SELECT COUNT(*) AS overdue, MIN(next_attempt_at) AS oldest FROM (SELECT next_attempt_at FROM 202_notification_pending"
             . " WHERE status = 'pending' AND next_attempt_at <= ?";
         $types = 'i';
         $binds = [$now - self::OVERDUE_SECONDS];
@@ -42,7 +46,7 @@ final class OutboxBacklog
             $types .= 'i';
             $binds[] = $userId;
         }
-        $stmt = $conn->prepareRead($sql);
+        $stmt = $conn->prepareRead($sql . ' ORDER BY next_attempt_at LIMIT ' . (self::COUNT_CAP + 1) . ') AS due');
         $conn->bind($stmt, $types, $binds);
         $row = $conn->fetchOne($stmt);
         $overdue = (int) ($row['overdue'] ?? 0);
@@ -67,7 +71,9 @@ final class OutboxBacklog
     {
         $waited = self::span($now - $oldest);
 
-        return ($overdue === 1 ? '1 conversion postback to a traffic source has' : number_format($overdue) . ' conversion postbacks to your traffic sources have')
+        $many = $overdue > self::COUNT_CAP ? 'More than ' . number_format(self::COUNT_CAP) : number_format($overdue);
+
+        return ($overdue === 1 ? '1 conversion postback to a traffic source has' : $many . ' conversion postbacks to your traffic sources have')
             . ' not been sent, the oldest waiting ' . $waited . '. The cron job sends them, and '
             . ($lastRun === null ? 'it has never run on this install' : 'it last ran ' . self::span($now - $lastRun) . ' ago')
             . '. Until it runs, your traffic sources are not told about conversions. Set up the cron job, or turn on AutoCron'

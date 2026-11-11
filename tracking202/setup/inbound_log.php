@@ -25,7 +25,7 @@ use Prosper202\InboundLog\InboundReplay;
  * install answered for the account, newest first, and why each one that
  * recorded nothing was refused. The same list as GET
  * /api/v3/conversions/inbound-log; secrets and visitor details are never kept.
- * A refused server postback can be recorded from its row (InboundReplay) by a
+ * A refused postback or pixel can be recorded from its row (InboundReplay) by a
  * role that may also record conversions under Update.
  */
 
@@ -79,6 +79,35 @@ $endpointLabels = [
 $outcomeChoices = ['' => 'Everything', 'refused' => 'Refused or nothing recorded', 'accepted' => 'Accepted'];
 $endpointChoices = ['' => 'Every endpoint'] + $endpointLabels;
 $when = static fn (int $ts): string => date('Y-m-d H:i:s', $ts);
+// What a postback or pixel carried to say who sent it.
+$carried = ['none' => 'carried no token', 'invalid' => 'carried a wrong token or signature', 'token' => 'carried your token',
+    'signed' => 'signed'];
+// The question before a refused request is recorded: what it says, and that nothing vouched for it.
+$confirmRecord = static function (array $row): string {
+    $fields = is_array($row['fields']) ? $row['fields'] : [];
+    $said = [];
+    $click = $row['click_id'] ?? ($fields['subid'] ?? ($fields['sid'] ?? null));
+    if (is_scalar($click)) {
+        $said[] = 'click ' . $click;
+    }
+    foreach (['amount' => 'amount', 'event' => 'event'] as $name => $label) {
+        if (is_string($fields[$name] ?? null) && $fields[$name] !== '') {
+            $said[] = $label . ' ' . $fields[$name];
+        }
+    }
+    foreach (['txid', 'transaction_id', 'transactionid', 'order_id', 'orderid', 'oid', 't202txid'] as $name) {
+        if (is_string($fields[$name] ?? null) && $fields[$name] !== '') {
+            $said[] = 'transaction id ' . $fields[$name];
+            break;
+        }
+    }
+
+    return 'Record this request now? It says: ' . ($said === [] ? 'nothing beyond its click' : implode(', ', $said)) . '. '
+        . (in_array($row['auth'], ['none', 'invalid'], true)
+            ? 'It did not carry your postback token, so nothing shows who sent it: record it only if you know this sale is real. '
+            : '')
+        . 'It is recorded as it would have been when it arrived.';
+};
 
 AUTH::set_timezone($_SESSION['user_timezone'] ?? date_default_timezone_get());
 template_top('Inbound Log');
@@ -154,7 +183,8 @@ if ($seesUnattributed) {
                         <td><?php echo p202_setup_e($when((int) $row['received_at'])); ?></td>
                         <td><?php echo p202_setup_e($endpointLabels[$row['endpoint']] ?? $row['endpoint']); ?><?php echo $seesUnattributed && $row['user_id'] === null ? ' <span class="text-body-secondary">(account —)</span>' : ''; ?></td>
                         <td class="num"><?php echo (int) $row['http_status']; ?></td>
-                        <td><?php echo p202_setup_e(str_replace('_', ' ', (string) $row['outcome'])); ?></td>
+                        <td><?php echo p202_setup_e(str_replace('_', ' ', (string) $row['outcome'])); ?>
+                            <?php if ($row['auth'] !== null) { ?><div class="form-text"><?php echo p202_setup_e($carried[$row['auth']] ?? $row['auth']); ?></div><?php } ?></td>
                         <td><?php echo p202_setup_e((string) $row['reason']); ?>
                             <?php if ($fix !== null) { ?>
                                 <div class="form-text"><?php echo p202_setup_e($fix['text']); ?>
@@ -164,7 +194,7 @@ if ($seesUnattributed) {
                                 <div class="form-text">Recorded from this log on <?php echo p202_setup_e($when((int) $row['recorded_later_at'])); ?>.</div>
                             <?php } elseif ($mayRecord && $row['can_record'] && $row['user_id'] === $userId) { ?>
                                 <form method="post" action="<?php echo p202_setup_e($self . ($params === [] ? '' : '?' . http_build_query($params))); ?>" class="mt-1"
-                                    data-p202-confirm="Record this conversion now? It is recorded as the postback would have been, dated when it arrived.">
+                                    data-p202-confirm="<?php echo p202_setup_e($confirmRecord($row)); ?>">
                                     <?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>
                                     <input type="hidden" name="inbound_id" value="<?php echo (int) $row['inbound_id']; ?>">
                                     <button type="submit" class="btn btn-sm btn-outline-primary">Record it now</button>

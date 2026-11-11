@@ -84,6 +84,29 @@ final class SystemControllerBehaviorTest extends TestCase
         );
     }
 
+    public function testCronStatusIsStillAnsweredWhenThePostbackQueueCannotBeRead(): void
+    {
+        /** @var \mysqli&\PHPUnit\Framework\MockObject\MockObject $db */
+        $db = $this->getMockBuilder(\mysqli::class)->disableOriginalConstructor()->getMock();
+        $db->method('query')->willReturnCallback(fn (string $sql) => $this->createResultMock(
+            str_contains($sql, 'FROM 202_cronjob_logs') ? [['id' => 1, 'last_execution_time' => '1700001234']] : []
+        ));
+        $db->method('prepare')->willReturn(false);
+        $log = (string) ini_get('error_log');
+        $scratch = (string) tempnam(sys_get_temp_dir(), 'p202-cron-status');
+        ini_set('error_log', $scratch);
+        try {
+            $result = (new SystemController($db))->cronStatus();
+        } finally {
+            ini_set('error_log', $log);
+        }
+
+        $this->assertSame(1, $result['data']['recent_logs'][0]['id']);
+        $this->assertNull($result['data']['traffic_source_postbacks'], 'not known is null, never "nothing waiting"');
+        $this->assertStringContainsString('postback queue could not be read', (string) file_get_contents($scratch));
+        @unlink($scratch);
+    }
+
     public function testErrorsQueryUsesMysqlErrorTextAlias(): void
     {
         /** @var \mysqli&\PHPUnit\Framework\MockObject\MockObject $db */

@@ -135,14 +135,17 @@ per account.
 | `search` | A subid (click id), conversion id or transaction id, given whole: the row's own, or the one the request carried |
 
 A row that recorded nothing carries `fix` (what to do, and the page that does
-it) and `can_record`. `POST /conversions/inbound-log/{id}/record` records the
-conversion a refused server postback would have recorded, from the request
-the log kept: a `pb` or `gpb` request sent with GET, refused as
-`unauthenticated` or `failed`, whose kept values are whole and which carries
-no event. It is dated when the request arrived and meets a postback's checks:
+it) and `can_record`. `POST /conversions/inbound-log/{id}/record` records what
+a refused postback or pixel would have recorded, from the request the log
+kept: a `pb`, `gpb`, `px`, `gpx` or `upx` request refused as `unauthenticated`
+or `failed`, whose kept values are whole. A conversion is dated when the
+request arrived; a request that carries an event is handed to the click's
+goals. Each is recorded as its own endpoint records it, with the same checks:
 the click must be the account's, a `pb` request's click must have visited the
-campaign it names, a transaction id on file is a duplicate, and without one a
-click converts once. Sent twice it records once (`already_recorded`). It
+campaign it names, a transaction id or event id on file is a duplicate, and
+without one a click converts once. A pixel's click and a form post's body are
+kept from 1.9.80 on (`match_method` on the row); a row logged without them is
+not offered. Sent twice it records once (`already_recorded`). It
 answers 201 `recorded`, 200 `duplicate` or `already_recorded`, 422 with the
 reason when the row cannot be recorded or the recorder refuses it, and asks
 for the role's access to the Setup and Update sections. The buyer's details

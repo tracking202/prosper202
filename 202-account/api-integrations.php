@@ -938,17 +938,18 @@ template_top('API Integrations');
 								<?php echo $e(number_format($pbWithout)); ?> of <?php echo $e(number_format($pbReady['requests'])); ?> came without your token or a signature that verifies.
 								<?php echo $pbOff
 									? 'Requiring the token would refuse them and record nothing. Give each sender below its URL from <a href="' . $e($base . 'tracking202/setup/get_postback.php') . '">Setup › Postback / Pixel</a> first.'
-									: 'They are refused and nothing is recorded. Give each sender below its URL from <a href="' . $e($base . 'tracking202/setup/get_postback.php') . '">Setup › Postback / Pixel</a>; a refused postback can be recorded from the <a href="' . $e($base . 'tracking202/setup/inbound_log.php?outcome=unauthenticated') . '">Inbound Log</a>.'; ?></p>
+									: 'They are refused and nothing is recorded. Give each sender below its URL from <a href="' . $e($base . 'tracking202/setup/get_postback.php') . '">Setup › Postback / Pixel</a>; a refused request can be recorded from the <a href="' . $e($base . 'tracking202/setup/inbound_log.php?outcome=unauthenticated') . '">Inbound Log</a>.'; ?></p>
 						<?php } ?>
 						<?php if ($pbReady !== null && $pbReady['senders'] !== []) { ?>
 							<div class="p202-table-wrap">
 								<table class="table p202-table" id="postback-auth-senders">
-									<thead><tr><th>Arrived at</th><th>Campaign</th><th>Carried</th><th class="num">Requests</th><th class="num">Conversions recorded</th><th>Last one</th></tr></thead>
+									<thead><tr><th>Endpoint</th><th>Campaign</th><th>Carried</th><th class="num">Requests</th><th class="num">Conversions recorded</th><th>Last one</th></tr></thead>
 									<tbody>
 									<?php foreach ($pbReady['senders'] as $pbSender) { ?>
 										<tr<?php echo in_array($pbSender['presented'], ['none', 'invalid'], true) ? ' class="table-warning"' : ''; ?>>
 											<td><?php echo $e($pbEndpoints[$pbSender['endpoint']] ?? $pbSender['endpoint']); ?></td>
-											<td><?php echo $pbSender['campaign_name'] === null ? '<span class="text-secondary">none recorded</span>'
+											<td><?php echo $pbSender['campaign_name'] === null
+												? '<span class="text-secondary">' . ($pbSender['subids'] === [] ? 'not known' : 'not known; subid ' . $e(implode(', ', $pbSender['subids']))) . '</span>'
 												: $e($pbSender['campaign_name']) . ($pbSender['network_name'] !== null ? ' <span class="text-secondary">(' . $e($pbSender['network_name']) . ')</span>' : ''); ?></td>
 											<td><?php echo $e($pbCame[$pbSender['presented']] ?? $pbSender['presented']); ?></td>
 											<td class="num"><?php echo $e(number_format($pbSender['requests'])); ?></td>

@@ -63,7 +63,7 @@ final class InboundLog
     public const REPLAY_CLAIM_SECONDS = 120;
 
     private const COLUMNS = 'inbound_id, user_id, received_at, endpoint, method, http_status, outcome, reason,'
-        . ' click_id, conversion_id, transaction_id, fields, auth, replayed_at';
+        . ' click_id, conversion_id, transaction_id, fields, auth, replayed_at, replay_done, match_method';
 
     public const ENDPOINTS = ['pb', 'gpb', 'px', 'gpx', 'upx', 'clickbank', 'jvzoo', 'paykickstart', 'shopify', 'zaxaa'];
 
@@ -84,10 +84,10 @@ final class InboundLog
             }
             $stmt = $conn->prepareWrite(
                 'INSERT INTO ' . TableRegistry::INBOUND_LOG
-                . ' (user_id, received_at, endpoint, method, http_status, outcome, accepted, reason, click_id, conversion_id, transaction_id, fields, auth)'
-                . ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                . ' (user_id, received_at, endpoint, method, http_status, outcome, accepted, reason, click_id, conversion_id, transaction_id, fields, auth, match_method)'
+                . ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             );
-            $conn->bind($stmt, 'iissisisiisss', [
+            $conn->bind($stmt, 'iissisisiissss', [
                 $userId,
                 $now,
                 substr($entry->endpoint, 0, 24),
@@ -101,6 +101,7 @@ final class InboundLog
                 $entry->transactionId === null ? null : mb_substr(Redactor::scalar($entry->transactionId), 0, 255, 'UTF-8'),
                 Redactor::encode($entry->fields),
                 in_array($entry->auth, PostbackAuthGate::PRESENTED, true) ? $entry->auth : '',
+                $entry->matchMethod === null ? null : substr($entry->matchMethod, 0, 16),
             ]);
             $conn->executeInsert($stmt);
 
@@ -238,7 +239,7 @@ final class InboundLog
 
     /**
      * Take the row for one "record it now" (InboundReplay): true for the one
-     * caller that may write. A row that has its conversion, or that another
+     * caller that may write. A row already recorded this way, or that another
      * caller took less than REPLAY_CLAIM_SECONDS ago, is not taken.
      */
     public function claimReplay(int $userId, int $inboundId, int $now): bool
@@ -246,19 +247,24 @@ final class InboundLog
         $conn = new Connection($this->db);
         $stmt = $conn->prepareWrite(
             'UPDATE ' . TableRegistry::INBOUND_LOG . ' SET replayed_at = ?'
-            . ' WHERE inbound_id = ? AND user_id = ? AND conversion_id IS NULL AND (replayed_at IS NULL OR replayed_at < ?)'
+            . ' WHERE inbound_id = ? AND user_id = ? AND replay_done = 0 AND (replayed_at IS NULL OR replayed_at < ?)'
         );
         $conn->bind($stmt, 'iiii', [$now, $inboundId, $userId, $now - self::REPLAY_CLAIM_SECONDS]);
 
         return $conn->executeUpdate($stmt) === 1;
     }
 
-    /** The conversion a "record it now" recorded, or found on file, kept on the row. */
-    public function finishReplay(int $userId, int $inboundId, int $conversionId, int $now): void
+    /**
+     * The row is recorded: with the conversion a "record it now" recorded or
+     * found on file, or none (an event that reached no goal, a payment a
+     * recorder of its own settled).
+     */
+    public function finishReplay(int $userId, int $inboundId, ?int $conversionId, int $now): void
     {
         $conn = new Connection($this->db);
         $stmt = $conn->prepareWrite(
-            'UPDATE ' . TableRegistry::INBOUND_LOG . ' SET conversion_id = ?, replayed_at = ? WHERE inbound_id = ? AND user_id = ?'
+            'UPDATE ' . TableRegistry::INBOUND_LOG . ' SET conversion_id = COALESCE(?, conversion_id), replayed_at = ?, replay_done = 1'
+            . ' WHERE inbound_id = ? AND user_id = ?'
         );
         $conn->bind($stmt, 'iiii', [$conversionId, $now, $inboundId, $userId]);
         $conn->executeUpdate($stmt);
@@ -270,7 +276,7 @@ final class InboundLog
         $conn = new Connection($this->db);
         $stmt = $conn->prepareWrite(
             'UPDATE ' . TableRegistry::INBOUND_LOG . ' SET replayed_at = NULL'
-            . ' WHERE inbound_id = ? AND user_id = ? AND conversion_id IS NULL AND replayed_at = ?'
+            . ' WHERE inbound_id = ? AND user_id = ? AND replay_done = 0 AND replayed_at = ?'
         );
         $conn->bind($stmt, 'iii', [$inboundId, $userId, $claimedAt]);
         $conn->executeUpdate($stmt);
@@ -347,7 +353,8 @@ final class InboundLog
         $conversionId = $row['conversion_id'] === null ? null : (int) $row['conversion_id'];
         $replayedAt = ($row['replayed_at'] ?? null) === null ? null : (int) $row['replayed_at'];
         $auth = (string) ($row['auth'] ?? '');
-        $shaped = self::shape($row, $fields, $userId, $conversionId, $replayedAt, $auth);
+        $done = (int) ($row['replay_done'] ?? 0) === 1;
+        $shaped = self::shape($row, $fields, $userId, $conversionId, $replayedAt, $auth, $done);
 
         return $shaped + [
             'fix' => InboundFix::of($shaped),
@@ -360,8 +367,15 @@ final class InboundLog
      * @param array<array-key, mixed>|null $fields
      * @return array<string, mixed>
      */
-    private static function shape(array $row, ?array $fields, int $userId, ?int $conversionId, ?int $replayedAt, string $auth): array
-    {
+    private static function shape(
+        array $row,
+        ?array $fields,
+        int $userId,
+        ?int $conversionId,
+        ?int $replayedAt,
+        string $auth,
+        bool $done,
+    ): array {
         $status = (int) $row['http_status'];
 
         return [
@@ -381,8 +395,10 @@ final class InboundLog
             // What a postback or pixel presented; null where that was not read.
             'auth' => $auth === '' ? null : $auth,
             // When "record it now" recorded the row's conversion; null for a row never recorded that way.
-            'recorded_later_at' => $conversionId !== null ? $replayedAt : null,
-            'record_started_at' => $conversionId === null ? $replayedAt : null,
+            'recorded_later_at' => $done ? $replayedAt : null,
+            'record_started_at' => $done ? null : $replayedAt,
+            // How the endpoint found the click (a MatchMethod value), where it said before answering.
+            'match_method' => ($row['match_method'] ?? null) === null ? null : (string) $row['match_method'],
         ];
     }
 }

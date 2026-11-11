@@ -861,9 +861,10 @@ per account are kept. `--json` is `GET /conversions/inbound-log`; page with
 `--search` finds the requests for one subid (click id), conversion id or
 transaction id, given whole. Each refused row says what to do about it and
 whether its conversion can be recorded now (`can_record`). `record
-<inbound_id>` records the conversion a refused server postback (`pb`, `gpb`)
-would have recorded, from the request the log kept: for one refused for its
-token or signature, or by an error on the server. The click must be your
+<inbound_id>` records what a refused postback or pixel (`pb`, `gpb`, `px`,
+`gpx`, `upx`) would have recorded, from the request the log kept: for one
+refused for its token or signature, or by an error on the server. A request
+that carries an event is handed to the click's goals. The click must be your
 account's, a transaction id already on file is a duplicate, and without one
 a click converts once, so running it twice records once.
 

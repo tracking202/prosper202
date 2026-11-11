@@ -367,11 +367,14 @@ paths:
                               type: string
                       traffic_source_postbacks:
                         type: object
+                        nullable: true
                         description: >-
                           Conversion postbacks queued for traffic sources and
                           left unsent, every account's. `stuck` is true when
                           one has been due for 15 minutes and no scheduler
                           has run since; `warning` then says so and names the fix.
+                          `overdue` counts up to 1,001, which reads as more than
+                          1,000. Null when the queue could not be read.
                         properties:
                           stuck:
                             type: boolean
@@ -2740,6 +2743,13 @@ paths:
                           type: integer
                           nullable: true
                           description: Unix time a recording from the log began and has not finished; null otherwise.
+                        match_method:
+                          type: string
+                          nullable: true
+                          description: >-
+                            How the endpoint found the click (click_id, cookie,
+                            same_ip), where it said before it answered; null on
+                            a row logged without it.
                         fix:
                           type: object
                           nullable: true
@@ -2770,19 +2780,23 @@ paths:
   /conversions/inbound-log/{id}/record:
     post:
       tags: [Conversions]
-      summary: Record the conversion of a refused postback from the log
+      summary: Record a refused postback or pixel from the log
       description: |
-        Records the conversion a refused server postback would have recorded,
-        from the request the log kept ("Record it now" on Setup › Inbound
-        Log): the same click, amount and transaction id, dated when the
-        request arrived. For a `pb` or `gpb` request sent with GET that was
-        refused as `unauthenticated` or `failed`, whose kept values are whole
-        and which carries no event; `can_record` on the row says so. The
-        checks a postback meets apply: the click must be the account's, a
-        `pb` row's click must have visited the campaign it names, a
-        transaction id on file is a duplicate, and without one a click
-        converts once. Sent twice it records once: the second call answers
-        `already_recorded` with the same conversion. Asks for the role's
+        Records what a refused postback or pixel would have recorded, from
+        the request the log kept ("Record it now" on Setup › Inbound Log):
+        the same click, amount and transaction id, dated when the request
+        arrived, or its event, handed to the click's goals. For a `pb`,
+        `gpb`, `px`, `gpx` or `upx` request that was refused as
+        `unauthenticated` or `failed` and whose kept values are whole;
+        `can_record` on the row says so. A pixel's click and a form post's
+        body are kept from 1.9.80 on (`match_method` on the row); a row
+        logged without them is not offered. Each is recorded as its own
+        endpoint records it, with the same checks: the click must be the
+        account's, a `pb` row's click must have visited the campaign it
+        names, a transaction id or event id on file is a duplicate, and
+        without one a click converts once. Sent twice it records once: the
+        second call answers `already_recorded`. `conversion_id` is null for
+        an event that reached no goal that records a conversion. Asks for the role's
         access to the Setup and Update sections. It takes no body.
       operationId: recordInboundLogRequest
       parameters:
@@ -11551,8 +11565,10 @@ paths:
         `safe_to_require_token` is true only when every request seen carried
         the token or a signature, false when one did not, and null when none
         arrived or what one carried was not read (`unread`). `senders` lists
-        the ones a stricter mode would refuse, by endpoint and the campaign
-        of the conversion each recorded, most requests first. The log keeps
+        the ones a stricter mode would refuse, by endpoint and campaign, most
+        requests first: the campaign a request recorded on, or for one that
+        recorded nothing the campaign its URL names (`acip`) or its click's;
+        where none can be told, `subids` holds a few of the subids named. The log keeps
         a number of requests, not of days: `covers_since` is later than
         `since` when it reaches back less than 7 days. Asks what GET
         /conversions/postback-auth asks.
@@ -11617,6 +11633,11 @@ paths:
                             network_name:
                               type: string
                               nullable: true
+                            subids:
+                              type: array
+                              description: Up to 3 subids the group's requests named, when no campaign could be told
+                              items:
+                                type: string
                             requests:
                               type: integer
                             conversions:

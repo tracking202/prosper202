@@ -25,6 +25,8 @@ $mysql['click_id'] = 0;
 // A signed request reads its query alone: p202_sig signs nothing else.
 $signedQuery = \Prosper202\Conversion\PostbackAuth\PresentedCredentials::fromQueryString((string) ($_SERVER['QUERY_STRING'] ?? ''))->signature !== null;
 $request = p202PostbackRequest($_GET, $signedQuery ? [] : $_POST);
+// The log keeps the request as read here, a form post's body included (redacted as the query is).
+\Prosper202\InboundLog\RequestLog::current()?->request($request);
 
 // The click: an exact positive integer from subid (or sid), or a 404.
 // is_numeric() plus a cast used to turn "123.9" into click 123, and a
@@ -70,6 +72,10 @@ if ($parsedClickId === null) {
     $parsedClickId = $legacyPurLink['click_id'];
 }
 $mysql['click_id'] = (string) $parsedClickId;
+if ($signedPurLink === null && $legacyPurLink === null) {
+    // A plain subid: kept with how it was found, so a refused request can be recorded from the log.
+    \Prosper202\InboundLog\RequestLog::current()?->matched($parsedClickId, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
+}
 
 // The click's latest visit, which the conversion credits (p202PostbackClickSql()).
 $cvar_sql = p202PostbackClickSql($parsedClickId);

@@ -25,6 +25,9 @@ final class RequestLog
     private string $reason = '';
     private ?int $status = null;
     private bool $written = false;
+    private ?string $matchMethod = null;
+    /** @var array<array-key, mixed>|null the request as the endpoint read it, when that is more than its query */
+    private ?array $request = null;
 
     /**
      * @param array<array-key, mixed> $fields
@@ -73,6 +76,31 @@ final class RequestLog
         if ($id > 0) {
             $this->userId = $id;
         }
+    }
+
+    /**
+     * The click the request names and how the endpoint found it, said before
+     * anything can refuse the request, so a refused one can be recorded
+     * later from its row (InboundReplay). Not for a signed PurLink SubID,
+     * which its own recorder verifies.
+     */
+    public function matched(?int $clickId, \Prosper202\Conversion\Ledger\MatchMethod $by): void
+    {
+        if ($clickId !== null && $clickId > 0) {
+            $this->clickId = $clickId;
+            $this->matchMethod = $by->value;
+        }
+    }
+
+    /**
+     * The request as the endpoint reads it (gpb.php: its query with a form
+     * post's body), kept in place of the query alone; redacted as that is.
+     *
+     * @param array<array-key, mixed> $fields
+     */
+    public function request(array $fields): void
+    {
+        $this->request = $fields;
     }
 
     public function click(?int $clickId): void
@@ -163,8 +191,9 @@ final class RequestLog
             $this->clickId,
             $this->conversionId,
             $this->transactionId,
-            Redactor::fields($this->fields, $this->endpoint),
+            Redactor::fields($this->request ?? $this->fields, $this->endpoint),
             $auth,
+            $this->matchMethod,
         );
     }
 
