@@ -284,7 +284,13 @@ webhooks. Under **Account › API integrations › Shopify**:
 1. On your store, add the click id to the cart as the line item property
    `t202subid` (or `_t202subid`, which checkout hides), filled from the
    tracker's `[[subid]]`. Prosper202 reads it from the first line item that
-   carries it, as paid 1.9.56 did.
+   carries it, as paid 1.9.56 did. The page gives a theme snippet that does
+   this: end the URL your tracker sends buyers to with
+   `?t202subid=[[subid]]`, and paste the snippet into `theme.liquid` just
+   before `</body>` (Online Store › Themes › Edit code). It keeps the click
+   id in the buyer's browser for 30 days and adds it to every add-to-cart
+   form as `_t202subid`. It works with themes that add to the cart through
+   the product form, as Shopify's own themes do.
 2. In Shopify, under **Settings › Notifications › Webhooks**, create a JSON
    webhooks for **Order payment**, **Refund create**, and **Transaction creation**
    (`order_transactions/create`), all to the
@@ -310,12 +316,32 @@ records nothing. A refund that names no click and whose order is not on file
 records nothing. Multiple partial refunds are recorded once each, capped at
 the remaining sale amount. A refund with pending transactions is saved until
 all of them settle and its order is recorded. Transaction creation reports the
-terminal transaction statuses; without that subscription, pending refunds
-require manual reconciliation. Check Setup › Inbound Log for refusals. A pending
+terminal transaction statuses; without that subscription, a pending refund
+is never settled by itself. A pending
 refund whose transaction details disagree with what Shopify sent before is
 refused once, on its own, with the reason in the Inbound Log; the order's other
 refunds are still recorded. A refund refused this way is not tried again and
 its amount stays counted in the sale, so check it in Shopify.
+
+**Setup › Inbound Log** lists every refund that is not recorded while its
+order's sale is, above the log: the ones still waiting for a transaction to
+settle, with how long each has waited, and the ones refused for good, with
+the reason. A refund that has waited more than a day is flagged, and the
+page says so when the Transaction creation webhook has never arrived. Check
+the refund in Shopify, then **Record refund** with what it returned, in your
+account's currency: it is taken from the order's sale, at most what is left
+of it, so an order that already has a refund can take another. An order
+recorded on more than one click asks which click the refund takes back from.
+**Close** removes a refund from the list with nothing recorded (no money
+went back). A refund recorded there is not recorded again if Shopify settles
+it later.
+
+The Shopify card says whether webhooks are arriving: the last one and when,
+the last order recorded, and how many refunds are left to settle. When a
+Shopify webhook arrives that no saved secret verifies, the card says so:
+if it came from your store, the saved secret is not the one Shopify signs
+with. An account that stores a Shopify secret sees those webhooks in the
+Inbound Log as account "—", without their fields.
 Early development installations already marked 1.9.80 may need the new refund
 tables: open `202-config/upgrade.php` and run the repair before enabling the
 Transaction creation webhook.

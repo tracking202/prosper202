@@ -119,14 +119,86 @@ final class RefundSettlementStore
         return $result;
     }
 
-    public function complete(int $userId, string $refundId, int $now): void
+    /** Closes a refund; $refused says why it was closed without a reversal. */
+    public function complete(int $userId, string $refundId, int $now, ?string $refused = null): void
     {
         self::id($refundId);
         $stmt = $this->conn->prepareWrite(
-            'UPDATE 202_shopify_pending_refunds SET completed_at = ? WHERE user_id = ? AND refund_id = ? AND completed_at IS NULL'
+            'UPDATE 202_shopify_pending_refunds SET completed_at = ?, refused_reason = ?'
+            . ' WHERE user_id = ? AND refund_id = ? AND completed_at IS NULL'
+        );
+        $this->conn->bind($stmt, 'isis', [$now, self::reason($refused), $userId, $refundId]);
+        $this->conn->executeUpdate($stmt);
+    }
+
+    /** A sale of the order is on file, so its refunds that are not recorded overstate it. */
+    public function orderOnFile(int $userId, string $orderId): void
+    {
+        self::id($orderId);
+        $stmt = $this->conn->prepareWrite(
+            'UPDATE 202_shopify_pending_refunds SET order_on_file = 1'
+            . ' WHERE user_id = ? AND order_id = ? AND order_on_file = 0'
+        );
+        $this->conn->bind($stmt, 'is', [$userId, $orderId]);
+        $this->conn->executeUpdate($stmt);
+    }
+
+    /**
+     * A refund refused outright, kept closed with its reason as one line
+     * stating what it returned. One already kept takes the new reason.
+     */
+    public function refuse(
+        int $userId,
+        string $refundId,
+        string $orderId,
+        int $occurredAt,
+        string $amount,
+        ?string $currency,
+        string $reason,
+        bool $orderOnFile,
+        int $now
+    ): void {
+        self::id($refundId);
+        self::id($orderId);
+        if ($userId <= 0 || $occurredAt < 0 || $now <= 0 || preg_match('/^\d{1,6}(?:\.\d{1,5})?$/D', $amount) !== 1) {
+            throw new InvalidArgumentException('A refused refund needs its account, time and amount.');
+        }
+        $json = json_encode([[
+            'id' => $refundId, 'status' => 'success', 'amount' => $amount, 'currency' => strtoupper((string) $currency),
+        ]], JSON_THROW_ON_ERROR);
+        $stmt = $this->conn->prepareWrite(
+            'INSERT INTO 202_shopify_pending_refunds'
+            . ' (user_id, refund_id, order_id, click_id, occurred_at, transactions, completed_at, refused_reason,'
+            . ' order_on_file)'
+            . ' VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE'
+            . ' completed_at = COALESCE(completed_at, VALUES(completed_at)), refused_reason = VALUES(refused_reason),'
+            . ' order_on_file = GREATEST(order_on_file, VALUES(order_on_file))'
+        );
+        $this->conn->bind($stmt, 'issisisi', [
+            $userId, $refundId, $orderId, $occurredAt, $json, $now, self::reason($reason), $orderOnFile ? 1 : 0,
+        ]);
+        $this->conn->executeUpdate($stmt);
+    }
+
+    /**
+     * Closes a refund an operator settled or closed by hand: nothing is left
+     * to list. Answers whether the refund was one still listed.
+     */
+    public function settledByHand(int $userId, string $refundId, int $now): bool
+    {
+        self::id($refundId);
+        $stmt = $this->conn->prepareWrite(
+            'UPDATE 202_shopify_pending_refunds SET completed_at = COALESCE(completed_at, ?), refused_reason = NULL'
+            . ' WHERE user_id = ? AND refund_id = ? AND (completed_at IS NULL OR refused_reason IS NOT NULL)'
         );
         $this->conn->bind($stmt, 'iis', [$now, $userId, $refundId]);
-        $this->conn->executeUpdate($stmt);
+
+        return $this->conn->executeUpdate($stmt) > 0;
+    }
+
+    private static function reason(?string $reason): ?string
+    {
+        return $reason === null ? null : mb_substr($reason, 0, 500, 'UTF-8');
     }
 
     private static function id(string $id): void

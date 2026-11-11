@@ -1440,13 +1440,32 @@ template_top('API Integrations');
 	$shopifyConnected = SavedSecret::isSaved($shopifyColumn) && !ShopifyWebhookSecret::unreadable($shopifyColumn);
 	$shopifyErrors = isset($error['shopify_webhook_secret_error'])
 		? [ShopifyWebhookSecret::COLUMN => (string) $error['shopify_webhook_secret_error']] : [];
+	// Whether webhooks are arriving, and the refunds left to settle; unread, the card says so.
+	$shopifyStatus = null;
+	$shopifyRefunds = null;
+	if ($shopifyConnected) {
+		try {
+			$shopifyStatus = \Prosper202\PaymentNotification\Shopify\WebhookStatus::of($db, (int) $_SESSION['user_id']);
+			$shopifyRefunds = (new \Prosper202\PaymentNotification\Shopify\RefundsToSettle($db))->list((int) $_SESSION['user_id']);
+		} catch (\Throwable $shopifyUnread) {
+			error_log(p202UncaughtLogLine('API integrations: the Shopify webhook status could not be read', $shopifyUnread));
+		}
+	}
+	$shopifyLog = $base . 'tracking202/setup/inbound_log.php';
+	$shopifyAgo = static fn (int $at): string => \Prosper202\PaymentNotification\Shopify\WebhookStatus::ago($at);
 	?>
 	<div class="col-12 col-lg-6">
 		<section class="p202-panel h-100" id="shopify">
 			<div class="p202-panel__head">
 				<h2 class="p202-panel__title">Shopify</h2>
-				<?php if ($shopifyConnected) { ?>
-					<span class="p202-pill p202-pill--good">Connected</span>
+				<?php if ($shopifyConnected && $shopifyStatus !== null && $shopifyStatus->unverifiedAt !== null) { ?>
+					<span class="p202-pill p202-pill--warn">Signature not verifying</span>
+				<?php } elseif ($shopifyConnected && $shopifyStatus !== null && $shopifyStatus->last !== null) { ?>
+					<span class="p202-pill p202-pill--good">Receiving webhooks</span>
+				<?php } elseif ($shopifyConnected && $shopifyStatus !== null) { ?>
+					<span class="p202-pill p202-pill--warn">No webhook yet</span>
+				<?php } elseif ($shopifyConnected) { ?>
+					<span class="p202-pill p202-pill--good">Secret saved</span>
 				<?php } elseif (ShopifyWebhookSecret::unreadable($shopifyColumn)) { ?>
 					<span class="p202-pill p202-pill--warn">Secret unreadable</span>
 				<?php } else { ?>
@@ -1456,11 +1475,44 @@ template_top('API Integrations');
 			<div class="p202-panel__body">
 				<p class="text-secondary">Record each Shopify order on the click that sent the buyer, at the order’s
 					total, and take it back on a refund, from Shopify’s webhooks.</p>
-				<p class="text-secondary">Check Setup › Inbound Log for Shopify refusals.</p>
+				<?php if ($shopifyConnected && $shopifyStatus === null) { ?>
+					<p class="text-secondary">Whether webhooks are arriving could not be read just now.
+						<a href="<?php echo $e($shopifyLog . '?endpoint=shopify'); ?>">Setup › Inbound Log</a> lists them.</p>
+				<?php } elseif ($shopifyStatus !== null) { ?>
+					<ul class="list-unstyled mb-3" id="shopify-status">
+						<?php if ($shopifyStatus->unverifiedAt !== null) { ?>
+							<li><strong>A Shopify webhook arrived <?php echo $e($shopifyAgo($shopifyStatus->unverifiedAt)); ?>
+								that no saved secret verifies; nothing was recorded.</strong> If it came from your store,
+								the secret saved here is not the one Shopify signs with: copy it again from
+								Settings › Notifications › Webhooks and save it below.
+								<a href="<?php echo $e($shopifyLog . '?endpoint=shopify&outcome=unverified'); ?>">See it in the Inbound Log</a></li>
+						<?php } ?>
+						<?php if ($shopifyStatus->last === null) { ?>
+							<li>No webhook signed with your secret has arrived yet. Shopify sends one when an order is
+								paid; “Send test notification” beside the webhook in Shopify sends one now.</li>
+						<?php } else { ?>
+							<li>Last webhook: <?php echo $e(trim(\Prosper202\PaymentNotification\Shopify\WebhookStatus::topicName($shopifyStatus->last['topic'])
+								. ' ' . $shopifyAgo($shopifyStatus->last['at']))); ?>,
+								<?php echo $e(str_replace('_', ' ', $shopifyStatus->last['outcome'])); ?>.
+								<a href="<?php echo $e($shopifyLog . '?endpoint=shopify'); ?>">Inbound Log</a></li>
+							<li><?php echo $shopifyStatus->lastOrderAt === null
+								? 'No order has been recorded yet: an order is recorded when it carries a click id (step 1).'
+								: 'Last order recorded ' . $e($shopifyAgo($shopifyStatus->lastOrderAt)) . '.'; ?></li>
+						<?php } ?>
+						<?php if ($shopifyRefunds !== null && $shopifyRefunds['refunds'] !== []) {
+							$shopifyOpen = count($shopifyRefunds['refunds']); ?>
+							<li><strong><?php echo $shopifyOpen . ($shopifyRefunds['more'] ? '+' : '') . ($shopifyOpen === 1 ? ' refund is' : ' refunds are'); ?>
+								not recorded</strong> and still counted as revenue.
+								<a href="<?php echo $e($shopifyLog . '#shopify-refunds'); ?>">Record or close <?php echo $shopifyOpen === 1 ? 'it' : 'them'; ?></a></li>
+						<?php } ?>
+					</ul>
+				<?php } ?>
 				<ol class="ps-3">
-					<li>On your store, add the click id to the cart as the line item property
-						<code class="text-nowrap">t202subid</code> (or <code class="text-nowrap">_t202subid</code>, which
-						checkout hides), filled from the tracker’s <code>[[subid]]</code>.</li>
+					<li>End the URL your tracker sends buyers to with
+						<code class="text-nowrap"><?php echo $e(\Prosper202\PaymentNotification\Shopify\ThemeSnippet::URL_SUFFIX); ?></code>
+						and paste the theme snippet below into your store’s theme. It adds the click id to the cart
+						as the line item property <code class="text-nowrap">_t202subid</code>, which checkout hides
+						(<code class="text-nowrap">t202subid</code> is read too).</li>
 					<li>In Shopify, under Settings › Notifications › Webhooks, create a JSON webhook for
 						<strong>Order payment</strong>, <strong>Refund create</strong>, and <strong>Transaction creation</strong>, all to this URL.
 						Transaction creation reports when a pending refund settles.
@@ -1469,6 +1521,19 @@ template_top('API Integrations');
 						webhook it does not verify is refused, and nothing is recorded until a secret is stored.</li>
 				</ol>
 				<?php echo $endpoint('Webhook URL', $trackingBase . 'tracking202/static/shopify.php'); ?>
+				<details class="p202-disclosure mb-3">
+					<summary>Theme snippet <span class="p202-disclosure__hint">for step 1</span></summary>
+					<div class="p202-disclosure__body">
+						<p>In Shopify, under Online Store › Themes › Edit code, open <code>theme.liquid</code> and
+							paste this just before <code>&lt;/body&gt;</code>. It works with themes that add to the
+							cart through the product form, as Shopify’s own themes do. A buyer’s click id is kept in
+							their browser for 30 days.</p>
+						<div class="p202-code mb-0"><pre class="p202-code__value p202-code__value--long"><?php
+							echo $e(\Prosper202\PaymentNotification\Shopify\ThemeSnippet::html()); ?></pre>
+							<button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="<?php
+								echo $e(\Prosper202\PaymentNotification\Shopify\ThemeSnippet::html()); ?>">Copy</button></div>
+					</div>
+				</details>
 				<p>A webhook already sent to your postback URL (<code>tracking202/static/gpb.php</code>) is handled
 					the same way. Each order counts once, under its order id, whichever webhook arrives first.</p>
 				<p class="mb-3"><span class="text-secondary">Webhook secret:</span>

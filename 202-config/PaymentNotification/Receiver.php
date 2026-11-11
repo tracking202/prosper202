@@ -56,7 +56,8 @@ final class Receiver
                 $notification?->clickId,
                 $outcome->conversionId,
                 $notification?->transactionId,
-                Redactor::fields($request->fields, $endpoint),
+                ($this->provider instanceof ShopifyAdapter ? ShopifyAdapter::logged($request) : [])
+                    + Redactor::fields($request->fields, $endpoint),
             ));
         } catch (\Throwable $e) {
             error_log($this->provider->name() . ' notification: the inbound log could not be written: ' . $e->getMessage());
@@ -112,6 +113,7 @@ final class Receiver
             if ($refused->accountId === null && count($accounts) === 1) {
                 $refused = new Outcome($refused->kind, $refused->message, $refused->conversionId, $accounts[0]);
             }
+            $this->keepRefusedShopifyRefund($refused);
 
             return [$refused, null];
         } catch (\Throwable $e) {
@@ -138,6 +140,7 @@ final class Receiver
                     $outcome = (new SettlementCoordinator($this->db, $this->provider))
                         ->afterSale($sale, $notification->transactionId, $request);
                 }
+                $this->keepRefusedShopifyRefund($outcome);
             }
         } catch (\Throwable $e) {
             error_log($name . ' settlement: ' . $e->getMessage());
@@ -156,6 +159,23 @@ final class Receiver
         }
 
         return [$outcome, $notification];
+    }
+
+    /**
+     * A Shopify refund refused for good is kept where Setup › Inbound Log
+     * lists it. Failing to keep it never changes the answer.
+     */
+    private function keepRefusedShopifyRefund(Outcome $outcome): void
+    {
+        if (!$this->provider instanceof ShopifyAdapter || $this->provider->refundRead() === null) {
+            return;
+        }
+        try {
+            (new SettlementCoordinator($this->db, $this->provider))
+                ->keepRefused($this->provider->refundRead(), $outcome);
+        } catch (\Throwable $e) {
+            error_log('Shopify notification: the refused refund could not be kept: ' . $e->getMessage());
+        }
     }
 
     /**
