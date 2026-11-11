@@ -224,7 +224,9 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
         $click = self::requireScratch()->query('SELECT MAX(click_id) FROM 202_clicks WHERE user_id = ' . self::TRACKED)
             ->fetch_row()[0];
         self::assertNotNull($click, 'the click is recorded');
-        self::assertStringContainsString('window.p202DcsClick({"t202Subid":"' . $click . '","updateProof":"update.' . $click . '.', $body);
+        // No tracker named: the click has no traffic source account.
+        $answer = 'window.p202DcsClick({"t202Subid":"' . $click . '","t202SourceId":"","updateProof":"update.' . $click . '.';
+        self::assertStringContainsString($answer, $body);
 
         foreach (['refused' => self::TRACKED_PAGE . '&p202_consent=0', 'held back' => (string) self::HELD_BACK_PAGE,
             "'eu'" => (string) self::EU_PAGE] as $why => $query) {
