@@ -946,13 +946,17 @@ p202 destination update <id> [--enable|--disable] [--name S] [any create flag]  
 p202 destination test <id> [--json]                     # made-up conversion to GA4's /debug/mp/collect: valid + messages
 p202 destination deliveries <id> [--status pending|sent|failed|withheld|cancelled] [--kind conversion|test]
                        [--conv-id N] [--limit 50] [--offset 0] [--json]    # the log; meta.summary counts by status
+p202 destination resend <id> (--delivery-id N | --status failed|withheld) [--json]   # sent again with all their tries; `more` true: run again
+p202 destination backfill <id> --days N [--json]        # queue the last N days' conversions it has no delivery for (GA4 1-3, Google Ads 1-90)
 p202 destination delete <id> [--force] [--dry-run] [--json]                # unsent rows cancelled; the log stays
 ```
 
 The API secret is read from a file or piped stdin (`-`), never a flag value. `--staged` is refused: the
-routes are not stageable. A `withheld` delivery is never retried: a guessed click, the privacy setting, or an
-EEA/UK visitor without both consent signals stated `granted` (`last_error` says which);
-`failed` with `last_error` says why (GA4's answer, an event over 72 hours old, an address never called).
+routes are not stageable. A `withheld` delivery is never retried by itself: a guessed click, the privacy setting (`eu`, the default, holds
+back every EEA/UK visitor whatever consent is stated), or, with the setting `disabled`, an EEA/UK visitor without
+both consent signals stated `granted` (`last_error` says which); `destination resend` has it checked again.
+`failed` with `last_error` says why (GA4's answer, an event over 72 hours old, an address never called); it stays
+failed until `destination resend` after the cause is fixed.
 A Google Ads destination with `status` `needs_authorisation` holds its conversions `pending` (no tries used)
 until a person opens `connect`'s `authorisation_url`; an agent cannot complete that step. A click under 6 hours
 old also waits; one with no gclid/wbraid/gbraid and no hashed data is `withheld`. While conversions wait on

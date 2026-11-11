@@ -772,6 +772,8 @@ try {
             $r->delete('/{id}',     fn($ctx) => tap($crud($cls), fn($c) => $c->delete(PathId::of($ctx))));
             $r->post('/{id}/test',  fn($ctx) => $crud($cls)->test(PathId::of($ctx)));
             $r->post('/{id}/oauth/start', fn($ctx) => $crud($cls)->oauthStart(PathId::of($ctx), $_SERVER));
+            $r->post('/{id}/deliveries/resend', fn($ctx) => $crud($cls)->resend(PathId::of($ctx), $payload));
+            $r->post('/{id}/backfill', fn($ctx) => $crud($cls)->backfill(PathId::of($ctx), $payload));
         }, [$setupSection]);
 
         // ── API capabilities ────────────────────────────────────────────
@@ -1380,7 +1382,7 @@ try {
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
                 'apps'          => '/apps/{id|skan-encodings|postbacks|report|notifications|verify|schema|installs}[/installs|/install-token|/store-link|/integrity|/integrity-credential]',
                 'goals'         => '/goals/{id|validate|evaluate}',
-                'destinations'  => '/destinations[/{id}][/test|/deliveries|/oauth/start]',
+                'destinations'  => '/destinations[/{id}][/test|/deliveries[/resend]|/backfill|/oauth/start]',
                 'events'        => '/events',
                 'users'         => '/users',
                 'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations|traffic-source-owners|traffic-source-owners/repair|traffic-source-owners/split}',

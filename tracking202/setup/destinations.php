@@ -12,7 +12,9 @@ if (!$userObj->hasPermission('access_to_setup_section')) {
 }
 
 require_once __DIR__ . '/_includes/setup_ui.php';
+require_once __DIR__ . '/_includes/destination_panels.php';
 
+use Prosper202\Destinations\DestinationForm;
 use Prosper202\Destinations\DestinationInputException;
 use Prosper202\Destinations\DestinationQueue;
 use Prosper202\Destinations\DestinationStore;
@@ -36,6 +38,11 @@ $base = get_absolute_url();
 $self = $base . 'tracking202/setup/destinations.php';
 $redirectUri = GoogleAdsOAuth::redirectUri($_SERVER);
 $canSeeLog = $userObj->hasPermission('access_to_campaign_data');
+// The full log of one destination (?log=<id>), for a role that may see it.
+$logId = \Prosper202\Http\PostedId::read($_GET['log'] ?? null);
+$logStatus = is_string($_GET['status'] ?? null) && in_array($_GET['status'], DestinationQueue::STATUSES, true) ? $_GET['status'] : null;
+$logPage = \Prosper202\Http\PostedId::read($_GET['page'] ?? null) ?? 1;
+$logQuery = $logId === null ? '' : '?log=' . $logId . ($logStatus !== null ? '&status=' . $logStatus : '') . ($logPage > 1 ? '&page=' . $logPage : '');
 $errors = [];
 $tokenRefused = false;
 $posted = null;
@@ -107,6 +114,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     header('location: ' . $self . '?done=tested#d' . $id);
                     die();
                 }
+            } elseif ($action === 'update') {
+                $current = $store->get($userId, $id);
+                if ($current === null || $store->update($userId, $id, DestinationForm::patch($_POST, $current, $store->type((string) $current['type'])), time(), true) === null) {
+                    $errors['destination'] = 'That destination is not one of yours, or was deleted.';
+                } else {
+                    header('location: ' . $self . '?done=updated#d' . $id);
+                    die();
+                }
+            } elseif ($action === 'resend' || $action === 'resend_all') {
+                $deliveryId = $action === 'resend' ? \Prosper202\Http\PostedId::read($_POST['delivery_id'] ?? null) : null;
+                $status = is_string($_POST['status'] ?? null) ? $_POST['status'] : '';
+                if ($action === 'resend' && $deliveryId === null) {
+                    $errors['delivery'] = 'The form did not name a delivery; nothing was changed.';
+                } else {
+                    $again = (new DestinationQueue($conn, $store))->resend($userId, $id, $deliveryId, $status, time());
+                    if ($again === null) {
+                        $errors['destination'] = 'That destination is not one of yours, or was deleted.';
+                    } elseif ($again['queued'] === 0) {
+                        $errors['delivery'] = $action === 'resend'
+                            ? 'That delivery is not a failed or withheld conversion of this destination (it may have been sent again already); nothing was changed.'
+                            : 'No ' . $status . ' conversion of the last ' . DestinationQueue::RESEND_DAYS . ' days was found to send again.';
+                    } else {
+                        $_SESSION['p202_destination_queued'] = ['id' => $id, 'what' => 'again'] + $again;
+                        header('location: ' . $self . ($action === 'resend' && $logQuery !== '' ? $logQuery . '&done=queued' : '?done=queued#d' . $id));
+                        die();
+                    }
+                }
+            } elseif ($action === 'backfill') {
+                $days = \Prosper202\Http\PostedId::read($_POST['days'] ?? null);
+                $filled = $days === null ? null : (new DestinationQueue($conn, $store))->backfill($userId, $id, $days, time());
+                if ($days === null) {
+                    $errors['days'] = 'Pick how many days back to send; nothing was changed.';
+                } elseif ($filled === null) {
+                    $errors['destination'] = 'That destination is not one of yours, or was deleted.';
+                } else {
+                    $_SESSION['p202_destination_queued'] = ['id' => $id, 'what' => 'earlier', 'days' => $days] + $filled;
+                    header('location: ' . $self . '?done=queued#d' . $id);
+                    die();
+                }
             } else {
                 $errors['action'] = 'The form did not say what to do; nothing was changed.';
             }
@@ -129,7 +175,31 @@ if (isset($_SESSION['p202_destination_test']) && is_array($_SESSION['p202_destin
     $test = $_SESSION['p202_destination_test'];
     unset($_SESSION['p202_destination_test']);
 }
+$queuedNotice = null;
+if (isset($_SESSION['p202_destination_queued']) && is_array($_SESSION['p202_destination_queued'])) {
+    $queuedNotice = $_SESSION['p202_destination_queued'];
+    unset($_SESSION['p202_destination_queued']);
+}
 $destinations = $store->list($userId);
+$now = time();
+$queue = new DestinationQueue($conn, $store);
+$health = $queue->health($userId, array_map(static fn (array $d): int => (int) $d['destination_id'], $destinations), $now - 7 * 86400, $now);
+$privacy = \Prosper202\Http\PrivacySetting::forAccount($conn, $userId);
+$campaignLabels = [];
+foreach (p202_setup_campaign_options($db, $userId) as $group) {
+    foreach ($group['options'] as $campaignId => $option) {
+        $campaignLabels[(int) $campaignId] = $group['label'] . ' › ' . $option['label'];
+    }
+}
+$logDestination = null;
+if ($logId !== null && $canSeeLog) {
+    foreach ($destinations as $d) {
+        $logDestination = (int) $d['destination_id'] === $logId ? $d : $logDestination;
+    }
+    if ($logDestination === null) {
+        $errors['destination'] = 'That destination is not one of yours, or was deleted.';
+    }
+}
 // The latest deliveries of each, for a role that may see conversion values.
 $recent = [];
 if ($canSeeLog && $destinations !== []) {
@@ -144,6 +214,8 @@ $value = static fn (string $key, string $default = ''): string => is_string($pos
 // A refused form's errors and values belong to the form that was posted, not to both.
 $postedAction = is_string($posted['action'] ?? null) ? $posted['action'] : '';
 $formErrors = static fn (string $form): array => $postedAction === $form ? $errors : [];
+// A refused edit is shown again in its destination's own form, where the page lands.
+$editedId = $postedAction === 'update' && $errors !== [] && in_array($id ?? 0, array_map(static fn (array $d): int => (int) $d['destination_id'], $destinations), true) ? $id : null;
 $ga4Errors = $formErrors('create_ga4');
 $gadsErrors = $formErrors('create_google_ads');
 $when = static fn (int $ts): string => date('Y-m-d H:i', $ts);
@@ -186,6 +258,7 @@ $doneText = [
     'enabled' => 'Destination on: new conversions are queued for it.',
     'disabled' => 'Destination off: it queues nothing, and what it queued waits.',
     'deleted' => 'Destination deleted. What it had not sent is cancelled.',
+    'updated' => 'Changes saved. Conversions that were waiting for this destination go out with the next run; send a test to check it. Conversions that failed before the change stay failed until you send them again, below.',
 ][is_string($_GET['done'] ?? null) ? $_GET['done'] : ''] ?? null;
 if ($doneText !== null) {
     echo p202_flash('ok', $doneText);
@@ -196,7 +269,22 @@ if ($oauthNotice !== null) {
 if ($tokenRefused) {
     echo p202_flash('bad', 'Your session\'s security token did not match, so nothing was changed. Reload the page and try again.');
 }
-echo p202_setup_error_flashes($errors, $formFields);
+if ($queuedNotice !== null && ($_GET['done'] ?? '') === 'queued') {
+    $n = (int) ($queuedNotice['queued'] ?? 0);
+    echo p202_flash($n > 0 ? 'ok' : 'info', (($queuedNotice['what'] ?? '') === 'earlier'
+        ? ($n > 0 ? number_format($n) . ' earlier conversion(s) queued for this destination.' : 'No paid conversion of the last ' . (int) ($queuedNotice['days'] ?? 0) . ' day(s) was left to queue: each one already has a row in its log.')
+        : number_format($n) . ' conversion(s) queued to be sent again, with all their tries.')
+        . ($n > 0 ? ' They go out with the next runs of the cron job, about 200 a minute.' : '')
+        . (($queuedNotice['more'] ?? false) === true ? ' More remain: press the button again for the next ' . number_format(DestinationQueue::RESEND_BATCH) . '.' : ''));
+}
+echo p202_setup_error_flashes($editedId !== null ? [] : $errors, $formFields);
+if ($logDestination !== null) {
+    echo p202_destination_log($logDestination, $queue->log($userId, $logId, $logStatus, 50, ($logPage - 1) * 50), $logStatus, $logPage, 50, $self, $base, (string) ($_SESSION['token'] ?? ''), $when);
+    echo p202_setup_script_tag($base);
+    template_bottom();
+
+    return;
+}
 ?>
 
 <div class="row g-4">
@@ -244,8 +332,9 @@ echo p202_setup_error_flashes($errors, $formFields);
                     </div>
                     <?php if (is_array($d['waiting'] ?? null)) {
                         echo p202_flash('bad', 'Conversions are waiting for you, using none of their tries: ' . rtrim((string) $d['waiting']['reason'], '. ')
-                            . '. They are tried again at ' . $when((int) $d['waiting']['until']) . ', or at once when you connect it again or save its settings or credentials (p202 destination update).');
+                            . '. They are tried again at ' . $when((int) $d['waiting']['until']) . ', or at once when you connect it again or save its settings or credentials (Edit, below).');
                     } ?>
+                    <?php echo p202_destination_privacy_note($privacy, $settings, $base); ?>
                     <?php if ($test !== null && (int) $test['id'] === $id) {
                         echo p202_flash($test['valid'] ? 'ok' : 'bad', $test['valid']
                             ? ($isAds
@@ -253,6 +342,8 @@ echo p202_setup_error_flashes($errors, $formFields);
                                 : 'GA4\'s validation endpoint accepted the test event. Nothing was recorded in your property. It does not check the API secret: confirm the first real conversions in GA4\'s Realtime report.')
                             : 'The test was refused: ' . ($test['messages'] !== [] ? implode(' ', $test['messages']) : (string) ($test['reason'] ?? 'no reason given')));
                     } ?>
+                    <?php echo p202_destination_health($d, $health[$id], $self, (string) ($_SESSION['token'] ?? ''), $canSeeLog); ?>
+                    <?php echo p202_destination_edit($d, $campaignLabels, $editedId === $id ? $posted : null, $editedId === $id ? $errors : [], $self, (string) ($_SESSION['token'] ?? ''), p202_destination_privacy_sentence($privacy), $base); ?>
                     <?php if ($canSeeLog && isset($recent[$id])) { ?>
                     <div class="p202-table-wrap">
                         <table class="table p202-table">
@@ -273,7 +364,7 @@ echo p202_setup_error_flashes($errors, $formFields);
                     <?php } ?>
                 </div>
                 <?php } ?>
-                <div class="form-text">Google Ads takes a conversion 6 hours after its click, so those wait until then, uncounted as tries. Conversions go out within a minute or two, sent by the minutely cron job and retried with backoff (8 tries over about a day). A guessed click, a visitor your privacy setting holds back, and a visitor who may be in the EEA or UK are never sent (withheld) unless, for the last, both consent signals below are Granted. Field mapping, campaigns and the full log: <code>p202 destination</code> or <code>/api/v3/destinations</code>.</div>
+                <div class="form-text">Google Ads takes a conversion 6 hours after its click, so those wait until then, uncounted as tries. Conversions go out within a minute or two, sent by the minutely cron job and retried with backoff (8 tries over about a day). A conversion whose click was guessed is never sent (withheld). <?php echo p202_setup_e(p202_destination_privacy_sentence($privacy)); ?> Change the setting in <?php echo p202_destination_privacy_link($base); ?>. The same from a script: <code>p202 destination</code> or <code>/api/v3/destinations</code>.</div>
             </div>
         </section>
     </div>
@@ -316,7 +407,7 @@ echo p202_setup_error_flashes($errors, $formFields);
                     </select>
                 </div>
                 <?php } ?>
-                <div class="form-text mb-3">Prosper202 does not record a visitor's consent: state what your consent banner collected, or leave it unstated.</div>
+                <div class="form-text mb-3">Prosper202 does not record a visitor's consent: state what your consent banner collected, or leave it unstated. <?php echo p202_setup_e(p202_destination_privacy_sentence($privacy)); ?></div>
                 <div class="p202-form-actions">
                     <button type="submit" class="btn btn-primary">Add destination</button>
                 </div>
@@ -354,7 +445,7 @@ echo p202_setup_error_flashes($errors, $formFields);
                     </select>
                 </div>
                 <?php } ?>
-                <div class="form-text mb-3">A conversion is sent with the click's gclid (or wbraid, gbraid), or with hashed email and phone when you turn that on; one with neither is withheld.</div>
+                <div class="form-text mb-3"><?php echo p202_setup_e(p202_destination_privacy_sentence($privacy)); ?> A conversion is sent with the click's gclid (or wbraid, gbraid), or with hashed email and phone when you turn that on; one with neither is withheld.</div>
                 <div class="p202-form-actions">
                     <button type="submit" class="btn btn-primary">Add destination</button>
                 </div>
