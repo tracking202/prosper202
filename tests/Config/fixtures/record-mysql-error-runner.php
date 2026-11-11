@@ -137,18 +137,16 @@ if ($scenario === 'gone' || $scenario === 'lookup_fails') {
     }
 }
 // The admin page ends with the signed-in footer, and the footer reads the
-// database the page is about (the account's dash email, the tracking domain
-// of the cron ping): its real source, and what it calls. The click path
-// loads no template.php and its page draws no footer.
+// database the page is about (the tracking domain of the cron ping): its
+// real source, and what it calls. The click path loads no template.php and
+// its page draws no footer.
 if (!$clickPath) {
     $config = dirname($shared);
     eval(lift_function("$config/template.php", 'template_bottom'));
     foreach (['get_absolute_url', 'getTrackingDomain', 'p202StoredTrackingDomain'] as $footer) {
         eval(lift_function($shared, $footer));
     }
-    foreach (['getDashEmail', 'p202CronBeaconStatement'] as $footer) {
-        eval(lift_function("$config/functions-tracking202.php", $footer));
-    }
+    eval(lift_function("$config/functions-tracking202.php", 'p202CronBeaconStatement'));
 }
 // connect2.php's own, which the click path's body logs the address through:
 // the address as stored, unmasked here (no privacy setting in this process).

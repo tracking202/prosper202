@@ -43,8 +43,9 @@ const P202_TS_OWNERS_REASONS = [
 
 /** Why the cron job leaves a source to the operator (TrafficSourceOwners' auto_split_blocked_by). */
 const P202_TS_OWNERS_NOT_AUTOMATIC = [
-    'may_be_theirs' => 'an account naming it was saved before the source was last saved, so the source may have'
-        . ' been that user\'s, and moving it back may be what you want',
+    'may_be_theirs' => 'an account naming it was saved before the source was last saved, or was removed (which'
+        . ' does not keep when it was saved), so the source may have been that user\'s, and moving it back may be'
+        . ' what you want',
     'same_name' => 'a user who would get a copy already has a traffic source of this name',
     'no_such_user' => 'a user it names no longer exists',
     'deleted_user' => 'a user it names is deleted, and nothing is copied into a deleted account',

@@ -75,9 +75,12 @@ final class TrafficSourceOwners
      * split copies for:
      *
      * - may_be_theirs: a user whose accounts name it saved one of them before
-     *   the source was last saved. That is what a source taken by a rename
-     *   looks like, and moving it back may be what the operator wants, which
-     *   a copy would put out of reach: the source would leave the report;
+     *   the source was last saved, or removed one. That is what a source
+     *   taken by a rename looks like, and moving it back may be what the
+     *   operator wants, which a copy would put out of reach: the source would
+     *   leave the report. Removing an account on Setup › Traffic Sources
+     *   stamps ppc_account_time, so a removed account's time may be its
+     *   removal's and says nothing about when it came to name the source;
      * - same_name: a user who would get a copy already has a live traffic
      *   source of that name, and putting the accounts on that one may be
      *   what the operator wants.
@@ -591,7 +594,7 @@ final class TrafficSourceOwners
         // account saved in the source's own second was not saved before it.
         $blocked = [];
         foreach ($others as $user) {
-            if ($byUser[$user]['first'] < $sourceTime) {
+            if ($byUser[$user]['first'] < $sourceTime || $byUser[$user]['removed'] > 0) {
                 $blocked[] = self::MAY_BE_THEIRS;
                 break;
             }

@@ -397,9 +397,16 @@ final class UnrecordedSourceVariablesServedIntegrationTest extends TestCase
             }
             $first = (string) file_get_contents($log);
             $asked = count($said->calls);
-            // An account on its own source, and one that came with no value: nothing said, nothing kept.
+            // An account on its own source, and one that came with no value: nothing said, nothing kept
+            // in the database. The first is kept in the cache, since no click on it has anything to say;
+            // the second is not, since the next click may come with a value.
             $note->note(self::OWNER, self::OWN_ACCOUNT, $request);
+            $ownCalls = array_slice($said->calls, $asked);
+            $note->note(self::OWNER, self::OWN_ACCOUNT, $request);
+            $ownAgain = array_slice($said->calls, $asked + count($ownCalls));
+            $beforeNoValue = count($said->calls);
             $note->note(self::OWNER, self::SECOND_STRAY_ACCOUNT, ['retired' => 'old']);
+            $noValueCalls = array_slice($said->calls, $beforeNoValue);
             $kept = $rows();
             // Told the source is the account's own, nothing is asked: no line, no row.
             \Prosper202\Repository\LookupRepositoryFactory::noteUnrecordedVariables(
@@ -435,6 +442,10 @@ final class UnrecordedSourceVariablesServedIntegrationTest extends TestCase
         self::assertSame(1, $kept, 'one row for the account, written once');
         self::assertSame(1, $keptAfter, 'an account said to be on its own source is not looked at');
         self::assertSame(6, $asked, 'five reads of the cache and one write: the database is read once');
+        self::assertSame(['get', 'set'], array_column($ownCalls, 0));
+        self::assertSame(['said' => '0'], $ownCalls[1][2]);
+        self::assertSame([['get', $ownCalls[0][1]]], $ownAgain, 'the account\'s next click reads only the cache');
+        self::assertSame(['get'], array_column($noValueCalls, 0), 'a click with no value keeps nothing');
         self::assertSame(1, substr_count($failed, 'whether that was already said this hour could not be read or kept'));
         self::assertSame(1, substr_count($failed, "\n"), $failed);
         self::assertStringNotContainsString(self::SECRET, $all . $failed);
