@@ -61,6 +61,13 @@ final class CriterionMatcherTest extends TestCase
         yield 'platform' => ['platform', 'Windows', true];
         yield 'browser' => ['browser', 'Firefox', false];
         yield 'device, lower case' => ['device', 'desktop', true];
+        yield 'device, as stored before the writers lowered it' => ['device', 'Desktop', true];
+        yield 'device, another' => ['device', 'Mobile', false];
+        yield 'country, as stored before the writers named it' => ['country', 'DE', true];
+        yield 'country, a code in lower case' => ['country', 'fr, de', true];
+        yield 'country, another code' => ['country', 'FR', false];
+        yield 'country, by its code whatever the name' => ['country', 'Deutschland(DE)', true];
+        yield 'country, a name alone' => ['country', 'Germany', false];
         yield 'eu true' => ['eu', 'true', true];
         yield 'eu false' => ['eu', 'false', false];
         yield 'eu in any case' => ['eu', 'TRUE', true];

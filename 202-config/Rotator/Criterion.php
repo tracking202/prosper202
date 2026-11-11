@@ -133,14 +133,79 @@ final class Criterion
             : '"' . implode('", "', $unknown) . '" never matches a ' . $type . ' rule: use ' . implode(' or ', $allowed) . '.';
     }
 
-    /** A value as the writers store it for its type: an IP list as canonical addresses, unless it holds ALL. */
+    /**
+     * A value as the writers store it for its type, the one normalizer of
+     * every writer: an IP list as canonical addresses, a country as
+     * Name(CC) whether typed as a code ("us"), a name or Name(CC), a device
+     * in lower case. A value holding ALL, and a country this class cannot
+     * name, are kept as normalize() leaves them.
+     */
     public static function stored(string $type, string $value): string
     {
-        if ($type === 'ip' && !self::matchesEveryone(self::values($value))) {
+        $values = self::values($value);
+        if (self::matchesEveryone($values)) {
+            return self::normalize($value);
+        }
+        if ($type === 'ip') {
             return IpCriterion::normalize($value)['value'];
         }
+        if ($type === 'country') {
+            $values = array_map(self::storedCountry(...), $values);
+        } elseif ($type === 'device') {
+            $values = array_map(strtolower(...), $values);
+        }
 
-        return self::normalize($value);
+        return implode(',', array_values(array_unique($values)));
+    }
+
+    /** One country value as stored: Name(CC) when it names a country without its code in brackets. */
+    private static function storedCountry(string $value): string
+    {
+        if (preg_match('/\(([A-Za-z]{2})\)$/D', $value) === 1) {
+            return $value;
+        }
+        $code = CountryNames::code($value);
+
+        return $code === null ? $value : CountryNames::value($code);
+    }
+
+    /**
+     * The country a country value names, as its upper-case code: the code
+     * in the brackets that end it, or the value itself when it is two
+     * letters (rows stored before the writers normalized them). Null when
+     * it names none that way.
+     */
+    public static function countryCode(string $value): ?string
+    {
+        if (preg_match('/^([A-Za-z]{2})$|\(([A-Za-z]{2})\)$/D', $value, $m) === 1) {
+            return strtoupper($m[2] ?? $m[1]);
+        }
+
+        return null;
+    }
+
+    /**
+     * What storing a typed value changed, for the person who typed it:
+     * each value stored() rewrote, as [typed, stored]. Trimming, dropped
+     * empties and the case of ALL are not listed.
+     *
+     * @return list<array{string, string}>
+     */
+    public static function rewritten(string $type, string $value): array
+    {
+        $values = self::values($value);
+        if (self::matchesEveryone($values) || ($type !== 'country' && $type !== 'device')) {
+            return [];
+        }
+        $changes = [];
+        foreach ($values as $typed) {
+            $stored = self::stored($type, $typed);
+            if ($stored !== $typed) {
+                $changes[] = [$typed, $stored];
+            }
+        }
+
+        return $changes;
     }
 
     /**
