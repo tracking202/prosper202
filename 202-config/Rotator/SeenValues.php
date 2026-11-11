@@ -49,6 +49,12 @@ final class SeenValues
         return isset(self::LOOKUPS[$type]);
     }
 
+    /** @return list<string> every type suggested from the clicks */
+    public static function types(): array
+    {
+        return array_keys(self::LOOKUPS);
+    }
+
     /** The statement matching() runs: the account, the window's start, the pattern. */
     public static function sql(string $type, int $limit): string
     {
