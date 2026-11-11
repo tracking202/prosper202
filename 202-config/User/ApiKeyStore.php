@@ -515,10 +515,15 @@ final class ApiKeyStore
         return true;
     }
 
-    /** Whether a write failed because a column cannot hold a character sent (MySQL 1366). */
+    /**
+     * Whether a write failed because a column cannot hold a character sent:
+     * 1366 on MariaDB and for a value MySQL converts, 3988 where MySQL 8
+     * refuses the conversion of a bound value outright.
+     */
     public static function isUnstorableText(\Throwable $e): bool
     {
-        return Connection::isMysqlError($e, 1366, 'Incorrect string value');
+        return Connection::isMysqlError($e, 1366, 'Incorrect string value')
+            || Connection::isMysqlError($e, 3988, 'Conversion from collation');
     }
 
     /** What a person is told when a key's name cannot be stored. */
