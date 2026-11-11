@@ -569,7 +569,7 @@ class UsersController
         // label came with 1.9.78; the files can land before its upgrade runs.
         $hasLabelColumn = \Api\V3\Auth::apiKeyLabelColumnExists($this->db);
         $columns = 'user_id, ' . ApiKeyStore::columns($this->db) . ($hasScopeColumn ? ', scope' : '')
-            . ($hasLabelColumn ? ', label' : '') . ', created_at';
+            . ($hasLabelColumn ? ', label' : '') . ', created_at' . ApiKeyStore::useColumns($this->db);
         $stmt = $this->prepare("SELECT $columns FROM 202_api_keys WHERE user_id = ?");
         $this->bind($stmt, 'i', $userId);
         $this->execute($stmt, 'Query failed');

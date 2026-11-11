@@ -125,4 +125,88 @@ final class ApiKeyStoreTest extends TestCase
             $literal
         );
     }
+
+    public function testAKeyEndsAtItsEndingAndAnUnreadableEndingHasEnded(): void
+    {
+        self::assertNull(ApiKeyStore::endedAt(['user_id' => 7], 1000), 'no column: the key never ends');
+        self::assertNull(ApiKeyStore::endedAt(['ends_at' => null], 1000));
+        self::assertNull(ApiKeyStore::endedAt(['ends_at' => '1001'], 1000));
+        self::assertSame(1000, ApiKeyStore::endedAt(['ends_at' => '1000'], 1000));
+        self::assertSame(999, ApiKeyStore::endedAt(['ends_at' => 999], 1000));
+        foreach (['', 'soon', '12abc', '-5', 1.5, []] as $unreadable) {
+            self::assertSame(0, ApiKeyStore::endedAt(['ends_at' => $unreadable], 1000), var_export($unreadable, true));
+        }
+        self::assertStringContainsString('on 1970-01-01 00:16 UTC', ApiKeyStore::endedMessage(999));
+        self::assertStringNotContainsString(' on ', ApiKeyStore::endedMessage(0));
+    }
+
+    public function testAClientNameIsOneLineOfValidTextCutToItsColumn(): void
+    {
+        self::assertSame('store-sync/2.1 (nightly)', ApiKeyStore::clientName(" store-sync/2.1\r\n(nightly) "));
+        self::assertSame('first', ApiKeyStore::clientName(['first', 'second']));
+        self::assertNull(ApiKeyStore::clientName(null));
+        self::assertNull(ApiKeyStore::clientName("  \t "));
+        self::assertNull(ApiKeyStore::clientName(42));
+        $long = ApiKeyStore::clientName(str_repeat("\u{1F6D2}", 400));
+        self::assertSame(ApiKeyStore::CLIENT_LENGTH, mb_strlen((string) $long));
+        self::assertTrue(mb_check_encoding((string) ApiKeyStore::clientName("bad\xC3(bytes"), 'UTF-8'));
+    }
+
+    public function testAUseIsNotWrittenWithoutTheColumnsOrInsideTheInterval(): void
+    {
+        $db = self::db(true);
+        ApiKeyStore::stampUse($db, ['user_id' => 7, 'scope' => null], self::KEY, 'v3', 'store-sync/2.1', 1000);
+        $row = ['user_id' => 7, 'last_used_api' => 'v3', 'last_used_client' => null];
+        $recent = ['last_used_at' => 1000 - ApiKeyStore::USE_STAMP_INTERVAL + 1] + $row;
+        ApiKeyStore::stampUse($db, $recent, self::KEY, 'v3', 'store-sync/2.1', 1000);
+        self::assertSame([], $db->statementsContaining('UPDATE 202_api_keys'));
+
+        $stale = ['last_used_at' => 1000 - ApiKeyStore::USE_STAMP_INTERVAL] + $row;
+        ApiKeyStore::stampUse($db, $stale, self::KEY, 'v1', 'store-sync/2.1', 1000);
+        $update = $db->statementsContaining('UPDATE 202_api_keys')[0];
+        self::assertStringContainsString('WHERE user_id = ? AND (key_hash = ?', $update->sql);
+        self::assertStringContainsString('AND (last_used_at IS NULL OR last_used_at < ?)', $update->sql);
+        self::assertSame(
+            [1000, 'v1', 'store-sync/2.1', 7, hash('sha256', self::KEY), self::KEY, 1000],
+            $update->boundValues
+        );
+    }
+
+    public function testAKeysRowSaysItsLastUseInTheClientsWordsAndItsEnding(): void
+    {
+        require_once dirname(__DIR__, 2) . '/202-config/functions-account-ui.php';
+        $key = ['use_recorded' => true, 'label' => null, 'last_used_at' => null, 'last_used_api' => null,
+            'last_used_client' => null, 'ends_at' => null];
+        self::assertSame(
+            ['used' => 'No use recorded', 'ending' => '', 'ended' => false, 'replaceable' => true],
+            p202_account_key_use($key, 5000)
+        );
+
+        $used = p202_account_key_use(
+            ['last_used_at' => 4000, 'last_used_api' => 'v3', 'last_used_client' => 'store-sync/2.1'] + $key,
+            5000
+        );
+        self::assertSame(
+            'Last used ' . date('M j, Y H:i', 4000) . ' on API v3, by a client calling itself store-sync/2.1',
+            $used['used']
+        );
+
+        $ending = p202_account_key_use(['ends_at' => 5001] + $key, 5000);
+        self::assertSame(
+            ['Replaced; works until ' . date('M j, Y H:i', 5001), false, false],
+            [$ending['ending'], $ending['ended'], $ending['replaceable']]
+        );
+        $ended = p202_account_key_use(['ends_at' => 5000] + $key, 5000);
+        self::assertSame(
+            ['Replaced; ended ' . date('M j, Y H:i', 5000), true, false],
+            [$ended['ending'], $ended['ended'], $ended['replaceable']]
+        );
+
+        $ai = p202_account_key_use(['label' => AiConnect::LABEL_PREFIX . 'Claude'] + $key, 5000);
+        self::assertFalse($ai['replaceable']);
+        self::assertSame(
+            ['used' => '', 'ending' => '', 'ended' => false, 'replaceable' => false],
+            p202_account_key_use(['use_recorded' => false] + $key, 5000)
+        );
+    }
 }

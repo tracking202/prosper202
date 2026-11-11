@@ -36,7 +36,7 @@ final readonly class Auth
      * Authenticate the current request from headers.
      * Returns an Auth instance on success, throws on failure.
      */
-    public static function fromRequest(array $headers, \mysqli $db): self
+    public static function fromRequest(array $headers, \mysqli $db, string $api = 'v3'): self
     {
         $apiKey = self::bearerKey($headers);
         if ($apiKey === '') {
@@ -51,9 +51,10 @@ final readonly class Auth
         // user off left every key they held working with their role.
         // The key is found by its hash, byte for byte (ApiKeyStore); the
         // lookup by api_key under utf8mb4_general_ci folded case.
-        $scopeColumnExists = self::apiKeyScopeColumnExists($db);
         [$keyMatch, $keyTypes, $keyValues] = \Prosper202\User\ApiKeyStore::matchKey($db, $apiKey, 'k');
-        $sql = 'SELECT k.user_id, ' . ($scopeColumnExists ? 'k.scope, ' : '') . 'u.user_active'
+        // k.* brings the scope, last-use and ending columns where the
+        // install has them, with no probe on this path.
+        $sql = 'SELECT k.*, u.user_active'
             . ' FROM 202_api_keys k INNER JOIN 202_users u ON u.user_id = k.user_id'
             . ' WHERE ' . $keyMatch . ' AND u.user_deleted = 0 LIMIT 1';
         $stmt = $db->prepare($sql);
@@ -82,7 +83,22 @@ final readonly class Auth
             throw new AuthException('The account this API key belongs to is deactivated; an Admin can turn it back on in My Account › User Management.', 401);
         }
 
+        $now = time();
+        $endedAt = \Prosper202\User\ApiKeyStore::endedAt($row, $now);
+        if ($endedAt !== null) {
+            throw new AuthException(\Prosper202\User\ApiKeyStore::endedMessage($endedAt), 401);
+        }
+
         $scopes = self::parseScopes((string)($row['scope'] ?? ''));
+        $headers = array_change_key_case($headers, CASE_LOWER);
+        \Prosper202\User\ApiKeyStore::stampUse(
+            $db,
+            $row,
+            $apiKey,
+            $api,
+            $headers['user-agent'] ?? ($_SERVER['HTTP_USER_AGENT'] ?? null),
+            $now
+        );
 
         return self::loadRoles((int)$row['user_id'], $db, $scopes, \Prosper202\Conversion\Ledger\SourceRef::apiKey($apiKey));
     }
@@ -654,6 +670,22 @@ final readonly class Auth
         $cache ??= new \WeakMap();
         if (!isset($cache[$db])) {
             $cache[$db] = self::probeApiKeyColumn($db, "SHOW COLUMNS FROM 202_api_keys LIKE 'key_hash'");
+        }
+        return $cache[$db];
+    }
+
+    /**
+     * Whether 202_api_keys has the last-use and ending columns (1.9.80; the
+     * upgrade adds ends_at last of them). Cached and failing as
+     * apiKeyLabelColumnExists() does. The key lists and Replace read it;
+     * the authentication path reads the row it found instead.
+     */
+    public static function apiKeyUseColumnsExist(\mysqli $db): bool
+    {
+        static $cache = null;
+        $cache ??= new \WeakMap();
+        if (!isset($cache[$db])) {
+            $cache[$db] = self::probeApiKeyColumn($db, "SHOW COLUMNS FROM 202_api_keys LIKE 'ends_at'");
         }
         return $cache[$db];
     }

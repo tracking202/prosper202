@@ -219,7 +219,8 @@ final class ApiKeyHashUpgradeIntegrationTest extends TestCase
     private function asOf1979(): void
     {
         self::q('ALTER TABLE 202_api_keys DROP INDEX `202_api_keys_key_hash`, DROP COLUMN key_hash,'
-            . ' DROP COLUMN key_prefix, DROP COLUMN watcher_token');
+            . ' DROP COLUMN key_prefix, DROP COLUMN watcher_token, DROP COLUMN last_used_at,'
+            . ' DROP COLUMN last_used_api, DROP COLUMN last_used_client, DROP COLUMN ends_at');
         self::q('DELETE FROM 202_version');
         self::row('202_version', ['version' => '1.9.79']);
     }

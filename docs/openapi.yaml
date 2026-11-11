@@ -5391,6 +5391,31 @@ paths:
                             <app> via mcp.tracking202.com".
                         created_at:
                           type: integer
+                        last_used_at:
+                          type: integer
+                          nullable: true
+                          description: >-
+                            When the key last authenticated a request, to
+                            within five minutes; null when no use is recorded.
+                            Recorded from 1.9.80 on, and absent until that
+                            upgrade has run.
+                        last_used_api:
+                          type: string
+                          nullable: true
+                          description: The API version of that request (`v1`, `v2` or `v3`)
+                        last_used_client:
+                          type: string
+                          nullable: true
+                          description: >-
+                            The User-Agent that request sent, as the client
+                            named itself; null when it sent none.
+                        ends_at:
+                          type: integer
+                          nullable: true
+                          description: >-
+                            Set on a key that was replaced in My Account. The key
+                            is refused with 401 from this time on; null for a
+                            key that does not end.
         "403":
           $ref: "#/components/responses/Forbidden"
     post:

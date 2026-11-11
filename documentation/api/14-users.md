@@ -60,6 +60,8 @@ each refusal against a running instance.
 
 API keys are masked after the first 8 characters in list responses. The full key is only returned once, at creation time.
 
+From 1.9.80 each key in the list also carries `last_used_at` (when it last authenticated a request, to within five minutes; `null` when no use is recorded), `last_used_api` (`v1`, `v2` or `v3`), `last_used_client` (the `User-Agent` that request sent, as the client named itself) and `ends_at`. `ends_at` is set on a key replaced in My Account › Personal Settings › API keys: the replaced key keeps working for 24 hours and is refused with `401` from then on, with a message saying it was replaced.
+
 ## Preference Endpoints
 
 | Method | Path | Auth | Description |

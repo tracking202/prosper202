@@ -137,6 +137,29 @@ final class ApiKeyAuthPathScopeTest extends TestCase
         }
     }
 
+    /**
+     * A replaced key ends on every version, and each records the key's use
+     * only after its refusals. A floor; ApiKeyUseIntegrationTest runs v2 and
+     * v3 against a database.
+     */
+    public function testEveryAuthenticationPathRefusesAnEndedKeyAndRecordsItsUse(): void
+    {
+        $files = $this->authenticatingFiles();
+        $this->assertCount(3, $files, 'the three key lookups were found');
+        foreach ($files as $path => $source) {
+            $this->assertMatchesRegularExpression('/\bSELECT\s+k\.\*/', $source, "$path reads the key's whole row");
+            $ended = strpos($source, 'ApiKeyStore::endedAt(');
+            $stamp = strpos($source, 'ApiKeyStore::stampUse(');
+            $active = strpos($source, "['user_active'] ?? '') !== '1'");
+            $this->assertNotFalse($ended, "$path refuses a key that has ended");
+            $this->assertNotFalse($stamp, "$path records the key's use");
+            $this->assertNotFalse($active);
+            $this->assertLessThan($stamp, $ended, "$path records a use only of a key it did not refuse");
+            $this->assertLessThan($stamp, $active, "$path records a use only of an active user's key");
+            $this->assertSame(1, substr_count($source, 'ApiKeyStore::stampUse('), "$path records it in one place");
+        }
+    }
+
     public function testEveryAuthenticationPathAccountsForKeyScope(): void
     {
         $unguarded = [];

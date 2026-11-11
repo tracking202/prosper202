@@ -437,8 +437,9 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
  * by its ref; a key still stored whole is shown as a hashed one would be.
  *
  * @return list<array<string, mixed>>  ref, prefix, created_at, scope (null
- *   when the install has no scope column), label, and watcher_token for an AI
- *   connection's key (null otherwise)
+ *   when the install has no scope column), label, watcher_token for an AI
+ *   connection's key (null otherwise), and the key's last use and ending
+ *   (use_recorded false, and each null, before the upgrade adds the columns)
  * @throws Throwable when the keys cannot be read
  */
 function p202_account_api_keys(mysqli $db, int $userId): array
@@ -448,7 +449,9 @@ function p202_account_api_keys(mysqli $db, int $userId): array
     $hasLabel = \Api\V3\Auth::apiKeyLabelColumnExists($db);
     $conn = new \Prosper202\Database\Connection($db);
     $columns = \Prosper202\User\ApiKeyStore::columns($db) . ', created_at'
-        . ($hasScope ? ', scope' : '') . ($hasLabel ? ', label' : '');
+        . ($hasScope ? ', scope' : '') . ($hasLabel ? ', label' : '')
+        . \Prosper202\User\ApiKeyStore::useColumns($db);
+    $hasUse = \Api\V3\Auth::apiKeyUseColumnsExist($db);
     $stmt = $conn->prepareRead('SELECT ' . $columns
         . ' FROM 202_api_keys WHERE user_id = ? ORDER BY created_at DESC');
     $conn->bind($stmt, 'i', [$userId]);
@@ -464,9 +467,55 @@ function p202_account_api_keys(mysqli $db, int $userId): array
             'watcher_token' => \Api\V3\Support\AiConnect::isConnectionLabel($label)
                 ? \Prosper202\User\ApiKeyStore::watcherTokenOf($row)
                 : null,
+            'use_recorded' => $hasUse,
+            'last_used_at' => isset($row['last_used_at']) ? (int) $row['last_used_at'] : null,
+            'last_used_api' => isset($row['last_used_api']) ? (string) $row['last_used_api'] : null,
+            'last_used_client' => isset($row['last_used_client']) ? (string) $row['last_used_client'] : null,
+            'ends_at' => isset($row['ends_at']) ? (int) $row['ends_at'] : null,
         ];
     }
     return $keys;
+}
+
+/**
+ * What a key's row says of its last use and its ending, as text, and whether
+ * Replace is offered: not before the upgrade adds the columns, not for a key
+ * already replaced, and not for an AI app's key (its app connects again).
+ * The client is the request's own User-Agent, so it is shown as its words.
+ *
+ * @param array<string, mixed> $key one of p202_account_api_keys()
+ * @return array{used: string, ending: string, ended: bool, replaceable: bool}
+ */
+function p202_account_key_use(array $key, int $now): array
+{
+    if (!($key['use_recorded'] ?? false)) {
+        return ['used' => '', 'ending' => '', 'ended' => false, 'replaceable' => false];
+    }
+    $used = 'No use recorded';
+    if ($key['last_used_at'] !== null) {
+        $used = 'Last used ' . date('M j, Y H:i', (int) $key['last_used_at']);
+        $api = (string) ($key['last_used_api'] ?? '');
+        if ($api !== '') {
+            $used .= ' on API ' . $api;
+        }
+        $client = (string) ($key['last_used_client'] ?? '');
+        if ($client !== '') {
+            $used .= ', by a client calling itself ' . $client;
+        }
+    }
+    $ending = '';
+    $ended = false;
+    if ($key['ends_at'] !== null) {
+        $ended = (int) $key['ends_at'] <= $now;
+        $ending = ($ended ? 'Replaced; ended ' : 'Replaced; works until ') . date('M j, Y H:i', (int) $key['ends_at']);
+    }
+    return [
+        'used' => $used,
+        'ending' => $ending,
+        'ended' => $ended,
+        'replaceable' => $key['ends_at'] === null
+            && !\Api\V3\Support\AiConnect::isConnectionLabel($key['label'] ?? null),
+    ];
 }
 
 /** The IPQualityScore card's description on Account › API integrations. */
