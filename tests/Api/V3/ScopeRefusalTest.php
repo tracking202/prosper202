@@ -236,9 +236,11 @@ final class ScopeRefusalTest extends TestCase
 
     /**
      * keySource() reads "AI: " as a connection's label because AiConnect is
-     * the only writer of a key's label. A second writer (a key named by its
-     * owner) would make that label a claim; this fails until the reading is
-     * decided again.
+     * the only writer of a label that starts so. The other writers are held
+     * to that: a name a person gives a key goes through
+     * ApiKeyStore::labelFrom(), which refuses the prefix, and Replace carries
+     * a label over only after refusing a connection's key. A writer not
+     * listed here fails until the reading is decided again.
      */
     public function testOnlyTheAiConnectionWritesAKeysLabel(): void
     {
@@ -269,6 +271,38 @@ final class ScopeRefusalTest extends TestCase
                 }
             }
         }
-        self::assertSame(['api/v3/Support/AiConnect.php'], array_values(array_unique($labelled)));
+        $labelled = array_values(array_unique($labelled));
+        sort($labelled);
+        // And ApiKeyStore::replace(), which calls self::insert() (below).
+        self::assertSame(
+            ['202-account/account.php', 'api/v3/Controllers/UsersController.php', 'api/v3/Support/AiConnect.php'],
+            $labelled
+        );
+
+        $root = dirname(__DIR__, 3);
+        $page = (string) file_get_contents($root . '/202-account/account.php');
+        self::assertSame(1, substr_count($page, 'ApiKeyStore::insert('));
+        self::assertStringContainsString(
+            "\$newKeyLabel = \\Prosper202\\User\\ApiKeyStore::labelFrom(\$_POST['rest_api_key_label'] ?? '');",
+            $page
+        );
+        self::assertStringContainsString('$newKey, null, $newKeyLabel, $keyCreated);', $page);
+        self::assertFalse(\Prosper202\User\ApiKeyStore::labelFrom(AiConnect::LABEL_PREFIX . 'Claude'));
+        self::assertFalse(\Prosper202\User\ApiKeyStore::labelFrom(strtolower(AiConnect::LABEL_PREFIX) . 'claude'));
+
+        $api = (string) file_get_contents($root . '/api/v3/Controllers/UsersController.php');
+        self::assertSame(1, substr_count($api, 'ApiKeyStore::insert('));
+        self::assertStringContainsString(
+            "\$keyLabel = isset(\$payload['label']) ? ApiKeyStore::labelFrom(\$payload['label']) : null;",
+            $api
+        );
+        self::assertStringContainsString('$key, $storedScope, $keyLabel, $now);', $api);
+
+        $store = (string) file_get_contents($root . '/202-config/User/ApiKeyStore.php');
+        self::assertSame(1, substr_count($store, 'self::insert('));
+        $refuses = 'if (AiConnect::isConnectionLabel($label)) {' . "\n" . '                throw new \DomainException(';
+        $refusal = strpos($store, $refuses);
+        self::assertNotFalse($refusal);
+        self::assertLessThan(strpos($store, 'self::insert($db, $userId, $newKey, $scope, $label, $now);'), $refusal);
     }
 }

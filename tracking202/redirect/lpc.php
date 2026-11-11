@@ -48,6 +48,12 @@ $html['cloaked_hop'] = htmlspecialchars(p202InstallPath('tracking202/redirect/cl
 
 //modify the redirect site url to go through another cloaked link
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
+// lp.php hands on the deep link of the PurLink this redirect stands in for.
+$redirect_site_url = \Prosper202\Click\PurLinkDestination::choose(
+    (string) $redirect_site_url,
+    $_GET[\Prosper202\Click\PurLinkDestination::PARAM] ?? null,
+    $tracker_row
+);
 
 // The visitor's click, by its cookie, read exactly (ClickId): anything else
 // is no click, as no cookie was.

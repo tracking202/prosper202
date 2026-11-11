@@ -40,6 +40,7 @@ final class MysqlWebhookRepository
         'alert.conversions_stopped',
         'alert.spend_without_conversions',
         'alert.postback_refusals_spiked',
+        'alert.test',
     ];
 
     /** Max delivery attempts before a delivery is failed and the hook may die. */
@@ -275,14 +276,31 @@ final class MysqlWebhookRepository
      */
     public function enqueue(int $userId, string $eventName, array $payload): int
     {
+        return $this->enqueueFor($userId, $eventName, [$eventName], $payload);
+    }
+
+    /**
+     * Queues $eventName for the account's webhooks subscribed to any of
+     * $subscribedToAny (or to every event): a test of the alerts reaches the
+     * webhooks the alerts themselves would. The number queued.
+     *
+     * @param non-empty-list<string> $subscribedToAny
+     * @param array<string, mixed> $payload
+     */
+    public function enqueueFor(int $userId, string $eventName, array $subscribedToAny, array $payload): int
+    {
         self::assertEventName($eventName);
+        foreach ($subscribedToAny as $name) {
+            self::assertEventName($name);
+        }
 
         $stmt = $this->conn->prepareRead(
             "SELECT webhook_id FROM 202_ltv_webhooks
              WHERE user_id = ? AND status IN ('active', 'dead')
-               AND (subscribed_events = '' OR FIND_IN_SET(?, subscribed_events) > 0)"
+               AND (subscribed_events = ''"
+            . str_repeat(' OR FIND_IN_SET(?, subscribed_events) > 0', count($subscribedToAny)) . ')'
         );
-        $this->conn->bind($stmt, 'is', [$userId, $eventName]);
+        $this->conn->bind($stmt, 'i' . str_repeat('s', count($subscribedToAny)), [$userId, ...$subscribedToAny]);
         $webhooks = $this->conn->fetchAll($stmt);
         if ($webhooks === []) {
             return 0;

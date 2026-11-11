@@ -55,6 +55,7 @@ final class PublisherCreditTest extends TestCase
             );
         }
         $landing = (string) file_get_contents($root . '/tracking202/static/landing.php');
-        self::assertStringContainsString("\"t202pubid=\" + t202Enc(t202GetVar('t202pubid'))", $landing);
+        // p202Var(): the URL's t202pubid, or the one the page's t202Settings names.
+        self::assertStringContainsString("\"t202pubid=\" + t202Enc(p202Var('t202pubid'))", $landing);
     }
 }

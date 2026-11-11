@@ -37,6 +37,7 @@ record links only to the caller's own records
 | Redirector: redirectors, rules, criteria | `/rotators`, `/rotators/{id}/rules` (`PUT` saves the whole set, in order, as the page does) | `p202 rotator …`, `rotator set-rules`, `rotator rule-create/update/delete`, `rotator criteria-values`, `rotator test`, `rotator trace` | ◐ criteria values that come from a hosted list for some types; the auto-monetizer is set on the page only |
 | Mobile Apps (incl. goals, SKAN encodings, integrity) | `/apps/…`, `/goals/…` | `p202 app …`, `p202 goal …` | ✅ |
 | Get LP Code | `GET /landing-pages/{id}/code` (`?offers=campaign:12,rotator:3` for an advanced page) | `p202 landing-page code <id>` (`--offer`) | ✅ |
+| Get LP Code › Check my page, and each page's code check on Landing Pages | `POST /landing-pages/{id}/check` | `p202 landing-page check <id>` | ✅ |
 | Get Links | `POST /trackers`, `GET /trackers/{id}/url` (`t202kw`, `c1`–`c4`, `utm_*`, the source's custom variables) | `p202 tracker create`, `tracker create-with-url`, `tracker get-url`, `tracker bulk-urls` | ✅ |
 | Postback/Pixel | `GET /conversions/postback-code` | `p202 conversion postback-url`, `p202 conversion pixel` (`--type simple\|advanced\|universal`, `--iframe`) | ✅ |
 | Inbound Log | `GET /conversions/inbound-log` (`search`), `POST /conversions/inbound-log/{id}/record` | `p202 conversion inbound-log --search`, `p202 conversion inbound-log record <inbound_id>` | ✅ |
@@ -69,6 +70,7 @@ record links only to the caller's own records
 
 | Page | API | CLI | |
 | ---- | --- | --- | - |
+| Visitors › Not fraud (a click IPQualityScore filtered) | `POST /clicks/{id}/not-fraud` | `p202 click not-fraud <id>` | ✅ |
 | Visitors: each click with its campaign, source, keyword, IP, location, device, referrer and landing URLs | `/clicks`, `/clicks/{id}`, `/clicks/{id}/conversions` | `p202 click list`, `click get`, `click conversions` | ✅ the same filters and periods as the reports |
 | Spy: the newest clicks, then each new one | `/clicks` polled | `p202 click list --follow` | ✅ |
 

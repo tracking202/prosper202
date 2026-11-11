@@ -46,6 +46,7 @@ final class TableRegistry
     public const string IPQS_PROGRESS = '202_ipqs_progress';
     public const string ALERT_SETTINGS = '202_alert_settings';
     public const string ALERT_STATE = '202_alert_state';
+    public const string ALERT_LOG = '202_alert_log';
     public const string USER_DATA_FEEDBACK = 'user_data_feedback';
 
     // Click tables
@@ -94,6 +95,7 @@ final class TableRegistry
     public const string PPC_NETWORKS = '202_ppc_networks';
     public const string PPC_ACCOUNT_PIXELS = '202_ppc_account_pixels';
     public const string LANDING_PAGES = '202_landing_pages';
+    public const string LANDING_PAGE_CHECKS = '202_landing_page_checks';
     public const string TEXT_ADS = '202_text_ads';
 
     // Attribution tables

@@ -114,6 +114,7 @@ class Application extends ConsoleApplication
         $this->add(new Commands\AttributionBreakdownCommand());
         $this->add(new Commands\AttributionJourneyCommand());
         $this->add(new Commands\AttributionQueueCommand());
+        $this->add(new Commands\AttributionRetryCommand());
         $this->add(new Commands\AttributionExportListCommand());
         $this->add(new Commands\AttributionExportGetCommand());
         $this->add(new Commands\AttributionExportCreateCommand());

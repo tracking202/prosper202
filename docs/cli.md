@@ -1634,7 +1634,17 @@ p202 attribution breakdown --group-by traffic_source --model 3 --compare-model 4
 p202 attribution journeys --period last30
 p202 attribution journey 1234
 p202 attribution queue
+p202 attribution retry
 ```
+
+`queue` lists what is waiting and what is failing, each failing conversion,
+visitor merge and model change with its `last_error`. `retry` makes the
+account's failed ones due at once and runs the attribution worker once: it
+answers `made_due` (how many of each), `worker` (`ran`, `busy` when another
+run held the lock and takes them next, `failed` when the run itself failed
+and the cron job's next run takes them, `idle` when nothing was waiting on a
+failure, `waiting` when it was asked less than 30 seconds ago, with
+`retry_after_seconds`) and `queue`, the backlog after.
 
 | Flag              | Default  | Description |
 |-------------------|----------|-------------|
@@ -1804,9 +1814,11 @@ p202 user role remove 2 3             # Remove role 3 from user 2
 ```bash
 p202 user apikey list 1               # List keys for user 1
 p202 user apikey create 1             # Generate new key (shown once)
+p202 user apikey create 1 --name "Nightly store sync"   # Named for what will use it
 p202 user apikey delete 1 <key>       # Delete a specific key
-p202 user apikey rotate 1 <old-key> --force
-p202 user apikey rotate 1 <old-key> --keep-old --update-config
+p202 user apikey rotate 1 <old-key>   # New key, same scope and label; the old one works 24 hours more
+p202 user apikey rotate 1 <old-key> --update-config
+p202 user apikey delete 1 <old-key>   # End the old key now
 ```
 
 The full API key is displayed only once at creation time. Store it securely.

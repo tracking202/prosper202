@@ -7,6 +7,7 @@ the web UI:
 | Method | Path | The Setup page |
 | ------ | ---- | -------------- |
 | `GET` | `/landing-pages/{id}/code` | Get LP Code (simple and advanced) |
+| `POST` | `/landing-pages/{id}/check` | Get LP Code's "Check my page": whether the page at the saved URL carries its code |
 | `GET` | `/conversions/postback-code` | Postback / Pixel |
 | `GET` | `/ppc-networks/{id}/variables` | Traffic Sources › variables |
 | `POST` | `/ppc-networks/{id}/variables` | |
@@ -82,6 +83,35 @@ one first.
 `segments` lists the elements the loader fills on the page (Dynamic Content
 Segments), e.g. `<span name="t202Country" t202Default="Your Country">Your
 Country</span>`.
+
+
+## Check a landing page's code — `POST /landing-pages/{id}/check`
+
+"Check my page" on Get LP Code. The server fetches the landing page's saved
+URL and reads its HTML for the code above. No body and no parameters. A key
+with `landing-pages:read` may call it: it changes no setup.
+
+```json
+{"data": {"landing_page_id": 12, "landing_page_id_public": 6122,
+          "landing_page_url": "https://lp.example.com/spring",
+          "status": "absent", "found": false,
+          "message": "The code was not found on your page at https://lp.example.com. …",
+          "other_landing_page_ids_public": []}}
+```
+
+`status` is `present`, `legacy` (the older `landing.js` code, which still
+works), `mixed` (this page's code and another landing page's),
+`other_tracker` (loaded from a host that is not this install's tracking
+domain), `wrong_id`, `commented` (only inside an HTML comment), `absent`, or
+`error` when the page could not be fetched; `found` is true for `present` and
+`legacy`. A page that cannot be fetched is a `200` with `status: "error"`. The
+answer is kept: Setup › Landing Pages shows it beside the page. That page
+checks a landing page with no answer for its present URL when the list is
+opened, and the cron job checks each page again about once a day.
+
+Only public addresses are fetched, each redirect is checked, and the fetch
+stops at 10 seconds or 2 MB. Code a tag manager adds after the page loads is
+not seen. Not stageable; no dry run.
 
 ## Pixels and postback URLs — `GET /conversions/postback-code`
 

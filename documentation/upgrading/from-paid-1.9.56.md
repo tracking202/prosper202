@@ -23,7 +23,9 @@ address below on a database shaped like a paid 1.9.56 one, after the upgrade.
   clicks from the 90 days before the upgrade that had not converted yet still
   convert when their postback arrives. A page's `t202Settings`
   (`t202UseSubidOrig`, `t202ExpireSubidOrig`) keeps a returning visitor's
-  original SubID in its PurLinks, with the visitor's consent. PurLinks are
+  original SubID in its PurLinks, with the visitor's consent. Values set in
+  `t202Settings`, `t202UrlVars`, `t202SubidOrig` and `t202SourceId` work as
+  before. PurLinks are
   refreshed when a visitor returns with the Back or Forward button. A PurLink
   that names a deeper URL of its campaign keeps it while its SubID is
   prepared. See [PurLinks](../features/purlinks.md).

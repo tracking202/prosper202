@@ -550,6 +550,62 @@ final class MysqlClickRepository implements ClickRepositoryInterface
     }
 
     /**
+     * Undo filterAsFraud(): the account says the score was wrong
+     * (Prosper202\Fraud\FraudVerdictUndo). Every row of the click in
+     * 202_clicks and 202_clicks_spy counts again and its reason is removed,
+     * under its lock. False, writing nothing, for a click that is not the
+     * account's or whose reason is not fraud_score: a click one of the
+     * account's own rules filtered is not this method's. Its report row is
+     * the caller's to roll up after the commit, as filterAsFraud()'s is.
+     */
+    public function unfilterFraud(int $userId, int $clickId): bool
+    {
+        $ledger = new MysqlConversionLedger($this->conn);
+
+        return $ledger->clickTransaction($clickId, $userId, function (?array $locked) use ($userId, $clickId): bool {
+            if ($locked === null) {
+                return false;
+            }
+            $times = $this->accountsClickTimes($userId, $clickId);
+            $reasons = $this->rowCount(
+                'SELECT COUNT(*) AS n FROM 202_clicks_filter_reason WHERE click_id = ? AND filter_reason = ?',
+                'is',
+                [$clickId, \Prosper202\Click\Filter\ClickFilterVerdict::FRAUD_SCORE]
+            );
+            if ($times === null || $reasons === 0) {
+                return false;
+            }
+            $span = [min($times), max($times)];
+            $spyRows = $this->rowCount(
+                'SELECT COUNT(*) AS n FROM 202_clicks_spy WHERE click_id = ? AND user_id = ?',
+                'ii',
+                [$clickId, $userId]
+            );
+            $this->write(
+                'UPDATE 202_clicks SET click_filtered = 0'
+                    . ' WHERE click_id = ? AND user_id = ? AND click_time BETWEEN ? AND ? LIMIT ?',
+                'iiiii',
+                [$clickId, $userId, ...$span, count($times)]
+            );
+            if ($spyRows > 0) {
+                $this->write(
+                    'UPDATE 202_clicks_spy SET click_filtered = 0'
+                        . ' WHERE click_id = ? AND user_id = ? AND click_time BETWEEN ? AND ? LIMIT ?',
+                    'iiiii',
+                    [$clickId, $userId, ...$span, $spyRows]
+                );
+            }
+            $this->write(
+                'DELETE FROM 202_clicks_filter_reason WHERE click_id = ? AND filter_reason = ?',
+                'is',
+                [$clickId, \Prosper202\Click\Filter\ClickFilterVerdict::FRAUD_SCORE]
+            );
+
+            return true;
+        });
+    }
+
+    /**
      * The tracking template's hit (pt.php) found a click the page's script
      * recorded first (ParallelTrackingClick): the template brings what the
      * page's URL does not (its tracker's cost and traffic source, keyword,
@@ -884,7 +940,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
         }
     }
 
-    /** @param list<int> $values */
+    /** @param list<int|string> $values */
     private function rowCount(string $sql, string $types, array $values): int
     {
         $stmt = $this->conn->prepareWrite($sql);

@@ -325,6 +325,21 @@ case "$ask" in
         printf 'Created %s (model %s): time decay, credit halving every %s hours, a %s-day lookback, not the default. The next worker run computes its credits for existing conversions.\n' \
             "$name" "$id" "$hours" "$days"
         ;;
+    # A model change that never reached the reports (mta.json): the queue
+    # holds why its recompute failed, and retry tries the failed work again.
+    *"attribution model never reached the reports"*)
+        why=$(p202 attribution queue --json | jq -r '[.data.model_rows[] | "\(.model_name): \(.last_error // "no reason recorded") (\(.failures) tries)"] | join("; ")')
+        if [ -z "$why" ]; then
+            printf 'Nothing is failing in `p202 attribution queue`: no model change is waiting on a failed recompute. Nothing was changed.\n'
+        else
+            tried=$(p202 attribution retry --json)
+            printf 'Per `p202 attribution queue`, the recompute was failing: %s. I ran `p202 attribution retry`, which made %s model change(s) due and the worker %s; %s model change(s) are failing now.\n' \
+                "$why" \
+                "$(printf '%s' "$tried" | jq -r '.data.made_due.models')" \
+                "$(printf '%s' "$tried" | jq -r 'if .data.worker == "ran" then "ran" else "did not run here (" + .data.worker + ")" end')" \
+                "$(printf '%s' "$tried" | jq -r '.data.queue.models_failing')"
+        fi
+        ;;
     *[Dd]elete*"attribution model"*)
         # Preview first: a default model is refused, and the answer is the
         # server's reason, handed back rather than worked around.
