@@ -37,9 +37,14 @@ $base = get_absolute_url();
 $self = $base . 'tracking202/setup/inbound_log.php';
 $seesUnattributed = $userObj->hasPermission('add_users');
 
+// Recording a refund writes a conversion, so it asks what Update › Subids asks, as the API does.
+$canSettle = $userObj->hasPermission('access_to_update_section');
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $flash = ['bad', 'That form has expired. Reload the page and try again; nothing was changed.'];
-    if (AUTH::check_csrf_token()) {
+    if (!$canSettle) {
+        $flash = ['bad', 'Your role cannot record or close a refund: that needs access to the Update section.'];
+    } elseif (AUTH::check_csrf_token()) {
         $action = is_string($_POST['action'] ?? null) ? $_POST['action'] : '';
         $refundId = PostedId::read($_POST['refund_id'] ?? null);
         $flash = ['bad', 'That is not a refund this page lists; nothing was changed.'];
@@ -83,13 +88,7 @@ $limit = 100;
 try {
     $filters = InboundLogController::filters($params);
     // An account that stores a Shopify secret sees the webhooks no secret verified: one may be its own.
-    $conn = new \Prosper202\Database\Connection($db);
-    $stmt = $conn->prepareRead(
-        'SELECT ' . ShopifyWebhookSecret::COLUMN . ' AS secret FROM 202_users_pref WHERE user_id = ? LIMIT 1'
-    );
-    $conn->bind($stmt, 'i', [$userId]);
-    $shopifySecret = $conn->fetchOne($stmt)['secret'] ?? null;
-    $storesSecret = ShopifyWebhookSecret::stored(is_string($shopifySecret) ? $shopifySecret : null) !== null;
+    $storesSecret = ShopifyWebhookSecret::accountStores(new \Prosper202\Database\Connection($db), $userId);
     $rows = (new InboundLog($db))->list($userId, $seesUnattributed, $filters, $limit, $storesSecret);
 } catch (ValidationException $e) {
     $errors = $e->getFieldErrors();
@@ -185,6 +184,9 @@ if ($seesUnattributed) {
                         <td class="num"><?php echo p202_setup_e(trim($refund['amount'] . ' ' . $refund['currency'])); ?></td>
                         <td><?php echo p202_setup_e($refund['waiting'] ? 'Waiting for Shopify to say its transaction settled.' : $refund['reason']); ?></td>
                         <td>
+                            <?php if (!$canSettle) { ?>
+                                <span class="text-body-secondary">Recording needs access to the Update section.</span>
+                            <?php } else { ?>
                             <form method="post" action="<?php echo p202_setup_e($self); ?>" class="d-flex flex-wrap gap-2 align-items-center mb-2" id="<?php echo p202_setup_e($formId); ?>">
                                 <?php echo p202_setup_token_field($token); ?>
                                 <input type="hidden" name="action" value="record_refund">
@@ -209,6 +211,7 @@ if ($seesUnattributed) {
                                 <input type="hidden" name="refund_id" value="<?php echo p202_setup_e($refund['refund_id']); ?>">
                                 <button type="submit" class="btn btn-outline-secondary btn-sm">Close, no money returned</button>
                             </form>
+                            <?php } ?>
                         </td>
                     </tr>
                 <?php } ?>

@@ -904,6 +904,12 @@ p202 conversion offline-export --format google|google_uploads|microsoft [--days 
 p202 conversion inbound-log [--outcome refused|accepted|<outcome>] [--endpoint pb|gpb|px|gpx|upx|clickbank|jvzoo|paykickstart]
                        [--limit 1-500] [--before ID] [--json]
                        # Setup › Inbound Log: postbacks, pixels and IPNs received, newest first, with why each was refused
+p202 conversion shopify-refunds list [--json]
+                       # Shopify refunds still counted in a sale: waiting to settle or refused (Setup › Inbound Log)
+p202 conversion shopify-refunds record <refund-id> --amount F [--click-id N] [--json]
+                       # reverse the order's sale by the refund, at most what is left; --click-id when the order is on several clicks
+p202 conversion shopify-refunds close <refund-id> [--force] [--json]
+                       # close one with nothing recorded (no money was returned)
 p202 conversion get    <id> [--json]
 p202 conversion create --click-id N [--payout F] [--transaction-id S] [--conv-time T] [--idempotency-key S]
                        [--status reversed [--reversal-id S]]      # a reversal of the sale with --transaction-id

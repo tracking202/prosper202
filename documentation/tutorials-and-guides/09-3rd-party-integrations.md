@@ -334,7 +334,11 @@ of it, so an order that already has a refund can take another. An order
 recorded on more than one click asks which click the refund takes back from.
 **Close** removes a refund from the list with nothing recorded (no money
 went back). A refund recorded there is not recorded again if Shopify settles
-it later.
+it later. Recording or closing needs a role with access to the Update
+section. The same list and actions are `GET /conversions/shopify-refunds`
+and its `record` and `close` routes in the API, and `p202 conversion
+shopify-refunds` in the CLI. The amount offered is what the refund returns
+as far as is known, less any transaction Shopify reported as failed.
 
 The Shopify card says whether webhooks are arriving: the last one and when,
 the last order recorded, and how many refunds are left to settle. When a

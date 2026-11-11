@@ -40,6 +40,7 @@ record links only to the caller's own records
 | Get Links | `POST /trackers`, `GET /trackers/{id}/url` (`t202kw`, `c1`–`c4`, `utm_*`, the source's custom variables) | `p202 tracker create`, `tracker create-with-url`, `tracker get-url`, `tracker bulk-urls` | ✅ |
 | Postback/Pixel | `GET /conversions/postback-code` | `p202 conversion postback-url`, `p202 conversion pixel` (`--type simple\|advanced\|universal`, `--iframe`) | ✅ |
 | Inbound Log | `GET /conversions/inbound-log` | `p202 conversion inbound-log` | ✅ |
+| Inbound Log: Shopify refunds not recorded | `GET /conversions/shopify-refunds`, `POST /conversions/shopify-refunds/{id}/record`, `POST /conversions/shopify-refunds/{id}/close` | `p202 conversion shopify-refunds list`, `record`, `close` | ✅ |
 | Offline Conversions: the download | `GET /conversions/offline-export`, `GET /conversions/offline-export/summary` | `p202 conversion offline-export` (`--summary`) | ◐ the conversion names and the fetch URLs are set on the page only: a URL's key is shown once, there |
 
 ## Overview

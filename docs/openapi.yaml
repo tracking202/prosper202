@@ -2611,7 +2611,10 @@ paths:
         status the sender got, the outcome and the reason: the same list as
         Setup › Inbound Log, asked with the role's access to the Setup
         section. An admin also gets the requests no account could be found
-        for, with `user_id` null. The newest 5,000 per account are kept.
+        for, with `user_id` null. An account that stores a Shopify webhook
+        secret also gets the Shopify webhooks no stored secret verified,
+        with `user_id`, `fields` and `transaction_id` null, since nothing
+        proves whose they are. The newest 5,000 per account are kept.
         `fields` holds every field's name, and its value only for the
         fields the endpoint is known to send and only when it holds no
         email or IP address; every other value is `[redacted]`.
@@ -2699,6 +2702,190 @@ paths:
                     type: integer
         "403":
           $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+
+  /conversions/shopify-refunds:
+    get:
+      tags: [Conversions]
+      summary: Shopify refunds that are not recorded while their order's sale is
+      description: |
+        The account's Shopify refunds still counted in a sale: the ones
+        waiting for Shopify to say a transaction settled, and the ones
+        refused for good, oldest first (at most 200). The same list as the
+        panel above Setup › Inbound Log, asked with the role's access to
+        the Setup section. `amount` is what the refund returns as far as
+        is known, less every transaction Shopify reported as failed.
+      operationId: listShopifyRefunds
+      responses:
+        "200":
+          description: The refunds, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        refund_id:
+                          type: string
+                          description: Shopify's id of the refund
+                        order_id:
+                          type: string
+                          description: Shopify's id of the order, the sale's transaction id
+                        refunded_at:
+                          type: integer
+                          nullable: true
+                          description: Unix time Shopify says the refund happened
+                        state:
+                          type: string
+                          enum: [waiting, refused]
+                        stale:
+                          type: boolean
+                          description: Waiting for more than a day
+                        reason:
+                          type: string
+                          nullable: true
+                          description: Why a refused refund was not recorded
+                        amount:
+                          type: number
+                        currency:
+                          type: string
+                          nullable: true
+                        click_ids:
+                          type: array
+                          description: >-
+                            The clicks the order's sale is recorded on. With
+                            more than one, recording names which.
+                          items:
+                            type: integer
+                  more:
+                    type: boolean
+                    description: More than the 200 listed are left
+                  transaction_webhook_seen:
+                    type: boolean
+                    description: >-
+                      Whether Shopify's Transaction creation webhook has ever
+                      arrived for the account. Without it a waiting refund is
+                      never settled by itself.
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /conversions/shopify-refunds/{id}/record:
+    post:
+      tags: [Conversions]
+      summary: Record a listed Shopify refund as a reversal of its order's sale
+      description: |
+        Takes `amount` back from the sale of the refund's order, at most
+        what is left of it, and closes the refund, as Record refund does
+        under Setup › Inbound Log. It is recorded once under the refund's
+        id, so Shopify settling the refund later records nothing more.
+        Asks for the role's access to the Setup and Update sections.
+      operationId: recordShopifyRefund
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The refund's refund_id
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              additionalProperties: false
+              properties:
+                amount:
+                  type: number
+                  description: >-
+                    What the refund returned, in the account's currency. More
+                    than 0; a decimal string is read too.
+                click_id:
+                  type: integer
+                  description: >-
+                    The click the refund takes back from. Needed only when
+                    the order is recorded on more than one (click_ids).
+      responses:
+        "200":
+          description: The reversal
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      refund_id:
+                        type: string
+                      outcome:
+                        type: string
+                        enum: [reversed, duplicate]
+                        description: duplicate when the refund was recorded already
+                      conversion_id:
+                        type: integer
+                        nullable: true
+                      message:
+                        type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            The refund cannot be taken from the sale (no sale on file any
+            more, or one recorded at another amount); the message says which.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /conversions/shopify-refunds/{id}/close:
+    post:
+      tags: [Conversions]
+      summary: Close a listed Shopify refund with nothing recorded
+      description: |
+        Removes the refund from the list without a reversal, for one that
+        returned no money. Its amount stays counted in the sale. Asks for
+        the role's access to the Setup and Update sections.
+      operationId: closeShopifyRefund
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The refund's refund_id
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Closed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      refund_id:
+                        type: string
+                      closed:
+                        type: boolean
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
 

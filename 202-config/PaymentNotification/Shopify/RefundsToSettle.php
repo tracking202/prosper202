@@ -30,6 +30,10 @@ final class RefundsToSettle
     public const STALE_AFTER = 86400;
     public const LIMIT = 200;
 
+    /** Where a refund was settled from, as the inbound log names it. */
+    public const THE_PAGE = 'Setup › Inbound Log';
+    public const THE_API = 'the API';
+
     private const AMOUNT = '/^\d{1,6}(?:\.\d{1,5})?$/D';
 
     private readonly Connection $conn;
@@ -64,6 +68,7 @@ final class RefundsToSettle
         $more = count($rows) > self::LIMIT;
         $rows = array_slice($rows, 0, self::LIMIT);
         $clicks = $this->clicksByOrder($account, array_column($rows, 'order_id'));
+        $failed = $this->failedTransactions($account, array_column($rows, 'order_id'));
         $refunds = [];
         foreach ($rows as $row) {
             $orderId = (string) $row['order_id'];
@@ -80,7 +85,7 @@ final class RefundsToSettle
                 'stale' => $waiting && $at > 0 && $now - $at > self::STALE_AFTER,
                 'reason' => (string) ($row['refused_reason'] ?? ''),
                 'clicks' => $clicks[$orderId],
-            ] + self::stated((string) $row['transactions']);
+            ] + self::stated((string) $row['transactions'], $failed);
         }
 
         return ['refunds' => $refunds, 'more' => $more, 'transaction_webhook_seen' => $this->transactionSeen($account)];
@@ -100,7 +105,8 @@ final class RefundsToSettle
         string $refundId,
         string $amount,
         ?int $clickId,
-        InboundRequest $request
+        InboundRequest $request,
+        string $from = self::THE_PAGE
     ): Outcome {
         $row = $this->listed($account, $refundId);
         if ($row === null) {
@@ -161,13 +167,13 @@ final class RefundsToSettle
         if (in_array($outcome->kind, [OutcomeKind::REVERSED, OutcomeKind::DUPLICATE], true)) {
             (new RefundSettlementStore($this->conn))->settledByHand($account, $refundId, time());
         }
-        $this->log($account, $outcome, 'Recorded by hand from Setup › Inbound Log. ', $refundId, $click);
+        $this->log($account, $outcome, 'Recorded by hand from ' . $from . '. ', $refundId, $click);
 
         return $outcome;
     }
 
     /** Closes the refund with nothing recorded (no money was returned, or it is handled elsewhere). */
-    public function close(int $account, string $refundId): bool
+    public function close(int $account, string $refundId, string $from = self::THE_PAGE): bool
     {
         if (
             $this->listed($account, $refundId) === null
@@ -178,7 +184,7 @@ final class RefundsToSettle
         $this->log(
             $account,
             new Outcome(OutcomeKind::IGNORED, 'Nothing was recorded.', null, $account),
-            'Closed by hand from Setup › Inbound Log. ',
+            'Closed by hand from ' . $from . '. ',
             $refundId,
             null
         );
@@ -203,7 +209,7 @@ final class RefundsToSettle
     }
 
     /** @return array<string, mixed>|null the refund when it is still one to settle */
-    private function listed(int $account, string $refundId): ?array
+    public function listed(int $account, string $refundId): ?array
     {
         if (preg_match('/^[1-9][0-9]{0,19}$/D', $refundId) !== 1) {
             return null;
@@ -258,12 +264,40 @@ final class RefundsToSettle
     }
 
     /**
-     * What the refund said it returns: its transactions that did not fail,
-     * added up. Stored transactions that cannot be read state nothing.
+     * The orders' refund transactions Shopify has since reported as failed.
      *
+     * @param list<string> $orderIds
+     * @return array<string, true> by transaction id
+     */
+    private function failedTransactions(int $account, array $orderIds): array
+    {
+        $orderIds = array_values(array_unique(array_map('strval', $orderIds)));
+        if ($orderIds === []) {
+            return [];
+        }
+        $in = implode(', ', array_fill(0, count($orderIds), '?'));
+        $stmt = $this->conn->prepareRead(
+            'SELECT transaction_id FROM 202_shopify_refund_transactions WHERE user_id = ?'
+            . " AND status IN ('failure', 'error') AND order_id IN (" . $in . ')'
+        );
+        $this->conn->bind($stmt, 'i' . str_repeat('s', count($orderIds)), [$account, ...$orderIds]);
+        $failed = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $failed[(string) $row['transaction_id']] = true;
+        }
+
+        return $failed;
+    }
+
+    /**
+     * What the refund returns as far as is known: its transactions added
+     * up, less the ones that failed, when the refund arrived or since
+     * ($failed). Stored transactions that cannot be read state nothing.
+     *
+     * @param array<string, true> $failed
      * @return array{amount: string, currency: string}
      */
-    private static function stated(string $transactions): array
+    private static function stated(string $transactions, array $failed): array
     {
         $units = 0;
         $currency = '';
@@ -273,6 +307,7 @@ final class RefundsToSettle
             if (
                 !is_string($amount) || preg_match(self::AMOUNT, $amount) !== 1
                 || in_array($transaction['status'] ?? null, ['failure', 'error'], true)
+                || isset($failed[(string) ($transaction['id'] ?? '')])
             ) {
                 continue;
             }

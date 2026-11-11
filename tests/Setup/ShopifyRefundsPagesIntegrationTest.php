@@ -74,7 +74,7 @@ final class ShopifyRefundsPagesIntegrationTest extends TestCase
         self::q("UPDATE 202_users SET p202_customer_api_key = 'page-runner', install_hash = 'h"
             . self::USER . "' WHERE user_id = " . self::USER);
         self::row('202_roles', ['role_id' => self::ROLE, 'role_name' => 'shopify refunds test']);
-        foreach (['access_to_api_integrations', 'access_to_setup_section'] as $name) {
+        foreach (['access_to_api_integrations', 'access_to_setup_section', 'access_to_update_section'] as $name) {
             $grant = "permission_description = '$name'";
             $found = self::$db->query("SELECT permission_id FROM 202_permissions WHERE $grant");
             $permission = $found instanceof \mysqli_result ? ($found->fetch_row()[0] ?? null) : null;
@@ -222,6 +222,29 @@ final class ShopifyRefundsPagesIntegrationTest extends TestCase
         $after = self::decoded(self::page(self::LOG));
         self::assertStringNotContainsString('id="shopify-refunds"', $after);
         self::assertStringContainsString('Recorded by hand from Setup › Inbound Log.', $after);
+    }
+
+    public function testARoleWithoutTheUpdateSectionSeesTheListAndSettlesNothing(): void
+    {
+        self::paidOrderWithAWaitingRefund();
+        $update = 'SELECT permission_id FROM 202_permissions'
+            . " WHERE permission_description = 'access_to_update_section'";
+        self::q('DELETE FROM 202_role_permission WHERE role_id = ' . self::ROLE . " AND permission_id IN ($update)");
+        try {
+            $page = self::decoded(self::page(self::LOG));
+            self::assertStringContainsString('id="shopify-refunds"', $page);
+            self::assertStringContainsString('Recording needs access to the Update section.', $page);
+            self::assertStringNotContainsString('name="action" value="record_refund"', $page);
+            foreach (['record_refund', 'close_refund'] as $action) {
+                self::page(self::LOG, ['action' => $action, 'refund_id' => '9100001', 'amount' => '10.00',
+                    'token' => 'SESSION']);
+            }
+        } finally {
+            self::q('INSERT INTO 202_role_permission (role_id, permission_id) SELECT ' . self::ROLE
+                . ", permission_id FROM 202_permissions WHERE permission_description = 'access_to_update_section'");
+        }
+        self::assertSame(['59.00000'], self::payouts());
+        self::assertStringContainsString('id="shopify-refunds"', self::page(self::LOG));
     }
 
     public function testClosingFromTheLogRecordsNothingAndClearsTheList(): void
