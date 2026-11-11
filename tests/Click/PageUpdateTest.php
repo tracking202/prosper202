@@ -96,11 +96,25 @@ final class PageUpdateTest extends TestCase
         yield 'no click' => [[], true, 0];
     }
 
+    public function testTheClickScriptNamesTheClicksTrafficSourceAccountOnlyToATrackedVisitor(): void
+    {
+        RecordedClicks::note(41);
+        $key = fn (): string => self::KEY;
+        $script = static fn (array $request, bool $allowed, int $source): string
+            => PageUpdate::clickScript($request, $allowed, 41, 12, 3, self::NOW, $key, $source);
+        self::assertSame('9', self::answer($script([], true, 9))['t202SourceId']);
+        self::assertSame('', self::answer($script([], true, 0))['t202SourceId']);
+        self::assertSame('', self::answer($script([], true, -4))['t202SourceId']);
+        self::assertSame('', $script([], false, 9), 'held back by the privacy setting');
+        self::assertSame('', $script(['p202_consent' => '0'], true, 9), 'refused');
+    }
+
     public function testWithoutAKeyTheSubidStillGoesWithoutAProof(): void
     {
         RecordedClicks::note(41);
-        self::assertSame(['t202Subid' => '41'], self::answer(PageUpdate::clickScript([], true, 41, 12, 3, self::NOW, fn (): ?string => null)));
-        self::assertSame(['t202Subid' => '41'], self::answer(PageUpdate::clickScript(
+        $bare = ['t202Subid' => '41', 't202SourceId' => ''];
+        self::assertSame($bare, self::answer(PageUpdate::clickScript([], true, 41, 12, 3, self::NOW, fn (): ?string => null)));
+        self::assertSame($bare, self::answer(PageUpdate::clickScript(
             [],
             true,
             41,
@@ -112,7 +126,7 @@ final class PageUpdateTest extends TestCase
             }
         )));
         self::assertSame(
-            ['t202Subid' => '42'],
+            ['t202Subid' => '42', 't202SourceId' => ''],
             self::answer(PageUpdate::clickScript([], true, 42, 12, 3, self::NOW, fn (): string => self::KEY)),
             'a click this request did not allocate is never signed'
         );

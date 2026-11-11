@@ -38,6 +38,7 @@ function page(serverData, query, elements, options = {}) {
     const network = [];
     const posts = [];
     const queue = [];
+    const jar = options.jar || new Map();
     const document = {
         readyState: options.readyState || 'complete',
         referrer: options.referrer === undefined ? 'https://search.example/?q=shoes' : options.referrer,
@@ -89,6 +90,12 @@ function page(serverData, query, elements, options = {}) {
         p202EventQueue: queue,
         Image: function () { network.push('image'); },
         t202GetVar: get,
+        p202Var: (name) => (options.settingValues && name in options.settingValues ? options.settingValues[name] : get(name)),
+        p202DcsSet: null,
+        P202_SUBID_ORIG: '_t202SubidOrig',
+        p202SubidOrigExpiry: () => options.expiry || 7,
+        readCookie: (name) => (jar.has(name) ? jar.get(name).value : null),
+        createCookie: (name, value, days) => { jar.set(name, {value: String(value), days}); },
         p202ConsentGiven: () => consent,
         p202PurLinkRevoked: !!options.revoked,
         t202kw: get('t202kw'), c1: get('c1'), c2: get('c2'), c3: get('c3'), c4: get('c4'),
@@ -105,7 +112,7 @@ function page(serverData, query, elements, options = {}) {
         .replace('<?php echo $p202DcsUpdateUrlJs; ?>', JSON.stringify(UPDATE_URL));
     assert.ok(!code.includes('<?php'), 'every PHP value is substituted');
     vm.runInNewContext(code, context);
-    return {window, listeners, warnings, network, posts, queue, context};
+    return {window, listeners, warnings, network, posts, queue, context, jar};
 }
 const UPDATE_URL = 'https://track.example/tracking202/static/dcs-update.php';
 const PROOF = 'update.41.12.3.1700086400.' + 'A'.repeat(43);
@@ -217,15 +224,50 @@ const query = 'c1=<b>one</b>&c2=two&t202kw=blue+shoes&utm_source=news&pci=88&t20
     const subid = new Element('input', {name: 't202Subid'});
     const orig = new Element('input', {name: 't202SubidOrig'});
     const ip = new Element('span', {name: 't202IP', t202Default: 'hidden'});
-    const {window} = page(server, query, [subid, orig, ip]);
-    window.p202DcsClick({t202Subid: '41'});
-    assert.deepStrictEqual([subid.value, orig.value, ip.textContent], ['41', '41', '192.0.2.7']);
+    const source = new Element('span', {t202attribute: 't202SourceId'});
+    const {window, jar} = page(server, query, [subid, orig, ip, source], {expiry: 30});
+    assert.deepStrictEqual([window.t202GetSubid(), window.t202GetSubidOrig()], ['', ''], 'empty until the click is known');
+    window.p202DcsClick({t202Subid: '41', t202SourceId: '9'});
+    assert.deepStrictEqual([subid.value, orig.value, ip.textContent, source.textContent], ['41', '41', '192.0.2.7', '9']);
+    assert.deepStrictEqual(jar.get('_t202SubidOrig'), {value: '41', days: 30}, 'the first click is kept, for t202ExpireSubidOrig days');
+    assert.deepStrictEqual([window.t202GetSubid(), window.t202GetSubidOrig()], ['41', '41']);
+    assert.strictEqual(window.dcs.t202DataObj.t202SourceId, '9');
+    // A later pageview of the same visitor: its own subid, the first click's as the original.
+    {
+        const subid2 = new Element('input', {name: 't202Subid'});
+        const orig2 = new Element('input', {name: 't202SubidOrig'});
+        const later = page(server, query, [subid2, orig2], {jar});
+        later.window.p202DcsClick({t202Subid: '57', t202SourceId: ''});
+        assert.deepStrictEqual([subid2.value, orig2.value, later.window.t202GetSubidOrig()], ['57', '41', '41']);
+        assert.strictEqual(jar.get('_t202SubidOrig').value, '41', 'the first click stays');
+        // A cookie that is not a click id is replaced.
+        const bad = new Map([['_t202SubidOrig', {value: '41-491-abc', days: 7}]]);
+        const replaced = page(server, query, [], {jar: bad});
+        replaced.window.p202DcsClick({t202Subid: '57'});
+        assert.strictEqual(bad.get('_t202SubidOrig').value, '57');
+        assert.strictEqual(replaced.window.dcs.t202DataObj.t202SourceId, '', 'no source id is none');
+    }
     window.p202.consent(false);
-    assert.deepStrictEqual([subid.value, ip.textContent], ['', 'hidden'], 'a withdrawal clears them');
+    assert.deepStrictEqual([subid.value, orig.value, source.textContent, ip.textContent], ['', '', '', 'hidden'], 'a withdrawal clears them');
+    assert.deepStrictEqual([window.t202GetSubid(), window.t202GetSubidOrig()], ['', '']);
     window.p202DcsClick({t202Subid: '42'});
     assert.strictEqual(subid.value, '', 'no subid after a withdrawal');
     window.p202.consent(true);
     assert.strictEqual(ip.textContent, '192.0.2.7', 'consent given again restores the address');
+}
+// t202Settings' values (p202DcsSet): any case of a key, shown, and nothing sent.
+{
+    const kw = new Element('input', {name: 't202Kw'});
+    const c1 = new Element('span', {t202attribute: 't202c1'});
+    const {window, context, network, jar} = page(server, query, [kw, c1], {settingValues: {gclid: 'MAPPED'}});
+    assert.strictEqual(window.dcs.t202DataObj.t202GCLID, 'MAPPED', 'an ad click id read from the page\'s parameter');
+    context.p202DcsSet({t202kw: 'from settings', T202C1: 'home', t202Nope: 'x'});
+    assert.deepStrictEqual([kw.value, c1.textContent], ['from settings', 'home']);
+    assert.deepStrictEqual([window.dcs.t202DataObj.t202Kw, window.dcs.t202DataObj.t202kw, window.dcs.t202DataObj.t202C1],
+        ['from settings', 'from settings', 'home']);
+    assert.ok(!('t202Nope' in window.dcs.t202DataObj));
+    assert.deepStrictEqual(network, [], 'the pageview carries them: no update is sent');
+    assert.strictEqual(jar.size, 0);
 }
 for (const options of [{consent: false}, {revoked: true}]) {
     const subid = new Element('input', {name: 't202Subid'});
