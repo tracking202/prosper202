@@ -4297,6 +4297,45 @@ paths:
                   data:
                     $ref: "#/components/schemas/AttributionQueue"
 
+  /attribution/queue/retry:
+    post:
+      tags: [Attribution]
+      summary: Try the account's failed attribution work again now
+      description: >-
+        Makes the account's failed conversions, identity merges and model recomputes due at once and
+        runs the attribution worker once, briefly. Another account's rows wait their turn. Takes no
+        body. Role permission `view_attribution_reports`.
+      operationId: retryAttributionQueue
+      responses:
+        "200":
+          description: What was made due, what became of the run, and the backlog after
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      made_due:
+                        type: object
+                        properties:
+                          conversions:
+                            type: integer
+                          merges:
+                            type: integer
+                          models:
+                            type: integer
+                      worker:
+                        type: string
+                        enum: [ran, busy, failed]
+                        description: >-
+                          `ran` when the worker ran; `busy` when another run held its lock and takes the
+                          rows next; `failed` when the run itself failed (logged), and the cron job's next
+                          run takes them.
+                      queue:
+                        $ref: "#/components/schemas/AttributionQueue"
+
   /attribution/exports:
     get:
       tags: [Attribution]

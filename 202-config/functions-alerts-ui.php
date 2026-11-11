@@ -80,9 +80,12 @@ function p202_alerts_post(\mysqli $db, int $userId, array $post): array
 
         return $answer;
     }
-    p202_account_flash('ok', $settings->enabled
-        ? 'Money-loss alerts are on. The cron job checks your campaigns every hour.'
-        : 'Money-loss alerts are off for your account. Turn them back on here at any time.');
+    p202_account_flash('ok', match (true) {
+        !$settings->enabled => 'Money-loss alerts are off for your account. Turn them back on here at any time.',
+        !$settings->anyChannel() => 'Money-loss alerts are on, with Slack, email and webhooks all off: you will see'
+            . ' them only on Home and on this card. The cron job checks your campaigns every hour.',
+        default => 'Money-loss alerts are on. The cron job checks your campaigns every hour.',
+    });
     p202_account_redirect(P202_ALERTS_RETURN);
 }
 
@@ -109,6 +112,10 @@ function p202_alerts_send_test(
         if (!$settings->enabled) {
             return ['warn', 'No test alert was sent: money-loss alerts are off for your account. Turn them on and'
                 . ' save, then send the test.'];
+        }
+        if (!$settings->anyChannel()) {
+            return ['warn', 'No test alert was sent: Slack, email and webhooks are all off in your saved settings,'
+                . ' so your alerts are shown only on Home and on this card.'];
         }
         $notifier ??= new AlertNotifier(
             $conn,
@@ -207,7 +214,9 @@ function p202_alerts_list(array $alerts, string $base, int $now): string
 function p202_alerts_home_panel(\mysqli $db, int $userId, string $base, int $now): string
 {
     try {
-        $alerts = (new MysqlAlertStore(new Connection($db)))->recent($userId, $now - 7 * 86400, 10);
+        $conn = new Connection($db);
+        AlertNotifier::rememberWebAddress($conn, $_SERVER, dirname(__DIR__), $now);
+        $alerts = (new MysqlAlertStore($conn))->recent($userId, $now - 7 * 86400, 10);
     } catch (\Throwable $e) {
         error_log('Home: the money-loss alerts could not be read: ' . get_class($e) . ': ' . $e->getMessage());
 
@@ -230,11 +239,12 @@ function p202_alerts_home_panel(\mysqli $db, int $userId, string $base, int $now
 /**
  * The card's read: the settings as stored and where alerts would go, or
  * null with a flash when they cannot be read (so no form of defaults is
- * shown to save over them); and the alerts of the last 30 days, null when
- * they cannot be read (the card says so rather than "none").
+ * shown to save over them); whether messages can link this install (it has
+ * a stored address); and the alerts of the last 30 days, null when they
+ * cannot be read (the card says so rather than "none").
  *
  * @return array{settings: ?AlertSettings, contact: array{email: string, slack: string, domain: string},
- *     recent: ?list<array<string, mixed>>, flashes: list<array{kind: string, text: string}>}
+ *     recent: ?list<array<string, mixed>>, links: bool, flashes: list<array{kind: string, text: string}>}
  */
 function p202_alerts_view(\mysqli $db, int $userId): array
 {
@@ -242,12 +252,15 @@ function p202_alerts_view(\mysqli $db, int $userId): array
         'settings' => null,
         'contact' => ['email' => '', 'slack' => '', 'domain' => ''],
         'recent' => [],
+        'links' => true,
         'flashes' => [],
     ];
     $conn = new Connection($db);
     try {
         $view['settings'] = (new MysqlAlertStore($conn))->settings($userId);
         $view['contact'] = (new AlertNotifier($conn))->contact($userId);
+        AlertNotifier::rememberWebAddress($conn, $_SERVER, dirname(__DIR__), time());
+        $view['links'] = AlertNotifier::settingsUrl($conn, $_SERVER, dirname(__DIR__)) !== null;
     } catch (QueryException | \mysqli_sql_exception | \UnexpectedValueException $e) {
         error_log('Account page: the money-loss alert settings could not be read: ' . $e->getMessage());
         $view['settings'] = null;
@@ -274,13 +287,15 @@ function p202_alerts_view(\mysqli $db, int $userId): array
  * @param array<string, mixed> $form what a refused save sent
  * @param ?list<array<string, mixed>> $recent the account's alerts of the last 30 days (MysqlAlertStore::recent()),
  *        null when they could not be read
+ * @param bool $links whether email and Slack messages can link this install (AlertNotifier::settingsUrl())
  */
 function p202_alerts_card(
     AlertSettings $settings,
     array $contact,
     array $errors,
     array $form,
-    ?array $recent = []
+    ?array $recent = [],
+    bool $links = true
 ): string {
     $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
     $action = $e(get_absolute_url() . P202_ALERTS_RETURN);
@@ -354,6 +369,11 @@ function p202_alerts_card(
         . $switch('notify_slack', 'Slack', $slackHelp)
         . $switch('notify_email', 'Email', $emailHelp)
         . $switch('notify_webhook', 'Webhooks', $webhookHelp)
+        . '<p class="form-text mt-0">With all three off you are sent nothing: your alerts are shown only on Home and'
+        . ' in the list below.</p>'
+        . ($links ? '' : '<p class="form-text mt-0" id="money-loss-alerts-no-links">Email and Slack messages carry'
+            . ' no links yet, because this install has no tracking domain stored: set one in the first account\'s'
+            . ' Personal settings. The alerts listed on Home and below always link.</p>')
         . '<h3 class="p202-panel__title mb-2 mt-3">When</h3>'
         . '<div class="row g-3 mb-3">'
         . $number(

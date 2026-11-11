@@ -25,8 +25,8 @@ declare(strict_types=1);
  * API does not or skip one it does (CLAUDE.md error pattern #5): a model
  * name, type, lookback or weighting the API would refuse is refused here in
  * its sentence, the default model cannot be deactivated or deleted, and a
- * webhook is checked by the same guard. "Try again now" has no route: it
- * makes the account's failed rows due (QueueRetry) and runs the worker once.
+ * webhook is checked by the same guard. "Try again now" is the API's
+ * POST /attribution/queue/retry (QueueRetry), said in the page's words.
  *
  * Permissions are the API's too: view_attribution_reports to open the page
  * and to create, retry, delete and download exports; manage_attribution_models

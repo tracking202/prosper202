@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Alerts;
 
+use Prosper202\Click\TrackingBaseUrl;
 use Prosper202\Click\TrackingDomain;
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\MysqlWebhookRepository;
@@ -48,26 +49,100 @@ final class AlertNotifier
 
     /**
      * The settings card's address on this install, or null when it is not
-     * known: the install's stored address (user 1's tracking domain, as the
-     * password reset links it) and its path, which a run knows only when it
-     * was started through the web server (a command-line run has no document
-     * root, and a guessed path would link a subdirectory install to nothing).
+     * known. The host is the install's stored address (user 1's tracking
+     * domain, as the password reset links it), never the request's: the
+     * message goes to someone else. The path and, for a domain stored
+     * without one, the scheme are the request's when the run was started
+     * through the web server, and otherwise what a web request last found
+     * (rememberWebAddress()): a command-line run has no document root, and a
+     * guessed path would link a subdirectory install to nothing.
      *
      * @param array<string, mixed> $server normally $_SERVER
      */
     public static function settingsUrl(Connection $conn, array $server, string $installRoot): ?string
+    {
+        $row = $conn->fetchOne(
+            $conn->prepareRead('SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = 1 LIMIT 1')
+        );
+        $stored = (string) ($row['user_tracking_domain'] ?? '');
+        if (TrackingDomain::normalize($stored) === '') {
+            return null;
+        }
+        if (self::webAddress($server, $installRoot) === null) {
+            $server = self::rememberedServer((new MysqlAlertStore($conn))->installAddress(), $installRoot);
+            if ($server === null) {
+                return null;
+            }
+        }
+        $base = PasswordResetLink::base($stored, $server, $installRoot);
+
+        return $base === null ? null : $base . self::SETTINGS_PAGE;
+    }
+
+    /**
+     * Keeps where this web request found the install served, for the runs
+     * that cannot tell (settingsUrl()). Home and the settings card call it:
+     * a signed-in browser's request, not a cron fetch, which may reach the
+     * server on another scheme. Nothing is written from a command-line run,
+     * or when what is kept is already this.
+     *
+     * @param array<string, mixed> $server normally $_SERVER
+     */
+    public static function rememberWebAddress(Connection $conn, array $server, string $installRoot, int $now): void
+    {
+        $address = self::webAddress($server, $installRoot);
+        $store = new MysqlAlertStore($conn);
+        if ($address !== null && $store->installAddress() !== $address) {
+            $store->saveInstallAddress($address['https'], $address['path'], $now);
+        }
+    }
+
+    /**
+     * The install's path under this request's document root and the
+     * request's scheme; null when the request has no document root holding
+     * the install (a command-line run).
+     *
+     * @param array<string, mixed> $server
+     * @return ?array{https: bool, path: string}
+     */
+    private static function webAddress(array $server, string $installRoot): ?array
     {
         $docRoot = is_scalar($server['DOCUMENT_ROOT'] ?? null) ? realpath((string) $server['DOCUMENT_ROOT']) : false;
         $root = realpath($installRoot);
         if ($docRoot === false || $root === false || !str_starts_with($root . '/', rtrim($docRoot, '/') . '/')) {
             return null;
         }
-        $row = $conn->fetchOne(
-            $conn->prepareRead('SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = 1 LIMIT 1')
-        );
-        $base = PasswordResetLink::base((string) ($row['user_tracking_domain'] ?? ''), $server, $installRoot);
+        require_once dirname(__DIR__) . '/request-https.php';
 
-        return $base === null ? null : $base . self::SETTINGS_PAGE;
+        return [
+            'https' => p202_request_is_https($server),
+            'path' => TrackingBaseUrl::installPath($server, $installRoot),
+        ];
+    }
+
+    /**
+     * The server values that give a remembered address back: the document
+     * root the install sits under at that path, and the scheme. Null when
+     * nothing is remembered or the install no longer sits at that path.
+     *
+     * @param ?array{https: bool, path: string} $address
+     * @return ?array<string, string>
+     */
+    private static function rememberedServer(?array $address, string $installRoot): ?array
+    {
+        $root = realpath($installRoot);
+        if ($address === null || $root === false) {
+            return null;
+        }
+        $under = rtrim($address['path'], '/');
+        if ($under !== '' && !str_ends_with($root, $under)) {
+            return null;
+        }
+
+        return [
+            'DOCUMENT_ROOT' => $under === '' ? $root : substr($root, 0, -strlen($under)),
+            'HTTPS' => $address['https'] ? 'on' : 'off',
+        ];
     }
 
     /** The install's address, when the settings card's is known. */

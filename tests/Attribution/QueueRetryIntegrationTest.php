@@ -102,6 +102,55 @@ final class QueueRetryIntegrationTest extends TestCase
         self::assertSame(1, (int) self::scalar($queued . $theirs));
     }
 
+    public function testTheApiRouteMakesDueRunsTheWorkerAndAnswersTheBacklog(): void
+    {
+        $this->campaign(1);
+        $this->click(10, 1, time() - 600);
+        $conv = $this->convert(10, '5.00', 'mine');
+        $this->work();
+        self::fixture("INSERT INTO 202_attribution_pending
+            (conv_id, enqueued_at, reason, attempts, last_error, retry_at)
+            VALUES ($conv, 1, 'recorded', 3, 'Lock wait timeout exceeded', " . self::LATER . ')');
+        $api = new \Api\V3\Controllers\AttributionController(self::$db, 1);
+
+        // Another run holds the worker's lock: the rows are due, and the answer says who takes them.
+        $other = self::secondConnection();
+        $lock = $other->real_escape_string(AttributionWorker::lockName($this->conn));
+        self::assertSame('1', $other->query("SELECT GET_LOCK('$lock', 0)")->fetch_row()[0]);
+        try {
+            $busy = $api->retryQueue()['data'];
+        } finally {
+            $other->close();
+        }
+        self::assertSame(
+            [['conversions' => 1, 'merges' => 0, 'models' => 0], QueueRetry::BUSY, 1],
+            [$busy['made_due'], $busy['worker'], $busy['queue']['pending']]
+        );
+        self::assertSame(0, $busy['queue']['rows'][0]['retry_at'], 'due now');
+
+        $ran = $api->retryQueue()['data'];
+        self::assertSame(
+            [['conversions' => 0, 'merges' => 0, 'models' => 0], QueueRetry::RAN, 0, 0],
+            [$ran['made_due'], $ran['worker'], $ran['queue']['pending'], $ran['queue']['failing']]
+        );
+
+        // The page says the same in its words.
+        [$kind, $text] = p202_attr_retry_failed(self::$db, 1);
+        self::assertSame('ok', $kind);
+        self::assertStringContainsString('nothing is failing or waiting now', $text);
+    }
+
+    private static function secondConnection(): \mysqli
+    {
+        return new \mysqli(
+            (string) getenv('P202_TEST_DB_HOST'),
+            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+            (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+        );
+    }
+
     public function testNothingFailingShowsNoPanel(): void
     {
         $queue = (new AttributionReports($this->conn))->queue(1, 20);

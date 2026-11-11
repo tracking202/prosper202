@@ -427,7 +427,9 @@ final class UserTables
      * under campaign 0 (Prosper202\Alerts\MysqlAlertStore). A new
      * incident has another key, so it is sent again. delivered 0 is an
      * incident every channel failed for, tried again until attempts reaches
-     * AlertRun::MAX_ATTEMPTS. From 1.9.80.
+     * AlertRun::MAX_ATTEMPTS. The run's own rows are user 0's: its cursor,
+     * and where the install is served (detail holds its path under the
+     * document root), which a command-line run cannot tell. From 1.9.80.
      */
     public static function alertState(): SchemaDefinition
     {
@@ -441,6 +443,7 @@ final class UserTables
                 `alerted_at` int(10) unsigned NOT NULL,
                 `delivered` tinyint(1) unsigned NOT NULL DEFAULT '1',
                 `attempts` tinyint(3) unsigned NOT NULL DEFAULT '1',
+                `detail` varchar(255) DEFAULT NULL,
                 PRIMARY KEY (`user_id`, `aff_campaign_id`, `alert_kind`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );

@@ -141,6 +141,43 @@ final class MysqlAlertStore
         $this->conn->executeUpdate($stmt);
     }
 
+    /** 202_alert_state's row for where the install is served: incident_key 1 is https, detail its path. */
+    private const ADDRESS_KIND = 'install_address';
+
+    /**
+     * Where a web request last found the install served: its path under the
+     * document root and whether it arrived on https. Null when none has.
+     *
+     * @return ?array{https: bool, path: string}
+     */
+    public function installAddress(): ?array
+    {
+        $stmt = $this->conn->prepareRead(
+            'SELECT incident_key, detail FROM 202_alert_state'
+            . ' WHERE user_id = 0 AND aff_campaign_id = 0 AND alert_kind = ?'
+        );
+        $this->conn->bind($stmt, 's', [self::ADDRESS_KIND]);
+        $row = $this->conn->fetchOne($stmt);
+        $path = $row['detail'] ?? null;
+        if (!is_string($path) || !str_starts_with($path, '/')) {
+            return null;
+        }
+
+        return ['https' => (int) $row['incident_key'] === 1, 'path' => $path];
+    }
+
+    public function saveInstallAddress(bool $https, string $path, int $now): void
+    {
+        $stmt = $this->conn->prepareWrite(
+            'INSERT INTO 202_alert_state (user_id, aff_campaign_id, alert_kind, incident_key, alerted_at, detail)'
+            . ' VALUES (0, 0, ?, ?, ?, ?)'
+            . ' ON DUPLICATE KEY UPDATE incident_key = VALUES(incident_key), alerted_at = VALUES(alerted_at),'
+            . ' detail = VALUES(detail)'
+        );
+        $this->conn->bind($stmt, 'siis', [self::ADDRESS_KIND, $https ? 1 : 0, $now, $path]);
+        $this->conn->executeUpdate($stmt);
+    }
+
     public static function incidentId(Alert $alert): string
     {
         return $alert->kind->stateKey() . ':' . $alert->campaignId;

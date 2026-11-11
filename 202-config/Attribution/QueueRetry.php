@@ -9,12 +9,37 @@ use Prosper202\Database\Connection;
 /**
  * "Try again now" for one account: its failed conversions, identity merges
  * and model recomputes are made due at once, as the worker's --retry-now
- * does for the whole install. The worker's next run takes them.
+ * does for the whole install, and the worker is run once, briefly, so the
+ * asker hears the result; the minutely cron job carries on with the rest.
  */
 final class QueueRetry
 {
+    public const RAN = 'ran';
+    /** Another run held the worker's lock; it takes the rows next. */
+    public const BUSY = 'busy';
+    /** The run threw (logged); the rows stay due for the cron job. */
+    public const FAILED = 'failed';
+
     private function __construct()
     {
+    }
+
+    /**
+     * @return array{made_due: array{conversions: int, merges: int, models: int}, worker: 'ran'|'busy'|'failed'}
+     */
+    public static function tryNow(Connection $conn, int $userId, int $budgetSeconds = 5): array
+    {
+        $due = self::makeDue($conn, $userId);
+        try {
+            $worker = AttributionWorker::runExclusive($conn, $budgetSeconds) === null ? self::BUSY : self::RAN;
+        } catch (\Throwable $e) {
+            // The rows are due whatever became of this run: that is not undone or hidden.
+            error_log('p202 attribution: the run after "try again now" failed: ' . get_class($e) . ': '
+                . $e->getMessage());
+            $worker = self::FAILED;
+        }
+
+        return ['made_due' => $due, 'worker' => $worker];
     }
 
     /** @return array{conversions: int, merges: int, models: int} what was made due */

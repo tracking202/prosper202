@@ -1078,7 +1078,8 @@ p202 attribution breakdown       [--group-by D] [--model ID] [--compare-model ID
                                  [--period P | --time-from T --time-to T] [--limit N] [--json]
 p202 attribution journeys        [--period P | --time-from T --time-to T] [--json]
 p202 attribution journey         <conv_id> [--json]
-p202 attribution queue           [--limit N] [--json]
+p202 attribution queue           [--limit N] [--json]     (what is failing, each with last_error)
+p202 attribution retry           [--json]                 (failed work made due, the worker run once)
 
 p202 attribution export create   [--group-by D] [--model ID] [--compare-model ID]
                                  [--period P | --time-from T --time-to T] [--run-at T]

@@ -337,10 +337,8 @@ function p202_attr_failures(array $queue, string $pageUrl, string $view, int $no
 }
 
 /**
- * "Try again now": the account's failed rows are made due (QueueRetry) and
- * the worker run once, briefly, so the page comes back with the result; the
- * minutely cron job carries on with whatever is left. The flash's kind and
- * its sentence.
+ * "Try again now" (QueueRetry::tryNow()) as the page says it: the flash's
+ * kind and its sentence.
  *
  * @return array{0: 'ok'|'warn'|'bad', 1: string}
  */
@@ -348,8 +346,7 @@ function p202_attr_retry_failed(\mysqli $db, int $userId): array
 {
     try {
         $conn = new \Prosper202\Database\Connection($db);
-        $due = \Prosper202\Attribution\QueueRetry::makeDue($conn, $userId);
-        $ran = \Prosper202\Attribution\AttributionWorker::runExclusive($conn, 5) !== null;
+        $tried = \Prosper202\Attribution\QueueRetry::tryNow($conn, $userId);
         $left = (new \Prosper202\Attribution\AttributionReports($conn))->queue($userId, 1);
     } catch (\Throwable $e) {
         error_log('attribution page retry_failed: ' . get_class($e) . ': ' . $e->getMessage());
@@ -357,23 +354,28 @@ function p202_attr_retry_failed(\mysqli $db, int $userId): array
         return ['bad', 'Trying again failed: the attribution tables could not be read or written. The server'
             . ' error log says why; the worker keeps trying by itself.'];
     }
+    $due = $tried['made_due'];
     $count = static fn (int $n, string $one): string => $n . ' ' . $one . ($n === 1 ? '' : 's');
-    $tried = $count($due['conversions'], 'conversion') . ', ' . $count($due['merges'], 'visitor merge')
+    $what = $count($due['conversions'], 'conversion') . ', ' . $count($due['merges'], 'visitor merge')
         . ' and ' . $count($due['models'], 'model change');
     $pending = (int) $left['pending'];
     $stillFailing = (int) $left['failing'] + (int) $left['merges_failing'] + (int) $left['models_failing'];
-    if (!$ran) {
-        return ['ok', $tried . ' are due again. The attribution worker is running right now and takes them next;'
+    if ($tried['worker'] === \Prosper202\Attribution\QueueRetry::BUSY) {
+        return ['ok', $what . ' are due again. The attribution worker is running right now and takes them next;'
             . ' reload in a minute.'];
     }
+    if ($tried['worker'] === \Prosper202\Attribution\QueueRetry::FAILED) {
+        return ['warn', $what . ' are due again, but the run made for them here failed; the server error log'
+            . ' says why. The cron job\'s next run, within a minute, takes them.'];
+    }
     if ($stillFailing > 0) {
-        return ['warn', $tried . ' were tried again, and ' . $stillFailing . ' still '
+        return ['warn', $what . ' were tried again, and ' . $stillFailing . ' still '
             . ($stillFailing === 1 ? 'fails' : 'fail') . '. The reasons are under "What failed and why".'];
     }
     if ($pending > 0) {
-        return ['ok', $tried . ' were tried again and nothing is failing now. ' . $count($pending, 'conversion')
+        return ['ok', $what . ' were tried again and nothing is failing now. ' . $count($pending, 'conversion')
             . ($pending === 1 ? ' is' : ' are') . ' still waiting for the worker, which runs every minute.'];
     }
 
-    return ['ok', $tried . ' were tried again, and nothing is failing or waiting now.'];
+    return ['ok', $what . ' were tried again, and nothing is failing or waiting now.'];
 }

@@ -926,6 +926,7 @@ try {
             $r->get('/reports/journeys',           fn() => $crud($cls)->journeyMetrics($queryParams));
             $r->get('/conversions/{id}/journey',   fn($ctx) => $crud($cls)->journey(PathId::of($ctx)));
             $r->get('/queue',                      fn() => $crud($cls)->queue($queryParams));
+            $r->post('/queue/retry', fn() => $crud($cls)->retryQueue());
         }, [
             static function () use ($auth, $db): void {
                 $auth->requirePermission($db, 'view_attribution_reports');

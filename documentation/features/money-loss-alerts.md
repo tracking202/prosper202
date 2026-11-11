@@ -75,7 +75,8 @@ and each sends only where it has somewhere to go:
   retried as every webhook event is; see [the payloads](../api/20-ltv.md).
 
 An account with no email address, no Slack webhook and no subscribed webhook
-is sent nothing; its alerts are still listed in the app.
+is sent nothing; its alerts are still listed in the app. You can also switch
+all three off and keep the alerts on: they are then shown in the app only.
 
 ## In the app
 
@@ -87,7 +88,8 @@ and how it was sent, or why each channel did not take it. A server whose
 `mail()` accepts a message and never delivers it cannot hide an alert there.
 The list keeps an alert for 90 days after its problem was last seen.
 
-Each message carries the same link when the install's address is known: the
+Each message carries the same link when the install's address is known (see
+below): the
 Inbound Log for conversions that stopped and for refused postbacks, the
 campaign for spend with no conversions. Webhook payloads carry it as `url`.
 
@@ -102,10 +104,14 @@ arrive), and whether a webhook was queued. Webhooks receive it as the event
 event. A test is not listed as an alert.
 
 Every email and Slack message ends with a line saying how to turn the alerts
-off. The line links to the settings page when the install's address is known:
-user 1's tracking domain is set and the cron job is fetched through the web
-server. A command-line cron run cannot know the install's path, so the
-message names the page without a link.
+off. The line, and the link to the problem, carry this install's address when
+it is known. The host is always the tracking domain stored for user 1, never
+the address a request came in on. A cron job fetched through the web server
+knows the rest; one run from the command line cannot tell where the install
+is served, so it uses the path and scheme a signed-in browser last found,
+which is kept whenever Home or the settings card is opened. Until one of
+those has been opened, or while no tracking domain is stored, messages name
+the page without a link, and the settings card says so.
 
 If every channel tried for an alert fails (Slack answered an error, `mail()`
 refused it, the webhook could not be queued), the alert is tried again the

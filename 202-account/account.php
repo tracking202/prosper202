@@ -1113,7 +1113,8 @@ echo p202_account_render_flashes($extraFlashes);
                 $alertsView['contact'],
                 $alertsPost['errors'],
                 $alertsPost['form'],
-                $alertsView['recent']
+                $alertsView['recent'],
+                $alertsView['links']
             );
         } ?>
 

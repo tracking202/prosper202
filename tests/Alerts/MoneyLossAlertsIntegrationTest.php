@@ -623,6 +623,78 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
         self::assertCount($mailed, $this->mailed);
     }
 
+    public function testACommandLineRunLinksOnceABrowserHasShownWhereTheInstallIs(): void
+    {
+        $conn = new Connection(self::$db);
+        $root = dirname(__DIR__, 2);
+        $cli = ['argv' => []];
+        $under = '/' . basename($root) . '/';
+        $page = $under . '202-account/account.php#money-loss-alerts';
+        $browser = ['DOCUMENT_ROOT' => dirname($root), 'HTTPS' => 'on', 'HTTP_HOST' => 'elsewhere.example.net'];
+        self::q('DELETE FROM 202_users_pref WHERE user_id = 1');
+        self::row('202_users_pref', ['user_id' => 1, 'user_tracking_domain' => 'alerts.example.com']);
+        try {
+            self::assertNull(AlertNotifier::settingsUrl($conn, $cli, $root), 'nothing has shown the path yet');
+
+            AlertNotifier::rememberWebAddress($conn, $cli, $root, self::$now);
+            self::assertNull(AlertNotifier::settingsUrl($conn, $cli, $root), 'a command-line run shows nothing');
+
+            AlertNotifier::rememberWebAddress($conn, $browser, $root, self::$now);
+            self::assertSame(
+                'https://alerts.example.com' . $page,
+                AlertNotifier::settingsUrl($conn, $cli, $root),
+                'the stored domain, never the request\'s host, at the path and scheme the browser found'
+            );
+
+            // The hourly run from the command line now links its messages.
+            $this->settings(self::OWNER, new AlertSettings(true, false, true, false, 5, 10, '0.00'));
+            $this->runAlerts(self::$now, AlertNotifier::settingsUrl($conn, $cli, $root));
+            self::assertStringContainsString(
+                'https://alerts.example.com' . $under . 'tracking202/setup/inbound_log.php' . "\n",
+                $this->mailed[0][2]
+            );
+
+            // A domain stored with its scheme keeps it; one without takes the scheme the browser came on.
+            AlertNotifier::rememberWebAddress($conn, ['HTTPS' => 'off'] + $browser, $root, self::$now);
+            self::assertSame('http://alerts.example.com' . $page, AlertNotifier::settingsUrl($conn, $cli, $root));
+            self::q("UPDATE 202_users_pref SET user_tracking_domain = 'https://alerts.example.com' WHERE user_id = 1");
+            self::assertSame('https://alerts.example.com' . $page, AlertNotifier::settingsUrl($conn, $cli, $root));
+
+            // An install that no longer sits at the remembered path is not linked to a guess.
+            (new MysqlAlertStore($conn))->saveInstallAddress(true, '/moved-away/', self::$now);
+            self::assertNull(AlertNotifier::settingsUrl($conn, $cli, $root));
+
+            // No stored domain is no address, whatever a request says.
+            AlertNotifier::rememberWebAddress($conn, $browser, $root, self::$now);
+            self::q("UPDATE 202_users_pref SET user_tracking_domain = '' WHERE user_id = 1");
+            self::assertNull(AlertNotifier::settingsUrl($conn, $cli, $root));
+            self::assertNull(AlertNotifier::settingsUrl($conn, $browser, $root));
+        } finally {
+            self::q('DELETE FROM 202_users_pref WHERE user_id = 1');
+        }
+    }
+
+    public function testAlertsOnWithEveryChannelOffAreRaisedAndShownInTheAppOnly(): void
+    {
+        $this->settings(self::OWNER, new AlertSettings(true, false, false, false, 5, 10, '100.00'));
+
+        $report = $this->runAlerts(self::$now);
+
+        self::assertSame(['accounts' => 2, 'sent' => 0, 'failed' => 0, 'unsent' => 3, 'errors' => 0], $report);
+        self::assertSame([[], [], []], [$this->posted, $this->mailed, self::deliveries()]);
+        $listed = (new MysqlAlertStore(new Connection(self::$db)))->recent(self::OWNER, 0, 10);
+        self::assertSame(
+            [[MysqlAlertStore::NOWHERE, ''], [MysqlAlertStore::NOWHERE, '']],
+            array_map(static fn (array $a): array => [$a['delivery'], $a['delivery_note']], $listed)
+        );
+        $this->runAlerts(self::$now + 3600);
+        self::assertSame([], $this->mailed, 'and not tried again');
+
+        [$kind, $text] = $this->sendTest(self::OWNER);
+        self::assertSame('warn', $kind);
+        self::assertStringContainsString('shown only on Home and on this card', $text);
+    }
+
     /** @return array{0: string, 1: string} */
     private function sendTest(int $user): array
     {

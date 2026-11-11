@@ -67,6 +67,51 @@ func TestAttributionCommandsValidateBeforeTheyConnect(t *testing.T) {
 	}
 }
 
+func TestAttributionRetryPostsToTheQueueAndSaysWhatToDoWhenItFails(t *testing.T) {
+	var gotMethod, gotPath string
+	status := 200
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		w.WriteHeader(status)
+		if status == 200 {
+			w.Write([]byte(`{"data":{"made_due":{"conversions":2,"merges":0,"models":1},"worker":"ran","queue":{"failing":0}}}`))
+			return
+		}
+		w.Write([]byte(`{"error":true,"message":"Internal server error","status":500}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	out, _, err := executeCommand("attribution", "retry", "--json")
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if gotMethod != http.MethodPost || !strings.HasSuffix(gotPath, "/attribution/queue/retry") {
+		t.Errorf("request = %s %q, want POST …/attribution/queue/retry", gotMethod, gotPath)
+	}
+	if !strings.Contains(out, `"worker"`) || !strings.Contains(out, `"made_due"`) {
+		t.Errorf("output = %q, want the answer's made_due and worker", out)
+	}
+
+	status = 500
+	_, _, err = executeCommand("attribution", "retry", "--json")
+	if err == nil {
+		t.Fatal("a 500 must be an error")
+	}
+	if code := exitCodeForError(err); code != ExitServer {
+		t.Errorf("exit code = %d, want %d", code, ExitServer)
+	}
+	if hint := hintFor(err); !strings.Contains(hint, "p202 attribution queue") {
+		t.Errorf("hint = %q, want it to name p202 attribution queue", hint)
+	}
+
+	if _, _, err = executeCommand("attribution", "retry", "now"); err == nil {
+		t.Error("an argument must be refused")
+	}
+}
+
 func TestAttributionBreakdownMapsFlagsToTheReportsApi(t *testing.T) {
 	var gotPath string
 	var gotParams url.Values
