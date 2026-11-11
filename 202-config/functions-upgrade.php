@@ -394,7 +394,7 @@ if (!function_exists('_upgrade_ledger_currency_backfill')) {
     {
         $columns = _upgrade_conversion_ledger_probe('SHOW COLUMNS FROM `202_conversion_logs`', 'Field', 'Null');
         if ($columns === null) {
-            error_log('Prosper202 upgrade: could not read the columns of 202_conversion_logs; the ledger currency step will retry.');
+            _upgrade_note('could not read the columns of 202_conversion_logs; the ledger currency step will retry.');
             return false;
         }
         foreach ([
@@ -407,14 +407,14 @@ if (!function_exists('_upgrade_ledger_currency_backfill')) {
                 continue;
             }
             if (_upgrade_query('ALTER TABLE `202_conversion_logs` ADD COLUMN ' . $ddl) === false) {
-                error_log('Prosper202 upgrade: failed to add 202_conversion_logs.' . $column . '; the ledger currency step will retry.');
+                _upgrade_note('failed to add 202_conversion_logs.' . $column . '; the ledger currency step will retry.');
                 return false;
             }
         }
 
         $changed = _upgrade_query('SELECT DISTINCT `user_id` FROM `202_aff_campaigns` WHERE `aff_campaign_foreign_payout` <> 0');
         if (!$changed instanceof \mysqli_result) {
-            error_log('Prosper202 upgrade: could not read which accounts changed their currency;'
+            _upgrade_note('could not read which accounts changed their currency;'
                 . ' the ledger currency step will retry.');
             return false;
         }
@@ -428,7 +428,7 @@ if (!function_exists('_upgrade_ledger_currency_backfill')) {
         // (UsersController::normalizeCurrency()), and the accounts of each.
         $prefs = _upgrade_query('SELECT `user_id`, `user_account_currency` FROM `202_users_pref`');
         if (!$prefs instanceof \mysqli_result) {
-            error_log('Prosper202 upgrade: could not read the accounts\' currencies; the ledger currency step will retry.');
+            _upgrade_note('could not read the accounts\' currencies; the ledger currency step will retry.');
             return false;
         }
         $accounts = [];
@@ -445,7 +445,7 @@ if (!function_exists('_upgrade_ledger_currency_backfill')) {
         $bounds = _upgrade_query('SELECT MIN(`conv_id`) AS lo, MAX(`conv_id`) AS hi FROM `202_conversion_logs`');
         $range = $bounds instanceof \mysqli_result ? $bounds->fetch_assoc() : null;
         if (!is_array($range)) {
-            error_log('Prosper202 upgrade: could not read the conv_id range of 202_conversion_logs;'
+            _upgrade_note('could not read the conv_id range of 202_conversion_logs;'
                 . ' the ledger currency step will retry.');
             return false;
         }
@@ -469,7 +469,7 @@ if (!function_exists('_upgrade_ledger_currency_backfill')) {
                     . \Prosper202\Conversion\Ledger\RowCurrency::BASIS_UPGRADE . " WHERE `currency` = ''"
                     . ' AND `user_id` IN (' . implode(',', $users) . ')' . $where;
                 if (_upgrade_query($sql) === false) {
-                    error_log('Prosper202 upgrade: failed to give the ledger rows their currency; the step will retry.');
+                    _upgrade_note('failed to give the ledger rows their currency; the step will retry.');
                     return false;
                 }
             }
