@@ -2757,6 +2757,12 @@ paths:
                         currency:
                           type: string
                           nullable: true
+                          description: The currency Shopify states the refund in
+                        other_currency:
+                          type: boolean
+                          description: >-
+                            The refund is stated in another currency than the
+                            account's, so amount is not what to record.
                         click_ids:
                           type: array
                           description: >-
@@ -2773,6 +2779,9 @@ paths:
                       Whether Shopify's Transaction creation webhook has ever
                       arrived for the account. Without it a waiting refund is
                       never settled by itself.
+                  account_currency:
+                    type: string
+                    description: The currency the account counts in, which a recorded amount is stated in
         "403":
           $ref: "#/components/responses/Forbidden"
         "422":
@@ -2787,7 +2796,11 @@ paths:
         what is left of it, and closes the refund, as Record refund does
         under Setup › Inbound Log. It is recorded once under the refund's
         id, so Shopify settling the refund later records nothing more.
-        Asks for the role's access to the Setup and Update sections.
+        Nothing converts money: for a refund Shopify states in another
+        currency than the account's (`other_currency`), send the amount
+        converted with `currency` naming the account's, or the answer is a
+        422 on `currency`. Asks for the role's access to the Setup and
+        Update sections.
       operationId: recordShopifyRefund
       parameters:
         - name: id
@@ -2810,6 +2823,12 @@ paths:
                   description: >-
                     What the refund returned, in the account's currency. More
                     than 0; a decimal string is read too.
+                currency:
+                  type: string
+                  description: >-
+                    The currency amount is stated in, which must be the
+                    account's (account_currency). Required for a refund
+                    Shopify states in another currency.
                 click_id:
                   type: integer
                   description: >-

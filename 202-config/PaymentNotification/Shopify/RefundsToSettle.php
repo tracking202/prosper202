@@ -49,9 +49,10 @@ final class RefundsToSettle
      *
      * @return array{
      *     refunds: list<array{refund_id: string, order_id: string, occurred_at: int, waiting: bool, stale: bool,
-     *         reason: string, amount: string, currency: string, clicks: list<int>}>,
+     *         reason: string, amount: string, currency: string, clicks: list<int>, other_currency: bool}>,
      *     more: bool,
-     *     transaction_webhook_seen: bool
+     *     transaction_webhook_seen: bool,
+     *     account_currency: string
      * }
      */
     public function list(int $account, ?int $now = null): array
@@ -88,7 +89,18 @@ final class RefundsToSettle
             ] + self::stated((string) $row['transactions'], $failed);
         }
 
-        return ['refunds' => $refunds, 'more' => $more, 'transaction_webhook_seen' => $this->transactionSeen($account)];
+        $counts = $this->accountCurrency($account);
+        foreach ($refunds as $i => $refund) {
+            $its = strtoupper($refund['currency']);
+            $refunds[$i]['other_currency'] = $its !== '' && $its !== $counts;
+        }
+
+        return [
+            'refunds' => $refunds,
+            'more' => $more,
+            'transaction_webhook_seen' => $this->transactionSeen($account),
+            'account_currency' => $counts,
+        ];
     }
 
     /**
@@ -106,7 +118,8 @@ final class RefundsToSettle
         string $amount,
         ?int $clickId,
         InboundRequest $request,
-        string $from = self::THE_PAGE
+        string $from = self::THE_PAGE,
+        ?string $currency = null
     ): Outcome {
         $row = $this->listed($account, $refundId);
         if ($row === null) {
@@ -121,6 +134,29 @@ final class RefundsToSettle
             return new Outcome(
                 OutcomeKind::MALFORMED,
                 'The amount is what the refund returned, such as 12.50: more than 0, at most 999999.99999.',
+                null,
+                $account
+            );
+        }
+        // Nothing here converts money: the amount is the account's currency's, and for a refund Shopify
+        // stated in another one the caller says so, so its figure is never taken over as it stands.
+        $counts = $this->accountCurrency($account);
+        $refunded = strtoupper(self::stated((string) $row['transactions'], [])['currency']);
+        if ($currency !== null && strtoupper($currency) !== $counts) {
+            return new Outcome(
+                OutcomeKind::CURRENCY_MISMATCH,
+                'This account counts in ' . $counts . ', and the amount was stated in ' . strtoupper($currency)
+                . '. Prosper202 does not convert it: state the amount in ' . $counts . '. Nothing was recorded.',
+                null,
+                $account
+            );
+        }
+        if ($refunded !== '' && $refunded !== $counts && $currency === null) {
+            return new Outcome(
+                OutcomeKind::CURRENCY_MISMATCH,
+                'Shopify states this refund in ' . $refunded . ' and this account counts in ' . $counts
+                . '. Prosper202 does not convert it: state what it returned in ' . $counts . ', and name '
+                . $counts . ' as the currency of the amount. Nothing was recorded.',
                 null,
                 $account
             );
@@ -215,7 +251,8 @@ final class RefundsToSettle
             return null;
         }
         $stmt = $this->conn->prepareWrite(
-            'SELECT order_id, occurred_at FROM 202_shopify_pending_refunds WHERE user_id = ? AND refund_id = ?'
+            'SELECT order_id, occurred_at, transactions FROM 202_shopify_pending_refunds'
+            . ' WHERE user_id = ? AND refund_id = ?'
             . ' AND (completed_at IS NULL OR refused_reason IS NOT NULL)'
         );
         $this->conn->bind($stmt, 'is', [$account, $refundId]);
@@ -250,6 +287,19 @@ final class RefundsToSettle
         }
 
         return $clicks;
+    }
+
+    /** The currency the account counts in, as the processor reads it for a webhook's amount. */
+    private function accountCurrency(int $account): string
+    {
+        $stmt = $this->conn->prepareRead('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1');
+        $this->conn->bind($stmt, 'i', [$account]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new \RuntimeException('account ' . $account . ' has no preferences row to read its currency from');
+        }
+
+        return strtoupper(trim((string) $row['user_account_currency']));
     }
 
     /** Whether Shopify's Transaction creation webhook has ever settled a refund transaction for the account. */

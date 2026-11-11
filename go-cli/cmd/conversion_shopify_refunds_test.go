@@ -95,6 +95,31 @@ func TestShopifyRefundsAnswersCarryTheNextStep(t *testing.T) {
 	}
 }
 
+func TestShopifyRefundsRecordSendsTheCurrencyAndExplainsARefusalOfIt(t *testing.T) {
+	_, seen := goalServer(t, 200, `{"data":{"refund_id":"9100001","outcome":"reversed","conversion_id":77,"message":"Reversed."}}`)
+	if _, _, err := executeCommand("conversion", "shopify-refunds", "record", "9100001", "--amount", "11.60", "--currency", "usd"); err != nil {
+		t.Fatalf("record --currency: %v", err)
+	}
+	if body := (*seen)[0].Body; body["currency"] != "USD" || body["amount"] != 11.6 {
+		t.Errorf("body = %+v, want currency USD and amount 11.6", body)
+	}
+
+	_, seen = goalServer(t, 200, `{}`)
+	_, _, err := executeCommand("conversion", "shopify-refunds", "record", "9100001", "--amount", "5", "--currency", "dollars")
+	if err == nil || exitCodeForError(err) != ExitValidation || len(*seen) != 0 {
+		t.Fatalf("--currency dollars should be refused before sending, err=%v sent=%+v", err, *seen)
+	}
+	if !strings.Contains(hintFor(err), "account_currency") {
+		t.Errorf("hint = %q, want one naming account_currency", hintFor(err))
+	}
+
+	goalServer(t, 422, `{"error":true,"message":"Invalid currency","status":422,"field_errors":{"currency":"Shopify states this refund in EUR and this account counts in USD."}}`)
+	_, _, err = executeCommand("conversion", "shopify-refunds", "record", "9100001", "--amount", "10")
+	if err == nil || !strings.Contains(hintFor(err), "--currency") {
+		t.Fatalf("a refused currency should name --currency, got err=%v hint=%q", err, hintFor(err))
+	}
+}
+
 func TestShopifyRefundsCloseAsksFirstAndForceSkipsTheQuestion(t *testing.T) {
 	_, seen := goalServer(t, 200, `{"data":{"refund_id":"9100001","closed":true}}`)
 	// No terminal: the question cannot be answered, and nothing is sent.

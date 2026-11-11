@@ -53,6 +53,7 @@ final class ShopifyRefundsController
                 'reason' => $refund['waiting'] ? null : $refund['reason'],
                 'amount' => (float) $refund['amount'],
                 'currency' => $refund['currency'] !== '' ? $refund['currency'] : null,
+                'other_currency' => $refund['other_currency'],
                 'click_ids' => $refund['clicks'],
             ];
         }
@@ -61,6 +62,7 @@ final class ShopifyRefundsController
             'data' => $data,
             'more' => $listed['more'],
             'transaction_webhook_seen' => $listed['transaction_webhook_seen'],
+            'account_currency' => $listed['account_currency'],
         ];
     }
 
@@ -70,7 +72,7 @@ final class ShopifyRefundsController
      */
     public function takeBack(int $refundId, array $payload): array
     {
-        PayloadKeys::refuseUnknown($payload, ['amount', 'click_id'], 'a Shopify refund to record');
+        PayloadKeys::refuseUnknown($payload, ['amount', 'click_id', 'currency'], 'a Shopify refund to record');
         $errors = [];
         $amount = $payload['amount'] ?? null;
         // A decimal string or a JSON number; a float is read at the five decimals a payout holds.
@@ -89,6 +91,11 @@ final class ShopifyRefundsController
                 $errors['click_id'] = 'A click id: the click of the order\'s sale this refund takes back from';
             }
         }
+        $currency = $payload['currency'] ?? null;
+        if ($currency !== null && (!is_string($currency) || preg_match('/^[A-Za-z]{3}$/D', $currency) !== 1)) {
+            $errors['currency'] = 'The currency the amount is stated in, such as USD: the account\'s currency';
+            $currency = null;
+        }
         PayloadKeys::refuse($errors);
         $this->mustBeListed($refundId);
 
@@ -98,7 +105,8 @@ final class ShopifyRefundsController
             (string) $amount,
             $clickId,
             new InboundRequest('POST', '', [], '', '', 'Prosper202 API'),
-            RefundsToSettle::THE_API
+            RefundsToSettle::THE_API,
+            $currency
         );
         if (in_array($outcome->kind, [OutcomeKind::REVERSED, OutcomeKind::DUPLICATE], true)) {
             return ['data' => [
@@ -107,6 +115,9 @@ final class ShopifyRefundsController
                 'conversion_id' => $outcome->conversionId,
                 'message' => $outcome->message,
             ]];
+        }
+        if ($outcome->kind === OutcomeKind::CURRENCY_MISMATCH) {
+            throw new ValidationException('Invalid currency', ['currency' => $outcome->message]);
         }
         if ($outcome->kind === OutcomeKind::MALFORMED) {
             // Only the click is left to be wrong: the order is on more than one.

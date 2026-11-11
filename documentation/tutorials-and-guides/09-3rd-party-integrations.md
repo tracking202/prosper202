@@ -332,8 +332,11 @@ the refund in Shopify, then **Record refund** with what it returned, in your
 account's currency: it is taken from the order's sale, at most what is left
 of it, so an order that already has a refund can take another. An order
 recorded on more than one click asks which click the refund takes back from.
+Prosper202 does not convert money: a refund Shopify states in another
+currency than your account's is listed with its own figure and currency,
+and its amount box is left empty for what it returned in your currency.
 **Close** removes a refund from the list with nothing recorded (no money
-went back). A refund recorded there is not recorded again if Shopify settles
+went back), and it stays closed if Shopify sends the refund again. A refund recorded there is not recorded again if Shopify settles
 it later. Recording or closing needs a role with access to the Update
 section. The same list and actions are `GET /conversions/shopify-refunds`
 and its `record` and `close` routes in the API, and `p202 conversion
@@ -342,8 +345,9 @@ as far as is known, less any transaction Shopify reported as failed.
 
 The Shopify card says whether webhooks are arriving: the last one and when,
 the last order recorded, and how many refunds are left to settle. When a
-Shopify webhook arrives that no saved secret verifies, the card says so:
-if it came from your store, the saved secret is not the one Shopify signs
+Shopify webhook arrives that no saved secret verifies, the card says so. It
+may be from your store or from another store pointed at this install: if
+your orders are not arriving, the saved secret is not the one Shopify signs
 with. An account that stores a Shopify secret sees those webhooks in the
 Inbound Log as account "—", without their fields.
 Early development installations already marked 1.9.80 may need the new refund

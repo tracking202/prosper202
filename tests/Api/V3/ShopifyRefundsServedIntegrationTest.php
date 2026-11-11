@@ -281,6 +281,7 @@ final class ShopifyRefundsServedIntegrationTest extends TestCase
         self::assertEquals(15, $refund['amount'], $raw);
         self::assertTrue($refund['stale'], $raw);
         self::assertFalse($body['transaction_webhook_seen'], $raw);
+        self::assertSame(['USD', false], [$body['account_currency'] ?? null, $refund['other_currency'] ?? null], $raw);
 
         // Shopify says the 5 failed: the 10 is what is still to come back.
         self::deliver('order_transactions/create', ['id' => 71002, 'order_id' => 5550001234567, 'kind' => 'refund',
@@ -351,6 +352,36 @@ final class ShopifyRefundsServedIntegrationTest extends TestCase
         [$status, , $raw] = self::request('POST', $path, self::$keys['mine'], $chosen);
         self::assertSame(200, $status, $this->context($raw));
         self::assertSame(['59.00000', '59.00000', '-20.00000'], self::payouts());
+    }
+
+    public function testARefundInAnotherCurrencyNeedsTheAmountStatedInTheAccounts(): void
+    {
+        self::order();
+        self::deliver('refunds/create', ShopifyAdapterTest::refund(['refund_line_items' => [], 'transactions' => [
+            ['id' => 77001, 'kind' => 'refund', 'status' => 'success', 'amount' => '10.00', 'currency' => 'EUR'],
+        ]]));
+        $path = '/conversions/shopify-refunds/9100001/record';
+
+        [, $body, $raw] = self::request('GET', '/conversions/shopify-refunds', self::$keys['mine']);
+        self::assertSame(['EUR', true, 'USD'], [
+            $body['data'][0]['currency'] ?? null, $body['data'][0]['other_currency'] ?? null,
+            $body['account_currency'] ?? null,
+        ], $raw);
+
+        // The list's own figure sent back, a currency that is not the account's, one that is not a code.
+        $refusedBodies = [['amount' => 10], ['amount' => 10, 'currency' => 'EUR'],
+            ['amount' => 10, 'currency' => 'dollars']];
+        foreach ($refusedBodies as $payload) {
+            [$status, $body, $raw] = self::request('POST', $path, self::$keys['mine'], $payload);
+            self::assertSame(422, $status, $raw);
+            self::assertArrayHasKey('currency', $body['field_errors'] ?? [], $raw);
+        }
+        self::assertSame(['59.00000'], self::payouts());
+
+        $converted = ['amount' => '11.60', 'currency' => 'USD'];
+        [$status, , $raw] = self::request('POST', $path, self::$keys['mine'], $converted);
+        self::assertSame(200, $status, $this->context($raw));
+        self::assertSame(['59.00000', '-11.60000'], self::payouts());
     }
 
     public function testClosingRecordsNothingAndIsTheAccountsOwn(): void

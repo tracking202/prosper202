@@ -197,6 +197,7 @@ final class ShopifyRefundsToSettleIntegrationTest extends TestCase
         self::assertSame([
             'refund_id' => '9100001', 'order_id' => self::ORDER, 'occurred_at' => $at, 'waiting' => true,
             'stale' => false, 'reason' => '', 'clicks' => [self::CLICK], 'amount' => '10', 'currency' => 'USD',
+            'other_currency' => false,
         ], $fresh['refunds'][0]);
         self::assertFalse($fresh['transaction_webhook_seen']);
 
@@ -296,6 +297,167 @@ final class ShopifyRefundsToSettleIntegrationTest extends TestCase
         self::assertInstanceOf(\mysqli_result::class, $result);
         self::assertSame([['click_id' => (string) (self::CLICK + 1)]], $result->fetch_all(MYSQLI_ASSOC));
         self::assertSame([], self::desk()->list(self::ACCOUNT)['refunds']);
+    }
+
+    public function testARefundClosedOrRecordedByHandStaysSoWhenShopifySendsItAgain(): void
+    {
+        $this->deliver('orders/paid', self::order());
+        self::recordClick(self::CLICK + 1);
+        $this->deliver('orders/paid', self::order(self::CLICK + 1));
+        $refund = ShopifyAdapterTest::refund(['refund_line_items' => []]);
+        $this->deliver('refunds/create', $refund);
+        self::assertCount(1, self::desk()->list(self::ACCOUNT)['refunds']);
+
+        // Sent again while still refused, it is the one refund, still listed.
+        $this->deliver('refunds/create', $refund);
+        self::assertCount(1, self::desk()->list(self::ACCOUNT)['refunds']);
+
+        self::assertTrue(self::desk()->close(self::ACCOUNT, '9100001'));
+        $again = $this->deliver('refunds/create', $refund);
+        self::assertSame(OutcomeKind::CONFLICT, $again->kind, $again->message);
+        self::assertSame([], self::desk()->list(self::ACCOUNT)['refunds'], 'a closed refund stays closed');
+
+        // Another refund of the order, recorded by hand, is not listed again either.
+        $other = ShopifyAdapterTest::refund(['id' => 9100002, 'refund_line_items' => []]);
+        $this->deliver('refunds/create', $other);
+        $outcome = self::desk()->takeBack(self::ACCOUNT, '9100002', '20.00', self::CLICK, self::byHand());
+        self::assertSame(OutcomeKind::REVERSED, $outcome->kind, $outcome->message);
+        $this->deliver('refunds/create', $other);
+        self::assertSame([], self::desk()->list(self::ACCOUNT)['refunds'], 'a recorded refund stays recorded');
+        self::assertSame(['59.00000', '59.00000', '-20.00000'], self::payouts());
+    }
+
+    public function testARefundInAnotherCurrencyIsNeverRecordedAtShopifysFigure(): void
+    {
+        $this->deliver('orders/paid', self::order());
+        $refused = $this->deliver('refunds/create', ShopifyAdapterTest::refund([
+            'refund_line_items' => [], 'transactions' => [
+                ['id' => 77001, 'kind' => 'refund', 'status' => 'success', 'amount' => '10.00', 'currency' => 'EUR'],
+            ],
+        ]));
+        self::assertSame(OutcomeKind::CURRENCY_MISMATCH, $refused->kind, $refused->message);
+
+        $listed = self::desk()->list(self::ACCOUNT);
+        self::assertSame('USD', $listed['account_currency']);
+        self::assertCount(1, $listed['refunds']);
+        self::assertSame(['10', 'EUR', true], [
+            $listed['refunds'][0]['amount'], $listed['refunds'][0]['currency'], $listed['refunds'][0]['other_currency'],
+        ]);
+
+        // The stated figure handed back as it is, or an amount in the refund's own currency, records nothing.
+        foreach ([null, 'EUR'] as $currency) {
+            $outcome = self::desk()->takeBack(
+                self::ACCOUNT,
+                '9100001',
+                '10.00',
+                null,
+                self::byHand(),
+                RefundsToSettle::THE_PAGE,
+                $currency
+            );
+            self::assertSame(OutcomeKind::CURRENCY_MISMATCH, $outcome->kind, $outcome->message);
+            self::assertStringContainsString('USD', $outcome->message);
+        }
+        self::assertSame(['59.00000'], self::payouts());
+        self::assertCount(1, self::desk()->list(self::ACCOUNT)['refunds']);
+
+        // Stated in the account's currency, it is the operator's own conversion.
+        $outcome = self::desk()->takeBack(
+            self::ACCOUNT,
+            '9100001',
+            '11.60',
+            null,
+            self::byHand(),
+            RefundsToSettle::THE_PAGE,
+            'usd'
+        );
+        self::assertSame(OutcomeKind::REVERSED, $outcome->kind, $outcome->message);
+        self::assertSame(['59.00000', '-11.60000'], self::payouts());
+    }
+
+    public function testAWaitingRefundRefusedOutrightLaterIsListedAsRefusedWithItsReason(): void
+    {
+        $this->deliver('orders/paid', self::order());
+        $this->pending(9100001, 71001, '10.00');
+        self::assertTrue(self::desk()->list(self::ACCOUNT)['refunds'][0]['waiting']);
+
+        $refused = $this->deliver('refunds/create', self::refundIn('EUR'));
+        self::assertSame(OutcomeKind::CURRENCY_MISMATCH, $refused->kind, $refused->message);
+        $listed = self::desk()->list(self::ACCOUNT)['refunds'];
+        self::assertCount(1, $listed);
+        self::assertFalse($listed[0]['waiting']);
+        self::assertStringContainsString('EUR', $listed[0]['reason']);
+    }
+
+    /** @return array<string, mixed> refund 9100001: one successful transaction of 10.00 in $currency */
+    private static function refundIn(string $currency): array
+    {
+        return ShopifyAdapterTest::refund(['refund_line_items' => [], 'transactions' => [
+            ['id' => 77001, 'kind' => 'refund', 'status' => 'success', 'amount' => '10.00', 'currency' => $currency],
+        ]]);
+    }
+
+    public function testARefusalTheProcessorMadeThatCannotBeKeptIsAnsweredAsAFailureToo(): void
+    {
+        $db = self::requireScratch();
+        $this->deliver('orders/paid', self::order());
+        self::q('ALTER TABLE 202_shopify_pending_refunds RENAME COLUMN refused_reason TO refused_reason_away');
+        try {
+            $receiver = new Receiver(new ShopifyAdapter($db), $db);
+            $webhook = ShopifyAdapterTest::webhook('refunds/create', self::refundIn('EUR'), self::SECRET);
+            $unkept = $receiver->receive($webhook);
+            self::assertSame(OutcomeKind::FAILED, $unkept->kind, $unkept->message);
+            self::assertSame(500, $receiver->status($unkept));
+        } finally {
+            self::q('ALTER TABLE 202_shopify_pending_refunds RENAME COLUMN refused_reason_away TO refused_reason');
+        }
+        self::assertSame(['59.00000'], self::payouts());
+    }
+
+    public function testARefundInTheAccountsCurrencyRefusesAnAmountStatedInAnother(): void
+    {
+        $this->deliver('orders/paid', self::order());
+        $this->pending(9100001, 71001, '10.00');
+        $outcome = self::desk()->takeBack(
+            self::ACCOUNT,
+            '9100001',
+            '10.00',
+            null,
+            self::byHand(),
+            RefundsToSettle::THE_PAGE,
+            'EUR'
+        );
+        self::assertSame(OutcomeKind::CURRENCY_MISMATCH, $outcome->kind, $outcome->message);
+        self::assertFalse(self::desk()->list(self::ACCOUNT)['refunds'][0]['other_currency']);
+        self::assertSame(['59.00000'], self::payouts());
+    }
+
+    public function testARefusedRefundThatCannotBeKeptIsAnsweredAsAFailureSoShopifySendsItAgain(): void
+    {
+        $db = self::requireScratch();
+        $this->deliver('orders/paid', self::order());
+        self::recordClick(self::CLICK + 1);
+        $this->deliver('orders/paid', self::order(self::CLICK + 1));
+        $refund = ShopifyAdapterTest::refund(['refund_line_items' => []]);
+
+        self::q('ALTER TABLE 202_shopify_pending_refunds RENAME COLUMN refused_reason TO refused_reason_away');
+        try {
+            $receiver = new Receiver(new ShopifyAdapter($db), $db);
+            $unkept = $receiver->receive(ShopifyAdapterTest::webhook('refunds/create', $refund, self::SECRET));
+            self::assertSame(OutcomeKind::FAILED, $unkept->kind, $unkept->message);
+            self::assertSame(500, $receiver->status($unkept));
+            self::assertStringContainsString('more than one click', $unkept->message);
+        } finally {
+            self::q('ALTER TABLE 202_shopify_pending_refunds RENAME COLUMN refused_reason_away TO refused_reason');
+        }
+
+        // The retry is refused as before, and kept this time.
+        $receiver = new Receiver(new ShopifyAdapter($db), $db);
+        $kept = $receiver->receive(ShopifyAdapterTest::webhook('refunds/create', $refund, self::SECRET));
+        self::assertSame(OutcomeKind::CONFLICT, $kept->kind, $kept->message);
+        self::assertSame(200, $receiver->status($kept));
+        self::assertCount(1, self::desk()->list(self::ACCOUNT)['refunds']);
+        self::assertSame(['59.00000', '59.00000'], self::payouts());
     }
 
     public function testClosingARefundRecordsNothingAndOnlyItsAccountCan(): void

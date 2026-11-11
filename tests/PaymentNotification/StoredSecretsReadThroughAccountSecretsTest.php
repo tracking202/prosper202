@@ -41,6 +41,10 @@ final class StoredSecretsReadThroughAccountSecretsTest extends TestCase
                 . ' signed-in account, or the API key\'s, stores a secret: it decides what that account is shown of'
                 . ' the inbound log, never which account a webhook is for (accountStores())',
         ],
+        '202-config/PaymentNotification/Shopify/RefundsToSettle.php' => [
+            'SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1' => 'the currency of the'
+                . ' signed-in account, or the API key\'s, whose refunds it lists and records (accountCurrency())',
+        ],
         '202-config/PaymentNotification/Processor.php' => [
             'SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1' => 'the currency of the'
                 . ' account the click and the verified secret already decided (Processor::otherCurrency())',

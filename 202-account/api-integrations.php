@@ -1459,7 +1459,7 @@ template_top('API Integrations');
 			<div class="p202-panel__head">
 				<h2 class="p202-panel__title">Shopify</h2>
 				<?php if ($shopifyConnected && $shopifyStatus !== null && $shopifyStatus->unverifiedAt !== null) { ?>
-					<span class="p202-pill p202-pill--warn">Signature not verifying</span>
+					<span class="p202-pill p202-pill--warn">Unverified webhook seen</span>
 				<?php } elseif ($shopifyConnected && $shopifyStatus !== null && $shopifyStatus->last !== null) { ?>
 					<span class="p202-pill p202-pill--good">Receiving webhooks</span>
 				<?php } elseif ($shopifyConnected && $shopifyStatus !== null) { ?>
@@ -1482,9 +1482,10 @@ template_top('API Integrations');
 					<ul class="list-unstyled mb-3" id="shopify-status">
 						<?php if ($shopifyStatus->unverifiedAt !== null) { ?>
 							<li><strong>A Shopify webhook arrived <?php echo $e($shopifyAgo($shopifyStatus->unverifiedAt)); ?>
-								that no saved secret verifies; nothing was recorded.</strong> If it came from your store,
-								the secret saved here is not the one Shopify signs with: copy it again from
-								Settings › Notifications › Webhooks and save it below.
+								that no saved secret verifies; nothing was recorded.</strong> It may be from your
+								store, or from another store pointed at this install. If your orders are not
+								arriving, the secret saved here is not the one Shopify signs with: copy it again
+								from Settings › Notifications › Webhooks and save it below.
 								<a href="<?php echo $e($shopifyLog . '?endpoint=shopify&outcome=unverified'); ?>">See it in the Inbound Log</a></li>
 						<?php } ?>
 						<?php if ($shopifyStatus->last === null) { ?>

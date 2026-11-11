@@ -871,7 +871,10 @@ reported as failed), whether it has waited more than a day, and the clicks
 the order's sale is on; it says so when Shopify's Transaction creation
 webhook has never arrived. `record` takes `--amount`, in the account's
 currency, back from the order's sale, at most what is left of it, and closes
-the refund; an order on more than one click needs `--click-id`. `close`
+the refund; an order on more than one click needs `--click-id`. Nothing
+converts money: for a refund Shopify states in another currency
+(`other_currency` in `list --json`), pass the amount converted and
+`--currency` with the account's currency. `close`
 removes a refund with nothing recorded and asks first (`--force` skips the
 question). These are the panel above Setup › Inbound Log; `list` needs a role
 with access to the Setup section, `record` and `close` the Update section

@@ -145,7 +145,9 @@ final class RefundSettlementStore
 
     /**
      * A refund refused outright, kept closed with its reason as one line
-     * stating what it returned. One already kept takes the new reason.
+     * stating what it returned. One still open or already refused takes the
+     * new reason; one recorded or closed by hand (completed, no reason)
+     * stays as it is, so a webhook sent again does not list it again.
      */
     public function refuse(
         int $userId,
@@ -171,7 +173,9 @@ final class RefundSettlementStore
             . ' (user_id, refund_id, order_id, click_id, occurred_at, transactions, completed_at, refused_reason,'
             . ' order_on_file)'
             . ' VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE'
-            . ' completed_at = COALESCE(completed_at, VALUES(completed_at)), refused_reason = VALUES(refused_reason),'
+            // The reason first: it reads completed_at as it was.
+            . ' refused_reason = IF(completed_at IS NULL OR refused_reason IS NOT NULL, VALUES(refused_reason),'
+            . ' refused_reason), completed_at = COALESCE(completed_at, VALUES(completed_at)),'
             . ' order_on_file = GREATEST(order_on_file, VALUES(order_on_file))'
         );
         $this->conn->bind($stmt, 'issisisi', [

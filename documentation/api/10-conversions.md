@@ -133,11 +133,13 @@ It needs the role's access to the Setup section and takes no parameter.
       "reason": null,
       "amount": 12.5,
       "currency": "USD",
+      "other_currency": false,
       "click_ids": [4821]
     }
   ],
   "more": false,
-  "transaction_webhook_seen": false
+  "transaction_webhook_seen": false,
+  "account_currency": "USD"
 }
 ```
 
@@ -154,7 +156,13 @@ most what is left of it, and closes the refund. When the order is recorded
 on more than one click (`click_ids`), send `click_id` too; without it the
 answer is a `422` naming the clicks. It answers `200` with `outcome`
 (`reversed`, or `duplicate` when the refund was on file already) and the
-reversal's `conversion_id`. The refund is recorded once under its id, so
+reversal's `conversion_id`. Nothing converts money: when Shopify states the
+refund in another currency than the account's (`other_currency` is true;
+`currency` is Shopify's, `account_currency` the account's), the list's
+`amount` is not what to record. Send what the refund returned in the
+account's currency, with `"currency"` naming that currency; without it, or
+with any other currency, the answer is a `422` on `currency` and nothing is
+recorded. The refund is recorded once under its id, so
 Shopify settling it later records nothing more. `POST
 /conversions/shopify-refunds/{id}/close` removes a refund from the list with
 nothing recorded, for one that returned no money. Both need the role's

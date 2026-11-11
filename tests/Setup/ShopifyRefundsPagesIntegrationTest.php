@@ -247,6 +247,32 @@ final class ShopifyRefundsPagesIntegrationTest extends TestCase
         self::assertStringContainsString('id="shopify-refunds"', self::page(self::LOG));
     }
 
+    public function testARefundInAnotherCurrencyIsNotPrefilledAndRecordsOnlyTheAmountTyped(): void
+    {
+        self::deliver('orders/paid', ShopifyAdapterTest::order(['line_items' => [[
+            'id' => 13001, 'title' => 'Single-origin coffee beans, 1 kg', 'quantity' => 1, 'price' => '54.00',
+            'properties' => [['name' => '_t202subid', 'value' => (string) self::CLICK]],
+        ]]]));
+        self::deliver('refunds/create', ShopifyAdapterTest::refund(['refund_line_items' => [], 'transactions' => [
+            ['id' => 77001, 'kind' => 'refund', 'status' => 'success', 'amount' => '10.00', 'currency' => 'EUR'],
+        ]]));
+
+        $page = self::decoded(self::page(self::LOG));
+        self::assertStringContainsString('Stated in EUR: enter what it returned in USD.', $page);
+        $empty = '#name="refund_id" value="9100001">\s*<input[^>]*name="amount"[^>]*value="">#';
+        self::assertMatchesRegularExpression($empty, $page);
+        self::assertStringContainsString('<input type="hidden" name="currency" value="USD">', $page);
+
+        // The form posted without what the page adds for this refund records nothing.
+        self::page(self::LOG, ['action' => 'record_refund', 'refund_id' => '9100001', 'amount' => '10.00',
+            'token' => 'SESSION']);
+        self::assertSame(['59.00000'], self::payouts());
+
+        self::page(self::LOG, ['action' => 'record_refund', 'refund_id' => '9100001', 'amount' => '11.60',
+            'currency' => 'USD', 'token' => 'SESSION']);
+        self::assertSame(['59.00000', '-11.60000'], self::payouts());
+    }
+
     public function testClosingFromTheLogRecordsNothingAndClearsTheList(): void
     {
         self::paidOrderWithAWaitingRefund();
@@ -267,7 +293,7 @@ final class ShopifyRefundsPagesIntegrationTest extends TestCase
 
         self::deliver('orders/paid', ShopifyAdapterTest::order(), 'a-secret-the-store-does-not-have');
         $failing = self::decoded(self::card());
-        self::assertStringContainsString('p202-pill p202-pill--warn">Signature not verifying<', $failing);
+        self::assertStringContainsString('p202-pill p202-pill--warn">Unverified webhook seen<', $failing);
         self::assertStringContainsString('that no saved secret verifies', $failing);
         $log = self::decoded(self::page(self::LOG, [], self::USER, ['endpoint' => 'shopify']));
         self::assertStringContainsString('The Shopify webhooks no stored secret verified are listed too', $log);

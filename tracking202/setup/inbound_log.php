@@ -58,7 +58,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     (string) $refundId,
                     $amount,
                     $postedClick === null || $postedClick === '' ? null : PostedId::read($postedClick),
-                    new InboundRequest('POST', '', [], '', '', 'Prosper202 Setup › Inbound Log')
+                    new InboundRequest('POST', '', [], '', '', 'Prosper202 Setup › Inbound Log'),
+                    RefundsToSettle::THE_PAGE,
+                    is_string($_POST['currency'] ?? null) && $_POST['currency'] !== '' ? $_POST['currency'] : null
                 );
                 $recorded = in_array($outcome->kind, [OutcomeKind::REVERSED, OutcomeKind::DUPLICATE], true);
                 $flash = [$recorded ? 'ok' : 'bad', 'Refund ' . $refundId . ': ' . $outcome->message];
@@ -96,7 +98,7 @@ try {
     error_log(p202UncaughtLogLine('Setup › Inbound Log: the log could not be read', $e));
     $errors['log'] = 'The log could not be read just now. If it keeps failing, the server\'s error log says why (an upgrade may be pending).';
 }
-$toSettle = ['refunds' => [], 'more' => false, 'transaction_webhook_seen' => true];
+$toSettle = ['refunds' => [], 'more' => false, 'transaction_webhook_seen' => true, 'account_currency' => ''];
 try {
     $toSettle = (new RefundsToSettle($db))->list($userId);
 } catch (\Throwable $e) {
@@ -142,7 +144,7 @@ if (is_array($flash) && is_string($flash[0] ?? null) && is_string($flash[1] ?? n
 if ($seesUnattributed) {
     echo p202_flash('info', 'As an admin you also see the requests no account could be found for (an unknown campaign, a signature no stored key verifies); they show "—" as the account.');
 } elseif (array_filter($rows, static fn (array $row): bool => $row['user_id'] === null) !== []) {
-    echo p202_flash('info', 'The Shopify webhooks no stored secret verified are listed too, as account "—": if one came from your store, the secret saved under Account › API integrations › Shopify is not the one Shopify signs with.');
+    echo p202_flash('info', 'The Shopify webhooks no stored secret verified are listed too, as account "—". One may be from your store, or from another store pointed at this install: if your orders are not arriving, the secret saved under Account › API integrations › Shopify is not the one Shopify signs with.');
 }
 ?>
 
@@ -182,7 +184,10 @@ if ($seesUnattributed) {
                         <td><?php echo p202_setup_e($refund['order_id']); ?></td>
                         <td><?php echo p202_setup_e($refund['refund_id']); ?></td>
                         <td class="num"><?php echo p202_setup_e(trim($refund['amount'] . ' ' . $refund['currency'])); ?></td>
-                        <td><?php echo p202_setup_e($refund['waiting'] ? 'Waiting for Shopify to say its transaction settled.' : $refund['reason']); ?></td>
+                        <td><?php echo p202_setup_e($refund['waiting'] ? 'Waiting for Shopify to say its transaction settled.' : $refund['reason']); ?><?php
+                            if ($refund['other_currency']) {
+                                echo ' <strong>' . p202_setup_e('Stated in ' . $refund['currency'] . ': enter what it returned in ' . $toSettle['account_currency'] . '.') . '</strong>';
+                            } ?></td>
                         <td>
                             <?php if (!$canSettle) { ?>
                                 <span class="text-body-secondary">Recording needs access to the Update section.</span>
@@ -193,7 +198,12 @@ if ($seesUnattributed) {
                                 <input type="hidden" name="refund_id" value="<?php echo p202_setup_e($refund['refund_id']); ?>">
                                 <input type="text" inputmode="decimal" class="form-control form-control-sm w-auto" name="amount" size="9" required
                                     aria-label="Amount refunded, in your account’s currency" title="Amount refunded, in your account’s currency"
-                                    value="<?php echo p202_setup_e($refund['amount'] === '0' ? '' : $refund['amount']); ?>">
+                                    value="<?php echo p202_setup_e($refund['amount'] === '0' || $refund['other_currency'] ? '' : $refund['amount']); ?>">
+                                <span class="text-body-secondary"><?php echo p202_setup_e($toSettle['account_currency']); ?></span>
+                                <?php if ($refund['other_currency']) { ?>
+                                    <?php // The amount typed is the operator's own conversion, never Shopify's figure. ?>
+                                    <input type="hidden" name="currency" value="<?php echo p202_setup_e($toSettle['account_currency']); ?>">
+                                <?php } ?>
                                 <?php if (count($refund['clicks']) > 1) { ?>
                                     <select class="form-select form-select-sm w-auto" name="click_id" required aria-label="The click this refund takes back from">
                                         <option value="">Click…</option>
@@ -218,7 +228,7 @@ if ($seesUnattributed) {
                 </tbody>
             </table>
         </div>
-        <p class="form-text mb-0">The amount is in your account’s currency and is taken from the order’s sale, at most what is left of it.</p>
+        <p class="form-text mb-0">The amount is in your account’s currency<?php echo $toSettle['account_currency'] !== '' ? ' (' . p202_setup_e($toSettle['account_currency']) . ')' : ''; ?> and is taken from the order’s sale, at most what is left of it. Prosper202 does not convert a refund stated in another currency.</p>
     </div>
 </section>
 <?php } ?>

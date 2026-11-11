@@ -906,8 +906,9 @@ p202 conversion inbound-log [--outcome refused|accepted|<outcome>] [--endpoint p
                        # Setup › Inbound Log: postbacks, pixels and IPNs received, newest first, with why each was refused
 p202 conversion shopify-refunds list [--json]
                        # Shopify refunds still counted in a sale: waiting to settle or refused (Setup › Inbound Log)
-p202 conversion shopify-refunds record <refund-id> --amount F [--click-id N] [--json]
-                       # reverse the order's sale by the refund, at most what is left; --click-id when the order is on several clicks
+p202 conversion shopify-refunds record <refund-id> --amount F [--click-id N] [--currency CODE] [--json]
+                       # reverse the order's sale by the refund, at most what is left; --click-id when the order is on several clicks;
+                       # a refund in another currency (other_currency): convert --amount yourself and pass --currency <account_currency>
 p202 conversion shopify-refunds close <refund-id> [--force] [--json]
                        # close one with nothing recorded (no money was returned)
 p202 conversion get    <id> [--json]
