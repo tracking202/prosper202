@@ -33,6 +33,7 @@ final class NormalizedRuleMatchesServedIntegrationTest extends TestCase
     private const BRITISH = '81.2.69.160';
     private const UNPLACED = '203.0.113.44';
     private const DESKTOP = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+    private const MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15';
     private const PHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1';
 
     /** @var resource|null */
@@ -76,6 +77,7 @@ final class NormalizedRuleMatchesServedIntegrationTest extends TestCase
             'country stored' => $written('country stored', 'country', 'is', 'ALL'),
             'country stored, negated' => $written('country stored, negated', 'country', 'is_not', 'ALL'),
             'device stored' => $written('device stored', 'device', 'is', 'ALL'),
+            'desktop' => $written('desktop', 'device', 'is', 'desktop'),
         ];
         // As a writer before the normalizer left them.
         foreach (['country stored' => 'GB', 'country stored, negated' => 'GB', 'device stored' => 'Mobile'] as $name => $value) {
@@ -199,5 +201,17 @@ final class NormalizedRuleMatchesServedIntegrationTest extends TestCase
         self::assertSame('Mobile', self::storedValue('device stored'));
         self::assertSame('https://rule.example/', self::click('device stored', self::UNPLACED, self::PHONE));
         self::assertSame('https://default.example/', self::click('device stored', self::UNPLACED, self::DESKTOP));
+    }
+
+    /**
+     * A desktop is every computer, a Mac included: the user agent parser
+     * calls a Mac's device "Mac", which the redirects compared as it was,
+     * so "device is desktop" sent every Mac to the default.
+     */
+    public function testADesktopRuleMatchesAMac(): void
+    {
+        self::assertSame('https://rule.example/', self::click('desktop', self::UNPLACED, self::MAC));
+        self::assertSame('https://rule.example/', self::click('desktop', self::UNPLACED, self::DESKTOP));
+        self::assertSame('https://default.example/', self::click('desktop', self::UNPLACED, self::PHONE));
     }
 }

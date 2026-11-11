@@ -324,6 +324,33 @@ final class RedirectorRulesSaveIntegrationTest extends TestCase
     }
 
     /**
+     * Whether an ISP rule can be chosen follows the account's own MaxMind
+     * ISP setting, the one its redirects read, not the first account's.
+     */
+    public function testAnIspRuleFollowsTheAccountsOwnIspSetting(): void
+    {
+        $page = static fn (): string => self::page('tracking202/setup/rotator.php', ['rotator_id' => (string) self::ROTATOR]);
+        $set = static fn (int $user, int $isp) => self::q("INSERT INTO 202_users_pref SET user_id = $user, maxmind_isp = '$isp'"
+            . " ON DUPLICATE KEY UPDATE maxmind_isp = '$isp'");
+        $firstHad = self::requireScratch()->query('SELECT maxmind_isp FROM 202_users_pref WHERE user_id = 1')->fetch_row();
+        try {
+            $set(1, 1);
+            $set(self::USER, 0);
+            self::assertStringContainsString('(needs MaxMind ISP)', $page());
+            $set(1, 0);
+            $set(self::USER, 1);
+            self::assertStringNotContainsString('(needs MaxMind ISP)', $page());
+        } finally {
+            $set(self::USER, 0);
+            if ($firstHad === null) {
+                self::q('DELETE FROM 202_users_pref WHERE user_id = 1');
+            } else {
+                $set(1, (int) $firstHad[0]);
+            }
+        }
+    }
+
+    /**
      * A save that would remove a rule needs remove_rotator_rule, as the
      * page's remove button does, and refuses before anything is written.
      */

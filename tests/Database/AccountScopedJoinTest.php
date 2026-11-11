@@ -269,8 +269,6 @@ final class AccountScopedJoinTest extends TestCase
             'table built at runtime | \\Prosper202\\Conversion\\Ledger\\LedgerReportSql::partsTable($clickScope) | LEFT OUTER JOIN {\\Prosper202\\Conversion\\Ledger\\LedgerReportSql::partsTable($clickScope)} AS lcp ON ( `2c`.click_id = lcp.' => self::LEDGER_PARTS,
         ],
         '202-config/Rotator/SeenValues.php' => [
-            'condition built at runtime | 202_dataengine | d.user_id = ? AND d.click_time >= ?'
-                . ' AND d.{$column} > 0' => self::RUNTIME_CHECKED,
             'table built at runtime | $lookup | AS seen STRAIGHT_JOIN {$lookup}'
                 . ' ON ( {$idColumn} = seen.id ) WHERE {$value}' => self::RUNTIME_CHECKED,
         ],

@@ -9,7 +9,7 @@ $slack = false;
 
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-$user_sql = "SELECT 202_users.user_name AS username, 202_users_pref.maxmind_isp FROM 202_users_pref LEFT JOIN 202_users ON (202_users.user_id = '".$mysql['user_own_id']."') WHERE 202_users_pref.user_id='1'";
+$user_sql = "SELECT 202_users.user_name AS username FROM 202_users WHERE 202_users.user_id = '".$mysql['user_own_id']."'";
 $user_result = $db->query($user_sql);
 if ($user_result === false) {
     record_mysql_error($user_sql);

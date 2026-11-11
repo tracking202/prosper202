@@ -309,4 +309,24 @@ final class CriterionMatcherTest extends TestCase
             self::assertDoesNotMatchRegularExpression("/case\\s+'(?:country|browser|utm_source)'\\s*:/", $source, $file);
         }
     }
+
+    /**
+     * A device rule names the device as the click is recorded: a Mac is a
+     * desktop and a crawler a bot, in both redirect scripts.
+     */
+    public function testADeviceIsTabletMobileBotOrDesktopInBothScripts(): void
+    {
+        self::assertSame('Desktop', \Prosper202\Rotator\VisitorDevice::of(false, false, 'Mac'));
+        self::assertSame('Desktop', \Prosper202\Rotator\VisitorDevice::of(false, false, 'Other'));
+        self::assertSame('Desktop', \Prosper202\Rotator\VisitorDevice::of(false, false, 'PlayStation 4'));
+        self::assertSame('Bot', \Prosper202\Rotator\VisitorDevice::of(false, false, 'Spider'));
+        self::assertSame('Bot', \Prosper202\Rotator\VisitorDevice::of(false, false, 'Bot'));
+        self::assertSame('Mobile', \Prosper202\Rotator\VisitorDevice::of(false, true, 'iPhone'));
+        self::assertSame('Tablet', \Prosper202\Rotator\VisitorDevice::of(true, true, 'iPad'));
+        foreach (['tracking202/redirect/rtr.php', 'tracking202/redirect/offrtr.php'] as $file) {
+            $source = (string) file_get_contents(SourceScan::repoRoot() . '/' . $file);
+            self::assertStringContainsString('VisitorDevice::of(', $source, $file);
+            self::assertStringNotContainsString('device->family = "', $source, "$file names a device itself");
+        }
+    }
 }

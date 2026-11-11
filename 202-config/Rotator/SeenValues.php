@@ -14,13 +14,23 @@ use Prosper202\Database\Connection;
  * matches nobody.
  *
  * Read as Analyze's seen filters are (p202_overview_seen_list_sql()): the
- * account's report rows in the window grouped by the id first, then the
- * lookup, which is install-wide and far larger than one account's values.
+ * account's report rows grouped by the id first, then the lookup, which is
+ * install-wide and far larger than one account's values. The rows are the
+ * account's newest in the window, bounded (NEWEST_ROWS).
  */
 final class SeenValues
 {
     /** How far back the clicks are read. */
     public const WINDOW_DAYS = 30;
+
+    /**
+     * How many of the account's report rows are read, the newest first.
+     * Every row of the window was 1.7 million rows and 9 seconds a keystroke
+     * on a table partitioned as the installer makes it; the newest 50,000
+     * answer in about a tenth of that second, and are what a rule written
+     * today is for.
+     */
+    public const NEWEST_ROWS = 50000;
 
     /** type => [the 202_dataengine column, the lookup joined as l, its id column, the value]. */
     private const LOOKUPS = [
@@ -65,9 +75,11 @@ final class SeenValues
 
         // A value holding a comma cannot be a rule's: the rule's value is a comma-separated list.
         return "SELECT $value AS value, SUM(seen.clicks) AS clicks FROM ("
-            . "SELECT d.$column AS id, SUM(d.clicks) AS clicks FROM 202_dataengine AS d"
-            . " WHERE d.user_id = ? AND d.click_time >= ? AND d.$column > 0"
-            . " GROUP BY d.$column) AS seen"
+            . "SELECT newest.id, SUM(newest.clicks) AS clicks FROM ("
+            . "SELECT d.$column AS id, d.clicks FROM 202_dataengine AS d"
+            . " WHERE d.user_id = ? AND d.click_time >= ?"
+            . " ORDER BY d.click_time DESC LIMIT " . self::NEWEST_ROWS . ") AS newest"
+            . " WHERE newest.id > 0 GROUP BY newest.id) AS seen"
             . " STRAIGHT_JOIN $lookup ON ($idColumn = seen.id)"
             . " WHERE $value LIKE ? ESCAPE '|' AND $value != '' AND $value NOT LIKE '%,%'"
             . " GROUP BY $value ORDER BY clicks DESC, value LIMIT " . max(1, $limit);

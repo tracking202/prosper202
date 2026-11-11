@@ -23,7 +23,7 @@ $copying = false;
 $slack = false;
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-$user_sql = "SELECT 2u.user_name as username, 2up.maxmind_isp FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '".$mysql['user_own_id']."'";
+$user_sql = "SELECT 2u.user_name as username FROM 202_users AS 2u WHERE 2u.user_id = '".$mysql['user_own_id']."'";
 $user_results = $db->query($user_sql);
 if ($user_results === false) {
     record_mysql_error($user_sql);
@@ -187,7 +187,6 @@ $base = get_absolute_url();
 $self = $base . 'tracking202/setup/rotator.php';
 $token = (string) ($_SESSION['token'] ?? '');
 $uid = (int) $_SESSION['user_id'];
-$ispEnabled = isset($user_row['maxmind_isp']) && $user_row['maxmind_isp'] == '1';
 
 $rotators = p202_setup_rows($db, "SELECT * FROM `202_rotators` WHERE `user_id`='" . $uid . "' ORDER BY `name` ASC");
 $rulesByRotator = [];
@@ -234,6 +233,8 @@ try {
 } catch (\Throwable $matchAccountError) {
 	record_mysql_error($db, 'reading what the redirector rules of account ' . $uid . ' can ask', $matchAccountError->getMessage());
 }
+// The account's own MaxMind ISP setting, the one its redirects read (ClickPathReads::redirectorTracker()).
+$ispEnabled = $matchAccount['isp'];
 $integrationsUrl = $base . '202-account/api-integrations.php#ipqs';
 $typeWarnings = [];
 foreach (\Prosper202\Rotator\NeverMatches::types($matchAccount) as $warnedType => $warnedText) {
