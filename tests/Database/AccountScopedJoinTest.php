@@ -89,6 +89,11 @@ final class AccountScopedJoinTest extends TestCase
     private const GROUP_LEAVES = 'the group report\'s innermost groups, a derived table: its WHERE is'
         . ' filtered()\'s, which begins `de.user_id = ?` with the account, and its joins are dimensionJoin()\'s,'
         . ' which testRuntimeBuiltSqlIsTied() runs';
+    private const PUBLISHER_CREDIT = 'the publisher a click was credited to, named in the click\'s own account\'s'
+        . ' report: 202_clicks_publisher is written only by MysqlClickRepository (ClickRowsWrittenOnlyByTheWriterTest),'
+        . ' with the user PublisherCredit::forClick() answered for the click\'s account, a Publisher of its install'
+        . ' that the account may grant; the user row is the publisher\'s, not a record the click\'s account owns, so'
+        . ' there is no account to tie it to, and only its name is read';
     private const NOT_SQL = 'an exception message ("has no name join"), not SQL';
     private const CALLER_SCOPE = 'the caller\'s click scope over 202_dataengine (the report\'s own user filter); the rows it selects are one click\'s conversions';
     private const INSTALL_REGISTRATION = 'an install\'s registration: InstallIntake::insert() writes registration_id and user_id together from one registration, and no statement updates either';
@@ -329,6 +334,7 @@ final class AccountScopedJoinTest extends TestCase
                 . ' | implode("\n ", $joins)' => self::GROUP_LEAVES,
             'no table after JOIN | ? | LEFT JOIN' => self::JOIN_REWRITE,
             'table built at runtime | {$bd[\'table\']} | INNER JOIN {{$bd[\'table\']}} ref ON {$on}' => self::RUNTIME_CHECKED,
+            'no user_id tie | 202_users | ref.user_id = cp.publisher_user_id' => self::PUBLISHER_CREDIT,
         ],
         'tracking202/Report/ReportPrefsStore.php' => [
             'condition built at runtime | 202_dataengine | {$scope} AND `2st`.click_time >= ? '
@@ -518,6 +524,17 @@ final class AccountScopedJoinTest extends TestCase
         $join = $reports->getMethod('dimensionJoin');
         foreach (array_keys($reports->getConstant('BREAKDOWNS')) as $dimension) {
             $sql = 'SELECT 1 FROM 202_dataengine de ' . $join->invoke(null, $dimension) . ' WHERE de.user_id = ?';
+            if ($dimension === 'publisher') {
+                // PUBLISHER_CREDIT: the one join onto a user who is not the click's account.
+                self::assertSame(
+                    [['no user_id tie', '202_users', 'ref.user_id = cp.publisher_user_id']],
+                    array_map(
+                        static fn (array $f): array => [$f['kind'], $f['table'], $f['detail']],
+                        SqlJoinScan::findings($sql, [], self::accountTables())
+                    )
+                );
+                continue;
+            }
             $checked += $this->assertTied($sql, "ReportsController::dimensionJoin('$dimension')");
         }
         foreach (\Prosper202\Report\MysqlReportRepository::dimensions() as $dimension) {
