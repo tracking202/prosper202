@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Update;
 
+use Api\V3\Controllers\UsersController;
 use Prosper202\Click\ClickRef;
 use Prosper202\Click\FirstVisit;
 use Prosper202\Click\LatestVisit;
@@ -108,7 +109,7 @@ final class SubidBatch
      */
     public static function read(array $items): array
     {
-        return self::parse($items, false, null, time());
+        return self::parse($items, false, null, time(), null);
     }
 
     /**
@@ -121,19 +122,24 @@ final class SubidBatch
      * transaction id (or none); one stating another payout or time than the
      * earlier line is invalid_line.
      *
+     * A payout written with the sign or code of $currency, the account's
+     * ("$12.50", "12.50 USD"), is read as its number, and the entry keeps
+     * what was written as `payout_written`; with no $currency, or with
+     * another currency's sign, it is refused.
+     *
      * @param list<mixed> $items
-     * @return list<array{line: int, subid: string, click_id: int|null, status: string|null, first_line?: int, payout?: string, transaction_id?: string, conv_time?: int, error?: string}>
+     * @return list<array{line: int, subid: string, click_id: int|null, status: string|null, first_line?: int, payout?: string, payout_written?: string, transaction_id?: string, conv_time?: int, error?: string}>
      */
-    public static function readLines(array $items, ?\DateTimeZone $zone = null, ?int $now = null): array
+    public static function readLines(array $items, ?\DateTimeZone $zone = null, ?int $now = null, ?string $currency = null): array
     {
-        return self::parse($items, true, $zone, $now ?? time());
+        return self::parse($items, true, $zone, $now ?? time(), $currency);
     }
 
     /**
      * @param list<mixed> $items
      * @return list<array<string, mixed>>
      */
-    private static function parse(array $items, bool $withFields, ?\DateTimeZone $zone, int $now): array
+    private static function parse(array $items, bool $withFields, ?\DateTimeZone $zone, int $now, ?string $currency): array
     {
         $entries = [];
         $firstLine = [];
@@ -156,19 +162,31 @@ final class SubidBatch
                 $error = 'has ' . count($fields) . ' fields; a line is SUBID, PAYOUT, TRANSACTION ID, TIMESTAMP (a comma inside a value is not read)';
             }
             if ($error === null && ($fields[1] ?? '') !== '') {
-                $error = self::payoutError($fields[1]);
+                $written = $fields[1];
+                [$fields[1], $error] = self::withoutCurrencySign($written, $currency);
+                $error ??= self::payoutError($fields[1]);
                 $entry['payout'] = $fields[1];
+                if ($fields[1] !== $written) {
+                    $entry['payout_written'] = $written;
+                }
+                // "12,50 $" splits too: its second part is read without the sign, for these two checks only.
+                // A sign after the payout ends the amount ("5 USD, 7"), so nothing after it is part of it.
+                [$second, $signError] = self::withoutCurrencySign($fields[2] ?? '', $currency);
+                $second = $signError === null ? $second : ($fields[2] ?? '');
+                if (preg_match('/\d$/D', $written) !== 1) {
+                    $second = '';
+                }
                 // "1,250", "1,250.00", "12,5" and "1000,50" split into a payout and a short numeric
                 // transaction id; a payout written with its decimals ("12.00, 50") is not refused.
-                if ($error === null && preg_match('/^\d+$/D', $fields[1]) === 1 && preg_match('/^\d{1,3}(?:\.\d{1,2})?$/D', $fields[2] ?? '') === 1) {
-                    $error = 'payout "' . $fields[1] . ',' . $fields[2] . '" looks like an amount with a thousands separator or a decimal comma:'
-                        . ' write it as ' . $fields[1] . $fields[2] . ' or ' . $fields[1] . '.' . $fields[2]
+                if ($error === null && preg_match('/^\d+$/D', $fields[1]) === 1 && preg_match('/^\d{1,3}(?:\.\d{1,2})?$/D', $second) === 1) {
+                    $error = 'payout "' . $written . ',' . $fields[2] . '" looks like an amount with a thousands separator or a decimal comma:'
+                        . ' write it as ' . $fields[1] . $second . ' or ' . $fields[1] . '.' . $second
                         . ' (if ' . $fields[2] . ' is the transaction id, write the payout with its decimals, as ' . $fields[1] . '.00)';
                 }
                 // "1.250,00" splits into a payout of 1.250 and a transaction id of 00.
-                if ($error === null && preg_match('/^\d{1,3}(?:\.\d{3})+$/D', $fields[1]) === 1 && preg_match('/^\d{1,2}$/D', $fields[2] ?? '') === 1) {
-                    $error = 'payout "' . $fields[1] . ',' . $fields[2] . '" looks like an amount written with a dot for thousands and a comma for decimals:'
-                        . ' write it as ' . str_replace('.', '', $fields[1]) . '.' . $fields[2];
+                if ($error === null && preg_match('/^\d{1,3}(?:\.\d{3})+$/D', $fields[1]) === 1 && preg_match('/^\d{1,2}$/D', $second) === 1) {
+                    $error = 'payout "' . $written . ',' . $fields[2] . '" looks like an amount written with a dot for thousands and a comma for decimals:'
+                        . ' write it as ' . str_replace('.', '', $fields[1]) . '.' . $second;
                 }
             }
             if ($error === null && ($fields[2] ?? '') !== '') {
@@ -245,6 +263,93 @@ final class SubidBatch
         return (string) preg_replace('/(\.\d\d\d*?)0+$/D', '$1', Amount::fromUnits(Amount::toUnits($value)));
     }
 
+    /** Signs written for a dollar currency besides "$" and its code. */
+    private const DOLLAR_SIGNS = [
+        'USD' => ['US$'], 'AUD' => ['A$', 'AU$'], 'CAD' => ['C$', 'CA$'], 'HKD' => ['HK$'],
+        'MXN' => ['MX$'], 'NZD' => ['NZ$'], 'SGD' => ['S$', 'SG$'],
+    ];
+
+    /**
+     * Every way $currency is written beside an amount, lower-cased: its
+     * code, its symbol, and "$" for a dollar currency.
+     *
+     * @return list<string>
+     */
+    public static function currencySigns(string $currency): array
+    {
+        $signs = [$currency];
+        foreach (UsersController::CURRENCY_SYMBOLS[$currency] ?? [] as $symbol) {
+            if ($symbol !== '') {
+                $signs[] = $symbol;
+            }
+        }
+        if (isset(self::DOLLAR_SIGNS[$currency])) {
+            $signs = [...$signs, '$', ...self::DOLLAR_SIGNS[$currency]];
+        }
+        if (in_array($currency, ['DKK', 'NOK', 'SEK'], true)) {
+            $signs = [...$signs, 'kr', 'kr.'];
+        }
+        if (in_array($currency, ['JPY', 'CNY'], true)) {
+            $signs[] = "\u{FFE5}";
+        }
+
+        return array_values(array_unique(array_map('mb_strtolower', $signs)));
+    }
+
+    /**
+     * $payout as a network report writes it, without the sign or code of
+     * $currency before or after the number ("$12.50", "12.50 USD",
+     * "US$ 12.50"): the number, and null; or $payout as given and why it
+     * is refused, when the sign is another currency's. The amount is
+     * recorded in the account's currency, so another currency's is not
+     * read as it. Text with no sign, and any text when $currency is null,
+     * comes back as given for payoutError() to judge.
+     *
+     * @return array{0: string, 1: string|null}
+     */
+    public static function withoutCurrencySign(string $payout, ?string $currency): array
+    {
+        if ($currency === null
+            || preg_match('/^(?<before>[^\d\s.,+-][^\d\s,+-]{0,3})?\s*(?<number>-?\s*\d[\d.]*)\s*(?<after>[^\d\s.,+-][^\d\s,+-]{0,3})?$/Du', $payout, $m) !== 1) {
+            return [$payout, null];
+        }
+        $written = array_values(array_filter([$m['before'] ?? '', $m['after'] ?? ''], static fn (string $sign): bool => $sign !== ''));
+        if ($written === []) {
+            return [$payout, null];
+        }
+        $signs = self::currencySigns($currency);
+        foreach ($written as $sign) {
+            if (!in_array(mb_strtolower($sign), $signs, true)) {
+                return [$payout, 'payout "' . $payout . '" carries "' . $sign . '", which is not how this account\'s currency (' . $currency
+                    . ') is written: write the amount in ' . $currency . ' as digits, such as 12.50'];
+            }
+        }
+
+        return [(string) preg_replace('/\s+/', '', $m['number']), null];
+    }
+
+    /**
+     * A payout typed or sent for a whole list, read as a line's is: the
+     * number, and why it cannot be recorded (null when it can).
+     *
+     * @return array{0: string, 1: string|null}
+     */
+    public static function readPayout(string $payout, ?string $currency): array
+    {
+        [$number, $error] = self::withoutCurrencySign($payout, $currency);
+
+        return [$number, $error ?? self::payoutError($number)];
+    }
+
+    /** The currency the account's amounts are recorded in. */
+    public static function accountCurrency(Connection $conn, int $userId): string
+    {
+        $stmt = $conn->prepareRead('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1');
+        $conn->bind($stmt, 'i', [$userId]);
+
+        return UsersController::normalizeCurrency($conn->fetchOne($stmt)['user_account_currency'] ?? null);
+    }
+
     /**
      * Why $payout is not an amount Update Subids records, or null when it
      * is: a plain decimal, not negative, below a million.
@@ -255,7 +360,7 @@ final class SubidBatch
             return 'payout "' . $payout . '" is negative; a reversal is not recorded here';
         }
         if (preg_match('/^(\d+)(?:\.(\d{1,5}))?$/D', $payout, $m) !== 1) {
-            return 'payout "' . $payout . '" is not a number: write it as digits with a decimal point (at most five decimals), such as 12.50, with no currency sign or thousands separator';
+            return 'payout "' . $payout . '" is not a number: write it as digits with a decimal point (at most five decimals), such as 12.50, with no thousands separator and no sign but your account currency\'s';
         }
         // Compared as text: a long run of digits is no int.
         $whole = ltrim($m[1], '0');
@@ -747,7 +852,7 @@ final class SubidBatch
         if ($defaultPayout !== null && ($problem = self::payoutError($defaultPayout)) !== null) {
             throw new \InvalidArgumentException('default ' . $problem);
         }
-        $entries = $this->refuseChangedSales($userId, $this->refuseTimesBeforeTheirClick($userId, $this->verifyPurLinks($userId, self::readLines($items, $zone))), $zone);
+        $entries = $this->refuseChangedSales($userId, $this->refuseTimesBeforeTheirClick($userId, $this->verifyPurLinks($userId, self::readLines($items, $zone, null, self::accountCurrency($this->conn, $userId)))), $zone);
         $invalid = self::invalidLines($entries);
         if ($invalid !== []) {
             throw new SubidLinesRefused($invalid);

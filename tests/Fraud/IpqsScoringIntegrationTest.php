@@ -96,6 +96,7 @@ final class IpqsScoringIntegrationTest extends TestCase
             self::q("DELETE FROM $table WHERE click_id IN (SELECT click_id FROM ($clicks) AS ours)");
         }
         $tables = ['202_clicks', '202_clicks_spy', '202_dataengine', '202_ipqs_scores', '202_ipqs_progress',
+            '202_click_filter_entries', '202_click_filter_settings',
             '202_users_pref', '202_users', '202_dirty_hours'];
         foreach ($tables as $table) {
             self::q("DELETE FROM $table WHERE user_id IN ($users)");
@@ -185,6 +186,86 @@ final class IpqsScoringIntegrationTest extends TestCase
             self::cached(self::OWNER),
             'only the score is kept, per address'
         );
+    }
+
+    /**
+     * "Not fraud" (FraudVerdictUndo): the click and the account's other
+     * clicks from the address that were filtered for their score count
+     * again where every report reads them, the address goes on the click
+     * filter list as always count, and scoring leaves it alone after that.
+     */
+    public function testNotFraudCountsTheAddressesClicksAgainAndExemptsIt(): void
+    {
+        self::$stub->scores(['203.0.113.50' => 95, '203.0.113.60' => 99]);
+        $first = $this->click(self::OWNER, '203.0.113.50', 'US', 400);
+        $second = $this->click(self::OWNER, '203.0.113.50', 'US', 300);
+        $elsewhere = $this->click(self::OWNER, '203.0.113.60', 'US', 280);
+        $theirs = $this->click(self::OTHER, '203.0.113.50', 'US', 260);
+        $ruled = $this->click(self::OWNER, '203.0.113.50', 'US', 240);
+        $this->score();
+        // A click one of the account's own rules filtered, from the same address.
+        self::q("UPDATE 202_clicks SET click_filtered = 1 WHERE click_id = $ruled");
+        self::q("REPLACE INTO 202_clicks_filter_reason SET click_id = $ruled, filter_reason = 'repeat_visit', entry_id = 0");
+        self::assertSame(self::FRAUD, self::filtered($first));
+        self::assertSame(self::FRAUD, self::filtered($theirs));
+        $conn = new Connection(self::$db);
+        self::assertSame(['scored' => 2, 'filtered' => 3], \Prosper202\Fraud\FraudVerdictUndo::lastDay($conn, self::OWNER, $this->now));
+
+        $undo = new \Prosper202\Fraud\FraudVerdictUndo($conn);
+        self::assertNull($undo->undo(self::OWNER, $theirs), 'another account\'s click is not undone');
+        self::assertNull($undo->undo(self::OWNER, $ruled), 'a click a rule filtered is not undone here');
+        self::assertSame(self::FRAUD, self::filtered($theirs));
+        // The writer itself holds both lines, whoever calls it.
+        $writer = new \Prosper202\Click\MysqlClickRepository($conn);
+        self::assertFalse($writer->unfilterFraud(self::OWNER, $ruled), 'the writer leaves a click a rule filtered');
+        self::assertFalse($writer->unfilterFraud(self::OWNER, $theirs), 'and another account\'s click');
+        self::assertSame('1', self::one("SELECT click_filtered FROM 202_clicks WHERE click_id = $ruled"));
+        self::assertSame(self::FRAUD, self::filtered($theirs));
+
+        $answer = $undo->undo(self::OWNER, $second);
+        self::assertSame(['address' => '203.0.113.50', 'clicks' => 2, 'more' => false, 'exempted' => true, 'exempt_problem' => null], $answer);
+        self::assertSame(self::COUNTED, self::filtered($first), 'the address\'s other scored click counts again too');
+        self::assertSame(self::COUNTED, self::filtered($second));
+        self::assertSame(self::FRAUD, self::filtered($elsewhere), 'another address keeps its verdict');
+        self::assertSame(self::FRAUD, self::filtered($theirs), 'another account keeps its own');
+        self::assertSame('repeat_visit', self::filtered($ruled)['reason']);
+        self::assertSame('1', self::one("SELECT click_filtered FROM 202_clicks WHERE click_id = $ruled"));
+        self::assertSame(
+            'count',
+            self::one('SELECT action FROM 202_click_filter_entries WHERE user_id = ' . self::OWNER),
+            'the address is always counted from now on'
+        );
+        self::assertSame(['scored' => 2, 'filtered' => 1], \Prosper202\Fraud\FraudVerdictUndo::lastDay($conn, self::OWNER, $this->now));
+        self::assertNull($undo->undo(self::OWNER, $second), 'a click that counts has no verdict to undo');
+
+        // A new click from the address is neither looked up nor filtered, though its cached score is 95.
+        self::$stub->forget();
+        self::$stub->scores(['203.0.113.50' => 95]);
+        $later = $this->click(self::OWNER, '203.0.113.50', 'US', 120);
+        $report = $this->score();
+        self::assertSame(self::COUNTED, self::filtered($later));
+        self::assertSame([], self::$stub->addresses(), 'a listed address is not sent');
+        self::assertSame(0, $report['filtered']);
+        self::assertSame(1, (int) self::one('SELECT COUNT(*) FROM 202_click_filter_entries WHERE user_id = ' . self::OWNER));
+    }
+
+    /** With the list full the clicks still count again, and the answer says the address is not exempt. */
+    public function testNotFraudWithAFullListStillCountsTheClickAndSaysSo(): void
+    {
+        self::$stub->scores(['203.0.113.50' => 95]);
+        $click = $this->click(self::OWNER, '203.0.113.50', 'US', 400);
+        $this->score();
+        $rows = [];
+        for ($i = 0; $i < \Prosper202\Click\Filter\ClickFilterRules::MAX_ENTRIES; $i++) {
+            $packed = bin2hex((string) inet_pton('198.51.' . intdiv($i, 250) . '.' . ($i % 250 + 1)));
+            $rows[] = '(' . self::OWNER . ", 4, 0x$packed, 0x$packed, 32, 'filter', '', 0)";
+        }
+        self::q('INSERT INTO 202_click_filter_entries (user_id, family, range_start, range_end, prefix, action, note, created_at) VALUES ' . implode(',', $rows));
+
+        $answer = (new \Prosper202\Fraud\FraudVerdictUndo(new Connection(self::$db)))->undo(self::OWNER, $click);
+        self::assertSame([1, false], [$answer['clicks'] ?? null, $answer['exempted'] ?? null]);
+        self::assertStringContainsString('the list is full', (string) $answer['exempt_problem']);
+        self::assertSame(self::COUNTED, self::filtered($click));
     }
 
     public function testEuropeanAndUnplacedVisitorsAreNeverSent(): void

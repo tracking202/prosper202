@@ -491,9 +491,11 @@ try {
         // /conversions routes, whose GET /conversions/{id} would otherwise
         // answer GET /conversions/postback-code. SetupRoutesPermissionTest
         // holds all of this.
-        $router->group('', function (Router $r) use ($crud, $queryParams, $auth) {
+        $router->group('', function (Router $r) use ($crud, $queryParams, $payload, $auth) {
             $code = \Api\V3\Controllers\SetupCodeController::class;
             $r->get('/landing-pages/{id}/code', fn($ctx) => $crud($code)->landingPageCode(PathId::of($ctx), $queryParams));
+            // "Check my page": fetches the page and keeps the answer. Not stageable (it changes no setup), and no preview.
+            $r->post('/landing-pages/{id}/check', fn($ctx) => $crud($code)->landingPageCheck(PathId::of($ctx), $queryParams, $payload));
             // The postback token rides in the URLs only for a key that may write conversions.
             $r->get('/conversions/postback-code', fn() => $crud($code)->postbackCode($queryParams, null, $auth->hasScope('conversions:write')));
         }, [$setupSection]);
@@ -1716,6 +1718,13 @@ try {
             // events compute over the body and store nothing: reads that
             // arrive as POST because the definitions are their input. After
             // the staged override for the same reason as /apps/verify.
+            $scopeAction = 'read';
+        }
+        if ($method === 'POST' && preg_match('#^/landing-pages/[^/]+/check$#', $path) === 1) {
+            // "Check my page" fetches the landing page's own saved URL and
+            // keeps what it found beside the page: no setup changes, so a
+            // key that may read landing pages may ask. After the staged
+            // override, as /apps/verify is.
             $scopeAction = 'read';
         }
         if ($method === 'POST' && preg_match('#^/staged-changes/[^/]+/discard$#', $path) === 1) {

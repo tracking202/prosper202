@@ -247,6 +247,7 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "landing_page_list", Command: []string{"landing-page", "list"}, Title: "List landing pages", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "landing_page_get", Command: []string{"landing-page", "get"}, Title: "Get a landing page", Kind: mcpRead, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list).", true)}},
 	{Name: "landing_page_code", Command: []string{"landing-page", "code"}, Title: "Get landing page tracking code", Kind: mcpRead, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list).", true)}},
+	{Name: "landing_page_check", Command: []string{"landing-page", "check"}, Title: "Check a page carries its tracking code", Kind: mcpRead, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list).", true)}, Note: "Fetches the page's saved URL and looks for landing_page_code's code."},
 	{Name: "landing_page_create", Command: []string{"landing-page", "create"}, Title: "Create a landing page", Kind: mcpCreate},
 	{Name: "landing_page_update", Command: []string{"landing-page", "update"}, Title: "Update a landing page", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list).", true)}},
 	{Name: "landing_page_delete", Command: []string{"landing-page", "delete"}, Title: "Delete a landing page", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list); or give ids for several.", false)}, Note: deleteNote},

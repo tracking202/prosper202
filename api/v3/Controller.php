@@ -331,7 +331,10 @@ abstract class Controller
                     }
                     // The page's rule for the same field (HttpUrlPrefix), so the two accept the same values.
                     if (($def['format'] ?? null) === 'http_url' && !\Prosper202\Http\HttpUrlPrefix::accepts($clean[$col])) {
-                        $errors[$col] = "Field '$col' " . \Prosper202\Http\HttpUrlPrefix::MESSAGE;
+                        // A host sent without its scheme: the refusal names the value the page would have saved.
+                        $completed = \Prosper202\Http\HttpUrlPrefix::complete($clean[$col]);
+                        $errors[$col] = "Field '$col' " . \Prosper202\Http\HttpUrlPrefix::MESSAGE
+                            . ($completed === $clean[$col] ? '' : '; send ' . $completed);
                         unset($clean[$col]);
                     }
                     break;

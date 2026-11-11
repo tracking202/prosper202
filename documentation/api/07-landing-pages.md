@@ -12,12 +12,13 @@ Manage landing pages used between the traffic source and the destination.
 | `PUT` | `/landing-pages/{id}` | Update a landing page |
 | `DELETE` | `/landing-pages/{id}` | Delete a landing page |
 | `GET` | `/landing-pages/{id}/code` | The page's tracking code, as Setup › Get LP Code hands it out ([Setup API](27-setup.md)) |
+| `POST` | `/landing-pages/{id}/check` | Fetch the page's saved URL and say whether it carries that code ([Setup API](27-setup.md)) |
 
 ## Fields
 
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
-| `landing_page_url` | string | Yes | Landing page URL (max 255) |
+| `landing_page_url` | string | Yes | Landing page URL (max 255), starting with `http://` or `https://`. A host sent without its scheme (`lp.example.com/x`) is a `422` whose message names the URL to send (`https://lp.example.com/x`), the one Setup › Landing Pages saves when it is typed there |
 | `aff_campaign_id` | integer | Yes | Campaign this page belongs to; `0` for an advanced page (`landing_page_type: 1`), which has none |
 | `landing_page_nickname` | string | Yes | Friendly name (max 50) |
 | `leave_behind_page_url` | string | No | Leave-behind URL (max 255; `null` clears it) |

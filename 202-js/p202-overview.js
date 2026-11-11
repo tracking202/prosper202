@@ -17,6 +17,9 @@
  *   [data-p202-breakdown="<url>"] on a click history row: open the click's
  *                                conversions (#p202-click-conversions) and
  *                                draw their breakdown into it
+ *   [data-p202-not-fraud="<click id>"] on a row filtered for its fraud
+ *                                score: post it to data-p202-not-fraud-url
+ *                                and say the answer in the row
  *   [data-p202-snippet="<url>"]  an optional panel (the LTV strip): loaded
  *                                once, removed when the fragment has nothing
  *   [data-p202-chart]            a Highcharts config as JSON, drawn in place
@@ -452,6 +455,43 @@
        click_conversions.php). A later click on another row replaces the
        body; an answer that arrives for a row no longer asked about is
        dropped, so a slow first request never overwrites the second. */
+    /* "Not fraud" on a row filtered for its fraud score: the server counts
+       the click, and the others from its address, again (click_not_fraud.php)
+       and the row says what it answered. The pill becomes Real; the report
+       sums change with the next load. */
+    document.addEventListener('click', function (event) {
+        var button = event.target.closest ? event.target.closest('[data-p202-not-fraud]') : null;
+        if (!button || !window.jQuery) {
+            return;
+        }
+        event.preventDefault();
+        var cell = button.parentNode;
+        button.disabled = true;
+        var say = function (text, ok) {
+            var note = document.createElement('div');
+            note.className = 'small ' + (ok ? 'text-success' : 'text-danger');
+            note.setAttribute('role', 'status');
+            note.textContent = text;
+            cell.appendChild(note);
+        };
+        window.jQuery.post(button.getAttribute('data-p202-not-fraud-url'), { click_id: button.getAttribute('data-p202-not-fraud') }, null, 'json')
+            .done(function (answer) {
+                var pill = cell.querySelector('.p202-pill');
+                if (pill) {
+                    pill.className = 'p202-pill p202-pill--accent';
+                    pill.textContent = 'Real';
+                    pill.title = 'A real (unfiltered) click';
+                }
+                button.parentNode.removeChild(button);
+                say(answer && answer.message ? answer.message : 'The click counts again.', true);
+            })
+            .fail(function (xhr) {
+                button.disabled = false;
+                var sent = xhr && xhr.responseJSON && xhr.responseJSON.message;
+                say(sent || 'The click was not changed (' + (xhr && xhr.status ? 'HTTP ' + xhr.status : 'no answer from the server') + '). Reload the page and try again.', false);
+            });
+    });
+
     var breakdownAsked = null;
     document.addEventListener('click', function (event) {
         var button = event.target.closest ? event.target.closest('[data-p202-breakdown]') : null;

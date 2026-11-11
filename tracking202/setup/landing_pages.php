@@ -85,7 +85,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$error['landing_page_nickname'] = '<div class="error">Give this landing page a nickname</div>';
 	}
 
+	// A URL typed without its scheme (lp.example.com/x) is saved with https://, the URL the API's refusal names, and the page says so.
+	$schemeAdded = false;
+	foreach (['landing_page_url', 'leave_behind_page_url'] as $urlField) {
+		if (is_string($_POST[$urlField] ?? null)) {
+			$typedUrl = trim($_POST[$urlField]);
+			$_POST[$urlField] = \Prosper202\Http\HttpUrlPrefix::complete($typedUrl);
+			$schemeAdded = $schemeAdded || $_POST[$urlField] !== $typedUrl;
+		}
+	}
+	if (is_string($_POST['leave_behind_page_url'] ?? null) && mb_strlen($_POST['leave_behind_page_url']) > 255) {
+		$error['leave_behind_page_url'] = '<div class="error">The leave-behind URL can be at most 255 characters.</div>';
+	}
+
 	$landing_page_url = isset($_POST['landing_page_url']) ? trim((string) $_POST['landing_page_url']) : '';
+	if (mb_strlen($landing_page_url) > 255) {
+		$error['landing_page_url'] = '<div class="error">The landing page URL can be at most 255 characters.</div>';
+	}
 	if (empty($landing_page_url)) {
 		$error['landing_page_url'] = '<div class="error">What is the URL of your landing page?</div>';
 	}
@@ -329,7 +345,8 @@ if ((($editing == true) or ($add_success != true)) and (isset($mysql['aff_campai
 // Post-redirect-get: a saved or removed landing page answers with a redirect,
 // so a reload cannot submit the form (or the remove link) a second time.
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && $add_success == true) {
-	header('location: ' . get_absolute_url() . 'tracking202/setup/landing_pages.php?' . ($editing ? 'saved=1' : 'added=1'));
+	header('location: ' . get_absolute_url() . 'tracking202/setup/landing_pages.php?' . ($editing ? 'saved=1' : 'added=1')
+		. (($schemeAdded ?? false) ? '&https=1' : ''));
 	exit;
 }
 if ($delete_success == true) {
@@ -408,7 +425,9 @@ foreach (p202_setup_rows($db, "SELECT landing_page_id, landing_page_nickname, la
 	$simplePagesByCampaign[(int) $page['aff_campaign_id']][] = $page;
 }
 
-$pageItem = static function (array $page, bool $advanced) use ($self, $token, $canRemove, $editId, $optimizeLink): string {
+// What each page's last code check found; a page with none for its present URL is checked as the list loads.
+$codeChecks = (new \Prosper202\Setup\LandingPageCheckStore(new \Prosper202\Database\Connection($db)))->forAccount((int) $_SESSION['user_id']);
+$pageItem = static function (array $page, bool $advanced) use ($self, $token, $canRemove, $editId, $optimizeLink, $codeChecks): string {
 	$id = (int) $page['landing_page_id'];
 	$name = (string) $page['landing_page_nickname'];
 	$out = '<li class="p202-list__item' . ($editId === $id ? ' is-active' : '') . '" data-p202-filter-text="' . p202_setup_e($name) . '">'
@@ -416,6 +435,7 @@ $pageItem = static function (array $page, bool $advanced) use ($self, $token, $c
 		. '<span class="p202-list__actions">'
 		. '<a class="p202-list__action" href="' . p202_setup_e($self . '?edit_landing_page_id=' . $id) . '">edit</a>'
 		. '<a class="p202-list__action" href="' . p202_setup_e($self . '?copy_landing_page_id=' . $id) . '">copy</a>'
+		. '<a class="p202-list__action" href="#" role="button" data-p202-lp-check-now="' . $id . '" title="Fetch the page and look for its code again">check code</a>'
 		. ($advanced ? $optimizeLink($page) : '');
 	if ($canRemove) {
 		$out .= p202_setup_remove_form($self, [
@@ -425,7 +445,8 @@ $pageItem = static function (array $page, bool $advanced) use ($self, $token, $c
 			'token' => $token,
 		], 'Remove the landing page "' . $name . '"? Clicks already tracked keep their history.');
 	}
-	return $out . '</span><span class="p202-list__meta">' . p202_setup_e($page['landing_page_url'] ?? '') . '</span></li>';
+	return $out . '</span><span class="p202-list__meta">' . p202_setup_lp_check_pill($id, $codeChecks[$id] ?? null)
+		. ' ' . p202_setup_e($page['landing_page_url'] ?? '') . '</span></li>';
 };
 
 template_top('Landing Page Setup'); ?>
@@ -444,8 +465,11 @@ echo p202_setup_query_flashes([
 	'saved' => 'Landing page saved.',
 	'deleted' => 'Landing page removed. Clicks already tracked keep their history.',
 ], $_GET);
+if (isset($_GET['https']) && (string) $_GET['https'] === '1') {
+	echo p202_flash('info', 'The URL was typed without http:// or https://, so it was saved with https://. If the page is served over plain http, edit it and write http://.');
+}
 if ($error) {
-	echo p202_setup_error_flashes($error, ['landing_page_type', 'aff_campaign_id', 'landing_page_nickname', 'landing_page_url', 'fbpa_content_name', 'fbpa_content_type', 'fbpa_outbound_clicks']);
+	echo p202_setup_error_flashes($error, ['landing_page_type', 'aff_campaign_id', 'landing_page_nickname', 'landing_page_url', 'leave_behind_page_url', 'fbpa_content_name', 'fbpa_content_type', 'fbpa_outbound_clicks']);
 }
 ?>
 
@@ -536,7 +560,8 @@ if ($error) {
 							<summary>Advanced <span class="p202-disclosure__hint">leave-behind page</span></summary>
 							<div class="p202-disclosure__body">
 								<label class="form-label" for="leave_behind_page_url">Leave-behind URL</label>
-								<textarea class="form-control font-monospace" id="leave_behind_page_url" name="leave_behind_page_url" rows="2" placeholder="https://"><?php echo p202_setup_e($form['leave_behind_page_url']); ?></textarea>
+								<textarea class="form-control font-monospace<?php echo p202_setup_invalid($error, 'leave_behind_page_url'); ?>" id="leave_behind_page_url" name="leave_behind_page_url" rows="2" placeholder="https://"><?php echo p202_setup_e($form['leave_behind_page_url']); ?></textarea>
+								<?php echo p202_setup_feedback($error, 'leave_behind_page_url'); ?>
 								<div class="form-text">None by default. A page loaded behind the offer once a visitor clicks out of your landing page.</div>
 							</div>
 						</details>
@@ -618,5 +643,6 @@ if ($error) {
 	</div>
 </div>
 
+<span hidden data-p202-lp-check-url="<?php echo p202_setup_e($base . 'tracking202/ajax/check_landing_code.php'); ?>"></span>
 <?php echo p202_setup_script_tag($base); ?>
 <?php template_bottom();

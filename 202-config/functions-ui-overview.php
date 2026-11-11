@@ -817,6 +817,32 @@ function p202_overview_pagination(int $pages, int $offset, string $label = 'Repo
 }
 
 /**
+ * What a filtered click's pill says in Visitors and Spy, and why, for its
+ * recorded reason (Prosper202\Click\Filter\ClickFilterVerdict); null is a
+ * click with none on record.
+ *
+ * @return array{0: string, 1: string} the pill's words, and its title
+ */
+function p202_click_filter_reason(?string $reason): array
+{
+    $threshold = \Prosper202\Fraud\IpqsScoring::FRAUD_THRESHOLD;
+
+    return match ($reason) {
+        \Prosper202\Click\Filter\ClickFilterVerdict::FRAUD_SCORE => ['Filtered: fraud score',
+            'IPQualityScore scored this visitor\'s address ' . $threshold . ' or more out of 100. If that is wrong, choose Not fraud.'],
+        \Prosper202\Click\Filter\ClickFilterVerdict::SIGN_IN_ADDRESS => ['Filtered: your address',
+            'This click came from an address you signed in from (My Account › Personal Settings › Click filter).'],
+        \Prosper202\Click\Filter\ClickFilterVerdict::CRAWLER_RANGE => ['Filtered: crawler',
+            'This click came from a known crawler\'s address range.'],
+        \Prosper202\Click\Filter\ClickFilterVerdict::REPEAT_VISIT => ['Filtered: repeat visit',
+            'The same visitor had clicked already within your repeat-visit window.'],
+        \Prosper202\Click\Filter\ClickFilterVerdict::FILTER_LIST => ['Filtered: your list',
+            'This click\'s address is on your click filter list as always filter.'],
+        default => ['Filtered', 'This click was filtered out. No reason is on record: it was recorded before reasons were kept, or filtered as a bot.'],
+    };
+}
+
+/**
  * The empty state a click report shows when nothing matched: one sentence and
  * the first step, which for a report is a tracking link.
  *

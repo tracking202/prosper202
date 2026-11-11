@@ -8,7 +8,9 @@ declare(strict_types=1);
  * newer than the newest one shown, as bare rows). Drawn on the v2 shell by
  * 202-js/p202-overview.js; the filters are the user's report preferences,
  * which the page applied from its URL. A row with conversions opens their
- * breakdown (click_conversions.php) in the modal drawn below the table.
+ * breakdown (click_conversions.php) in the modal drawn below the table. A
+ * filtered row says why (202_clicks_filter_reason), and one filtered for
+ * its IPQualityScore score can be marked "not fraud" (click_not_fraud.php).
  */
 include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 require_once(substr(__DIR__, 0, -17) . '/202-config/functions-ui-overview.php');
@@ -34,7 +36,8 @@ $command = "SELECT 2c.click_id, 2c.click_time, 2c.click_alp, text_ad_name, aff_c
 2co.site_url_address AS outbound,2cod.site_domain_host AS outbound_host,
 2cc.site_url_address AS cloaking,2ccd.site_domain_host AS cloaking_host,
 2credir.site_url_address AS redirect,2credird.site_domain_host AS redirect_host,
-(SELECT COUNT(*) FROM 202_conversion_logs AS cvl WHERE cvl.click_id = 2c.click_id) AS conversion_rows
+(SELECT COUNT(*) FROM 202_conversion_logs AS cvl WHERE cvl.click_id = 2c.click_id) AS conversion_rows,
+(SELECT 2fr.filter_reason FROM 202_clicks_filter_reason AS 2fr WHERE 2fr.click_id = 2c.click_id) AS filter_reason
 FROM 202_dataengine AS 2c
 LEFT JOIN 202_clicks_record USING (click_id)
 LEFT JOIN 202_clicks_site AS 2cs ON (2c.click_id = 2cs.click_id)

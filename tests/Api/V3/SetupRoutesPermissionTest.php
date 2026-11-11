@@ -42,6 +42,7 @@ final class SetupRoutesPermissionTest extends TestCase
     /** [method, path, controller, the method its handler calls]. */
     private const ROUTES = [
         ['GET', '/landing-pages/5/code', self::CODE, 'landingPageCode'],
+        ['POST', '/landing-pages/5/check', self::CODE, 'landingPageCheck'],
         ['GET', '/conversions/postback-code', self::CODE, 'postbackCode'],
         ['GET', '/ppc-networks/5/variables', self::VARS, 'list'],
         ['POST', '/ppc-networks/5/variables', self::VARS, 'create'],
@@ -53,6 +54,11 @@ final class SetupRoutesPermissionTest extends TestCase
         ['PUT', '/ppc-accounts/5/pixels/6', self::PIXELS, 'update'],
         ['PATCH', '/ppc-accounts/5/pixels/6', self::PIXELS, 'update'],
         ['DELETE', '/ppc-accounts/5/pixels/6', self::PIXELS, 'delete'],
+    ];
+
+    /** Writes that are not stageable, each with why; `?staged=1` on one is refused. */
+    private const NOT_STAGEABLE = [
+        'POST /landing-pages/5/check' => 'it fetches a page and keeps what it found: no setup changes, so there is nothing to approve',
     ];
 
     /** The variable each controller is held in, in its Setup group. */
@@ -160,7 +166,8 @@ final class SetupRoutesPermissionTest extends TestCase
         }
         foreach (self::ROUTES as [$method, $path]) {
             $staged = $stageable->match($method, $path) !== null;
-            self::assertSame($method !== 'GET', $staged, "$method $path " . ($method === 'GET' ? 'is a read' : 'is stageable'));
+            $expected = $method !== 'GET' && !isset(self::NOT_STAGEABLE["$method $path"]);
+            self::assertSame($expected, $staged, "$method $path " . ($expected ? 'is stageable' : 'is not stageable'));
         }
     }
 

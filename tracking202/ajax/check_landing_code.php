@@ -7,9 +7,12 @@ AUTH::require_user();
 AUTH::require_permissions('access_to_setup_section');
 
 /*
- * "Check my page" on Setup › Get LP Code: fetches the landing page's saved
- * URL (Prosper202\Setup\LandingPageCheck) and answers whether the page
- * carries its code, as a flash. Only the account's own landing pages.
+ * The landing page code check, asked by a page: "Check my page" on Setup ›
+ * Get LP Code, and each landing page's pill on Setup › Landing Pages
+ * (as=pill). It fetches the landing page's saved URL
+ * (Prosper202\Setup\LandingPageCheck), keeps the answer
+ * (LandingPageCheckStore) and says whether the page carries its code, as a
+ * flash or as the pill. Only the account's own landing pages.
  */
 if (!AUTH::check_csrf_token()) {
 	http_response_code(403);
@@ -21,17 +24,15 @@ if ($landingPageId === null) {
 	die(p202_flash('bad', 'Choose a landing page, get its code, then check the page.'));
 }
 
-$conn = new \Prosper202\Database\Connection($db);
-$stmt = $conn->prepareRead('SELECT landing_page_url, landing_page_id_public FROM 202_landing_pages WHERE landing_page_id = ? AND user_id = ? AND landing_page_deleted = 0');
-$conn->bind($stmt, 'ii', [$landingPageId, (int) $_SESSION['user_id']]);
-$page = $conn->fetchOne($stmt);
-if ($page === null) {
-	die(p202_flash('bad', 'That landing page is not yours, or it was removed.'));
-}
+$asPill = ($_POST['as'] ?? null) === 'pill';
+// The fetch can take LandingPageCheck::TIMEOUT seconds; the session is not held for it.
+session_write_close();
 
-$result = (new \Prosper202\Setup\LandingPageCheck())->check(
-	(string) $page['landing_page_url'],
-	(string) ($page['landing_page_id_public'] ?? ''),
-	getTrackingDomain()
-);
-echo p202_flash($result->flashKind(), $result->message);
+$store = new \Prosper202\Setup\LandingPageCheckStore(new \Prosper202\Database\Connection($db));
+$result = $store->run((int) $_SESSION['user_id'], $landingPageId, getTrackingDomain());
+if ($result === null) {
+	die($asPill ? p202_setup_lp_check_pill($landingPageId, null, false) : p202_flash('bad', 'That landing page is not yours, or it was removed.'));
+}
+echo $asPill
+	? p202_setup_lp_check_pill($landingPageId, ['status' => $result->status, 'message' => $result->message, 'checked_at' => time()])
+	: p202_flash($result->flashKind(), $result->message);

@@ -199,9 +199,11 @@ final class UpdateController
         if (array_key_exists('payout', $payload)) {
             $raw = $payload['payout'];
             $defaultPayout = is_string($raw) ? trim($raw) : (is_int($raw) || is_float($raw) ? (string) $raw : null);
-            $problem = $defaultPayout === null
-                ? 'must be a number or a decimal string such as "12.50" (omit it for each campaign\'s payout), got ' . get_debug_type($raw)
-                : SubidBatch::payoutError($defaultPayout);
+            $problem = 'must be a number or a decimal string such as "12.50" (omit it for each campaign\'s payout), got ' . get_debug_type($raw);
+            if ($defaultPayout !== null) {
+                $currency = $this->guard(fn (): string => SubidBatch::accountCurrency($this->conn, $this->userId));
+                [$defaultPayout, $problem] = SubidBatch::readPayout($defaultPayout, $currency);
+            }
             if ($problem !== null) {
                 $errors['payout'] = $problem;
             }

@@ -37,6 +37,7 @@ record links only to the caller's own records
 | Redirector: redirectors, rules, criteria | `/rotators`, `/rotators/{id}/rules` (`PUT` saves the whole set, in order, as the page does) | `p202 rotator …`, `rotator set-rules`, `rotator rule-create/update/delete`, `rotator criteria-values`, `rotator test`, `rotator trace` | ◐ criteria values that come from a hosted list for some types; the auto-monetizer is set on the page only |
 | Mobile Apps (incl. goals, SKAN encodings, integrity) | `/apps/…`, `/goals/…` | `p202 app …`, `p202 goal …` | ✅ |
 | Get LP Code | `GET /landing-pages/{id}/code` (`?offers=campaign:12,rotator:3` for an advanced page) | `p202 landing-page code <id>` (`--offer`) | ✅ |
+| Get LP Code › Check my page, and each page's code check on Landing Pages | `POST /landing-pages/{id}/check` | `p202 landing-page check <id>` | ✅ |
 | Get Links | `POST /trackers`, `GET /trackers/{id}/url` (`t202kw`, `c1`–`c4`, `utm_*`, the source's custom variables) | `p202 tracker create`, `tracker create-with-url`, `tracker get-url`, `tracker bulk-urls` | ✅ |
 | Postback/Pixel | `GET /conversions/postback-code` | `p202 conversion postback-url`, `p202 conversion pixel` (`--type simple\|advanced\|universal`, `--iframe`) | ✅ |
 | Inbound Log | `GET /conversions/inbound-log` | `p202 conversion inbound-log` | ✅ |
