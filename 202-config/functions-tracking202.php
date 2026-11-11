@@ -150,28 +150,6 @@ function p202TrackingBaseUrl(): string
 }
 
 /**
- * The account's dash email as a JavaScript string, for the footer's support
- * widget: written between quotes as stored, an address with a ' ended the
- * string and broke the script.
- */
-function p202DashEmailJson(): string
-{
-    $json = json_encode(
-        (string) getDashEmail(),
-        JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
-            | JSON_INVALID_UTF8_SUBSTITUTE
-    );
-
-    if ($json === false) {
-        error_log('The dash email could not be written into the footer script: ' . json_last_error_msg());
-
-        return '""';
-    }
-
-    return $json;
-}
-
-/**
  * The statement in every signed-in page's footer script (template.php) that
  * has the user's own browser ping this install's cron endpoint:
  * `navigator.sendBeacon("//<tracking domain><install path>202-cronjobs/?page_ping=1");`.
@@ -1806,75 +1784,6 @@ function createPublisherIds(): void
             }
         }
     }
-}
-
-function getDashEmail(): string|bool
-{
-
-    global $db;
-    //get the main users dash email and api key from the db
-    $sql = "SELECT user_dash_email,p202_customer_api_key FROM 202_users WHERE user_id ='" . $_SESSION['user_id'] . "'";
-    $user_result = _mysqli_query($sql);
-    // Every signed-in page's footer reads this: a failed read (logged by
-    // _mysqli_query()) leaves the address unknown rather than the page cut
-    // off by a fatal.
-    if (!$user_result instanceof \mysqli_result) {
-        return false;
-    }
-    $user_row = $user_result->fetch_assoc();
-
-    if (!is_array($user_row)) {
-        return false;
-    }
-
-    //if found we are done return the email for usage
-    if ($user_row['user_dash_email']) {
-        return $user_row['user_dash_email'];
-    } else {
-        // Every page's footer gets here while no address is stored: ask the service once a day per session.
-        $askedAt = $_SESSION['p202_dash_email_asked_at'] ?? null;
-        if (is_int($askedAt) && time() - $askedAt < 86400) {
-            return false;
-        }
-        //email not found, try and set it from api call to the server
-        if ($user_row['p202_customer_api_key']) {
-            $_SESSION['p202_dash_email_asked_at'] = time();
-            $dashEmail = getSetDashEmail($user_row['p202_customer_api_key']);
-            if (is_array($dashEmail) && ($dashEmail['code'] ?? null) == 200 && ($dashEmail['email'] ?? '') != '') {
-                //found it save to DB and return
-                $mysql['email'] = $db->real_escape_string($dashEmail['email']);
-                $sql = "UPDATE `202_users` SET user_dash_email='" . $mysql['email'] . "' WHERE user_id ='" . $_SESSION['user_id'] . "'";
-                _mysqli_query($sql);
-                // The address, not its copy escaped for the statement above.
-                return (string) $dashEmail['email'];
-            }
-        }
-    }
-
-    return false;
-}
-
-function getSetDashEmail($key)
-{
-    $fields = [
-        'key' => $key
-    ];
-
-    $fields = http_build_query($fields);
-
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/get-customers-email');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-    $result = curl_exec($ch);
-    curl_close($ch);
-    $result = json_decode($result, true);
-    return $result;
 }
 
 function  upgrade_config()

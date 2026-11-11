@@ -17,11 +17,16 @@ final class InboundLogController
 {
     public const PARAMS = ['outcome', 'endpoint', 'limit', 'before'];
 
-    /** @param bool $seesUnattributed whether the requests no account was found for are listed too (admins) */
+    /**
+     * @param bool $seesUnattributed whether the requests no account was found for are listed too (admins)
+     * @param bool $seesUnverifiedShopify whether the Shopify webhooks no secret verified are listed, without
+     *        their fields (an account that stores a Shopify secret)
+     */
     public function __construct(
         private readonly \mysqli $db,
         private readonly int $userId,
         private readonly bool $seesUnattributed,
+        private readonly bool $seesUnverifiedShopify = false,
     ) {
     }
 
@@ -33,7 +38,13 @@ final class InboundLogController
     {
         $filters = self::filters($params);
         $limit = QueryInt::param($params, 'limit', InboundLog::DEFAULT_LIMIT, 1, InboundLog::MAX_LIMIT, 'requests to list');
-        $rows = (new InboundLog($this->db))->list($this->userId, $this->seesUnattributed, $filters, $limit);
+        $rows = (new InboundLog($this->db))->list(
+            $this->userId,
+            $this->seesUnattributed,
+            $filters,
+            $limit,
+            $this->seesUnverifiedShopify
+        );
         $last = $rows === [] ? null : $rows[count($rows) - 1]['inbound_id'];
 
         return [

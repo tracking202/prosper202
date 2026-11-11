@@ -70,7 +70,8 @@ final class Receiver
                 $notification?->clickId,
                 $outcome->conversionId,
                 $notification?->transactionId,
-                $logFields + Redactor::fields($request->fields, $endpoint),
+                ($this->provider instanceof ShopifyAdapter ? ShopifyAdapter::logged($request) : [])
+                    + $logFields + Redactor::fields($request->fields, $endpoint),
             ));
         } catch (\Throwable $e) {
             error_log($this->provider->name() . ' notification: the inbound log could not be written: ' . $e->getMessage());
@@ -126,8 +127,7 @@ final class Receiver
             if ($refused->accountId === null && count($accounts) === 1) {
                 $refused = new Outcome($refused->kind, $refused->message, $refused->conversionId, $accounts[0]);
             }
-
-            return [$refused, null];
+            return [$this->keepRefusedShopifyRefund($refused), null];
         } catch (\Throwable $e) {
             error_log($name . ' notification: it could not be read: ' . $e->getMessage());
 
@@ -152,6 +152,7 @@ final class Receiver
                     $outcome = (new SettlementCoordinator($this->db, $this->provider))
                         ->afterSale($sale, $notification->transactionId, $request);
                 }
+                $outcome = $this->keepRefusedShopifyRefund($outcome);
             }
         } catch (\Throwable $e) {
             error_log($name . ' settlement: ' . $e->getMessage());
@@ -170,6 +171,35 @@ final class Receiver
         }
 
         return [$outcome, $notification];
+    }
+
+    /**
+     * A Shopify refund refused for good is kept where Setup › Inbound Log
+     * lists it. One that could not be kept is answered as a failure, so
+     * Shopify sends it again: answered as refused it would be in no list,
+     * with its amount still counted. Nothing was written, so a retry is safe.
+     */
+    private function keepRefusedShopifyRefund(Outcome $outcome): Outcome
+    {
+        if (!$this->provider instanceof ShopifyAdapter || $this->provider->refundRead() === null) {
+            return $outcome;
+        }
+        try {
+            (new SettlementCoordinator($this->db, $this->provider))
+                ->keepRefused($this->provider->refundRead(), $outcome);
+        } catch (\Throwable $e) {
+            error_log('Shopify notification: the refused refund could not be kept: ' . $e->getMessage());
+
+            return new Outcome(
+                OutcomeKind::FAILED,
+                'The refund was not recorded (' . $outcome->message . ') and could not be kept for Setup ›'
+                . ' Inbound Log just now. Send it again.',
+                null,
+                $outcome->accountId
+            );
+        }
+
+        return $outcome;
     }
 
     /**

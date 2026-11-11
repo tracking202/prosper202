@@ -24,7 +24,10 @@ use Prosper202\Setup\TrafficSourceOwners;
  * - BOTH: one of NEWCOMER's accounts after, one before: left;
  * - TWO_USERS: NEWCOMER's after, THIRD's before: left, for both;
  * - NAMESAKE: after, but NEWCOMER has a source of that name already: left;
- * - OF_DELETED: after, by a deleted user: left.
+ * - OF_DELETED: after, by a deleted user: left;
+ * - REMOVED: NEWCOMER's only account on it was removed on Setup › Traffic
+ *   Sources after the source was saved, which stamps the removal's time:
+ *   left, since that time says nothing of when the account came to name it.
  *
  * Skips unless P202_TEST_DB_* names a scratch database; the report is
  * install-wide, so never point it at one an instance uses.
@@ -50,6 +53,7 @@ final class TrafficSourceAutomaticSplitIntegrationTest extends TestCase
     private const NAMESAKE = 872205;
     private const OF_DELETED = 872206;
     private const NEWCOMERS_OWN = 872207;
+    private const REMOVED = 872208;
     /** source => [the user it is in, its name] */
     private const SOURCES = [
         self::PUT_ON => [self::KEEPER, 'Search Ads'],
@@ -59,6 +63,7 @@ final class TrafficSourceAutomaticSplitIntegrationTest extends TestCase
         self::NAMESAKE => [self::KEEPER, 'Newsletter'],
         self::OF_DELETED => [self::KEEPER, 'Partner Sites'],
         self::NEWCOMERS_OWN => [self::NEWCOMER, 'NEWSLETTER'],
+        self::REMOVED => [self::KEEPER, 'Social Ads'],
     ];
 
     private const SAVED = 1_000_000_000;
@@ -74,7 +79,8 @@ final class TrafficSourceAutomaticSplitIntegrationTest extends TestCase
     private const H1 = 872307;
     private const N6 = 872308;
     private const G1 = 872309;
-    /** [ppc_account_id, user, source, saved] */
+    private const R1 = 872310;
+    /** [ppc_account_id, user, source, saved, removed] */
     private const ACCOUNTS = [
         [self::K1, self::KEEPER, self::PUT_ON, self::BEFORE],
         [self::N1, self::NEWCOMER, self::PUT_ON, self::AFTER],
@@ -85,6 +91,7 @@ final class TrafficSourceAutomaticSplitIntegrationTest extends TestCase
         [self::H1, self::THIRD, self::TWO_USERS, self::BEFORE],
         [self::N6, self::NEWCOMER, self::NAMESAKE, self::SAVED],
         [self::G1, self::GONE, self::OF_DELETED, self::AFTER],
+        [self::R1, self::NEWCOMER, self::REMOVED, self::AFTER, 1],
     ];
     /** [ppc_variable_id, source, name, parameter, removed] */
     private const VARIABLES = [
@@ -133,9 +140,11 @@ final class TrafficSourceAutomaticSplitIntegrationTest extends TestCase
             self::row('202_ppc_networks', ['ppc_network_id' => $id, 'user_id' => $user,
                 'ppc_network_name' => $name, 'ppc_network_time' => self::SAVED]);
         }
-        foreach (self::ACCOUNTS as [$id, $user, $source, $saved]) {
+        foreach (self::ACCOUNTS as $account) {
+            [$id, $user, $source, $saved] = $account;
             self::row('202_ppc_accounts', ['ppc_account_id' => $id, 'user_id' => $user, 'ppc_network_id' => $source,
-                'ppc_account_name' => 'Account ' . $id, 'ppc_account_time' => $saved]);
+                'ppc_account_name' => 'Account ' . $id, 'ppc_account_time' => $saved,
+                'ppc_account_deleted' => $account[4] ?? 0]);
         }
         foreach (self::VARIABLES as [$id, $source, $name, $parameter, $removed]) {
             self::row('202_ppc_network_variables', ['ppc_variable_id' => $id, 'ppc_network_id' => $source,
@@ -218,7 +227,8 @@ final class TrafficSourceAutomaticSplitIntegrationTest extends TestCase
     {
         $listed = self::listed();
         self::assertSame(
-            [self::PUT_ON, self::EARLIER, self::BOTH, self::TWO_USERS, self::NAMESAKE, self::OF_DELETED],
+            [self::PUT_ON, self::EARLIER, self::BOTH, self::TWO_USERS, self::NAMESAKE, self::OF_DELETED,
+                self::REMOVED],
             array_keys($listed)
         );
         self::assertSame([
@@ -229,6 +239,7 @@ final class TrafficSourceAutomaticSplitIntegrationTest extends TestCase
             // Saved in the source's own second: not before it. The name is compared as the column does.
             self::NAMESAKE => ['same_name'],
             self::OF_DELETED => ['deleted_user'],
+            self::REMOVED => ['may_be_theirs'],
         ], array_column($listed, 'auto_split_blocked_by', 'ppc_network_id'));
         foreach ($listed as $id => $entry) {
             self::assertSame($id === self::PUT_ON, $entry['auto_split'], "source $id");
@@ -294,7 +305,7 @@ final class TrafficSourceAutomaticSplitIntegrationTest extends TestCase
 
         // The fixed point: no longer listed, and the rest are, as they were.
         self::assertSame(
-            [self::EARLIER, self::BOTH, self::TWO_USERS, self::NAMESAKE, self::OF_DELETED],
+            [self::EARLIER, self::BOTH, self::TWO_USERS, self::NAMESAKE, self::OF_DELETED, self::REMOVED],
             array_keys(self::listed())
         );
         // The account is queued for the report rollup, as a user's split queues it.
