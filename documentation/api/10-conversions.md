@@ -12,6 +12,7 @@ List, inspect, manually create, and delete conversions.
 | `GET` | `/conversions/offline-export` | The conversions as Google Ads' or Microsoft Advertising's offline conversion import CSV ([below](#offline-conversion-files)) |
 | `GET` | `/conversions/offline-export/summary` | What that file holds, and why each other conversion is left out |
 | `GET` | `/conversions/inbound-log` | The postbacks, pixels and payment notifications received, and why each was refused ([below](#inbound-log)) |
+| `POST` | `/conversions/inbound-log/{id}/record` | Record the conversion of a refused postback from the log ([below](#inbound-log)) |
 | `GET` | `/offline-conversions/{key}` | A fetch URL made on Setup › Offline Conversions: the file, with no API key |
 | `POST` | `/conversions` | Manually log a conversion |
 | `DELETE` | `/conversions/{id}` | Delete a conversion |
@@ -131,6 +132,21 @@ per account.
 | `endpoint` | One of the endpoints above |
 | `limit` | 1 to 500 (50) |
 | `before` | Only requests older than this `inbound_id`: the previous page's `next_before` |
+| `search` | A subid (click id), conversion id or transaction id, given whole: the row's own, or the one the request carried |
+
+A row that recorded nothing carries `fix` (what to do, and the page that does
+it) and `can_record`. `POST /conversions/inbound-log/{id}/record` records the
+conversion a refused server postback would have recorded, from the request
+the log kept: a `pb` or `gpb` request sent with GET, refused as
+`unauthenticated` or `failed`, whose kept values are whole and which carries
+no event. It is dated when the request arrived and meets a postback's checks:
+the click must be the account's, a `pb` request's click must have visited the
+campaign it names, a transaction id on file is a duplicate, and without one a
+click converts once. Sent twice it records once (`already_recorded`). It
+answers 201 `recorded`, 200 `duplicate` or `already_recorded`, 422 with the
+reason when the row cannot be recorded or the recorder refuses it, and asks
+for the role's access to the Setup and Update sections. The buyer's details
+are never kept, so a conversion recorded this way links no customer.
 
 ```json
 {

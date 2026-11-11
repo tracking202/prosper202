@@ -100,6 +100,9 @@ try {
     // (Account › Settings shows the path and the reader's error to admins).
     $geoip = \Prosper202\GeoIp\CityDatabase::status();
 
+    // Traffic-source postbacks queued with their conversions and left unsent (every account's).
+    $postbackQueue = \Prosper202\Notifications\OutboxBacklog::read(new \Prosper202\Database\Connection($db), time());
+
     // Build response
     $response = [
         'status' => $status,
@@ -110,6 +113,11 @@ try {
         'isLocked' => $isLocked,
         'dataEngine' => $dataEngineStatus,
         'geoipDatabase' => $geoip->healthFields(),
+        'trafficSourcePostbacks' => [
+            'stuck' => $postbackQueue['stuck'],
+            'overdue' => $postbackQueue['overdue'],
+            'oldestDueTimestamp' => $postbackQueue['oldest_due_at'],
+        ],
         'serverTime' => date('Y-m-d H:i:s'),
         'serverTimestamp' => time()
     ];
@@ -121,6 +129,10 @@ try {
         $response['recommendations'][] = 'Cron jobs have not run recently. Check AutoCron or set up server cron.';
     }
     
+    if ($postbackQueue['warning'] !== null) {
+        $response['recommendations'][] = $postbackQueue['warning'];
+    }
+
     if ($isLocked === null) {
         $response['recommendations'][] = 'The cron lock file (202-cronjobs/' . \Prosper202\Cron\CronLock::FILE
             . ') could not be opened or locked here, so a cron run the web server makes cannot take it either:'

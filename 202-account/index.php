@@ -69,6 +69,8 @@ template_top('Prosper202 ClickServer');  ?>
     </div>
 </div>
 
+<?php echo p202_postback_queue_notice($db, $gs_user_id, $base); ?>
+
 <div class="row g-4">
     <div class="col-12 col-lg-7">
         <?php if (!$gs_all_done) { ?>

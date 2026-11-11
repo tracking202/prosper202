@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Prosper202\InboundLog;
 
+use Prosper202\Conversion\PostbackAuth\PostbackAuthGate;
+use Prosper202\Database\Connection;
+
 /**
  * The classic postback and pixel endpoints' log line: watch() at the top of
  * the endpoint, the shared helpers note what they learn (account, click,
@@ -23,19 +26,27 @@ final class RequestLog
     private ?int $status = null;
     private bool $written = false;
 
-    /** @param array<array-key, mixed> $fields */
+    /**
+     * @param array<array-key, mixed> $fields
+     * @param (\Closure(int, int): string)|null $presented what the request presented for an account at a time
+     */
     private function __construct(
         private readonly InboundLog $log,
         private readonly string $endpoint,
         private readonly string $method,
         private readonly array $fields,
+        private readonly ?\Closure $presented = null,
     ) {
     }
 
     /** @param array<array-key, mixed> $fields the request's query or form, redacted before it is kept */
     public static function watch(\mysqli $db, string $endpoint, string $method, array $fields): self
     {
-        $log = new self(new InboundLog($db), $endpoint, strtoupper($method), $fields);
+        // The raw query, as the gate reads it: PHP's parse renames and drops some of it.
+        $query = (string) ($_SERVER['QUERY_STRING'] ?? '');
+        $presented = static fn (int $userId, int $now): string => PostbackAuthGate::forConnection(new Connection($db))
+            ->presented($userId, $endpoint, $query, $now);
+        $log = new self(new InboundLog($db), $endpoint, strtoupper($method), $fields, $presented);
         self::$current = $log;
         register_shutdown_function([$log, 'write']);
 
@@ -131,7 +142,7 @@ final class RequestLog
         }
     }
 
-    public function entry(int $status): Entry
+    public function entry(int $status, string $auth = ''): Entry
     {
         $outcome = $this->outcome;
         $reason = $this->reason;
@@ -153,7 +164,23 @@ final class RequestLog
             $this->conversionId,
             $this->transactionId,
             Redactor::fields($this->fields, $this->endpoint),
+            $auth,
         );
+    }
+
+    /** What the request presented to authenticate itself; '' when no account was found or it could not be read. */
+    private function presentedAuth(): string
+    {
+        if ($this->presented === null || $this->userId <= 0 || !in_array($this->endpoint, InboundLog::POSTBACK_ENDPOINTS, true)) {
+            return '';
+        }
+        try {
+            return ($this->presented)($this->userId, time());
+        } catch (\Throwable $e) {
+            error_log('Inbound log: what the ' . $this->endpoint . ' request presented could not be read: ' . $e->getMessage());
+
+            return '';
+        }
     }
 
     public function write(): void
@@ -165,7 +192,7 @@ final class RequestLog
         try {
             $code = http_response_code();
             $status = is_int($code) && $code > 0 ? $code : ($this->status ?? 200);
-            $this->log->append($this->entry($status));
+            $this->log->append($this->entry($status, $this->presentedAuth()));
         } catch (\Throwable $e) {
             error_log('Inbound log: the ' . $this->endpoint . ' request could not be logged: ' . $e->getMessage());
         }

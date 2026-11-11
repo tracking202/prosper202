@@ -10,6 +10,7 @@ use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\QueryInt;
 use Prosper202\Click\ReClickBackfill;
 use Prosper202\Database\Connection;
+use Prosper202\Notifications\OutboxBacklog;
 
 class SystemController
 {
@@ -149,7 +150,15 @@ class SystemController
             $logs[] = $row;
         }
 
-        return ['data' => ['jobs' => $jobs, 'recent_logs' => $logs]];
+        // Queued traffic-source postbacks the cron job has not sent (every account's).
+        $backlog = OutboxBacklog::read(new Connection($this->db), time());
+
+        return ['data' => ['jobs' => $jobs, 'recent_logs' => $logs, 'traffic_source_postbacks' => [
+            'stuck' => $backlog['stuck'],
+            'overdue' => $backlog['overdue'],
+            'oldest_due_at' => $backlog['oldest_due_at'],
+            'warning' => $backlog['warning'],
+        ]]];
     }
 
     public function errors(array $params): array

@@ -13,6 +13,7 @@ final class Entry
     /**
      * @param int $userId the account it was for; 0 when none could be found
      * @param array<string, mixed> $fields the request's fields, redacted
+     * @param string $auth what a postback or pixel presented (PostbackAuthGate::PRESENTED); '' when not known
      */
     public function __construct(
         public readonly string $endpoint,
@@ -25,6 +26,7 @@ final class Entry
         public readonly ?int $conversionId = null,
         public readonly ?string $transactionId = null,
         public readonly array $fields = [],
+        public readonly string $auth = '',
     ) {
     }
 }

@@ -27,6 +27,16 @@ final class Redactor
         'external_product_id', 'product_name', 'qty', 'quantity', 'unit_price', 'currency',
     ];
 
+    /**
+     * The classic parameters, whose values a pb or gpb row keeps.
+     *
+     * @return list<string>
+     */
+    public static function classicFields(): array
+    {
+        return self::CLASSIC;
+    }
+
     /** Per endpoint, the fields whose values are kept. */
     private const KEEP = [
         'pb' => self::CLASSIC,

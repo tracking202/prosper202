@@ -671,6 +671,31 @@ function p202_overview_page(array $page): string
     return $html;
 }
 
+/**
+ * A click id as the button that opens the click's conversions, explained
+ * (tracking202/ajax/click_conversions.php), in p202_click_breakdown_modal(),
+ * which the page prints once.
+ */
+function p202_click_breakdown_button(string $base, int $clickId): string
+{
+    $url = rtrim($base, '/') . '/tracking202/ajax/click_conversions.php?click_id=' . $clickId;
+
+    return '<button type="button" class="btn btn-link btn-sm p-0 align-baseline" data-p202-breakdown="'
+        . htmlspecialchars($url, ENT_QUOTES, 'UTF-8') . '" data-p202-breakdown-title="Conversions on click ' . $clickId
+        . '" aria-label="Open click ' . $clickId . '">' . $clickId . '</button>';
+}
+
+/** The modal p202_click_breakdown_button() opens, with the script that fills it. */
+function p202_click_breakdown_modal(string $base): string
+{
+    return '<div class="modal fade" id="p202-click-conversions" tabindex="-1" aria-labelledby="p202-click-conversions-title" aria-hidden="true">'
+        . '<div class="modal-dialog modal-xl modal-dialog-scrollable"><div class="modal-content"><div class="modal-header">'
+        . '<h5 class="modal-title" id="p202-click-conversions-title">Conversions on this click</h5>'
+        . '<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>'
+        . '<div class="modal-body" data-p202-breakdown-body aria-live="polite"></div></div></div></div>'
+        . p202_overview_choices_script($base);
+}
+
 /** The shared report/optional-choice behavior, with a content-based cache buster. */
 function p202_overview_choices_script(string $base): string
 {

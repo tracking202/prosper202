@@ -538,6 +538,8 @@ final class ConversionTables
                 `conversion_id` int(11) unsigned DEFAULT NULL,
                 `transaction_id` varchar(255) DEFAULT NULL,
                 `fields` text,
+                `auth` varchar(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',
+                `replayed_at` int(10) unsigned DEFAULT NULL,
                 PRIMARY KEY (`inbound_id`),
                 KEY `user_recent` (`user_id`,`inbound_id`),
                 KEY `user_kind_recent` (`user_id`,`accepted`,`inbound_id`)

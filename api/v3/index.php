@@ -503,6 +503,8 @@ try {
         $router->group('/conversions/postback-auth', function (Router $r) use ($crud, $idempotent, $payload) {
             $cls = \Api\V3\Controllers\PostbackAuthController::class;
             $r->get('', fn() => $crud($cls)->show());
+            // Who a stricter mode would refuse, from the inbound log.
+            $r->get('/readiness', fn() => $crud($cls)->readiness());
             $r->put('', fn() => $crud($cls)->update($payload));
             $r->post('/rotate', fn() => $crud($cls)->withCredentials($idempotent('conversions/postback-auth/rotate', $payload,
                 fn() => $cls::withoutCredentials($crud($cls)->rotate($payload)))));
@@ -580,6 +582,12 @@ try {
                 $auth->hasPermission($db, 'add_users')
             ))->list($queryParams));
         }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'access_to_setup_section'); }]);
+        // "Record it now": a refused postback's conversion, recorded from the log. It writes a
+        // conversion, so it asks what POST /conversions asks beside the log's own permission.
+        $router->group('/conversions', function (Router $r) use ($db, $actorUserId) {
+            $r->post('/inbound-log/{id}/record', fn($ctx) => (new \Api\V3\Controllers\InboundLogController($db, $actorUserId, false))
+                ->recordNow(PathId::of($ctx)));
+        }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'access_to_setup_section'); }, $updateSection]);
         $router->group('/conversions', function (Router $r) use ($crud, $queryParams, $campaignFigures, $recordMoney, $matchFigures) {
             $cls = \Api\V3\Controllers\ConversionsController::class;
             $r->get('',        fn() => $campaignFigures($crud($cls)->list($queryParams), $recordMoney));

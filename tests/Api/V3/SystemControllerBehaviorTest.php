@@ -57,10 +57,26 @@ final class SystemControllerBehaviorTest extends TestCase
             }
         );
 
+        // The queue reading's prepared reads (OutboxBacklog): nothing overdue.
+        $db->method('prepare')->willReturnCallback(function (string $sql) {
+            $stmt = $this->createMock(\mysqli_stmt::class);
+            $stmt->method('bind_param')->willReturn(true);
+            $stmt->method('execute')->willReturn(true);
+            $stmt->method('get_result')->willReturn($this->createResultMock([
+                str_contains($sql, '202_notification_pending')
+                    ? ['overdue' => '0', 'oldest' => null]
+                    : ['last_execution_time' => '1700001234'],
+            ]));
+
+            return $stmt;
+        });
+
         $controller = new SystemController($db);
         $result = $controller->cronStatus();
 
         $this->assertArrayHasKey('data', $result);
+        $this->assertSame(['stuck' => false, 'overdue' => 0, 'oldest_due_at' => null, 'warning' => null],
+            $result['data']['traffic_source_postbacks']);
         $this->assertSame(1, $result['data']['recent_logs'][0]['id']);
         $this->assertStringContainsString(
             'SELECT id, last_execution_time FROM 202_cronjob_logs',

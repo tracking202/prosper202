@@ -51,6 +51,12 @@ final class ConversionLog
         WHEN cl.pixel_type = 3 THEN 'universal_pixel' WHEN cl.user_agent = 'subid-upload' THEN 'subid_upload'
         ELSE 'api' END";
 
+    private const SELECT = 'SELECT cl.conv_id, cl.click_id, cl.campaign_id, cl.transaction_id, cl.click_payout,
+                    cl.click_time, cl.conv_time, cl.ip, cl.pixel_type, cl.user_agent, cl.deleted,
+                    cl.source, cl.reverses_conv_id, ac.aff_campaign_name
+             FROM 202_conversion_logs cl
+             LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cl.campaign_id AND ac.user_id = cl.user_id';
+
     public function __construct(private Connection $conn)
     {
     }
@@ -195,6 +201,78 @@ final class ConversionLog
         if ($userId <= 0) {
             throw new \InvalidArgumentException('ConversionLog: an account id is required');
         }
+        [$whereSql, $types, $binds] = self::where($userId, $filters);
+
+        $stmt = $this->conn->prepareRead('SELECT COUNT(*) AS total FROM 202_conversion_logs cl WHERE ' . $whereSql);
+        $this->conn->bind($stmt, $types, $binds);
+        $total = (int) ($this->conn->fetchOne($stmt)['total'] ?? 0);
+        // Past the end is the last page, so the count, the rows and the pager agree.
+        $page = min(max(0, $page), max(0, intdiv($total - 1, self::PER_PAGE)));
+
+        $stmt = $this->conn->prepareRead(
+            self::SELECT . '
+             WHERE ' . $whereSql . '
+             ORDER BY cl.conv_time DESC, cl.conv_id DESC
+             LIMIT ? OFFSET ?'
+        );
+        $this->conn->bind($stmt, $types . 'ii', array_merge($binds, [self::PER_PAGE, $page * self::PER_PAGE]));
+
+        $rows = [];
+        foreach ($this->conn->fetchAll($stmt) as $r) {
+            $rows[] = self::shape($r);
+        }
+
+        return ['rows' => $rows, 'total' => $total, 'page' => $page];
+    }
+
+    /**
+     * Every row the filters name, newest first, handed to $each in the
+     * page's shape: the Download CSV of the list on screen. Read in batches
+     * by the list's own order (conversion time, then id), so a long list is
+     * never held whole and a row recorded meanwhile moves none.
+     *
+     * @param Filters $filters as readQuery() gives them
+     * @param callable(array<string, mixed>): void $each
+     * @return int the rows handed over
+     */
+    public function export(int $userId, array $filters, callable $each, int $batch = 1000): int
+    {
+        if ($userId <= 0) {
+            throw new \InvalidArgumentException('ConversionLog: an account id is required');
+        }
+        [$whereSql, $types, $binds] = self::where($userId, $filters);
+        $count = 0;
+        $after = null;
+        do {
+            $sql = self::SELECT . ' WHERE ' . $whereSql;
+            $pageTypes = $types;
+            $pageBinds = $binds;
+            if ($after !== null) {
+                $sql .= ' AND (cl.conv_time < ? OR (cl.conv_time = ? AND cl.conv_id < ?))';
+                $pageTypes .= 'iii';
+                array_push($pageBinds, $after[0], $after[0], $after[1]);
+            }
+            $stmt = $this->conn->prepareRead($sql . ' ORDER BY cl.conv_time DESC, cl.conv_id DESC LIMIT ?');
+            $this->conn->bind($stmt, $pageTypes . 'i', array_merge($pageBinds, [$batch]));
+            $rows = $this->conn->fetchAll($stmt);
+            foreach ($rows as $r) {
+                $each(self::shape($r));
+                $after = [(int) $r['conv_time'], (int) $r['conv_id']];
+                $count++;
+            }
+        } while (count($rows) === $batch);
+
+        return $count;
+    }
+
+    /**
+     * The filters as a WHERE over `cl`, the account's rows only.
+     *
+     * @param Filters $filters
+     * @return array{0: string, 1: string, 2: list<int|string>}
+     */
+    private static function where(int $userId, array $filters): array
+    {
         $where = ['cl.user_id = ?'];
         $types = 'i';
         $binds = [$userId];
@@ -224,51 +302,37 @@ final class ConversionLog
         } elseif (($filters['deleted'] ?? null) === 'no') {
             $where[] = 'cl.deleted = 0';
         }
-        $whereSql = implode(' AND ', $where);
 
-        $stmt = $this->conn->prepareRead('SELECT COUNT(*) AS total FROM 202_conversion_logs cl WHERE ' . $whereSql);
-        $this->conn->bind($stmt, $types, $binds);
-        $total = (int) ($this->conn->fetchOne($stmt)['total'] ?? 0);
-        // Past the end is the last page, so the count, the rows and the pager agree.
-        $page = min(max(0, $page), max(0, intdiv($total - 1, self::PER_PAGE)));
+        return [implode(' AND ', $where), $types, $binds];
+    }
 
-        $stmt = $this->conn->prepareRead(
-            'SELECT cl.conv_id, cl.click_id, cl.campaign_id, cl.transaction_id, cl.click_payout,
-                    cl.click_time, cl.conv_time, cl.ip, cl.pixel_type, cl.user_agent, cl.deleted,
-                    cl.source, cl.reverses_conv_id, ac.aff_campaign_name
-             FROM 202_conversion_logs cl
-             LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cl.campaign_id AND ac.user_id = cl.user_id
-             WHERE ' . $whereSql . '
-             ORDER BY cl.conv_time DESC, cl.conv_id DESC
-             LIMIT ? OFFSET ?'
-        );
-        $this->conn->bind($stmt, $types . 'ii', array_merge($binds, [self::PER_PAGE, $page * self::PER_PAGE]));
+    /**
+     * @param array<string, mixed> $r a row of SELECT
+     * @return array<string, mixed>
+     */
+    private static function shape(array $r): array
+    {
+        $clickTime = (int) $r['click_time'];
+        $convTime = (int) $r['conv_time'];
+        $txid = $r['transaction_id'] !== null && $r['transaction_id'] !== '' ? (string) $r['transaction_id'] : null;
+        $type = self::typeOf((string) $r['source'], (int) $r['pixel_type'], (string) $r['user_agent']);
 
-        $rows = [];
-        foreach ($this->conn->fetchAll($stmt) as $r) {
-            $clickTime = (int) $r['click_time'];
-            $convTime = (int) $r['conv_time'];
-            $txid = $r['transaction_id'] !== null && $r['transaction_id'] !== '' ? (string) $r['transaction_id'] : null;
-            $type = self::typeOf((string) $r['source'], (int) $r['pixel_type'], (string) $r['user_agent']);
-            $rows[] = [
-                'conv_id' => (int) $r['conv_id'],
-                'click_id' => (int) $r['click_id'],
-                'campaign_id' => (int) $r['campaign_id'],
-                'campaign_name' => $r['aff_campaign_name'] !== null ? (string) $r['aff_campaign_name'] : null,
-                'transaction_id' => $txid,
-                'amount' => Amount::fromUnits(Amount::toUnits((string) $r['click_payout'])),
-                'click_time' => $clickTime,
-                'conv_time' => $convTime,
-                'elapsed' => self::elapsed($clickTime, $convTime),
-                'ip' => (string) $r['ip'],
-                'type' => $type !== null ? $type->label() : 'Unknown (' . (string) $r['source'] . ')',
-                'reverses_conv_id' => $r['reverses_conv_id'] !== null ? (int) $r['reverses_conv_id'] : null,
-                'deleted' => (int) $r['deleted'] === 1,
-                'user_agent' => (string) $r['user_agent'],
-            ];
-        }
-
-        return ['rows' => $rows, 'total' => $total, 'page' => $page];
+        return [
+            'conv_id' => (int) $r['conv_id'],
+            'click_id' => (int) $r['click_id'],
+            'campaign_id' => (int) $r['campaign_id'],
+            'campaign_name' => $r['aff_campaign_name'] !== null ? (string) $r['aff_campaign_name'] : null,
+            'transaction_id' => $txid,
+            'amount' => Amount::fromUnits(Amount::toUnits((string) $r['click_payout'])),
+            'click_time' => $clickTime,
+            'conv_time' => $convTime,
+            'elapsed' => self::elapsed($clickTime, $convTime),
+            'ip' => (string) $r['ip'],
+            'type' => $type !== null ? $type->label() : 'Unknown (' . (string) $r['source'] . ')',
+            'reverses_conv_id' => $r['reverses_conv_id'] !== null ? (int) $r['reverses_conv_id'] : null,
+            'deleted' => (int) $r['deleted'] === 1,
+            'user_agent' => (string) $r['user_agent'],
+        ];
     }
 
     /**

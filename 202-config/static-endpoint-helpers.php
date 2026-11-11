@@ -1122,7 +1122,8 @@ if (!function_exists('p202RecordLegacyConversion')) {
      *     source?: string, reversal?: bool, reversal_ref?: string, reverses_carried_value?: bool,
      *     event_name?: string|null,
      *     conv_time?: int,
-     *     notify_traffic_source?: bool
+     *     notify_traffic_source?: bool,
+     *     items?: list<array<string, mixed>>
      * } $opts source is the ledger source the row is recorded under
      *     (legacy_pixel for px and pb, clickbank for cb202); event_name is
      *     a campaign-without-goals hit's `event=`, kept on the row; conv_time
@@ -1130,7 +1131,8 @@ if (!function_exists('p202RecordLegacyConversion')) {
      *     notify_traffic_source queues the click's traffic-source server
      *     postbacks with the row, as gpb.php does (pb.php and the payment
      *     notifications ask for it; px.php, a browser pixel like gpx.php,
-     *     does not). A reversal never announces anything.
+     *     does not). A reversal never announces anything. items are the
+     *     product lines of a request that carried them (p202ExtractItems()).
      *     $matchedBy is how the endpoint found the click (match_method).
      * @return array{recorded: bool, duplicate: bool, conv_id: int, reason: string}
      *         reason is '' when recorded; otherwise one of unknown_click,
@@ -1228,7 +1230,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
             $usePixelPayout ? $payout : '',
             $transactionId,
             [],
-            [],
+            is_array($opts['items'] ?? null) ? array_values($opts['items']) : [],
             $purLinkSubid[0] ?? null,
             $purLinkSubid[1] ?? null,
         );

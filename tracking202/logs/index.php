@@ -3,7 +3,9 @@
 /**
  * Conversion Logs: every conversion the account recorded, newest first, with
  * the filters and columns of the 1.9.56 page of the same address. Rows come
- * from the conversion ledger (Prosper202\Conversion\ConversionLog).
+ * from the conversion ledger (Prosper202\Conversion\ConversionLog). Each subid
+ * opens its click, each row links the requests the Inbound Log holds for it,
+ * and ?download=csv is the list on screen, every page of it, as a file.
  */
 
 declare(strict_types=1);
@@ -43,6 +45,53 @@ try {
     $readFailed = true;
 }
 
+$masked = \Prosper202\Report\CampaignDataMask::hidden();
+$knownRange = in_array($form['range'], \Tracking202\Report\ReportWindow::PRESETS, true)
+    || $form['range'] === ConversionLog::CUSTOM_RANGE;
+$range = $knownRange ? $form['range'] : ConversionLog::DEFAULT_RANGE;
+// The filters as a query, so page 2 and the download are of the same list.
+$view = http_build_query(array_filter([
+    'range' => $range,
+    'from' => $range === ConversionLog::CUSTOM_RANGE ? $form['from'] : '',
+    'to' => $range === ConversionLog::CUSTOM_RANGE ? $form['to'] : '',
+    'campaign_id' => $form['campaign_id'],
+    'click_id' => $form['click_id'],
+    'type' => $form['type'],
+    'deleted' => $form['deleted'],
+    'time_basis' => $form['time_basis'] !== 'conversion' ? $form['time_basis'] : '',
+], static fn (string $v): bool => $v !== ''));
+
+// Download CSV: the filtered list, whole. A filter that was refused, or a
+// list that could not be read, is said on the page instead of in a file.
+if (($_GET['download'] ?? null) === 'csv' && $errors === [] && !$readFailed) {
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="conversion-logs-' . date('Ymd-His') . '.csv"');
+    header('Cache-Control: no-store');
+    $out = fopen('php://output', 'w');
+    if ($out === false) {
+        throw new \RuntimeException('Conversion Logs: the download could not be opened');
+    }
+    $cell = \Prosper202\Attribution\ExportCsv::cell(...);
+    $stamp = static fn (int $ts): string => $ts > 0 ? date('Y-m-d H:i:s', $ts) : '';
+    fputcsv($out, ['conversion_id', 'subid', 'campaign', 'click_time', 'conversion_time', 'elapsed', 'ip_address', 'type',
+        'reverses_conversion_id', 'transaction_id', 'payout', 'deleted', 'user_agent'], ',', '"', '');
+    try {
+        $log->export($userId, $read['filters'], static function (array $row) use ($out, $cell, $stamp, $masked): void {
+            fputcsv($out, [
+                $row['conv_id'], $row['click_id'], $cell((string) ($row['campaign_name'] ?? '')), $stamp($row['click_time']),
+                $stamp($row['conv_time']), (string) ($row['elapsed'] ?? ''), $row['ip'], $cell($row['type']),
+                (string) ($row['reverses_conv_id'] ?? ''), $cell((string) ($row['transaction_id'] ?? '')),
+                $masked ? '?' : (string) $row['amount'], $row['deleted'] ? 'yes' : 'no', $cell($row['user_agent']),
+            ], ',', '"', '');
+        });
+    } catch (\Prosper202\Database\Exceptions\QueryException $failed) {
+        // The headers are sent: the file says it is not whole, never ends as if it were.
+        error_log('Conversion Logs: the download stopped: ' . $failed->getMessage());
+        fputcsv($out, ['The download stopped here because the list could not be read. Download it again.'], ',', '"', '');
+    }
+    exit;
+}
+
 $types = [];
 foreach (ConversionSource::cases() as $source) {
     $types[$source->value] = $source->label();
@@ -71,9 +120,6 @@ $filters = [
         'error' => $errors['time_basis'] ?? '', 'advanced' => true,
     ],
 ];
-$knownRange = in_array($form['range'], \Tracking202\Report\ReportWindow::PRESETS, true)
-    || $form['range'] === ConversionLog::CUSTOM_RANGE;
-$range = $knownRange ? $form['range'] : ConversionLog::DEFAULT_RANGE;
 // The picker refuses a date it cannot show; a typed one that is not a day is the range error.
 $day = static fn (string $v): string => preg_match('/^\d{4}-\d{2}-\d{2}$/D', $v) === 1 ? $v : '';
 
@@ -84,7 +130,7 @@ echo '<div class="p202-page-header">'
     . '<div class="p202-page-header__text">'
     . '<h1 class="p202-page-header__title">Conversion Logs</h1>'
     . '<p class="p202-page-header__desc">Every conversion recorded on your account, newest first, including'
-    . ' deleted ones and reversals. Open a click from Visitors to see why each of its conversions counts or not.</p>'
+    . ' deleted ones and reversals. Open a subid to see why each of its conversions counts or not.</p>'
     . '</div></div>';
 
 echo p202_report_filter_bar([
@@ -113,8 +159,8 @@ if ($errors !== []) {
 
 if ($readFailed || $result === null) {
     echo '</div><div class="p202-panel__body">'
-        . p202_flash('bad', 'The conversion log could not be read. Try again; if it keeps failing,'
-            . ' check the database error log.')
+        . p202_flash('bad', 'The conversions could not be read just now, so none are shown; nothing was changed.'
+            . ' Reload the page. If it keeps failing, the server\'s error log has the reason (a database upgrade may be waiting).')
         . '</div></section>';
     template_bottom();
     exit;
@@ -123,9 +169,12 @@ if ($readFailed || $result === null) {
 $total = $result['total'];
 echo '<span class="p202-panel__sub">' . $e(number_format($total)) . ' conversion' . ($total === 1 ? '' : 's')
     . '</span>'
+    . ($total > 0 ? '<div class="p202-panel__aside"><a class="btn btn-secondary btn-sm" id="conversion-logs-csv" href="'
+        . $e($base . 'tracking202/logs/?' . ($view !== '' ? $view . '&' : '') . 'download=csv')
+        . '"><i class="bi bi-file-earmark-spreadsheet"></i> Download CSV</a></div>' : '')
     . '</div><div class="p202-panel__body">';
 
-$masked = \Prosper202\Report\CampaignDataMask::hidden();
+$inboundLog = $base . 'tracking202/setup/inbound_log.php?search=';
 $rows = [];
 foreach ($result['rows'] as $row) {
     $type = $e($row['type']);
@@ -134,7 +183,8 @@ foreach ($result['rows'] as $row) {
     }
     $agent = $row['user_agent'] !== '' ? '<code class="small text-break">' . $e($row['user_agent']) . '</code>' : '—';
     $rows[] = [
-        'click' => (string) $row['click_id'],
+        'click' => ['html' => p202_click_breakdown_button($base, $row['click_id'])
+            . ' <a class="small text-nowrap" href="' . $e($inboundLog . $row['click_id']) . '">requests</a>'],
         'campaign' => $row['campaign_name'] ?? '—',
         'click_time' => $row['click_time'] > 0 ? date('m/d/y g:ia', $row['click_time']) : '—',
         'conv_time' => date('m/d/y g:ia', $row['conv_time']),
@@ -169,20 +219,10 @@ echo p202_data_table([
     ],
 ]);
 
-// The page links carry the filters, so page 2 is page 2 of the same list.
-$view = http_build_query(array_filter([
-    'range' => $range,
-    'from' => $range === ConversionLog::CUSTOM_RANGE ? $form['from'] : '',
-    'to' => $range === ConversionLog::CUSTOM_RANGE ? $form['to'] : '',
-    'campaign_id' => $form['campaign_id'],
-    'click_id' => $form['click_id'],
-    'type' => $form['type'],
-    'deleted' => $form['deleted'],
-    'time_basis' => $form['time_basis'] !== 'conversion' ? $form['time_basis'] : '',
-], static fn (string $v): bool => $v !== ''));
 $pages = (int) ceil($total / ConversionLog::PER_PAGE);
 echo p202_overview_pagination($pages, $result['page'], 'Conversion log pages', $view);
 
 echo '</div></section>';
+echo p202_click_breakdown_modal($base);
 
 template_bottom();

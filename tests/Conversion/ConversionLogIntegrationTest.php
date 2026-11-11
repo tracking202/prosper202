@@ -277,6 +277,33 @@ final class ConversionLogIntegrationTest extends TestCase
         self::assertSame(0, $empty['total']);
     }
 
+    public function testTheExportIsTheWholeFilteredListInThePagesOrder(): void
+    {
+        self::exec('DELETE FROM 202_conversion_logs');
+        // Two share a second, so the batches' cursor has a tie to cross.
+        for ($i = 1; $i <= 7; $i++) {
+            $this->conversion($i, 700 + $i, self::MINE, 10, 'postback', 2, $i === 4 ? 180 : $i * 60, 0, $i === 6 ? 1 : 0, 'ORD-' . $i, '1.00');
+        }
+        $this->conversion(900, 999, self::OTHER, 20, 'postback', 2, 60, 0, 0, 'ORD-X', '1.00');
+        $filters = ['campaign_id' => null, 'click_id' => null, 'from' => null, 'to' => null,
+            'time_basis' => 'conversion', 'type' => null, 'deleted' => null];
+        $listed = $this->log->page(self::MINE, $filters, 0)['rows'];
+
+        $exported = [];
+        $count = $this->log->export(self::MINE, $filters, static function (array $row) use (&$exported): void {
+            $exported[] = $row;
+        }, 2);
+
+        self::assertSame(7, $count);
+        self::assertSame($listed, $exported, 'the same rows, in the same shape and order, across batches');
+
+        $live = [];
+        $this->log->export(self::MINE, ['deleted' => 'no'] + $filters, static function (array $row) use (&$live): void {
+            $live[] = $row['conv_id'];
+        }, 3);
+        self::assertSame([7, 5, 4, 3, 2, 1], $live, 'the filters are the page\'s');
+    }
+
     public function testTheCampaignListIsTheAccountsLiveCampaigns(): void
     {
         self::assertSame([11 => 'CRM free trial', 10 => 'Spring sale store'], $this->log->campaigns(self::MINE));

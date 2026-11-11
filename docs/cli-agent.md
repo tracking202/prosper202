@@ -894,6 +894,7 @@ p202 conversion list   [--limit 50] [--offset 0] [--campaign-id N] [--all]
 p202 conversion match-methods [--aff-campaign-id N] [--period P] [--time-from T] [--time-to T] [--json]
                        # each campaign's conversions, counted ones and income by how their click was found
 p202 conversion postback-auth get [--json]   # mode, the URL token (p202_token), the signing secret, how to sign
+p202 conversion postback-auth readiness [--json]  # run before set --mode token: who came without the token in the last 7 days
 p202 conversion postback-auth set --mode off|token|signed  # token: token or signature; signed: signatures only, pixels refused
 p202 conversion postback-auth rotate [--credential token|signing_secret] [--grace-hours 0-720]  # the old one works this long (168)
 p202 conversion offline-export --format google|google_uploads|microsoft [--days 1-90] [--aff-campaign-id N]
@@ -902,8 +903,11 @@ p202 conversion offline-export --format google|google_uploads|microsoft [--days 
                        # Setup › Offline Conversions: the Google Ads / Microsoft Advertising import CSV;
                        # --summary says how many conversions it holds and why each other one is left out
 p202 conversion inbound-log [--outcome refused|accepted|<outcome>] [--endpoint pb|gpb|px|gpx|upx|clickbank|jvzoo|paykickstart]
-                       [--limit 1-500] [--before ID] [--json]
-                       # Setup › Inbound Log: postbacks, pixels and IPNs received, newest first, with why each was refused
+                       [--search SUBID|TXID] [--limit 1-500] [--before ID] [--json]
+                       # Setup › Inbound Log: postbacks, pixels and IPNs received, newest first, with why each was refused,
+                       # what to do about it (fix) and whether it can be recorded now (can_record)
+p202 conversion inbound-log record <inbound_id> [--json]
+                       # record a refused pb/gpb postback's conversion from the log; run twice, it records once
 p202 conversion get    <id> [--json]
 p202 conversion create --click-id N [--payout F] [--transaction-id S] [--conv-time T] [--idempotency-key S]
                        [--status reversed [--reversal-id S]]      # a reversal of the sale with --transaction-id

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\InboundLog;
 
+use Prosper202\Conversion\PostbackAuth\PostbackAuthGate;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Schema\TableRegistry;
 
@@ -48,6 +49,22 @@ final class InboundLog
      */
     public const BACKED_OUTCOMES = ['recorded', 'reversed', 'event_recorded'];
 
+    /** The classic postbacks and pixels, which the account's postback authentication decides. */
+    public const POSTBACK_ENDPOINTS = ['pb', 'gpb', 'px', 'gpx', 'upx'];
+
+    /** The request fields a search reads, beside the row's own click, conversion and transaction id. */
+    public const SEARCHED_FIELDS = [
+        'subid', 'sid', 'txid', 'transaction_id', 'transactionid', 'order_id', 'orderid', 'oid', 't202txid',
+        'ctransreceipt', 'custom_subid', 'invoice_id',
+    ];
+    public const MAX_SEARCH = 255;
+
+    /** How long a "record it now" in progress keeps another from starting on the same row. */
+    public const REPLAY_CLAIM_SECONDS = 120;
+
+    private const COLUMNS = 'inbound_id, user_id, received_at, endpoint, method, http_status, outcome, reason,'
+        . ' click_id, conversion_id, transaction_id, fields, auth, replayed_at';
+
     public const ENDPOINTS = ['pb', 'gpb', 'px', 'gpx', 'upx', 'clickbank', 'jvzoo', 'paykickstart', 'shopify', 'zaxaa'];
 
     public function __construct(private readonly \mysqli $db)
@@ -67,10 +84,10 @@ final class InboundLog
             }
             $stmt = $conn->prepareWrite(
                 'INSERT INTO ' . TableRegistry::INBOUND_LOG
-                . ' (user_id, received_at, endpoint, method, http_status, outcome, accepted, reason, click_id, conversion_id, transaction_id, fields)'
-                . ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                . ' (user_id, received_at, endpoint, method, http_status, outcome, accepted, reason, click_id, conversion_id, transaction_id, fields, auth)'
+                . ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             );
-            $conn->bind($stmt, 'iissisisiiss', [
+            $conn->bind($stmt, 'iissisisiisss', [
                 $userId,
                 $now,
                 substr($entry->endpoint, 0, 24),
@@ -83,6 +100,7 @@ final class InboundLog
                 $entry->conversionId,
                 $entry->transactionId === null ? null : mb_substr(Redactor::scalar($entry->transactionId), 0, 255, 'UTF-8'),
                 Redactor::encode($entry->fields),
+                in_array($entry->auth, PostbackAuthGate::PRESENTED, true) ? $entry->auth : '',
             ]);
             $conn->executeInsert($stmt);
 
@@ -111,8 +129,9 @@ final class InboundLog
      * The newest rows first. An admin's list includes the requests no account
      * could be found for (user_id 0), which only an admin sees.
      *
-     * @param array{outcome?: string, endpoint?: string, before?: int} $filters
-     *        outcome: 'refused' (anything not in ACCEPTED_OUTCOMES), 'accepted', or one outcome name
+     * @param array{outcome?: string, endpoint?: string, before?: int, search?: string} $filters
+     *        outcome: 'refused' (anything not in ACCEPTED_OUTCOMES), 'accepted', or one outcome name;
+     *        search: a subid (click id), conversion id or transaction id, matched whole
      * @return list<array<string, mixed>>
      */
     public function list(int $userId, bool $withUnattributed, array $filters = [], int $limit = self::DEFAULT_LIMIT): array
@@ -136,6 +155,12 @@ final class InboundLog
             $types .= 's';
             $values[] = $filters['endpoint'];
         }
+        if (isset($filters['search']) && $filters['search'] !== '') {
+            [$clause, $searchTypes, $searchValues] = self::searchClause($filters['search']);
+            $where .= ' AND ' . $clause;
+            $types .= $searchTypes;
+            array_push($values, ...$searchValues);
+        }
         if (isset($filters['before'])) {
             $where .= ' AND inbound_id < ?';
             $types .= 'i';
@@ -146,13 +171,109 @@ final class InboundLog
 
         $conn = new Connection($this->db);
         $stmt = $conn->prepareRead(
-            'SELECT inbound_id, user_id, received_at, endpoint, method, http_status, outcome, reason,'
-            . ' click_id, conversion_id, transaction_id, fields FROM ' . TableRegistry::INBOUND_LOG
+            'SELECT ' . self::COLUMNS . ' FROM ' . TableRegistry::INBOUND_LOG
             . ' WHERE ' . $where . ' ORDER BY inbound_id DESC LIMIT ?'
         );
         $conn->bind($stmt, $types, $values);
 
         return array_map(self::row(...), $conn->fetchAll($stmt));
+    }
+
+    /**
+     * The rows a search finds: the value is the row's click, conversion or
+     * transaction id, or the subid or order number the request carried. A
+     * request refused before its click was read keeps the subid only in its
+     * fields, so those are read too. The log is bounded per account, so the
+     * LIKEs read a bounded range.
+     *
+     * @return array{0: string, 1: string, 2: list<int|string>}
+     */
+    private static function searchClause(string $search): array
+    {
+        $search = mb_substr(trim($search), 0, self::MAX_SEARCH, 'UTF-8');
+        $clauses = ['transaction_id = ?'];
+        $types = 's';
+        $values = [$search];
+        $json = json_encode($search, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+        if (is_string($json)) {
+            // LIKE's wildcards, after JSON's escaping; | escapes, since a backslash is JSON's own.
+            $like = str_replace(['|', '%', '_'], ['||', '|%', '|_'], $json);
+            foreach (self::SEARCHED_FIELDS as $name) {
+                $clauses[] = "fields LIKE ? ESCAPE '|'";
+                $types .= 's';
+                $values[] = '%"' . $name . '":' . $like . '%';
+            }
+        }
+        if (preg_match('/\A[1-9][0-9]{0,17}\z/D', $search) === 1) {
+            $clauses[] = 'click_id = ?';
+            $clauses[] = 'conversion_id = ?';
+            $types .= 'ii';
+            $values[] = (int) $search;
+            $values[] = (int) $search;
+        }
+
+        return ['(' . implode(' OR ', $clauses) . ')', $types, $values];
+    }
+
+    /**
+     * One of the account's own rows, or null. A request no account was found
+     * for is nobody's to act on, so user 0's rows are never answered.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function find(int $userId, int $inboundId): ?array
+    {
+        if ($userId <= 0 || $inboundId <= 0) {
+            return null;
+        }
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareWrite(
+            'SELECT ' . self::COLUMNS . ' FROM ' . TableRegistry::INBOUND_LOG . ' WHERE inbound_id = ? AND user_id = ?'
+        );
+        $conn->bind($stmt, 'ii', [$inboundId, $userId]);
+        $row = $conn->fetchOne($stmt);
+
+        return $row === null ? null : self::row($row);
+    }
+
+    /**
+     * Take the row for one "record it now" (InboundReplay): true for the one
+     * caller that may write. A row that has its conversion, or that another
+     * caller took less than REPLAY_CLAIM_SECONDS ago, is not taken.
+     */
+    public function claimReplay(int $userId, int $inboundId, int $now): bool
+    {
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareWrite(
+            'UPDATE ' . TableRegistry::INBOUND_LOG . ' SET replayed_at = ?'
+            . ' WHERE inbound_id = ? AND user_id = ? AND conversion_id IS NULL AND (replayed_at IS NULL OR replayed_at < ?)'
+        );
+        $conn->bind($stmt, 'iiii', [$now, $inboundId, $userId, $now - self::REPLAY_CLAIM_SECONDS]);
+
+        return $conn->executeUpdate($stmt) === 1;
+    }
+
+    /** The conversion a "record it now" recorded, or found on file, kept on the row. */
+    public function finishReplay(int $userId, int $inboundId, int $conversionId, int $now): void
+    {
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareWrite(
+            'UPDATE ' . TableRegistry::INBOUND_LOG . ' SET conversion_id = ?, replayed_at = ? WHERE inbound_id = ? AND user_id = ?'
+        );
+        $conn->bind($stmt, 'iiii', [$conversionId, $now, $inboundId, $userId]);
+        $conn->executeUpdate($stmt);
+    }
+
+    /** Give the row back after a "record it now" that recorded nothing, so it can be asked again. */
+    public function releaseReplay(int $userId, int $inboundId, int $claimedAt): void
+    {
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareWrite(
+            'UPDATE ' . TableRegistry::INBOUND_LOG . ' SET replayed_at = NULL'
+            . ' WHERE inbound_id = ? AND user_id = ? AND conversion_id IS NULL AND replayed_at = ?'
+        );
+        $conn->bind($stmt, 'iii', [$inboundId, $userId, $claimedAt]);
+        $conn->executeUpdate($stmt);
     }
 
     /**
@@ -222,8 +343,26 @@ final class InboundLog
             $decoded = json_decode($row['fields'], true);
             $fields = is_array($decoded) ? $decoded : null;
         }
-        $status = (int) $row['http_status'];
         $userId = (int) $row['user_id'];
+        $conversionId = $row['conversion_id'] === null ? null : (int) $row['conversion_id'];
+        $replayedAt = ($row['replayed_at'] ?? null) === null ? null : (int) $row['replayed_at'];
+        $auth = (string) ($row['auth'] ?? '');
+        $shaped = self::shape($row, $fields, $userId, $conversionId, $replayedAt, $auth);
+
+        return $shaped + [
+            'fix' => InboundFix::of($shaped),
+            'can_record' => InboundReplay::refusalOf($shaped) === null,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @param array<array-key, mixed>|null $fields
+     * @return array<string, mixed>
+     */
+    private static function shape(array $row, ?array $fields, int $userId, ?int $conversionId, ?int $replayedAt, string $auth): array
+    {
+        $status = (int) $row['http_status'];
 
         return [
             'inbound_id' => (int) $row['inbound_id'],
@@ -236,9 +375,14 @@ final class InboundLog
             'reason' => (string) $row['reason'],
             'user_id' => $userId === 0 ? null : $userId,
             'click_id' => $row['click_id'] === null ? null : (int) $row['click_id'],
-            'conversion_id' => $row['conversion_id'] === null ? null : (int) $row['conversion_id'],
+            'conversion_id' => $conversionId,
             'transaction_id' => $row['transaction_id'] === null ? null : (string) $row['transaction_id'],
             'fields' => $fields,
+            // What a postback or pixel presented; null where that was not read.
+            'auth' => $auth === '' ? null : $auth,
+            // When "record it now" recorded the row's conversion; null for a row never recorded that way.
+            'recorded_later_at' => $conversionId !== null ? $replayedAt : null,
+            'record_started_at' => $conversionId === null ? $replayedAt : null,
         ];
     }
 }
