@@ -31,7 +31,8 @@ function page(settings, advanced) {
             jar.set(name, {value: pair.slice(at + 1), expires: when});
         },
     });
-    const context = {window: {t202Settings: settings}, document, Date, Math, Number, String, isFinite,
+    const warned = [];
+    const context = {window: {t202Settings: settings, console: {warn: (m) => warned.push(m)}}, document, Date, Math, Number, String, isFinite,
         consent: true, encodeURIComponent};
     vm.createContext(context);
     vm.runInContext(cookies + `
@@ -41,8 +42,14 @@ function page(settings, advanced) {
         var p202PurLinkAdvanced = ${advanced ? 'true' : 'false'};
         var p202PurLinkPage = '77';
         var p202PurLinkRevoked = false;
+        var p202SettingWarned = {};
+        function p202SettingWarn(message) {
+            if (p202SettingWarned[message]) { return; }
+            p202SettingWarned[message] = true;
+            window.console.warn('Prosper202: ' + message);
+        }
     ` + block, context);
-    return {context, jar, run: (code) => vm.runInContext(code, context)};
+    return {context, jar, warned, run: (code) => vm.runInContext(code, context)};
 }
 
 const first = '11-491-' + 'a'.repeat(12);
@@ -126,6 +133,19 @@ for (const [settings, days] of [[{t202UseSubidOrig: true}, 7], [{t202UseSubidOri
     const kept = p.jar.get('_t202SubidOrig_p77');
     assert.ok(kept && Math.abs(kept.expires - Date.now() - days * DAY) < 5000, JSON.stringify(settings) + ' keeps ' + days + ' days');
     assert.equal(p.run(`p202SubidOrigRead('', ${full})`), first, 'a simple page keeps its own');
+}
+
+// A t202ExpireSubidOrig that is not a number of days is said, once.
+for (const [given, days, said] of [[undefined, 7, null], [30, 30, null], ['30', 30, null], [400, 365, 'more than 365'],
+    ['abc', 7, 'not a number'], [0, 7, 'not a number'], [-3, 7, 'not a number'], [Infinity, 7, 'not a number'],
+    [true, 7, 'not a number'], [null, 7, 'not a number'], ['', 7, 'not a number']]) {
+    const settings = {t202UseSubidOrig: true};
+    if (given !== undefined) { settings.t202ExpireSubidOrig = given; }
+    const p = page(settings, false);
+    assert.equal(p.run('p202SubidOrigDays()'), days, String(given));
+    p.run('p202SubidOrigDays()');
+    assert.equal(p.warned.length, said ? 1 : 0, String(given) + ': ' + JSON.stringify(p.warned));
+    if (said) { assert.ok(p.warned[0].includes(said), p.warned[0]); }
 }
 
 console.log('Landing original-subid harness passed');

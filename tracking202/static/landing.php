@@ -250,6 +250,13 @@ var p202SettingParams = {t202kw: 't202kw', t202c1: 'c1', t202c2: 'c2', t202c3: '
 // Settings of their own, and what only the tracker knows.
 var p202SettingNotAValue = /^t202(urlvars|usesubidorig|expiresubidorig|subid|subidorig|sourceid|ip)$/i;
 var p202SettingValues = {};
+var p202SettingWarned = {};
+// Once per message: the page's own settings, so its author is told what was not used.
+function p202SettingWarn(message) {
+    if (p202SettingWarned[message] || !window.console || !window.console.warn) { return; }
+    p202SettingWarned[message] = true;
+    window.console.warn('Prosper202: ' + message);
+}
 var p202SettingsApplied = false;
 var p202DcsSet = null;
 // A value the pageview sends: the page's setting for it, else the URL's.
@@ -264,16 +271,32 @@ function p202ApplySettings() {
     if (!s || typeof s !== 'object') { return; }
     var own = Object.prototype.hasOwnProperty, data = {}, any = false, key, text;
     for (key in s) {
-        if (!own.call(s, key) || p202SettingNotAValue.test(key)) { continue; }
+        if (!own.call(s, key)) { continue; }
+        if (p202SettingNotAValue.test(key)) {
+            if (/^t202(subid|subidorig|sourceid|ip)$/i.test(key)) {
+                p202SettingWarn('t202Settings.' + key + ' cannot be set by the page, and is not used.');
+            }
+            continue;
+        }
         text = typeof s[key] === 'number' && isFinite(s[key]) ? String(s[key]) : s[key];
-        if (typeof text !== 'string') { continue; }
+        if (typeof text !== 'string') {
+            p202SettingWarn('t202Settings.' + key + ' is not text or a number, and is not used.');
+            continue;
+        }
         if (text !== '') { data[key] = text; any = true; }
     }
     var map = s.t202UrlVars;
     if (map && typeof map === 'object') {
         for (key in map) {
-            if (!own.call(map, key) || typeof map[key] !== 'string' || map[key] === '') { continue; }
-            if (p202SettingNotAValue.test(key)) { continue; }
+            if (!own.call(map, key)) { continue; }
+            if (typeof map[key] !== 'string' || map[key] === '') {
+                p202SettingWarn('t202Settings.t202UrlVars.' + key + ' does not name a URL parameter, and is not used.');
+                continue;
+            }
+            if (p202SettingNotAValue.test(key)) {
+                p202SettingWarn('t202Settings.t202UrlVars.' + key + ' cannot be set by the page, and is not used.');
+                continue;
+            }
             text = t202GetVar(map[key]);
             if (text !== '') { data[key] = text; any = true; }
         }
@@ -419,8 +442,15 @@ function p202PurLinkFallback(offer, template) {
 var P202_SUBID_ORIG = '_t202SubidOrig';
 function p202SubidOrigExpiry() {
     var s = window.t202Settings;
-    var days = (s && typeof s === 'object') ? Number(s.t202ExpireSubidOrig) : NaN;
-    return (isFinite(days) && days > 0) ? Math.min(days, 365) : 7;
+    var given = (s && typeof s === 'object') ? s.t202ExpireSubidOrig : undefined;
+    var days = Number(given);
+    if (given === undefined) { return 7; }
+    if (typeof given === 'boolean' || given === null || given === '' || !isFinite(days) || days <= 0) {
+        p202SettingWarn('t202Settings.t202ExpireSubidOrig is not a number of days; 7 days are used.');
+        return 7;
+    }
+    if (days > 365) { p202SettingWarn('t202Settings.t202ExpireSubidOrig is more than 365 days; 365 are used.'); }
+    return Math.min(days, 365);
 }
 function p202SubidOrigDays() {
     var s = window.t202Settings;
@@ -1017,14 +1047,21 @@ if (document.readyState === 'loading') {
     // t202Settings' values (p202ApplySettings()), under a key in any case.
     p202DcsSet = function(values) {
         if (window.dcs !== dcs) { return; }
-        var changed = [];
+        var changed = [], used = {};
         for (var key in dcs.t202DataObj) {
             if (!own(dcs.t202DataObj, key)) { continue; }
             for (var given in values) {
                 if (own(values, given) && given.toLowerCase() === key.toLowerCase()) {
                     dcs.t202DataObj[key] = values[given];
                     changed.push(key);
+                    used[given] = true;
                 }
+            }
+        }
+        for (var unused in values) {
+            if (own(values, unused) && !used[unused]) {
+                p202SettingWarn('t202Settings.' + unused + ' is not a key of dcs.t202DataObj, and is ignored;'
+                    + ' add it with dcs.addDataObj().');
             }
         }
         render(dcs, changed);
@@ -1035,13 +1072,26 @@ if (document.readyState === 'loading') {
 	if (document.readyState === 'loading') {
 		document.addEventListener('DOMContentLoaded', function() { if (window.dcs === dcs) { render(dcs, null); } });
 	}
+    // t202UseSubidOrig, or an element that shows the first click.
+    function keepsFirstClick() {
+        if (p202SubidOrigDays() > 0) { return true; }
+        var els = document.querySelectorAll('[name],[t202attribute]');
+        for (var i = 0; i < els.length; i++) {
+            if (els[i].hasAttribute('data-p202-purlink-input')) { continue; }
+            var name = els[i].getAttribute('name') || '';
+            if ((name.indexOf('t202SubidOrig') !== -1 && name.indexOf('t202p13n_') !== 0) ||
+                els[i].getAttribute('t202attribute') === 't202SubidOrig') { return true; }
+        }
+        return false;
+    }
 	// The click's id, from record.php's answer (p202DcsClickJs()).
 	window.p202DcsClick = function(click) {
 		if (!click || typeof click.t202Subid !== 'string' || !consented() || window.dcs !== dcs) { return; }
 		dcs.t202DataObj.t202Subid = click.t202Subid;
         if (/^[1-9][0-9]{0,18}$/.test(click.t202Subid)) {
-            // Kept t202ExpireSubidOrig days (7 when unset), as 1.9.56 kept it.
-            var orig = readCookie(P202_SUBID_ORIG);
+            // Kept t202ExpireSubidOrig days (7 when unset), and only by a page
+            // that uses it: elsewhere it is this visit's, and no cookie is set.
+            var orig = keepsFirstClick() ? readCookie(P202_SUBID_ORIG) : click.t202Subid;
             if (!/^[1-9][0-9]{0,18}$/.test(orig || '')) {
                 orig = click.t202Subid;
                 createCookie(P202_SUBID_ORIG, orig, p202SubidOrigExpiry());

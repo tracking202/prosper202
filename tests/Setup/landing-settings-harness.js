@@ -12,11 +12,14 @@ const end = source.indexOf('// --- First-party identity', start);
 assert.ok(start > 0 && end > start, 'landing.php has the t202Settings block');
 const block = source.slice(start, end);
 
+let warned = [];
 function page(settings, query, options = {}) {
+    warned = [];
     const params = new URLSearchParams(query);
     const get = (name) => params.getAll(name).join(', ');
     const context = {
-        window: {t202Settings: settings, p202PurLink: options.purlink ? {} : undefined},
+        window: {t202Settings: settings, p202PurLink: options.purlink ? {} : undefined,
+            console: {warn: (m) => warned.push(m)}},
         isFinite, String, Object,
         t202GetVar: get,
         readCookie: (name) => (name === 't202forcedkw' && options.forced ? options.forced : null),
@@ -72,6 +75,23 @@ for (const settings of [undefined, null, 'x', 7, {}, {t202UseSubidOrig: true, t2
         t202UrlVars: {t202Subid: 'q', t202SourceId: 'q', t202IP: 'q'}}, QUERY, {forced: 'forced kw'});
     assert.deepStrictEqual(plain(c.dcsSets), [{t202Kw: 'set'}]);
     assert.strictEqual(c.t202kw, 'forced kw');
+}
+
+// What the page sets and is not used is named once in the console.
+{
+    page({t202C1: ['x'], t202C2: {}, t202C3: true, t202Subid: '5', t202UseSubidOrig: true,
+        t202UrlVars: {t202Kw: 5, t202C4: '', t202IP: 'q'}}, QUERY);
+    assert.deepStrictEqual(warned.slice().sort(), [
+        'Prosper202: t202Settings.t202C1 is not text or a number, and is not used.',
+        'Prosper202: t202Settings.t202C2 is not text or a number, and is not used.',
+        'Prosper202: t202Settings.t202C3 is not text or a number, and is not used.',
+        'Prosper202: t202Settings.t202Subid cannot be set by the page, and is not used.',
+        'Prosper202: t202Settings.t202UrlVars.t202C4 does not name a URL parameter, and is not used.',
+        'Prosper202: t202Settings.t202UrlVars.t202IP cannot be set by the page, and is not used.',
+        'Prosper202: t202Settings.t202UrlVars.t202Kw does not name a URL parameter, and is not used.',
+    ]);
+    page({t202C1: 'home', t202UrlVars: {t202C2: 'sub'}}, QUERY);
+    assert.deepStrictEqual(warned, [], 'nothing to say about settings that are used');
 }
 
 console.log('Landing settings harness passed');

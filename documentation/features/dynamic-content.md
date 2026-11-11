@@ -97,9 +97,11 @@ The keyword, c1–c4, the UTM values, the ad click ids (`t202GCLID`,
 `t202GBRAID`, `t202WBRAID`, `t202TTCLID`, `t202MSCLKID`, `t202FBCLID`) and
 `t202Pubid` are recorded on the click with these values, shown on the page
 and used in PurLinks. The click is recorded with them from the start, with no
-second request. Any other key (`t202Country`, a key of your own page) is
-shown on the page only. `t202Subid`, `t202SubidOrig`, `t202SourceId` and
-`t202IP` cannot be set.
+second request. Another key the data object already has (`t202Country`) is
+shown on the page only. A key it does not have is ignored, as in 1.9.56; add
+one with `dcs.addDataObj()`. `t202Subid`, `t202SubidOrig`, `t202SourceId` and
+`t202IP` cannot be set. A key that is ignored, and a value that is not text
+or a number, is named once in the browser console.
 
 Put the script anywhere in the page's HTML: the settings are read once, when
 the page has finished loading and before the visit is sent. Settings added
@@ -109,10 +111,13 @@ later are not read; use `dcs.updateDataObj()` for those.
 
 Once the visit is recorded, two more keys are filled, as in 1.9.56:
 
-- `t202SubidOrig` is the SubID of the visitor's first visit to your site. It
-  is kept in a cookie on your landing page's site (`_t202SubidOrig`) for
-  `t202Settings.t202ExpireSubidOrig` days, 7 when left out. On a first visit
-  it equals `t202Subid`.
+- `t202SubidOrig` is the SubID of the visitor's first visit to your site,
+  on a page that uses it: one with an element named for `t202SubidOrig` (or
+  `t202attribute="t202SubidOrig"`), or one that sets
+  `t202Settings.t202UseSubidOrig`. It is kept in a cookie on your landing
+  page's site (`_t202SubidOrig`) for `t202Settings.t202ExpireSubidOrig` days,
+  7 when left out. On a first visit it equals `t202Subid`. A page that does
+  neither sets no cookie, and its `t202SubidOrig` is the visit's own SubID.
 - `t202SourceId` is the id of the click's traffic source account, the value
   `[[sourceid]]` takes in a campaign URL. It is empty for a click with no
   traffic source account.

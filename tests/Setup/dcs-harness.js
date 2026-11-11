@@ -92,8 +92,10 @@ function page(serverData, query, elements, options = {}) {
         t202GetVar: get,
         p202Var: (name) => (options.settingValues && name in options.settingValues ? options.settingValues[name] : get(name)),
         p202DcsSet: null,
+        p202SettingWarn: (m) => warnings.push('settings: ' + m),
         P202_SUBID_ORIG: '_t202SubidOrig',
         p202SubidOrigExpiry: () => options.expiry || 7,
+        p202SubidOrigDays: () => (options.useOrig ? options.expiry || 7 : 0),
         readCookie: (name) => (jar.has(name) ? jar.get(name).value : null),
         createCookie: (name, value, days) => { jar.set(name, {value: String(value), days}); },
         p202ConsentGiven: () => consent,
@@ -242,13 +244,31 @@ const query = 'c1=<b>one</b>&c2=two&t202kw=blue+shoes&utm_source=news&pci=88&t20
         assert.strictEqual(jar.get('_t202SubidOrig').value, '41', 'the first click stays');
         // A cookie that is not a click id is replaced.
         const bad = new Map([['_t202SubidOrig', {value: '41-491-abc', days: 7}]]);
-        const replaced = page(server, query, [], {jar: bad});
+        const replaced = page(server, query, [], {jar: bad, useOrig: true});
         replaced.window.p202DcsClick({t202Subid: '57'});
         assert.strictEqual(bad.get('_t202SubidOrig').value, '57');
         assert.strictEqual(replaced.window.dcs.t202DataObj.t202SourceId, '', 'no source id is none');
     }
     window.p202.consent(false);
     assert.deepStrictEqual([subid.value, orig.value, source.textContent, ip.textContent], ['', '', '', 'hidden'], 'a withdrawal clears them');
+    // A page that does not use the first click keeps none: it is this visit's.
+    {
+        const shown = new Element('span', {t202attribute: 't202Subid'});
+        const jar2 = new Map([['_t202SubidOrig', {value: '41', days: 7}]]);
+        const bare = page(server, query, [shown], {jar: jar2});
+        bare.window.p202DcsClick({t202Subid: '57'});
+        assert.strictEqual(bare.window.t202GetSubidOrig(), '57', 'this visit\'s, not a cookie it never set');
+        const none = new Map();
+        page(server, query, [shown], {jar: none}).window.p202DcsClick({t202Subid: '57'});
+        assert.strictEqual(none.size, 0, 'and no cookie is set');
+        // t202UseSubidOrig keeps it with no element, as does t202attribute="t202SubidOrig".
+        const setting = new Map();
+        page(server, query, [], {jar: setting, useOrig: true, expiry: 30}).window.p202DcsClick({t202Subid: '57'});
+        assert.deepStrictEqual(setting.get('_t202SubidOrig'), {value: '57', days: 30});
+        const attr = new Map();
+        page(server, query, [new Element('b', {t202attribute: 't202SubidOrig'})], {jar: attr}).window.p202DcsClick({t202Subid: '58'});
+        assert.strictEqual(attr.get('_t202SubidOrig').value, '58');
+    }
     assert.deepStrictEqual([window.t202GetSubid(), window.t202GetSubidOrig()], ['', '']);
     window.p202DcsClick({t202Subid: '42'});
     assert.strictEqual(subid.value, '', 'no subid after a withdrawal');
@@ -259,13 +279,15 @@ const query = 'c1=<b>one</b>&c2=two&t202kw=blue+shoes&utm_source=news&pci=88&t20
 {
     const kw = new Element('input', {name: 't202Kw'});
     const c1 = new Element('span', {t202attribute: 't202c1'});
-    const {window, context, network, jar} = page(server, query, [kw, c1], {settingValues: {gclid: 'MAPPED'}});
+    const {window, context, network, jar, warnings} = page(server, query, [kw, c1], {settingValues: {gclid: 'MAPPED'}});
     assert.strictEqual(window.dcs.t202DataObj.t202GCLID, 'MAPPED', 'an ad click id read from the page\'s parameter');
     context.p202DcsSet({t202kw: 'from settings', T202C1: 'home', t202Nope: 'x'});
     assert.deepStrictEqual([kw.value, c1.textContent], ['from settings', 'home']);
     assert.deepStrictEqual([window.dcs.t202DataObj.t202Kw, window.dcs.t202DataObj.t202kw, window.dcs.t202DataObj.t202C1],
         ['from settings', 'from settings', 'home']);
     assert.ok(!('t202Nope' in window.dcs.t202DataObj));
+    assert.deepStrictEqual(warnings.filter((w) => w.startsWith('settings: ')),
+        ['settings: t202Settings.t202Nope is not a key of dcs.t202DataObj, and is ignored; add it with dcs.addDataObj().']);
     assert.deepStrictEqual(network, [], 'the pageview carries them: no update is sent');
     assert.strictEqual(jar.size, 0);
 }
