@@ -5089,6 +5089,11 @@ class UPGRADE
                 // attribution worker's run carries on (AttributionWorker::
                 // fanOutModelRecomputes()). Every model already there is at 0.
                 \Prosper202\Database\Tables\AttributionTables::attributionModels(),
+                // 202_ppc_network_variables gains copied_from_ppc_variable_id:
+                // the variable a traffic source's copy took each of its own
+                // from (TrafficSourceOwners::split()), which names the values
+                // recorded before the copy. Null on every variable already there.
+                \Prosper202\Database\Tables\TrackingTables::ppcNetworkVariables(),
             ], [], [], true) && $paid_ok;
             if ($step_ok) {
                 _upgrade_seed_bot202_facebook_pixel_lookups();

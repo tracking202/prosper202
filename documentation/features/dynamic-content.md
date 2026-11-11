@@ -86,5 +86,7 @@ PurLinks use these values for their tokens (`[[c1]]` takes `t202C1`); call
   recorded. `redirect/u.php` still answers, but a request without the
   pageview's proof, such as a page that calls it directly, changes nothing.
 - Values are shown as text. A `t202Default` holding HTML shows the markup.
-- `t202SubidOrig`, `t202SourceId` and the `t202Settings` options are not
-  restored; an element named `t202SubidOrig` gets `t202Subid`.
+- The `t202SubidOrig` and `t202SourceId` segments are not restored: an
+  element named for either is not filled. `t202Settings`' `t202UseSubidOrig`
+  and `t202ExpireSubidOrig` are read again, for PurLinks; see
+  [PurLinks](purlinks.md).
