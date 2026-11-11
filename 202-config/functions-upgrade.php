@@ -193,7 +193,9 @@ if (!function_exists('_upgrade_seed_licence_answers')) {
 
     /**
      * Hash the API keys still stored whole (ApiKeyStore::hashStoredKeys()),
-     * for the 1.9.80 rung. False when one is left whole.
+     * and convert a label column that cannot hold every name
+     * (ApiKeyStore::widenLabel()), for the 1.9.80 rung. False when a key is
+     * left whole or the column unconverted.
      */
     function _upgrade_hash_api_keys(): bool
     {
@@ -201,7 +203,9 @@ if (!function_exists('_upgrade_seed_licence_answers')) {
 
         try {
             $conn = ($db instanceof \mysqli) ? $db : $db->getConnection();
-            return \Prosper202\User\ApiKeyStore::hashStoredKeys($conn);
+            // Both run, so one failure does not hide the other.
+            $named = \Prosper202\User\ApiKeyStore::widenLabel($conn);
+            return \Prosper202\User\ApiKeyStore::hashStoredKeys($conn) && $named;
         } catch (\Throwable $e) {
             error_log('Prosper202 upgrade: the API keys could not be hashed: ' . $e->getMessage());
             return false;

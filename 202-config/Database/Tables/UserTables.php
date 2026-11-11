@@ -272,7 +272,7 @@ final class UserTables
                 `user_id` mediumint(8) unsigned NOT NULL,
                 `api_key` varchar(250) NOT NULL DEFAULT '',
                 `scope` text DEFAULT NULL,
-                `label` varchar(100) DEFAULT NULL,
+                `label` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
                 `created_at` int(10) NOT NULL,
                 `key_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
                 `key_prefix` varchar(16) DEFAULT NULL,

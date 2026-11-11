@@ -484,6 +484,53 @@ final class ApiKeyStore
     }
 
     /**
+     * The 1.9.80 rung's step for a key's name: label holds any text. A table
+     * made before 1.9.55 has the server's default charset, and the column
+     * 1.9.78 added to it took that; it is converted, values and all. True
+     * when the column is utf8mb4.
+     */
+    public static function widenLabel(\mysqli $db): bool
+    {
+        $conn = new Connection($db);
+        try {
+            $column = $conn->fetchOne($conn->prepareRead(
+                "SELECT CHARACTER_SET_NAME AS charset FROM information_schema.COLUMNS"
+                . " WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '202_api_keys' AND COLUMN_NAME = 'label'"
+            ));
+            if ($column === null) {
+                error_log('Prosper202 upgrade: 202_api_keys has no label column to convert');
+                return false;
+            }
+            if (strtolower((string) $column['charset']) === 'utf8mb4') {
+                return true;
+            }
+            $conn->execute($conn->prepareWrite(
+                'ALTER TABLE 202_api_keys MODIFY `label` varchar(100)'
+                . ' CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL'
+            ));
+        } catch (\Throwable $e) {
+            error_log('Prosper202 upgrade: the API keys\' label column could not be converted: ' . $e->getMessage());
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Whether a write failed because a column cannot hold a character sent:
+     * 1366 on MariaDB and for a value MySQL converts, 3988 where MySQL 8
+     * refuses the conversion of a bound value outright.
+     */
+    public static function isUnstorableText(\Throwable $e): bool
+    {
+        return Connection::isMysqlError($e, 1366, 'Incorrect string value')
+            || Connection::isMysqlError($e, 3988, 'Conversion from collation');
+    }
+
+    /** What a person is told when a key's name cannot be stored. */
+    public const UNSTORABLE_NAME = 'That name holds a character this install cannot store in a key\'s name yet.'
+        . ' Run the upgrade at /202-config/upgrade.php, or use a name of plain letters and digits.';
+
+    /**
      * The 1.9.80 rung's step: hashes every key still stored whole, row by
      * row, and puts a placeholder in its api_key. A run that stops part way is picked up by
      * the next, since only rows with no key_hash are read. True when no key
