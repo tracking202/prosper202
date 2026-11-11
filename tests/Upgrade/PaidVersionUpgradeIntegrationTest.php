@@ -161,10 +161,15 @@ final class PaidVersionUpgradeIntegrationTest extends TestCase
     public function testAPaid1956DatabaseGetsTheSchemaOfTheFree1956Step(): void
     {
         self::paidShape();
+        self::assertTrue(\Prosper202\Update\PaidOrigin::isPaid1956(self::$db, '1.9.56'));
 
         [$out, $err] = self::upgrade();
 
         self::assertUpgradedToTheInstalledSchema($out, $err);
+        self::assertTrue(
+            \Prosper202\Update\PaidOrigin::isPaid1956(self::$db, '1.9.80'),
+            'the upgraded install is still known to have come from paid 1.9.56, by the table the upgrade leaves'
+        );
         $pass = self::$db->query('SELECT user_pass FROM 202_users WHERE user_id = ' . self::USER)->fetch_row()[0];
         self::assertSame(self::LEGACY_HASH, $pass, 'the stored password is kept, so the legacy sign-in still works');
 
@@ -196,6 +201,10 @@ final class PaidVersionUpgradeIntegrationTest extends TestCase
     public function testTheFreePathIsUnchangedAndASecondRunChangesNothing(): void
     {
         // Free 1.9.55: the 1.9.55 step brings the schema, the 1.9.56 step then finds it there.
+        self::assertFalse(
+            \Prosper202\Update\PaidOrigin::isPaid1956(self::$db, '1.9.55'),
+            'a free install is not sent to the paid notes'
+        );
         self::q('DROP TABLE user_data_feedback');
         self::q('ALTER TABLE 202_users MODIFY user_pass char(32) NOT NULL');
         self::stored('1.9.55');

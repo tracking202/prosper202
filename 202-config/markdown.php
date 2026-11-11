@@ -150,3 +150,40 @@ if (!function_exists('markdownToHtml')) {
         return strtr(implode("\n", $out), $protected);
     }
 }
+
+if (!function_exists('markdownDocLinks')) {
+
+    /**
+     * Make a rendered document's own links work where it is served:
+     * headings get the id a `#section` link names, and a link to another
+     * document under documentation/ (which is not served here) goes to that
+     * document in the public repository. $docPath is the document's path
+     * from the install root.
+     */
+    function markdownDocLinks(string $html, string $docPath): string
+    {
+        $html = (string) preg_replace_callback('~<(h[1-3])>(.*?)</\1>~s', static function (array $m): string {
+            $slug = strtolower(html_entity_decode(strip_tags($m[2]), ENT_QUOTES, 'UTF-8'));
+            $slug = str_replace(' ', '-', trim((string) preg_replace('/[^a-z0-9 _-]+/', '', $slug)));
+
+            return $slug === '' ? $m[0] : '<' . $m[1] . ' id="' . $slug . '">' . $m[2] . '</' . $m[1] . '>';
+        }, $html);
+
+        $repository = 'https://github.com/tracking202/prosper202/blob/master/';
+        $link = static function (array $m) use ($docPath, $repository): string {
+            $parts = [];
+            foreach (explode('/', dirname($docPath) . '/' . $m[1]) as $part) {
+                if ($part === '..') {
+                    array_pop($parts);
+                } elseif ($part !== '' && $part !== '.') {
+                    $parts[] = $part;
+                }
+            }
+            $url = $repository . implode('/', array_map('rawurlencode', $parts)) . ($m[2] ?? '');
+
+            return '<a href="' . htmlspecialchars($url, ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="noopener">';
+        };
+
+        return (string) preg_replace_callback('~<a href="([^"#:]+\.md)(#[^"]*)?">~', $link, $html);
+    }
+}

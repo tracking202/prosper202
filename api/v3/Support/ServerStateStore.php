@@ -58,7 +58,7 @@ class ServerStateStore implements QuotaStore
      * staged change, change-feed entry, sync job or manifest recorded after
      * it describes data the database no longer has. Each is stamped with the
      * database epoch it was written at (state_epoch); those stamped past the
-     * database's epoch are set aside, never deleted. Files holding many
+     * database's epoch are set aside, and kept 30 days. Files holding many
      * records ('items') are split record by record; the others are one record.
      */
     private const array RESTORE_SENSITIVE_ITEM_DIRS = ['idempotency', 'staged_changes', 'changes'];
@@ -69,6 +69,16 @@ class ServerStateStore implements QuotaStore
 
     /** The file beside the records that holds the highest database epoch (StateEpoch) they were written at. */
     private const string EPOCH_FILE = 'epoch.json';
+
+    /** The restored-* directories whose notice the owner dismissed (restoreNotices()). */
+    private const string RESTORE_NOTICES_FILE = 'restore-notices.json';
+
+    /** How long a restored-* directory is kept before it is removed. */
+    public const int SET_ASIDE_KEPT_SECONDS = 30 * 86400;
+
+    /** How long a restored-* directory that could not be removed waits before it is tried again. */
+    private const int SET_ASIDE_RETRY_SECONDS = 86400;
+    private const string SET_ASIDE_NAME = '/\Arestored-(\d{8}T\d{6}Z)-[0-9a-f]{6}\z/';
 
     private readonly string $baseDir;
 
@@ -211,6 +221,200 @@ class ServerStateStore implements QuotaStore
         }
         $this->setAsideWhatTheDatabaseIsBehind();
         $this->restoreChecked = true;
+        try {
+            $this->pruneSetAside();
+        } catch (\Throwable $e) {
+            error_log('p202: what a database restore set aside in ' . $this->baseDir . ' could not be pruned: '
+                . $e->getMessage());
+        }
+    }
+
+    /**
+     * What each database restore set aside and where, oldest first, until
+     * the owner dismisses it: counted from the restored-* directories
+     * themselves, so a restore interrupted half way is told whole. Checks
+     * against a restore first, so Settings says so on the first visit after
+     * one. Empty for a store without an epoch.
+     *
+     * @return list<array{at: int, name: string, dir: string, kept_until: int, counts: array<string, int>}>
+     */
+    public function restoreNotices(): array
+    {
+        $this->checkAgainstARestore();
+        $dismissed = $this->dismissedSetAside();
+        $notices = [];
+        foreach (glob($this->baseDir . '/restored-*', GLOB_ONLYDIR) ?: [] as $dir) {
+            $name = basename($dir);
+            $made = self::setAsideTime($name);
+            if ($made === null || is_link($dir) || in_array($name, $dismissed, true)) {
+                continue;
+            }
+            $counts = [];
+            foreach (self::RESTORE_SENSITIVE_ITEM_DIRS as $kind) {
+                foreach (glob($dir . '/' . $kind . '/*.json') ?: [] as $file) {
+                    $items = $this->readJsonFile($file, ['items' => []])['items'] ?? [];
+                    $counts[$kind] = ($counts[$kind] ?? 0) + (is_array($items) ? count($items) : 0);
+                }
+            }
+            foreach (self::RESTORE_SENSITIVE_RECORD_DIRS as $kind) {
+                foreach (glob($dir . '/' . $kind . '/*.json') ?: [] as $file) {
+                    $counts[$kind] = ($counts[$kind] ?? 0) + (str_ends_with($file, '.events.json') ? 0 : 1);
+                }
+            }
+            $counts = array_filter($counts);
+            if ($counts === []) {
+                continue;
+            }
+            $notices[] = [
+                'at' => $made,
+                'name' => $name,
+                'dir' => $dir,
+                'kept_until' => $made + self::SET_ASIDE_KEPT_SECONDS,
+                'counts' => $counts,
+            ];
+        }
+
+        return $notices;
+    }
+
+    /**
+     * The owner has read the notices of $names (restoreNotices()'s 'name'):
+     * they are not shown again. One made since is still shown, and nothing
+     * set aside is touched.
+     *
+     * @param list<string> $names
+     */
+    public function dismissRestoreNotices(array $names): void
+    {
+        $names = array_values(array_filter(
+            $names,
+            static fn ($name): bool => is_string($name) && self::setAsideTime($name) !== null
+        ));
+        if ($names === []) {
+            return;
+        }
+        $this->mutateJsonFile(
+            $this->baseDir . '/' . self::RESTORE_NOTICES_FILE,
+            ['dismissed' => []],
+            static function (array $state) use ($names): array {
+                $had = is_array($state['dismissed'] ?? null) ? $state['dismissed'] : [];
+                $state['dismissed'] = array_values(array_unique([...$had, ...$names]));
+
+                return $state;
+            }
+        );
+    }
+
+    /** @return list<string> */
+    private function dismissedSetAside(): array
+    {
+        $dismissed = $this->readJsonFile(
+            $this->baseDir . '/' . self::RESTORE_NOTICES_FILE,
+            ['dismissed' => []]
+        )['dismissed'] ?? [];
+
+        return is_array($dismissed) ? array_values(array_filter($dismissed, 'is_string')) : [];
+    }
+
+    /**
+     * Remove the restored-* directories made more than $olderThanSeconds
+     * ago, by the time in their name. One that cannot be removed is logged,
+     * does not hold back the others, and is tried again a day later, not on
+     * every request.
+     *
+     * @return int how many directories were removed
+     */
+    public function pruneSetAside(int $olderThanSeconds = self::SET_ASIDE_KEPT_SECONDS, ?int $now = null): int
+    {
+        $now ??= time();
+        $cutoff = $now - $olderThanSeconds;
+        $due = [];
+        foreach (glob($this->baseDir . '/restored-*', GLOB_ONLYDIR) ?: [] as $dir) {
+            $made = self::setAsideTime(basename($dir));
+            // A link is never followed: only a directory this store made is emptied.
+            if ($made !== null && $made <= $cutoff && !is_link($dir)) {
+                $due[] = $dir;
+            }
+        }
+        if ($due === []) {
+            return 0;
+        }
+        $notesFile = $this->baseDir . '/' . self::RESTORE_NOTICES_FILE;
+        $retryAt = $this->readJsonFile($notesFile, [])['retry_at'] ?? [];
+        $retryAt = is_array($retryAt) ? $retryAt : [];
+        $removed = [];
+        $failed = [];
+        foreach ($due as $dir) {
+            $name = basename($dir);
+            if ((int) ($retryAt[$name] ?? 0) > $now) {
+                continue;
+            }
+            try {
+                self::removeTree($dir);
+                $removed[] = $name;
+            } catch (\Throwable $e) {
+                $failed[$name] = $now + self::SET_ASIDE_RETRY_SECONDS;
+                error_log('p202: what a database restore set aside in ' . $dir . ' could not be removed ('
+                    . $e->getMessage() . '); it is tried again in a day.');
+            }
+        }
+        if ($removed !== [] || $failed !== []) {
+            $baseDir = $this->baseDir;
+            // What is no longer there is forgotten, a directory removed by hand included.
+            $this->mutateJsonFile(
+                $notesFile,
+                [],
+                static function (array $state) use ($failed, $baseDir): array {
+                    $there = static fn (string $name): bool => is_dir($baseDir . '/' . $name);
+                    $had = is_array($state['dismissed'] ?? null) ? $state['dismissed'] : [];
+                    $state['dismissed'] = array_values(array_filter(array_filter($had, 'is_string'), $there));
+                    $waits = (is_array($state['retry_at'] ?? null) ? $state['retry_at'] : []) + [];
+                    $state['retry_at'] = array_filter(
+                        $failed + $waits,
+                        static fn ($name): bool => is_string($name) && $there($name),
+                        ARRAY_FILTER_USE_KEY
+                    );
+
+                    return $state;
+                }
+            );
+        }
+        if ($removed !== []) {
+            error_log('p202: removed what a database restore set aside more than '
+                . (int) round($olderThanSeconds / 86400) . ' days ago in ' . $this->baseDir . ': '
+                . implode(', ', $removed));
+        }
+
+        return count($removed);
+    }
+
+    /** When restored-<time>-<random> was made, by its name; null for any other name. */
+    private static function setAsideTime(string $name): ?int
+    {
+        if (preg_match(self::SET_ASIDE_NAME, $name, $m) !== 1) {
+            return null;
+        }
+        $made = \DateTimeImmutable::createFromFormat('!Ymd\THis\Z', $m[1], new \DateTimeZone('UTC'));
+
+        return $made === false ? null : $made->getTimestamp();
+    }
+
+    private static function removeTree(string $dir): void
+    {
+        $entries = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::CHILD_FIRST
+        );
+        foreach ($entries as $entry) {
+            $path = $entry->getPathname();
+            $gone = $entry->isDir() && !$entry->isLink() ? rmdir($path) : unlink($path);
+            if (!$gone) {
+                throw new DatabaseException('Could not remove ' . $path);
+            }
+        }
+        if (!rmdir($dir)) {
+            throw new DatabaseException('Could not remove ' . $dir);
+        }
     }
 
     private function setAsideWhatTheDatabaseIsBehind(): void
@@ -274,7 +478,7 @@ class ServerStateStore implements QuotaStore
                 'p202: the database is behind the API state in %s (its epoch is %d, the state was written up to %d):'
                 . ' it was restored from an older backup. The %d idempotency records, staged changes, sync jobs,'
                 . ' manifests and change-feed entries written since were set aside in %s and are not used;'
-                . ' remove it once nothing in it is needed.',
+                . ' it is removed after 30 days, and Settings says so until it is dismissed.',
                 $this->baseDir,
                 $database,
                 $written,

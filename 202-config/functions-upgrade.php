@@ -19,6 +19,53 @@ if (!defined('_UPGRADE_ALREADY_APPLIED')) {
     define('_UPGRADE_ALREADY_APPLIED', [1050, 1060, 1061, 1068, 1091]);
 }
 
+if (!function_exists('_upgrade_note')) {
+    /**
+     * Something the upgrade could not do: logged, and kept for the page that
+     * ran it (UPGRADE::failures()). $shown may be read by a signed-out
+     * visitor of the upgrade page, so it holds the code's own words and
+     * table names only; an exception's message goes in $logOnly.
+     */
+    function _upgrade_note(string $shown, string $logOnly = ''): void
+    {
+        error_log('Prosper202 upgrade: ' . $shown . $logOnly);
+        UPGRADE::noteFailure($shown);
+    }
+
+    /**
+     * The stored version for a page drawn after the upgrade answered false:
+     * null when the database cannot say (the connection was lost), which the
+     * page then says, instead of failing on the read.
+     */
+    function _upgrade_stored_version_or_null(): ?string
+    {
+        try {
+            return (string) PROSPER202::prosper202_version();
+        } catch (\Throwable $e) {
+            error_log('Prosper202 upgrade page: the stored version could not be read after the upgrade stopped: '
+                . p202FailedQueryMessage((int) $e->getCode(), $e->getMessage()));
+
+            return null;
+        }
+    }
+
+    /**
+     * A failed statement for the upgrade page: redacted as its log line is,
+     * without the database's name, and the statement cut to what names it.
+     */
+    function _upgrade_shown_statement_failure(int $errno, string $error, string $sql): string
+    {
+        $message = $errno === 1049 ? 'Unknown database' : p202FailedQueryMessage($errno, $error);
+        $message = (string) preg_replace(
+            ["/'[^'.`]+\\.([^'.]+)'/", '/`[^`]+`\.(`[^`]+`)/'],
+            ["'$1'", '$1'],
+            $message
+        );
+
+        return 'a statement failed [errno ' . $errno . ']: ' . $message . ' | ' . p202RedactedStatement($sql, 110);
+    }
+}
+
 if (!function_exists('_upgrade_query_run')) {
     /**
      * Testable core of the upgrade query runner. Kept free of globals, real sleeps
@@ -84,6 +131,7 @@ if (!function_exists('_upgrade_query_run')) {
             if (!in_array($errno, _UPGRADE_ALREADY_APPLIED, true)) {
                 error_log('Prosper202 upgrade: statement failed [errno ' . $errno . ']: '
                     . p202FailedQueryMessage($errno, $error) . ' | ' . p202RedactedStatement($sql));
+                UPGRADE::noteFailure(_upgrade_shown_statement_failure($errno, $error, $sql));
             }
             return false;
         }
@@ -145,7 +193,7 @@ if (!function_exists('_upgrade_seed_bot202_facebook_pixel_lookups')) {
     {
         foreach (\Prosper202\Setup\FacebookPixelAssistantSettings::seedStatements() as $sql) {
             if (_upgrade_query($sql) === false) {
-                error_log('Prosper202 upgrade: a Bot202 Facebook Pixel Assistant lookup row could not be written.');
+                _upgrade_note('a Bot202 Facebook Pixel Assistant lookup row could not be written.');
             }
         }
     }
@@ -166,7 +214,10 @@ if (!function_exists('_upgrade_complete_landing_page_urls')) {
             $conn = ($db instanceof \mysqli) ? $db : $db->getConnection();
             \Prosper202\Setup\LandingPageUrlRepair::run(new \Prosper202\Database\Connection($conn));
         } catch (\Throwable $e) {
-            error_log('Prosper202 upgrade: landing page URLs stored without a scheme could not be completed: ' . $e->getMessage());
+            _upgrade_note(
+                'landing page URLs stored without a scheme could not be completed',
+                ': ' . $e->getMessage()
+            );
         }
     }
 }
@@ -187,7 +238,7 @@ if (!function_exists('_upgrade_seed_licence_answers')) {
             \Prosper202\License\ShellAccessCache::seedAnswers($answers);
             \Prosper202\License\CliAccessCache::seedAnswers($answers);
         } catch (\Throwable $e) {
-            error_log('Prosper202 upgrade: the cached licence answers could not be copied: ' . $e->getMessage());
+            _upgrade_note('the cached licence answers could not be copied', ': ' . $e->getMessage());
         }
     }
 
@@ -207,7 +258,7 @@ if (!function_exists('_upgrade_seed_licence_answers')) {
             $named = \Prosper202\User\ApiKeyStore::widenLabel($conn);
             return \Prosper202\User\ApiKeyStore::hashStoredKeys($conn) && $named;
         } catch (\Throwable $e) {
-            error_log('Prosper202 upgrade: the API keys could not be hashed: ' . $e->getMessage());
+            _upgrade_note('the API keys could not be hashed', ': ' . $e->getMessage());
             return false;
         }
     }
@@ -229,7 +280,7 @@ if (!function_exists('_upgrade_purlink_carryover')) {
 
         $table = _upgrade_query("SHOW TABLES LIKE '202\\_clicks\\_purlink'");
         if (!$table instanceof \mysqli_result) {
-            error_log('Prosper202 upgrade: could not read whether 202_clicks_purlink exists; its pending PurLink'
+            _upgrade_note('could not read whether 202_clicks_purlink exists; its pending PurLink'
                 . ' clicks will be carried over on the next run.');
             return false;
         }
@@ -240,7 +291,7 @@ if (!function_exists('_upgrade_purlink_carryover')) {
         }
         // CREATE TABLE IF NOT EXISTS; the step's reconcile converges it after.
         if (_upgrade_query(\Prosper202\Database\Tables\ClickTables::purLinkExitOrder()->createStatement) === false) {
-            error_log('Prosper202 upgrade: could not create 202_purlink_exit_order for the paid PurLink clicks;'
+            _upgrade_note('could not create 202_purlink_exit_order for the paid PurLink clicks;'
                 . ' they will be carried over on the next run.');
             return false;
         }
@@ -248,8 +299,8 @@ if (!function_exists('_upgrade_purlink_carryover')) {
             $conn = new \Prosper202\Database\Connection(($db instanceof \mysqli) ? $db : $db->getConnection());
             $counts = (new \Prosper202\Click\PurLinkPaidCarryOver($conn))->carry(time());
         } catch (\Throwable $e) {
-            error_log('Prosper202 upgrade: the pending PurLink clicks of paid 1.9.56 (202_clicks_purlink) could not'
-                . ' all be carried over: ' . $e->getMessage());
+            _upgrade_note('the pending PurLink clicks of paid 1.9.56 (202_clicks_purlink) could not'
+                . ' all be carried over', ': ' . $e->getMessage());
             return false;
         }
         if (isset($counts['unknown_shape'])) {
@@ -361,7 +412,7 @@ if (!function_exists('_upgrade_conversion_ledger')) {
     {
         $columns = _upgrade_conversion_ledger_probe('SHOW COLUMNS FROM `202_conversion_logs`', 'Field', 'Null');
         if ($columns === null) {
-            error_log('Prosper202 upgrade: could not read the columns of 202_conversion_logs; the ledger step will retry.');
+            _upgrade_note('could not read the columns of 202_conversion_logs; the ledger step will retry.');
             return false;
         }
 
@@ -370,7 +421,7 @@ if (!function_exists('_upgrade_conversion_ledger')) {
                 continue;
             }
             if (_upgrade_query('ALTER TABLE `202_conversion_logs` ADD COLUMN ' . $ddl) === false) {
-                error_log('Prosper202 upgrade: failed to add 202_conversion_logs.' . $column . '; the ledger step will retry.');
+                _upgrade_note('failed to add 202_conversion_logs.' . $column . '; the ledger step will retry.');
                 return false;
             }
             $columns[$column] = 'YES';
@@ -393,7 +444,7 @@ if (!function_exists('_upgrade_conversion_ledger')) {
             $bounds = _upgrade_query('SELECT MIN(`conv_id`) AS lo, MAX(`conv_id`) AS hi FROM `202_conversion_logs`');
             $range = $bounds instanceof \mysqli_result ? $bounds->fetch_assoc() : null;
             if (!is_array($range)) {
-                error_log('Prosper202 upgrade: could not read the conv_id range of 202_conversion_logs;'
+                _upgrade_note('could not read the conv_id range of 202_conversion_logs;'
                     . ' the ledger step will retry.');
                 return false;
             }
@@ -404,20 +455,20 @@ if (!function_exists('_upgrade_conversion_ledger')) {
                 $to = min($hi, $from + $chunk - 1);
                 $range_sql = _upgrade_conversion_ledger_backfill_sql() . ' AND `conv_id` BETWEEN ' . $from . ' AND ' . $to;
                 if (_upgrade_query($range_sql) === false) {
-                    error_log('Prosper202 upgrade: failed to backfill the conversion ledger columns;'
+                    _upgrade_note('failed to backfill the conversion ledger columns;'
                         . ' the ledger step will retry.');
                     return false;
                 }
             }
             if (_upgrade_query(_upgrade_conversion_ledger_backfill_sql() . ' AND `conv_id` > ' . $hi) === false) {
-                error_log('Prosper202 upgrade: failed to backfill the conversion ledger columns; the ledger step will retry.');
+                _upgrade_note('failed to backfill the conversion ledger columns; the ledger step will retry.');
                 return false;
             }
         }
 
         if (($columns['dedupe_key'] ?? 'YES') === 'YES') {
             if (_upgrade_query('ALTER TABLE `202_conversion_logs` MODIFY `dedupe_key` varchar(320) COLLATE utf8mb4_bin NOT NULL') === false) {
-                error_log('Prosper202 upgrade: failed to make 202_conversion_logs.dedupe_key NOT NULL; the ledger step will retry.');
+                _upgrade_note('failed to make 202_conversion_logs.dedupe_key NOT NULL; the ledger step will retry.');
                 return false;
             }
         }
@@ -433,7 +484,7 @@ if (!function_exists('_upgrade_conversion_ledger')) {
         // distinct, so no existing unique key can fail on it.
         $collations = _upgrade_conversion_ledger_probe('SHOW FULL COLUMNS FROM `202_conversion_logs`', 'Field', 'Collation');
         if ($collations === null) {
-            error_log('Prosper202 upgrade: could not read the collations of 202_conversion_logs; the ledger step will retry.');
+            _upgrade_note('could not read the collations of 202_conversion_logs; the ledger step will retry.');
             return false;
         }
         foreach ([
@@ -444,14 +495,14 @@ if (!function_exists('_upgrade_conversion_ledger')) {
                 continue;
             }
             if (_upgrade_query('ALTER TABLE `202_conversion_logs` MODIFY ' . $ddl) === false) {
-                error_log('Prosper202 upgrade: failed to make 202_conversion_logs.' . $column . ' compare exactly; the ledger step will retry.');
+                _upgrade_note('failed to make 202_conversion_logs.' . $column . ' compare exactly; the ledger step will retry.');
                 return false;
             }
         }
 
         $indexes = _upgrade_conversion_ledger_probe('SHOW INDEX FROM `202_conversion_logs`', 'Key_name', 'Key_name');
         if ($indexes === null) {
-            error_log('Prosper202 upgrade: could not read the indexes of 202_conversion_logs; the ledger step will retry.');
+            _upgrade_note('could not read the indexes of 202_conversion_logs; the ledger step will retry.');
             return false;
         }
         $indexSteps = [
@@ -467,7 +518,7 @@ if (!function_exists('_upgrade_conversion_ledger')) {
                 continue;
             }
             if (_upgrade_query($ddl) === false) {
-                error_log('Prosper202 upgrade: failed to ' . ($wanted ? 'add' : 'drop') . ' index ' . $name
+                _upgrade_note('failed to ' . ($wanted ? 'add' : 'drop') . ' index ' . $name
                     . ' on 202_conversion_logs; the ledger step will retry.');
                 return false;
             }
@@ -475,7 +526,7 @@ if (!function_exists('_upgrade_conversion_ledger')) {
 
         $campaignColumns = _upgrade_conversion_ledger_probe('SHOW COLUMNS FROM `202_aff_campaigns`', 'Field', 'Null');
         if ($campaignColumns === null) {
-            error_log('Prosper202 upgrade: could not read the columns of 202_aff_campaigns; the ledger step will retry.');
+            _upgrade_note('could not read the columns of 202_aff_campaigns; the ledger step will retry.');
             return false;
         }
         // The campaign settings the measurement rewrite adds, in the order
@@ -489,7 +540,7 @@ if (!function_exists('_upgrade_conversion_ledger')) {
         ];
         foreach ($campaignAdds as [$column, $ddl]) {
             if (!array_key_exists($column, $campaignColumns) && _upgrade_query($ddl) === false) {
-                error_log('Prosper202 upgrade: failed to add 202_aff_campaigns.' . $column . '; the ledger step will retry.');
+                _upgrade_note('failed to add 202_aff_campaigns.' . $column . '; the ledger step will retry.');
                 return false;
             }
         }
@@ -497,12 +548,12 @@ if (!function_exists('_upgrade_conversion_ledger')) {
         // registration delete unlinks by it.
         $campaignIndexes = _upgrade_conversion_ledger_probe('SHOW INDEX FROM `202_aff_campaigns`', 'Key_name', 'Column_name');
         if ($campaignIndexes === null) {
-            error_log('Prosper202 upgrade: could not read the indexes of 202_aff_campaigns; the ledger step will retry.');
+            _upgrade_note('could not read the indexes of 202_aff_campaigns; the ledger step will retry.');
             return false;
         }
         if (!array_key_exists('app_registration_id', $campaignIndexes)
             && _upgrade_query('ALTER TABLE `202_aff_campaigns` ADD KEY `app_registration_id` (`app_registration_id`)') === false) {
-            error_log('Prosper202 upgrade: failed to index 202_aff_campaigns.app_registration_id; the ledger step will retry.');
+            _upgrade_note('failed to index 202_aff_campaigns.app_registration_id; the ledger step will retry.');
             return false;
         }
 
@@ -541,13 +592,13 @@ if (!function_exists('_upgrade_conversion_idempotency')) {
             'Collation'
         );
         if ($collations === null || !array_key_exists('transaction_id', $collations)) {
-            error_log('Prosper202 upgrade: could not read 202_conversion_logs.transaction_id;'
+            _upgrade_note('could not read 202_conversion_logs.transaction_id;'
                 . ' the 1.9.61 step will retry.');
             return false;
         }
         $exact = 'ALTER TABLE `202_conversion_logs` MODIFY `transaction_id` varchar(255) COLLATE utf8mb4_bin DEFAULT NULL';
         if ($collations['transaction_id'] !== 'utf8mb4_bin' && _upgrade_query($exact) === false) {
-            error_log('Prosper202 upgrade: failed to make 202_conversion_logs.transaction_id compare exactly;'
+            _upgrade_note('failed to make 202_conversion_logs.transaction_id compare exactly;'
                 . ' the 1.9.61 step will retry.');
             return false;
         }
@@ -557,7 +608,7 @@ if (!function_exists('_upgrade_conversion_idempotency')) {
         // than once when no network order id is supplied (NULLs do not collide).
         $blank = "UPDATE 202_conversion_logs SET transaction_id = NULL WHERE transaction_id = ''";
         if (_upgrade_query($blank) === false) {
-            error_log('Prosper202 upgrade: failed to clear blank transaction ids; the 1.9.61 step will retry.');
+            _upgrade_note('failed to clear blank transaction ids; the 1.9.61 step will retry.');
             return false;
         }
 
@@ -578,7 +629,7 @@ if (!function_exists('_upgrade_conversion_idempotency')) {
                 SET c.transaction_id = NULL
                 WHERE c.conv_id <> d.keep_id";
         if (_upgrade_query($dedupe) === false) {
-            error_log('Prosper202 upgrade: failed to clear duplicate transaction ids; the 1.9.61 step will retry.');
+            _upgrade_note('failed to clear duplicate transaction ids; the 1.9.61 step will retry.');
             return false;
         }
 
@@ -736,7 +787,7 @@ if (!function_exists('_upgrade_postback_auth_table')) {
     {
         $table = _upgrade_query("SHOW TABLES LIKE '202\\_postback\\_auth'");
         if (!$table instanceof \mysqli_result) {
-            error_log('Prosper202 upgrade: could not read whether 202_postback_auth exists; it will be made on the next run.');
+            _upgrade_note('could not read whether 202_postback_auth exists; it will be made on the next run.');
             return false;
         }
         $exists = $table->num_rows > 0;
@@ -746,7 +797,7 @@ if (!function_exists('_upgrade_postback_auth_table')) {
         }
         $users = _upgrade_query("SHOW TABLES LIKE '202\\_users'");
         if (!$users instanceof \mysqli_result) {
-            error_log('Prosper202 upgrade: could not read whether 202_users exists; 202_postback_auth will be made on the next run.');
+            _upgrade_note('could not read whether 202_users exists; 202_postback_auth will be made on the next run.');
             return false;
         }
         $hasAccounts = $users->num_rows > 0;
@@ -762,7 +813,7 @@ if (!function_exists('_upgrade_postback_auth_table')) {
         $steps[] = 'RENAME TABLE `202_postback_auth_building` TO `202_postback_auth`';
         foreach ($steps as $sql) {
             if (_upgrade_query($sql) === false) {
-                error_log('Prosper202 upgrade: failed to make 202_postback_auth with a row for each account; the next run retries.');
+                _upgrade_note('failed to make 202_postback_auth with a row for each account; the next run retries.');
                 return false;
             }
         }
@@ -790,7 +841,7 @@ if (!function_exists('_upgrade_same_ip_fallback')) {
     {
         $table = _upgrade_query("SHOW TABLES LIKE '202\\_users\\_pref'");
         if (!$table instanceof \mysqli_result) {
-            error_log('Prosper202 upgrade: could not read whether 202_users_pref exists; the same-IP fallback'
+            _upgrade_note('could not read whether 202_users_pref exists; the same-IP fallback'
                 . ' setting will be added on the next run.');
             return false;
         }
@@ -802,7 +853,7 @@ if (!function_exists('_upgrade_same_ip_fallback')) {
         }
         $defaults = _upgrade_conversion_ledger_probe('SHOW COLUMNS FROM `202_users_pref`', 'Field', 'Default');
         if ($defaults === null) {
-            error_log('Prosper202 upgrade: could not read the columns of 202_users_pref; the same-IP fallback'
+            _upgrade_note('could not read the columns of 202_users_pref; the same-IP fallback'
                 . ' setting will be added on the next run.');
             return false;
         }
@@ -811,7 +862,7 @@ if (!function_exists('_upgrade_same_ip_fallback')) {
             $add = "ALTER TABLE `202_users_pref` ADD COLUMN `user_pref_same_ip_fallback` tinyint(1) NOT NULL DEFAULT '1'"
                 . ' AFTER `user_pref_dynamic_bid`';
             if (_upgrade_query($add) === false) {
-                error_log('Prosper202 upgrade: failed to add 202_users_pref.user_pref_same_ip_fallback; it will be'
+                _upgrade_note('failed to add 202_users_pref.user_pref_same_ip_fallback; it will be'
                     . ' added on the next run.');
                 return false;
             }
@@ -820,7 +871,7 @@ if (!function_exists('_upgrade_same_ip_fallback')) {
         if ($defaults['user_pref_same_ip_fallback'] !== '0') {
             $off = "ALTER TABLE `202_users_pref` ALTER COLUMN `user_pref_same_ip_fallback` SET DEFAULT '0'";
             if (_upgrade_query($off) === false) {
-                error_log('Prosper202 upgrade: failed to make the same-IP fallback off for new accounts'
+                _upgrade_note('failed to make the same-IP fallback off for new accounts'
                     . ' (202_users_pref.user_pref_same_ip_fallback); the next run retries.');
                 return false;
             }
@@ -841,7 +892,7 @@ if (!function_exists('_upgrade_1956_baseline')) {
         $ok = true;
         if (_upgrade_query(\Prosper202\Database\Tables\CoreTables::userDataFeedback()->createStatement) === false) {
             $ok = false;
-            error_log('Prosper202 upgrade: failed to create user_data_feedback');
+            _upgrade_note('failed to create user_data_feedback');
         }
 
         // A failed probe is not "already wide" (error pattern #11). Only a
@@ -850,12 +901,12 @@ if (!function_exists('_upgrade_1956_baseline')) {
         $column = $check instanceof mysqli_result ? $check->fetch_assoc() : null;
         if (!is_array($column)) {
             $ok = false;
-            error_log('Prosper202 upgrade: could not read 202_users.user_pass');
+            _upgrade_note('could not read 202_users.user_pass');
         } elseif (preg_match('/^(?:var)?char\((\d+)\)/i', (string) $column['Type'], $width) === 1
             && (int) $width[1] < 255
             && _upgrade_query("ALTER TABLE `202_users` MODIFY `user_pass` varchar(255) NOT NULL") === false) {
             $ok = false;
-            error_log('Prosper202 upgrade: failed to widen 202_users.user_pass');
+            _upgrade_note('failed to widen 202_users.user_pass');
         }
 
         return $ok;
@@ -965,7 +1016,7 @@ if (!function_exists('_upgrade_measurement_tables')) {
         foreach ($definitions as $definition) {
             if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::MESSAGING_EVENTS) {
                 if (!_upgrade_withhold_unconsented_analytics()) {
-                    error_log('Prosper202 upgrade: the analytics queued before consent could not be withheld');
+                    _upgrade_note('the analytics queued before consent could not be withheld');
                     return false;
                 }
                 $messagingEvents = true;
@@ -977,7 +1028,7 @@ if (!function_exists('_upgrade_measurement_tables')) {
         foreach ($definitions as $definition) {
             if (_upgrade_query($definition->createStatement) === false) {
                 $ok = false;
-                error_log('Prosper202 upgrade: failed to create ' . $definition->tableName);
+                _upgrade_note('failed to create ' . $definition->tableName);
                 continue;
             }
             if (!$reconciler->reconcile($definition)) {
@@ -995,7 +1046,7 @@ if (!function_exists('_upgrade_measurement_tables')) {
         if ($ok && $messagingEvents && _upgrade_query("UPDATE `202_messaging_events` SET tier = 'essential'
                 WHERE event_name IN ('login', 'account_created') AND tier <> 'essential'") === false) {
             $ok = false;
-            error_log('Prosper202 upgrade: the essential events could not be marked');
+            _upgrade_note('the essential events could not be marked');
         }
 
         if ($ok) {
@@ -1019,7 +1070,7 @@ if (!function_exists('_upgrade_measurement_tables')) {
                     }
                     if ($statement === null || _upgrade_query($statement) === false) {
                         $ok = false;
-                        error_log('Prosper202 upgrade: failed to set the default of ' . $table . '.' . $column . $why);
+                        _upgrade_note('failed to set the default of ' . $table . '.' . $column . $why);
                     }
                 }
             }
@@ -1035,11 +1086,11 @@ if (!function_exists('_upgrade_measurement_tables')) {
                 if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::DEPLOYMENT_SECRETS) {
                     if (_upgrade_query(\Api\V3\Apps\Android\InstallTokenKey::mintStatement()) === false) {
                         $ok = false;
-                        error_log('Prosper202 upgrade: failed to mint the Android install-token key');
+                        _upgrade_note('failed to mint the Android install-token key');
                     }
                     if (_upgrade_query(\Prosper202\Database\InstallId::mintStatement()) === false) {
                         $ok = false;
-                        error_log('Prosper202 upgrade: failed to mint the install id');
+                        _upgrade_note('failed to mint the install id');
                     }
                     break;
                 }
@@ -1059,7 +1110,7 @@ if (!function_exists('_upgrade_measurement_tables')) {
                 if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::ATTRIBUTION_BACKFILL) {
                     if (_upgrade_query(\Prosper202\Attribution\ConversionBackfill::MARK_SQL) === false) {
                         $ok = false;
-                        error_log('Prosper202 upgrade: failed to mark the pre-upgrade conversions'
+                        _upgrade_note('failed to mark the pre-upgrade conversions'
                             . ' for the attribution backfill');
                     }
                     break;
@@ -1074,7 +1125,7 @@ if (!function_exists('_upgrade_measurement_tables')) {
                 if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::RECLICK_BACKFILL) {
                     if (!_upgrade_reclick_backfill_mark()) {
                         $ok = false;
-                        error_log('Prosper202 upgrade: failed to mark the clicks re-clicked before 1.9.79'
+                        _upgrade_note('failed to mark the clicks re-clicked before 1.9.79'
                             . ' for their backfill');
                     }
                     break;
@@ -1086,21 +1137,21 @@ if (!function_exists('_upgrade_measurement_tables')) {
             foreach ($retirements as $retirement) {
                 if (preg_match('/^DROP TABLE IF EXISTS `202_[a-z0-9_]+`(?:, `202_[a-z0-9_]+`)*$/', $retirement) !== 1) {
                     $ok = false;
-                    error_log('Prosper202 upgrade: refused a retirement that is not a DROP TABLE IF EXISTS of 202_ tables');
+                    _upgrade_note('refused a retirement that is not a DROP TABLE IF EXISTS of 202_ tables');
                     continue;
                 }
                 if (_upgrade_query($retirement) === false) {
                     $ok = false;
-                    error_log('Prosper202 upgrade: failed to remove a retired table: ' . $retirement);
+                    _upgrade_note('failed to remove a retired table: ' . $retirement);
                 }
             }
         }
 
         foreach ($reconciler->getUnreconciled() as $note) {
-            error_log('Prosper202 upgrade: measurement schema difference left in place: ' . $note);
+            _upgrade_note('measurement schema difference left in place: ' . $note);
         }
         foreach ($reconciler->getErrors() as $error) {
-            error_log('Prosper202 upgrade: measurement schema reconciliation failed: ' . $error);
+            _upgrade_note('measurement schema reconciliation failed: ' . $error);
         }
 
         return $ok;
@@ -1169,6 +1220,54 @@ class UPGRADE
      */
     public static bool $lastRunBusy = false;
 
+    /** The first failures name the cause and the last say where the upgrade stopped, so both ends are kept. */
+    private const int FIRST_FAILURES_KEPT = 20;
+    private const int LAST_FAILURES_KEPT = 6;
+
+    /** @var list<string> */
+    private static array $firstFailures = [];
+    /** @var list<string> */
+    private static array $lastFailures = [];
+    private static int $failuresDropped = 0;
+
+    /** One thing the running upgrade could not do, in words a signed-out visitor may read (_upgrade_note()). */
+    public static function noteFailure(string $shown): void
+    {
+        if (count(self::$firstFailures) < self::FIRST_FAILURES_KEPT) {
+            self::$firstFailures[] = $shown;
+
+            return;
+        }
+        self::$lastFailures[] = $shown;
+        if (count(self::$lastFailures) > self::LAST_FAILURES_KEPT) {
+            array_shift(self::$lastFailures);
+            self::$failuresDropped++;
+        }
+    }
+
+    /** Each upgrade_databases() starts with none. */
+    public static function forgetFailures(): void
+    {
+        self::$firstFailures = [];
+        self::$lastFailures = [];
+        self::$failuresDropped = 0;
+    }
+
+    /**
+     * What the last upgrade_databases() could not do, in order, for the page
+     * to show when it answers false; the log has every line.
+     *
+     * @return list<string>
+     */
+    public static function failures(): array
+    {
+        $between = self::$failuresDropped === 0
+            ? []
+            : ['(' . self::$failuresDropped . ' more here, in the server\'s PHP error log)'];
+
+        return [...self::$firstFailures, ...$between, ...self::$lastFailures];
+    }
+
     /**
      * The upgrade, one at a time per database, reporting success only when the
      * stored version reached the code's. Every entry point calls this
@@ -1194,6 +1293,7 @@ class UPGRADE
     public static function upgrade_databases($time_from)
     {
         self::$lastRunBusy = false;
+        self::forgetFailures();
         ignore_user_abort(true);
         set_time_limit(0);
 
@@ -1201,17 +1301,34 @@ class UPGRADE
         $got = _upgrade_query('SELECT GET_LOCK(' . $lockName . ', 0) AS got');
         $row = $got instanceof mysqli_result ? $got->fetch_assoc() : null;
         if (!is_array($row) || $row['got'] === null) {
-            error_log('Prosper202 upgrade: could not take the upgrade lock; nothing was run.');
+            _upgrade_note('could not take the upgrade lock; nothing was run.');
 
             return false;
         }
         if ((int) $row['got'] !== 1) {
             self::$lastRunBusy = true;
-            error_log('Prosper202 upgrade: another upgrade of this database is running; nothing was run.');
+            _upgrade_note('another upgrade of this database is running; nothing was run.');
 
             return false;
         }
 
+        try {
+            return self::underTheLock($time_from, $lockName);
+        } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+            // A read the upgrade cannot do without failed (the connection
+            // was lost): the caller gets false and the note, not the throw.
+            $tagged = preg_match('/\[errno (\d+)\]/', $e->getMessage(), $m) === 1;
+            $errno = $tagged ? (int) $m[1] : (int) $e->getCode();
+            _upgrade_note('the upgrade stopped on a failed read of the database [errno ' . $errno . ']: '
+                . p202FailedQueryMessage($errno, $e->getMessage()));
+
+            return false;
+        }
+    }
+
+    /** The ladder and what follows it, with the upgrade lock held; it releases the lock. */
+    private static function underTheLock($time_from, string $lockName): bool
+    {
         try {
             $laddered = self::ladder($time_from);
             if ($laddered === true && PROSPER202::prosper202_version() === '1.9.80'
@@ -1234,7 +1351,7 @@ class UPGRADE
         $stored = (string) PROSPER202::prosper202_version();
         $code = (string) PROSPER202::php_version();
         if ($stored !== $code) {
-            error_log('Prosper202 upgrade: the ladder stopped at ' . $stored . ' (the code is ' . $code
+            _upgrade_note('the ladder stopped at ' . $stored . ' (the code is ' . $code
                 . '); see the messages above. Run the upgrade again.');
 
             return false;
@@ -2918,7 +3035,7 @@ class UPGRADE
             // latest, as the rebuild did when this step was written.
             $sql = \Prosper202\Database\Tables\ClickTables::clickLatestVisits()->createStatement;
             if (_upgrade_query($sql) === false) {
-                error_log('Prosper202 upgrade: failed to create 202_click_latest_visits, which the 1.9.5 rebuild below reads');
+                _upgrade_note('failed to create 202_click_latest_visits, which the 1.9.5 rebuild below reads');
             }
 
             $de = new DataEngine();
@@ -3954,10 +4071,10 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.56'") !== false) {
                     $prosper202_version = '1.9.56';
                 } else {
-                    error_log('Prosper202 upgrade: failed to persist version 1.9.56; leaving version at 1.9.55 so the next run retries.');
+                    _upgrade_note('failed to persist version 1.9.56; leaving version at 1.9.55 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: the 1.9.56 step is incomplete; leaving version at 1.9.55 so the next run retries.');
+                _upgrade_note('the 1.9.56 step is incomplete; leaving version at 1.9.55 so the next run retries.');
             }
         }
 
@@ -4023,7 +4140,7 @@ class UPGRADE
                 $check = _upgrade_query(\Prosper202\Attribution\DefaultModel::MISSING_SQL);
                 $missing = $check instanceof mysqli_result ? $check->fetch_assoc() : null;
                 if (!is_array($missing) || (int) $missing['missing'] !== 0) {
-                    error_log('Prosper202 upgrade: '
+                    _upgrade_note(''
                         . (is_array($missing) ? (int) $missing['missing'] . ' account(s) still have no' : 'could not check whether every account has a')
                         . ' default attribution model.');
                     $mta_ok = false;
@@ -4034,10 +4151,10 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.57'") !== false) {
                     $prosper202_version = '1.9.57';
                 } else {
-                    error_log('Prosper202 upgrade: created the attribution schema but failed to persist version 1.9.57; leaving version at 1.9.56 so the next run retries.');
+                    _upgrade_note('created the attribution schema but failed to persist version 1.9.57; leaving version at 1.9.56 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: attribution schema incomplete; leaving version at 1.9.56 so the next run retries.');
+                _upgrade_note('attribution schema incomplete; leaving version at 1.9.56 so the next run retries.');
             }
         }
 
@@ -4180,8 +4297,8 @@ class UPGRADE
                 // column. The 1.9.75 step repairs that; say so here rather
                 // than failing in silence (error pattern #1).
                 if (_upgrade_query($sql) === false) {
-                    error_log(
-                        'Prosper202 upgrade: could not add 202_api_keys.scope during the 1.9.60 step; '
+                    _upgrade_note(
+                        'could not add 202_api_keys.scope during the 1.9.60 step; '
                         . 'the 1.9.75 step will retry it.'
                     );
                 }
@@ -4404,7 +4521,7 @@ class UPGRADE
                 $result = _upgrade_query($sql);
                 $prosper202_version = '1.9.63';
             } else {
-                error_log('Prosper202 upgrade: 202_user_role.uniq_user_role was not created, or its redundant user_id index not dropped; leaving version at 1.9.62 so the next run retries.');
+                _upgrade_note('202_user_role.uniq_user_role was not created, or its redundant user_id index not dropped; leaving version at 1.9.62 so the next run retries.');
             }
         }
 
@@ -4446,10 +4563,10 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.64'") !== false) {
                     $prosper202_version = '1.9.64';
                 } else {
-                    error_log('Prosper202 upgrade: created 202_forecast_events but failed to persist version 1.9.64; leaving version at 1.9.63 so the next run retries.');
+                    _upgrade_note('created 202_forecast_events but failed to persist version 1.9.64; leaving version at 1.9.63 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: failed to create 202_forecast_events; leaving version at 1.9.63 so the next run retries.');
+                _upgrade_note('failed to create 202_forecast_events; leaving version at 1.9.63 so the next run retries.');
             }
         }
 
@@ -4468,7 +4585,7 @@ class UPGRADE
             foreach (\Prosper202\Database\Tables\LtvTables::getDefinitions() as $ltv_definition) {
                 if (_upgrade_query($ltv_definition->createStatement) === false) {
                     $ltv_ok = false;
-                    error_log('Prosper202 upgrade: failed to create ' . $ltv_definition->tableName);
+                    _upgrade_note('failed to create ' . $ltv_definition->tableName);
                 }
             }
 
@@ -4494,7 +4611,7 @@ class UPGRADE
                 $exists = ($check instanceof mysqli_result) && $check->num_rows > 0;
                 if (!$exists && _upgrade_query($ltv_sql) === false) {
                     $ltv_ok = false;
-                    error_log("Prosper202 upgrade: failed LTV alter on {$ltv_table} ({$ltv_kind} {$ltv_name})");
+                    _upgrade_note("failed LTV alter on {$ltv_table} ({$ltv_kind} {$ltv_name})");
                 }
             }
 
@@ -4504,10 +4621,10 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.65'") !== false) {
                     $prosper202_version = '1.9.65';
                 } else {
-                    error_log('Prosper202 upgrade: LTV schema created but failed to persist version 1.9.65; leaving version at 1.9.64 so the next run retries.');
+                    _upgrade_note('LTV schema created but failed to persist version 1.9.65; leaving version at 1.9.64 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: LTV schema incomplete; leaving version at 1.9.64 so the next run retries.');
+                _upgrade_note('LTV schema incomplete; leaving version at 1.9.64 so the next run retries.');
             }
         }
 
@@ -4521,7 +4638,7 @@ class UPGRADE
             $p13n_definition = \Prosper202\Database\Tables\LtvTables::personalizationTokens();
             if (_upgrade_query($p13n_definition->createStatement) === false) {
                 $p13n_ok = false;
-                error_log('Prosper202 upgrade: failed to create ' . $p13n_definition->tableName);
+                _upgrade_note('failed to create ' . $p13n_definition->tableName);
             }
 
             $check = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE 'user_ltv_personalization_fields'");
@@ -4530,17 +4647,17 @@ class UPGRADE
                 "ALTER TABLE `202_users_pref` ADD COLUMN `user_ltv_personalization_fields` varchar(500) NOT NULL DEFAULT ''"
             ) === false) {
                 $p13n_ok = false;
-                error_log('Prosper202 upgrade: failed to add 202_users_pref.user_ltv_personalization_fields');
+                _upgrade_note('failed to add 202_users_pref.user_ltv_personalization_fields');
             }
 
             if ($p13n_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.66'") !== false) {
                     $prosper202_version = '1.9.66';
                 } else {
-                    error_log('Prosper202 upgrade: personalization schema created but failed to persist version 1.9.66; leaving version at 1.9.65 so the next run retries.');
+                    _upgrade_note('personalization schema created but failed to persist version 1.9.66; leaving version at 1.9.65 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: personalization schema incomplete; leaving version at 1.9.65 so the next run retries.');
+                _upgrade_note('personalization schema incomplete; leaving version at 1.9.65 so the next run retries.');
             }
         }
 
@@ -4553,10 +4670,10 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.67'") !== false) {
                     $prosper202_version = '1.9.67';
                 } else {
-                    error_log('Prosper202 upgrade: created 202_offer_transitions but failed to persist version 1.9.67; leaving version at 1.9.66 so the next run retries.');
+                    _upgrade_note('created 202_offer_transitions but failed to persist version 1.9.67; leaving version at 1.9.66 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: failed to create 202_offer_transitions; leaving version at 1.9.66 so the next run retries.');
+                _upgrade_note('failed to create 202_offer_transitions; leaving version at 1.9.66 so the next run retries.');
             }
         }
 
@@ -4568,10 +4685,10 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.68'") !== false) {
                     $prosper202_version = '1.9.68';
                 } else {
-                    error_log('Prosper202 upgrade: created 202_engagement_events but failed to persist version 1.9.68; leaving version at 1.9.67 so the next run retries.');
+                    _upgrade_note('created 202_engagement_events but failed to persist version 1.9.68; leaving version at 1.9.67 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: failed to create 202_engagement_events; leaving version at 1.9.67 so the next run retries.');
+                _upgrade_note('failed to create 202_engagement_events; leaving version at 1.9.67 so the next run retries.');
             }
         }
 
@@ -4589,10 +4706,10 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.69'") !== false) {
                     $prosper202_version = '1.9.69';
                 } else {
-                    error_log('Prosper202 upgrade: added event_value but failed to persist version 1.9.69; leaving version at 1.9.68 so the next run retries.');
+                    _upgrade_note('added event_value but failed to persist version 1.9.69; leaving version at 1.9.68 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: failed to add 202_engagement_events.event_value; leaving version at 1.9.68 so the next run retries.');
+                _upgrade_note('failed to add 202_engagement_events.event_value; leaving version at 1.9.68 so the next run retries.');
             }
         }
 
@@ -4620,10 +4737,10 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.70'") !== false) {
                     $prosper202_version = '1.9.70';
                 } else {
-                    error_log('Prosper202 upgrade: company schema created but failed to persist version 1.9.70; leaving version at 1.9.69 so the next run retries.');
+                    _upgrade_note('company schema created but failed to persist version 1.9.70; leaving version at 1.9.69 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: company/score-weight schema incomplete; leaving version at 1.9.69 so the next run retries.');
+                _upgrade_note('company/score-weight schema incomplete; leaving version at 1.9.69 so the next run retries.');
             }
         }
 
@@ -4653,10 +4770,10 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.71'") !== false) {
                     $prosper202_version = '1.9.71';
                 } else {
-                    error_log('Prosper202 upgrade: added offer-transition stats columns but failed to persist version 1.9.71; leaving version at 1.9.70 so the next run retries.');
+                    _upgrade_note('added offer-transition stats columns but failed to persist version 1.9.71; leaving version at 1.9.70 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: failed to add 202_offer_transitions stats columns; leaving version at 1.9.70 so the next run retries.');
+                _upgrade_note('failed to add 202_offer_transitions stats columns; leaving version at 1.9.70 so the next run retries.');
             }
         }
 
@@ -4678,10 +4795,10 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.72'") !== false) {
                     $prosper202_version = '1.9.72';
                 } else {
-                    error_log('Prosper202 upgrade: created offer-recommendation log but failed to persist version 1.9.72; leaving version at 1.9.71 so the next run retries.');
+                    _upgrade_note('created offer-recommendation log but failed to persist version 1.9.72; leaving version at 1.9.71 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: offer-recommendation log/pref incomplete; leaving version at 1.9.71 so the next run retries.');
+                _upgrade_note('offer-recommendation log/pref incomplete; leaving version at 1.9.71 so the next run retries.');
             }
         }
 
@@ -4709,10 +4826,10 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.73'") !== false) {
                     $prosper202_version = '1.9.73';
                 } else {
-                    error_log('Prosper202 upgrade: added Landing Page Optimizer bridge columns but failed to persist version 1.9.73; leaving version at 1.9.72 so the next run retries.');
+                    _upgrade_note('added Landing Page Optimizer bridge columns but failed to persist version 1.9.73; leaving version at 1.9.72 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: failed to add 202_users_pref Landing Page Optimizer bridge columns; leaving version at 1.9.72 so the next run retries.');
+                _upgrade_note('failed to add 202_users_pref Landing Page Optimizer bridge columns; leaving version at 1.9.72 so the next run retries.');
             }
         }
 
@@ -4732,10 +4849,10 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.74'") !== false) {
                     $prosper202_version = '1.9.74';
                 } else {
-                    error_log('Prosper202 upgrade: added lpo_ctx_kw pref but failed to persist version 1.9.74; leaving version at 1.9.73 so the next run retries.');
+                    _upgrade_note('added lpo_ctx_kw pref but failed to persist version 1.9.74; leaving version at 1.9.73 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: failed to add 202_users_pref lpo_ctx_kw column; leaving version at 1.9.73 so the next run retries.');
+                _upgrade_note('failed to add 202_users_pref lpo_ctx_kw column; leaving version at 1.9.73 so the next run retries.');
             }
         }
 
@@ -4764,10 +4881,10 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.75'") !== false) {
                     $prosper202_version = '1.9.75';
                 } else {
-                    error_log('Prosper202 upgrade: added 202_api_keys scope column but failed to persist version 1.9.75; leaving version at 1.9.74 so the next run retries.');
+                    _upgrade_note('added 202_api_keys scope column but failed to persist version 1.9.75; leaving version at 1.9.74 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: failed to add 202_api_keys scope column; leaving version at 1.9.74 so the next run retries.');
+                _upgrade_note('failed to add 202_api_keys scope column; leaving version at 1.9.74 so the next run retries.');
             }
         }
 
@@ -4803,10 +4920,10 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.76'") !== false) {
                     $prosper202_version = '1.9.76';
                 } else {
-                    error_log('Prosper202 upgrade: created the measurement tables but failed to persist version 1.9.76; leaving version at 1.9.75 so the next run retries.');
+                    _upgrade_note('created the measurement tables but failed to persist version 1.9.76; leaving version at 1.9.75 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: measurement schema incomplete; leaving version at 1.9.75 so the next run retries.');
+                _upgrade_note('measurement schema incomplete; leaving version at 1.9.75 so the next run retries.');
             }
         }
 
@@ -4838,10 +4955,10 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.77'") !== false) {
                     $prosper202_version = '1.9.77';
                 } else {
-                    error_log('Prosper202 upgrade: reconciled 202_users_pref and removed the chat tables but failed to persist version 1.9.77; leaving version at 1.9.76 so the next run retries.');
+                    _upgrade_note('reconciled 202_users_pref and removed the chat tables but failed to persist version 1.9.77; leaving version at 1.9.76 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: 202_users_pref could not be reconciled or the chat tables removed; leaving version at 1.9.76 so the next run retries.');
+                _upgrade_note('202_users_pref could not be reconciled or the chat tables removed; leaving version at 1.9.76 so the next run retries.');
             }
         }
 
@@ -4858,11 +4975,11 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.78'") !== false) {
                     $prosper202_version = '1.9.78';
                 } else {
-                    error_log('Prosper202 upgrade: failed to persist version 1.9.78; '
+                    _upgrade_note('failed to persist version 1.9.78; '
                         . 'leaving version at 1.9.77 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: 202_api_keys could not be reconciled; '
+                _upgrade_note('202_api_keys could not be reconciled; '
                     . 'leaving version at 1.9.77 so the next run retries.');
             }
         }
@@ -4946,11 +5063,11 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.79'") !== false) {
                     $prosper202_version = '1.9.79';
                 } else {
-                    error_log('Prosper202 upgrade: failed to persist version 1.9.79; '
+                    _upgrade_note('failed to persist version 1.9.79; '
                         . 'leaving version at 1.9.78 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: a table of the 1.9.79 step could not be reconciled (the list above),'
+                _upgrade_note('a table of the 1.9.79 step could not be reconciled (the list above),'
                     . ' the new accounts\' privacy default set or the re-click backfill marked; leaving version'
                     . ' at 1.9.78 so the next run retries.');
             }
@@ -5063,10 +5180,10 @@ class UPGRADE
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.80'") !== false) {
                     $prosper202_version = '1.9.80';
                 } else {
-                    error_log('Prosper202 upgrade: failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
+                    _upgrade_note('failed to persist version 1.9.80; leaving version at 1.9.79 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: a table of the 1.9.80 step or the paid 1.9.56 baseline could not be reconciled (the list above),'
+                _upgrade_note('a table of the 1.9.80 step or the paid 1.9.56 baseline could not be reconciled (the list above),'
                     . ' an API key hashed, or the paid PurLink clicks carried over; leaving version at 1.9.79 so the next run retries.');
             }
         }
