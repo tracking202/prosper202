@@ -43,9 +43,12 @@ final class WebhookSender
     public const MAX_RESPONSE_BYTES = 65536;
     /** Response bytes kept: an LTV delivery's log stores them; an export's error quotes the first 300 characters. */
     private const KEEP_RESPONSE_BYTES = 1000;
+    /** Largest answer read() keeps whole: a page of an API's list. */
+    public const MAX_READ_BYTES = 2 * 1024 * 1024;
     private const MESSAGE_RESPONSE_CHARS = 300;
 
     private ?WebhookGuard $guard;
+    private bool $ownTransport;
     /** @var callable(array<int, mixed>): array{status: int, error: string|null, primary_ip: string|null, location: string|null, body: string} */
     private $transport;
 
@@ -59,6 +62,7 @@ final class WebhookSender
         // construction of every export run.
         $this->guard = $guard;
         $this->transport = $transport ?? [self::class, 'curlTransport'];
+        $this->ownTransport = $transport === null;
     }
 
     public static function signature(string $secret, int $timestamp, string $body): string
@@ -150,11 +154,37 @@ final class WebhookSender
         array $ports = [],
         int $timeout = self::TIMEOUT
     ): array {
+        return $this->request($url, $body, $headers, $ports, $timeout, null);
+    }
+
+    /**
+     * A request to an API whose answer is the point (a list a setup page
+     * shows): a POST of $body, or a GET when it is null, made exactly as
+     * post() makes one, with the answer kept whole up to MAX_READ_BYTES. A
+     * longer answer is cut off there, which `error` then says.
+     *
+     * @param list<string> $headers
+     * @param list<int> $ports
+     * @return Posted
+     */
+    public function read(string $url, ?string $body, array $headers, array $ports = []): array
+    {
+        return $this->request($url, $body, $headers, $ports, self::TIMEOUT, self::MAX_READ_BYTES);
+    }
+
+    /**
+     * @param list<string> $headers
+     * @param list<int> $ports
+     * @param int|null $keep answer bytes read and kept (read()); null keeps post()'s caps
+     * @return Posted
+     */
+    private function request(string $url, ?string $body, array $headers, array $ports, int $timeout, ?int $keep): array
+    {
         $none = [
             'refused' => null, 'retryable' => false, 'strayed' => null, 'pinned' => '', 'status' => 0,
             'error' => null, 'location' => null, 'body' => '',
         ];
-        if (strlen($body) > self::MAX_BODY_BYTES) {
+        if ($body !== null && strlen($body) > self::MAX_BODY_BYTES) {
             return ['refused' => 'the body is ' . strlen($body) . ' bytes, more than the ' . self::MAX_BODY_BYTES
                 . ' a webhook carries'] + $none;
         }
@@ -168,7 +198,14 @@ final class WebhookSender
             return ['refused' => $e->getMessage(), 'retryable' => $retryable] + $none;
         }
 
-        $answer = ($this->transport)(self::curlOptions($target, $body, $headers, $timeout));
+        $options = self::curlOptions($target, $body ?? '', $headers, $timeout);
+        if ($body === null) {
+            unset($options[CURLOPT_POST], $options[CURLOPT_POSTFIELDS]);
+            $options[CURLOPT_HTTPGET] = true;
+        }
+        $answer = $keep !== null && $this->ownTransport
+            ? self::curlTransport($options, $keep, $keep)
+            : ($this->transport)($options);
         $connected = $answer['primary_ip'];
 
         return [
@@ -225,14 +262,18 @@ final class WebhookSender
     }
 
     /**
-     * The real transfer. Reads at most MAX_RESPONSE_BYTES of the answer and
-     * keeps the Location header of a redirect for the message.
+     * The real transfer. Reads at most $maxBytes of the answer, keeps its
+     * first $keepBytes, and keeps the Location header of a redirect for the
+     * message.
      *
      * @param array<int, mixed> $options
      * @return array{status: int, error: string|null, primary_ip: string|null, location: string|null, body: string}
      */
-    public static function curlTransport(array $options): array
-    {
+    public static function curlTransport(
+        array $options,
+        int $maxBytes = self::MAX_RESPONSE_BYTES,
+        int $keepBytes = self::KEEP_RESPONSE_BYTES
+    ): array {
         $ch = curl_init();
         if ($ch === false) {
             return ['status' => 0, 'error' => 'curl could not be initialised', 'primary_ip' => null, 'location' => null, 'body' => ''];
@@ -241,13 +282,13 @@ final class WebhookSender
         $read = 0;
         $location = null;
         $options[CURLOPT_RETURNTRANSFER] = false;
-        $options[CURLOPT_WRITEFUNCTION] = static function ($handle, string $chunk) use (&$body, &$read): int {
+        $options[CURLOPT_WRITEFUNCTION] = static function ($handle, string $chunk) use (&$body, &$read, $maxBytes, $keepBytes): int {
             $read += strlen($chunk);
-            if ($read > self::MAX_RESPONSE_BYTES) {
-                return 0; // abort: the answer is larger than anything a receiver needs to say
+            if ($read > $maxBytes) {
+                return 0; // abort: the answer is larger than anything this server reads
             }
-            if (strlen($body) < self::KEEP_RESPONSE_BYTES) {
-                $body .= substr($chunk, 0, self::KEEP_RESPONSE_BYTES - strlen($body));
+            if (strlen($body) < $keepBytes) {
+                $body .= substr($chunk, 0, $keepBytes - strlen($body));
             }
 
             return strlen($chunk);

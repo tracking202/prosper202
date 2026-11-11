@@ -50,6 +50,14 @@ final class UpgradeBackupWarningTest extends TestCase
 
     private const CALL = '<?php echo p202_upgrade_backup_warning((string) PROSPER202::prosper202_version()); ?>';
 
+    /**
+     * The 1-click pages read the database's version once, before they
+     * replace anything, and hand the warning that: their form is drawn again
+     * after a failed database step, when the database may not answer.
+     */
+    private const ONE_CLICK_CALL = '<?php echo p202_upgrade_backup_warning($stored_version); ?>';
+    private const ONE_CLICK_READ = '$stored_version = (string) PROSPER202::prosper202_version();';
+
     private static function root(): string
     {
         return dirname(__DIR__, 2);
@@ -107,13 +115,18 @@ final class UpgradeBackupWarningTest extends TestCase
             self::assertIsInt($form, "$path: the button is in a form that posts");
             self::assertFalse(strpos(substr($page, $form, $button - $form), '</form>'), "$path: the same form");
 
-            $call = strpos($page, self::CALL, $form);
+            $oneClick = str_starts_with($path, '202-account/');
+            $callText = $oneClick ? self::ONE_CLICK_CALL : self::CALL;
+            if ($oneClick) {
+                self::assertSame(1, substr_count($page, self::ONE_CLICK_READ), "$path: the database's version");
+            }
+            $call = strpos($page, $callText, $form);
             self::assertIsInt($call, "$path: the warning, called exactly so, inside that form");
             self::assertLessThan($button, $call, "$path: above the button");
 
             // Nothing between the warning and the button can skip or hide it:
             // whitespace, and at most the actions wrapper the button sits in.
-            $between = substr($page, $call + strlen(self::CALL), $button - $call - strlen(self::CALL));
+            $between = substr($page, $call + strlen($callText), $button - $call - strlen($callText));
             self::assertMatchesRegularExpression(
                 '#^\s*(<div class="p202-form-actions">\s*)?<button [^>]*$#',
                 $between,

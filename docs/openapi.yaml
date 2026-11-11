@@ -5024,6 +5024,144 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /destinations/{id}/google-ads/accounts:
+    get:
+      tags: [Destinations]
+      summary: The Google Ads accounts a connected destination can send to
+      description: >-
+        Read from Google now, with the destination's own credentials, and
+        not stored. Every account the connected Google user can open that
+        runs ads. `login_customer_id` is the manager it is reached through,
+        or null when the user opens it directly. 422 when the destination is
+        not Google Ads, is not connected yet, or Google refused (the message
+        is Google's answer).
+      operationId: listDestinationGoogleAdsAccounts
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        "200":
+          description: The accounts, by name
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      accounts:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            customer_id: {type: string}
+                            login_customer_id: {type: string, nullable: true}
+                            name: {type: string}
+                            currency: {type: string}
+                            via: {type: string, nullable: true, description: The manager's name}
+                      notes:
+                        type: array
+                        items: {type: string}
+                        description: What the list left out, if anything
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /destinations/{id}/google-ads/conversion-actions:
+    get:
+      tags: [Destinations]
+      summary: An account's conversion actions that take uploaded clicks
+      description: >-
+        Read from Google now. The enabled conversion actions of type
+        UPLOAD_CLICKS of the destination's own account, or of `customer_id`.
+        `value` is what `conversion_action` is set to. `others` counts the
+        account's enabled actions of another kind, which cannot take an
+        upload. 422 as for the accounts, or when the destination has no
+        account and none is given.
+      operationId: listDestinationGoogleAdsConversionActions
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: customer_id, in: query, schema: {type: string}, description: "The account, 10 digits. Default the destination's own."}
+        - {name: login_customer_id, in: query, schema: {type: string}, description: "The manager customer_id is reached through, if any. Only with customer_id."}
+      responses:
+        "200":
+          description: The actions, by name
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      customer_id: {type: string}
+                      login_customer_id: {type: string, nullable: true}
+                      actions:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            value: {type: string}
+                            id: {type: string}
+                            name: {type: string}
+                            owner: {type: string, nullable: true, description: The manager account that owns it}
+                      others: {type: integer}
+                      notes: {type: array, items: {type: string}}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /destinations/{id}/google-ads/pick:
+    post:
+      tags: [Destinations]
+      summary: Set a Google Ads destination's account and conversion action by name
+      description: >-
+        Chooses from Google's lists, so no ID has to be known. `account` and
+        `conversion_action` are each a name (matched whole, case ignored) or
+        an ID. Without `account` the destination keeps its account, or takes
+        the only one the Google user reaches. Without `conversion_action` it
+        keeps its action for the same account, or takes the account's only
+        one. Several to choose from, or no match, is a 422 listing the
+        choices, and nothing is saved. The manager an account is reached
+        through is stored as `login_customer_id`, the names as
+        `settings.labels`. Another account takes none of the old one's
+        conversion actions with it. No `dry_run`.
+      operationId: pickDestinationGoogleAds
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                account: {type: string}
+                conversion_action: {type: string}
+      responses:
+        "200":
+          description: The destination as saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Destination"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /destinations/{id}/deliveries:
     get:
       tags: [Destinations]
@@ -18251,11 +18389,15 @@ components:
           description: Whether credentials are stored. They are never served.
         status:
           type: string
-          enum: [ready, needs_authorisation, credentials_unreadable]
+          enum: [ready, needs_authorisation, needs_account, credentials_unreadable]
           description: |
             needs_authorisation: a Google Ads destination not yet connected
             to Google (POST /destinations/{id}/oauth/start); its conversions
-            wait, pending, and are sent once it is.
+            wait, pending, and are sent once it is. needs_account: a
+            connected Google Ads destination with no customer_id or
+            conversion_action yet; its conversions wait the same way until
+            both are set, by an update or by picking them on Setup ›
+            Destinations.
         waiting:
           type: object
           nullable: true
@@ -18324,7 +18466,10 @@ components:
           description: GA4 event parameter name to the click field it carries.
         customer_id:
           type: string
-          description: Google Ads customer ID the conversions are uploaded to, 10 digits (dashes are stripped).
+          description: >-
+            Google Ads customer ID the conversions are uploaded to, 10 digits (dashes are stripped).
+            May be left out with conversion_action when the destination is made,
+            to pick both on Setup › Destinations after connecting (status needs_account until then).
         login_customer_id:
           type: string
           description: The manager account the access goes through, when it is not the customer itself (10 digits).
@@ -18338,6 +18483,12 @@ components:
           type: object
           additionalProperties: {type: string}
           description: Campaign id to the conversion action its conversions are uploaded as, instead of conversion_action.
+        labels:
+          type: object
+          description: >-
+            Google Ads: the names Google gives the account and the conversion action, for display only,
+            as `customer` and `conversion_action`, each `{id, name}`. Set by a pick. A label is kept only while
+            its id is the setting it names, so changing customer_id or conversion_action drops the old name.
     DestinationCredentials:
       type: object
       description: |

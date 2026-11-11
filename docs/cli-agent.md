@@ -945,6 +945,9 @@ p202 destination create --type google_ads --name S --customer-id 123-456-7890 --
                        # a flag of the other type (e.g. --credentials-file without --type google_ads) is a validation error, never ignored
                        # update: --campaign-conversion-action merges with the stored map; N= removes campaign N's
 p202 destination connect <id> [--json]                  # Google Ads: authorisation_url for a human's browser (same user, 10 min)
+p202 destination accounts <id> [--json]                 # Google Ads, connected: the accounts it can send to, read from Google
+p202 destination conversion-actions <id> [--customer-id N [--login-customer-id N]] [--json]   # the account's click-upload actions
+p202 destination pick <id> [--account NAME|ID] [--action NAME|ID] [--json]   # sets both from Google's lists; several to choose from is a 422 listing them
 p202 destination update <id> [--enable|--disable] [--name S] [any create flag]   # only the flags given change
 p202 destination test <id> [--json]                     # made-up conversion to GA4's /debug/mp/collect: valid + messages
 p202 destination deliveries <id> [--status pending|sent|failed|withheld|cancelled] [--kind conversion|test]
@@ -961,7 +964,9 @@ both consent signals stated `granted` (`last_error` says which); `destination re
 `failed` with `last_error` says why (GA4's answer, an event over 72 hours old, an address never called); it stays
 failed until `destination resend` after the cause is fixed.
 A Google Ads destination with `status` `needs_authorisation` holds its conversions `pending` (no tries used)
-until a person opens `connect`'s `authorisation_url`; an agent cannot complete that step. A click under 6 hours
+until a person opens `connect`'s `authorisation_url`; an agent cannot complete that step. `needs_account` is one
+connected with no account picked yet: `destination pick <id>` sets it by name from Google's lists (`--customer-id`/`--conversion-action` on `update` still work).
+`destination create --type google_ads` needs only `--name` and `--credentials-file`; the IDs are optional. A click under 6 hours
 old also waits; one with no gclid/wbraid/gbraid and no hashed data is `withheld`. While conversions wait on
 something only a person can fix (a developer token Google has not approved, lost access, a wrong customer ID or
 conversion action), `destination get` shows `waiting` (`reason`, `status_code`, `until`); report the `reason`,

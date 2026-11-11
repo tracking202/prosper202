@@ -248,3 +248,159 @@ func TestDestinationResendAndBackfillPostWhatWasAsked(t *testing.T) {
 		t.Errorf("a refused call reached the server: %v", calls)
 	}
 }
+
+// accounts and conversion-actions are reads of this install, which asks
+// Google; pick posts a name or an ID and the install resolves it.
+func TestDestinationPickCommandsSendNamesAndListFromTheInstall(t *testing.T) {
+	type call struct{ method, path, query, body string }
+	var calls []call
+	answer := `{"data":{"accounts":[{"customer_id":"4445556666","login_customer_id":"1112223333","name":"Online Store","currency":"USD","via":"Northwind Agency"}],"notes":[]}}`
+	status := http.StatusOK
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		body := make([]byte, r.ContentLength)
+		r.Body.Read(body)
+		calls = append(calls, call{r.Method, r.URL.Path, r.URL.RawQuery, string(body)})
+		w.WriteHeader(status)
+		w.Write([]byte(answer))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	for _, c := range []*cobra.Command{destinationPickCmd, destinationConversionActionsCmd} {
+		resetAllFlags(c)
+		c := c
+		t.Cleanup(func() { resetAllFlags(c) })
+	}
+
+	out, _, err := executeCommand("destination", "accounts", "7", "--json")
+	if err != nil {
+		t.Fatalf("accounts: %v", err)
+	}
+	if len(calls) != 1 || calls[0].method != "GET" || calls[0].path != "/api/v3/destinations/7/google-ads/accounts" {
+		t.Errorf("accounts requests = %v", calls)
+	}
+	if !strings.Contains(out, "Online Store") || !strings.Contains(out, "1112223333") {
+		t.Errorf("the accounts should be printed, got %s", out)
+	}
+
+	calls = nil
+	if _, _, err = executeCommand("destination", "conversion-actions", "7", "--customer-id", "444-555-6666", "--login-customer-id", "1112223333", "--json"); err != nil {
+		t.Fatalf("conversion-actions: %v", err)
+	}
+	if len(calls) != 1 || calls[0].path != "/api/v3/destinations/7/google-ads/conversion-actions" ||
+		!strings.Contains(calls[0].query, "customer_id=444-555-6666") || !strings.Contains(calls[0].query, "login_customer_id=1112223333") {
+		t.Errorf("conversion-actions requests = %v", calls)
+	}
+
+	calls = nil
+	resetAllFlags(destinationPickCmd)
+	if _, _, err = executeCommand("destination", "pick", "7", "--account", "Online Store", "--action", "Purchase (imported)", "--json"); err != nil {
+		t.Fatalf("pick: %v", err)
+	}
+	if len(calls) != 1 || calls[0].method != "POST" || calls[0].path != "/api/v3/destinations/7/google-ads/pick" {
+		t.Fatalf("pick requests = %v", calls)
+	}
+	if !strings.Contains(calls[0].body, `"account":"Online Store"`) || !strings.Contains(calls[0].body, `"conversion_action":"Purchase (imported)"`) {
+		t.Errorf("pick body = %s", calls[0].body)
+	}
+
+	// No flag: an empty body, so the install keeps or takes the only choice.
+	calls = nil
+	resetAllFlags(destinationPickCmd)
+	if _, _, err = executeCommand("destination", "pick", "7", "--json"); err != nil {
+		t.Fatalf("pick with no flags: %v", err)
+	}
+	if len(calls) != 1 || calls[0].body != "{}" {
+		t.Errorf("pick with no flags sent %v", calls)
+	}
+}
+
+func TestDestinationPickCommandsRefuseBadInputBeforeTheServerAndHintOnARefusal(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		w.Write([]byte(`{"error":true,"message":"There are 2 to choose from; name the Google Ads account by its name or ID: Online Store (444-555-6666), Demo Store (555-666-7777).","status":422,"field_errors":{"account":"There are 2 to choose from"}}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	for _, c := range []*cobra.Command{destinationPickCmd, destinationConversionActionsCmd} {
+		c := c
+		resetAllFlags(c)
+		t.Cleanup(func() { resetAllFlags(c) })
+	}
+
+	refused := [][]string{
+		{"destination", "accounts", "seven"},
+		{"destination", "conversion-actions", "0"},
+		{"destination", "conversion-actions", "7", "--login-customer-id", "1112223333"},
+		{"destination", "conversion-actions", "7", "--customer-id", ""},
+		{"destination", "pick", "x"},
+		{"destination", "pick", "7", "--account", " "},
+		{"destination", "pick", "7", "--action", ""},
+	}
+	for _, args := range refused {
+		resetAllFlags(destinationPickCmd)
+		resetAllFlags(destinationConversionActionsCmd)
+		_, _, err := executeCommand(args...)
+		if err == nil || exitCodeForError(err) != 1 || hintFor(err) == "" {
+			t.Errorf("%v: err %v, exit %d, hint %q", args, err, exitCodeForError(err), hintFor(err))
+		}
+	}
+	if calls != 0 {
+		t.Errorf("bad input reached the server %d times", calls)
+	}
+
+	// The install's refusal keeps its category and its words, with where to look next.
+	for _, args := range [][]string{{"destination", "pick", "7"}, {"destination", "accounts", "7"}, {"destination", "conversion-actions", "7"}} {
+		resetAllFlags(destinationPickCmd)
+		_, _, err := executeCommand(args...)
+		if err == nil || exitCodeForError(err) != 1 {
+			t.Fatalf("%v: a 422 should be a validation error, got %v (exit %d)", args, err, exitCodeForError(err))
+		}
+		if !strings.Contains(err.Error(), "Online Store (444-555-6666)") || !strings.Contains(hintFor(err), "p202 destination") {
+			t.Errorf("%v: message %q, hint %q", args, err.Error(), hintFor(err))
+		}
+	}
+}
+
+func TestAGoogleAdsDestinationIsCreatedWithoutItsIDs(t *testing.T) {
+	var bodies []string
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		body := make([]byte, r.ContentLength)
+		r.Body.Read(body)
+		bodies = append(bodies, string(body))
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"data":{"destination_id":2,"type":"google_ads","status":"needs_authorisation"}}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	resetAllFlags(destinationCreateCmd)
+	t.Cleanup(func() { resetAllFlags(destinationCreateCmd) })
+	creds := filepath.Join(tmp, "google-ads.json")
+	if err := os.WriteFile(creds, []byte(`{"developer_token":"devTOKEN_abc123XYZ","oauth_client_id":"1234-abcd.apps.googleusercontent.com","oauth_client_secret":"GOCSPX-clientSecret99"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := executeCommand("destination", "create", "--type", "google_ads", "--name", "Search", "--credentials-file", creds, "--json"); err != nil {
+		t.Fatalf("create without IDs: %v", err)
+	}
+	if len(bodies) != 1 || strings.Contains(bodies[0], "customer_id") || strings.Contains(bodies[0], "conversion_action") {
+		t.Errorf("create sent %v", bodies)
+	}
+
+	bodies = nil
+	resetAllFlags(destinationCreateCmd)
+	_, _, err := executeCommand("destination", "create", "--type", "google_ads", "--name", "Search", "--credentials-file", creds, "--conversion-action", "987654")
+	if err == nil || exitCodeForError(err) != 1 || !strings.Contains(hintFor(err), "destination pick") {
+		t.Errorf("an action without its account: err %v, hint %q", err, hintFor(err))
+	}
+	if len(bodies) != 0 {
+		t.Errorf("it reached the server: %v", bodies)
+	}
+}

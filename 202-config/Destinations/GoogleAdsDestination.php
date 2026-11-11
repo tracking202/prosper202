@@ -21,6 +21,11 @@ use Prosper202\Attribution\WebhookSender;
  * Every wait ends: past CLICK_MAX_AGE the row fails, measured from the click,
  * or from the conversion when the click's time is unknown (a click is never
  * later than its conversion, so that age is a floor).
+ *
+ * The customer and the conversion action may be left out when the
+ * destination is made: Setup › Destinations lists the connected Google
+ * user's accounts and their actions to pick from (GoogleAdsAccounts). Until
+ * both are set the destination's conversions wait (configured()).
  */
 final class GoogleAdsDestination implements DestinationType, AuthorisedDestination
 {
@@ -63,7 +68,7 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
 
     public function settingKeys(): array
     {
-        return ['customer_id', 'login_customer_id', 'conversion_action', 'campaign_conversion_actions'];
+        return ['customer_id', 'login_customer_id', 'conversion_action', 'campaign_conversion_actions', 'labels'];
     }
 
     /** The grant (refresh_token) is not one: only the consent screen fills it. */
@@ -91,14 +96,39 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
         return $given;
     }
 
+    /** Whether the settings name the customer and the conversion action a send needs. */
+    public function configured(array $settings): bool
+    {
+        return is_string($settings['customer_id'] ?? null) && $settings['customer_id'] !== ''
+            && is_string($settings['conversion_action'] ?? null) && $settings['conversion_action'] !== '';
+    }
+
     public function validate(array $settings, ?array $credentials): array
     {
-        $out = ['customer_id' => self::customerId($settings['customer_id'] ?? null, 'customer_id', true)];
+        $out = [];
+        $customer = self::customerId($settings['customer_id'] ?? null, 'customer_id', false);
+        if ($customer !== null) {
+            $out['customer_id'] = $customer;
+        }
         $login = self::customerId($settings['login_customer_id'] ?? null, 'login_customer_id', false);
         if ($login !== null) {
             $out['login_customer_id'] = $login;
         }
-        $out['conversion_action'] = self::action($settings['conversion_action'] ?? null, 'settings.conversion_action');
+        $action = $settings['conversion_action'] ?? null;
+        if ($action !== null && $action !== '') {
+            $out['conversion_action'] = self::action($action, 'settings.conversion_action');
+        }
+        // Everything else belongs to an account: none of it is kept without one.
+        // (A label for a setting that is not there is dropped by labels().)
+        $needsCustomer = array_filter([
+            'login_customer_id' => $login !== null,
+            'conversion_action' => isset($out['conversion_action']),
+            'campaign_conversion_actions' => ($settings['campaign_conversion_actions'] ?? []) !== [],
+        ]);
+        if ($customer === null && $needsCustomer !== []) {
+            throw new DestinationInputException('settings.customer_id', 'customer_id is required with ' . implode(', ', array_keys($needsCustomer))
+                . ': the Google Ads customer ID, 10 digits (123-456-7890). Leave them all out to pick the account on Setup › Destinations after connecting.');
+        }
         $byCampaign = $settings['campaign_conversion_actions'] ?? [];
         if (!is_array($byCampaign) || count($byCampaign) > 500) {
             throw new DestinationInputException('settings.campaign_conversion_actions', 'campaign_conversion_actions must be an object of campaign id to conversion action, at most 500.');
@@ -112,6 +142,10 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
         }
         if ($map !== []) {
             $out['campaign_conversion_actions'] = $map;
+        }
+        $labels = self::labels($settings['labels'] ?? [], $out);
+        if ($labels !== []) {
+            $out['labels'] = $labels;
         }
         if ($credentials === null) {
             return [$out, null];
@@ -141,6 +175,9 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
         $secrets = [$credentials['developer_token'] ?? null, $credentials['oauth_client_secret'] ?? null, $credentials[self::GRANT] ?? null];
         if (!$this->authorised($credentials)) {
             return new SendResult(false, true, null, SendResult::FOR_OPERATOR . 'Google Ads is not connected yet; press Connect Google Ads on Setup › Destinations', waitUntil: $now + self::AUTH_WAIT, destinationWaits: true);
+        }
+        if (!$this->configured($settings)) {
+            return new SendResult(false, true, null, SendResult::FOR_OPERATOR . 'pick the Google Ads account and conversion action on Setup › Destinations', waitUntil: $now + self::AUTH_WAIT, destinationWaits: true);
         }
         if ($test) {
             $facts = self::withTestClick($facts);
@@ -436,6 +473,28 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
     }
 
     /**
+     * What a refused request's body says, in a sentence: Google's error
+     * codes and messages, else its message, else nothing.
+     */
+    public static function failureText(string $body): string
+    {
+        try {
+            $decoded = json_decode($body, true, 32, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return '';
+        }
+        $error = is_array($decoded) ? ($decoded['error'] ?? null) : null;
+        $errors = self::errors($error);
+        if ($errors !== []) {
+            return self::describe($errors) . self::allowlistNote($errors);
+        }
+
+        return is_array($error) && is_string($error['message'] ?? null)
+            ? trim(mb_substr((string) preg_replace('/\s+/', ' ', $error['message']), 0, 200))
+            : '';
+    }
+
+    /**
      * An error the operator mends (the developer token not yet approved, the
      * OAuth user's access, the customer or login customer, the conversion
      * action) waits uncounted rather than failing: Google takes a click's
@@ -532,6 +591,42 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
         }
 
         return $digits;
+    }
+
+    /**
+     * The names Google gives the picked account and conversion action, for
+     * display only: labels.customer and labels.conversion_action, each
+     * {id, name}. A label is kept while its id is the setting it names, so
+     * a customer_id or conversion_action changed without its label loses
+     * the old name rather than showing it beside the new id.
+     *
+     * @param array<string, mixed> $out the settings validated so far
+     * @return array<string, array{id: string, name: string}>
+     */
+    private static function labels(mixed $given, array $out): array
+    {
+        $field = 'settings.labels';
+        if (!is_array($given) || array_diff(array_keys($given), ['customer', 'conversion_action']) !== []) {
+            throw new DestinationInputException($field, 'labels may hold customer and conversion_action, each {"id", "name"}.');
+        }
+        $kept = [];
+        foreach ($given as $what => $label) {
+            $id = is_array($label) ? ($label['id'] ?? null) : null;
+            $name = is_array($label) ? ($label['name'] ?? null) : null;
+            if (
+                !is_array($label) || array_diff(array_keys($label), ['id', 'name']) !== [] || !is_string($id) || !is_string($name)
+                || trim($name) === '' || mb_strlen($name) > 200 || preg_match('/[\x00-\x1F\x7F]/', $name) === 1
+            ) {
+                throw new DestinationInputException($field . '.' . $what, 'labels.' . $what . ' must be {"id", "name"}: the ID it names and a name of at most 200 characters.');
+            }
+            $names = $what === 'customer' ? 'customer_id' : 'conversion_action';
+            $stripped = $what === 'customer' ? (string) preg_replace('/[\s\-]/', '', $id) : trim($id);
+            if (($out[$names] ?? null) === $stripped) {
+                $kept[$what] = ['id' => $stripped, 'name' => trim($name)];
+            }
+        }
+
+        return $kept;
     }
 
     /** A conversion action's id, or its resource name when another account (a manager) owns it. */

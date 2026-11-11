@@ -75,6 +75,13 @@ require_once __DIR__ . '/../202-config/functions-alerts-ui.php';
 echo p202_alerts_home_panel($db, (int) ($_SESSION['user_id'] ?? 0), $base, time());
 ?>
 
+<?php echo p202_old_google_feed_notice(
+    $db,
+    (int) ($_SESSION['user_id'] ?? 0),
+    $userObj->hasPermission('access_to_setup_section') && $userObj->hasPermission('access_to_campaign_data'),
+    get_absolute_url()
+); ?>
+
 <div class="row g-4">
     <div class="col-12 col-lg-7">
         <?php if (!$gs_all_done) { ?>

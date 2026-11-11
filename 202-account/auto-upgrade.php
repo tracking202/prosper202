@@ -22,6 +22,14 @@ die_if_auto_upgrade_disabled();
 
 ini_set('memory_limit', '-1');
 
+// Asked before the button is shown, and again before anything is downloaded.
+$blockers = \Prosper202\Update\OneClickReadiness::blockers(dirname(__DIR__));
+
+// Read once, before anything is replaced: what is drawn after a failed
+// database step may have no database to ask.
+$stored_version = (string) PROSPER202::prosper202_version();
+$database_step_failed = false;
+
 // Initialize state used by the upgrade flow and rendering below.
 $log = '';
 $error = false;
@@ -72,7 +80,15 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
 		$error = true;
 	}
 
-	if (!$error && version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) {
+    if (!$error && $blockers !== []) {
+        foreach ($blockers as $blocker) {
+            $log .= $blocker['what'] . ' ' . $blocker['fix'] . "\n";
+        }
+        $log .= "Nothing was changed.\n";
+        $error = true;
+    }
+
+	if (!$error && version_compare($stored_version, '1.9.3', '<')) {
 
 		// A native date input posts YYYY-MM-DD; the classic datepicker posted
 		// DD-MM-YYYY, which is still read.
@@ -91,7 +107,7 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
 	//Do check for landing page upgrade to ssl 
 	$ssl_upgrade = '1'; //default to upgrade ssl
 
-	if (version_compare(PROSPER202::prosper202_version(), PROSPER202_VERSION, '<')) {
+	if (version_compare($stored_version, PROSPER202_VERSION, '<')) {
 		if (isset($_POST['lp_ssl']) && $_POST['lp_ssl'] == 0) {
 			$ssl_upgrade = '0';  //set to no upgrade if users doesn't want it
 		}
@@ -120,7 +136,8 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
 			}
 
 			if ($problem !== null) {
-				$log .= $problem . "\nOperation aborted.";
+                $signature_advice = \Prosper202\Update\OneClickReadiness::afterProblem($problem);
+                $log .= $problem . "\n" . $signature_advice . "\nOperation aborted.";
 				$FilesUpdated = false;
 			} elseif ($GetUpdate !== null) {
 
@@ -133,7 +150,8 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
 						// A signed release that is not the version offered, or not newer, is never extracted.
 						$signature_problem = \Prosper202\Update\ReleaseSignature::versionProblem($zipFile, $latest_version, (string) $version);
 						if ($signature_problem !== null) {
-							$log .= $signature_problem . "\nOperation aborted.";
+                            $signature_advice = \Prosper202\Update\OneClickReadiness::afterProblem($signature_problem);
+                            $log .= $signature_problem . "\n" . $signature_advice . "\nOperation aborted.";
 							$FilesUpdated = false;
 						}
 
@@ -226,11 +244,22 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
 			} else {
                 $log .= UPGRADE::$lastRunBusy
                     ? "Another upgrade of this database is running (its page may have timed out; it carries on). Nothing was changed; reload in a few minutes.\n"
-                    : "Database upgrade failed! Please try again!\n";
+                    : p202_upgrade_failure_log(
+                        UPGRADE::failures(),
+                        _upgrade_stored_version_or_null(),
+                        (string) $latest_version
+                    );
 				$upgrade_done = false;
+                $database_step_failed = !UPGRADE::$lastRunBusy;
 			}
 		}
 	}
+}
+
+// The database step failed: the database may no longer answer, and the shell
+// and the form below read it (p202_one_click_after_failed_database_step()).
+if ($database_step_failed) {
+    $stored_version = p202_one_click_after_failed_database_step($log);
 }
 
 $e = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
@@ -254,8 +283,14 @@ template_top('1-Click Upgrade');
 		<div>Your Prosper202 version <?php echo $e($version); ?> is the latest.</div>
 		<div class="p202-empty__action"><a class="btn btn-secondary btn-sm" href="<?php echo $e(get_absolute_url() . '202-account/'); ?>">Back to Home</a></div>
 	</div>
-<?php } elseif (!function_exists('zip_open')) { ?>
-	<?php echo p202_flash('bad', 'PHP zip module missing. The 1-click upgrade needs PHP compiled with zip support (the --enable-zip configure option); upgrade manually until it is.'); ?>
+<?php } elseif ($blockers !== []) { ?>
+    <section class="p202-panel">
+        <div class="p202-panel__head">
+            <h2 class="p202-panel__title">Prosper202 <?php echo $e($latest_version); ?> is available</h2>
+            <span class="p202-pill">you have <?php echo $e($version); ?></span>
+        </div>
+        <div class="p202-panel__body"><?php echo p202_one_click_blocked($blockers); ?></div>
+    </section>
 <?php } else { ?>
 	<div class="row g-4">
 		<div class="col-12 col-lg-7">
@@ -266,7 +301,10 @@ template_top('1-Click Upgrade');
 				</div>
 				<div class="p202-panel__body">
 					<?php if ($signature_problem !== null) { ?>
-						<?php echo p202_flash('bad', $signature_problem . ' Nothing on this install was changed.'); ?>
+                        <?php echo p202_flash(
+                            'bad',
+                            $signature_problem . ' Nothing on this install was changed. ' . ($signature_advice ?? '')
+                        ); ?>
 					<?php } ?>
 					<?php if ($submitted) { ?>
 						<label class="form-label" for="upgrade-log">What happened</label>
@@ -278,13 +316,13 @@ template_top('1-Click Upgrade');
 						<form method="post" action="">
 							<input type="hidden" name="start_upgrade" value="1">
 							<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
-							<?php if (version_compare(PROSPER202::prosper202_version(), '1.9.3', '<')) { ?>
+							<?php if (version_compare($stored_version, '1.9.3', '<')) { ?>
 								<div class="mb-3">
 									<label class="form-label" for="date_from">Process clicks for the new Data Engine from</label>
 									<input type="date" class="form-control" id="date_from" name="date_from" required max="<?php echo $e(date('Y-m-d')); ?>">
 								</div>
 							<?php } ?>
-							<?php if (version_compare(PROSPER202::prosper202_version(), PROSPER202_VERSION, '<')) { ?>
+							<?php if (version_compare($stored_version, PROSPER202_VERSION, '<')) { ?>
 								<div class="mb-3">
 									<span class="form-label d-block" id="lp_ssl_label">Upgrade old landing page URLs to HTTPS?</span>
 									<div class="d-flex gap-3" role="radiogroup" aria-labelledby="lp_ssl_label">
@@ -294,7 +332,8 @@ template_top('1-Click Upgrade');
 									<div class="form-text">Yes is the default: modern browsers require landing pages over HTTPS, or tracking stops working.</div>
 								</div>
 							<?php } ?>
-							<?php echo p202_upgrade_backup_warning((string) PROSPER202::prosper202_version()); ?>
+                            <?php echo p202_came_from_paid_1956($db) ? p202_paid_1956_notes_link() : ''; ?>
+                            <?php echo p202_upgrade_backup_warning($stored_version); ?>
 							<div class="p202-form-actions">
 								<button class="btn btn-primary" id="upgrade-submit" type="submit">Upgrade Prosper202</button>
 							</div>

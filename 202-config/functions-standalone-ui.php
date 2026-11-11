@@ -107,7 +107,7 @@ function info_top(array $options = []): void
 function info_bottom(): void
 {
 ?>
-			<p class="p202-standalone__foot">Prosper202 ClickServer &middot; <a href="http://support.tracking202.com/" target="_blank" rel="noopener">Help</a></p>
+			<p class="p202-standalone__foot">Prosper202 ClickServer &middot; <a href="https://support.tracking202.com/" target="_blank" rel="noopener">Help</a></p>
 		</div>
 	</main>
 </body>

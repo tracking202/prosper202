@@ -207,4 +207,183 @@ final class ServerStateStoreRestoreTest extends TestCase
         self::assertFileDoesNotExist($this->dir . '/epoch.json');
         self::assertNotNull((new ServerStateStore($this->dir))->getStagedChangeForUser(1, 'chg-plain'));
     }
+
+    public function testARestoreLeavesANoticeOfWhatWasSetAsideAndWhere(): void
+    {
+        $epoch = new FakeStateEpoch(10);
+        self::writeEachKind($this->store($epoch));
+        self::assertSame([], $this->store($epoch)->restoreNotices(), 'no restore, no notice');
+
+        $epoch->value = 10; // the restore
+        $notices = $this->store($epoch)->restoreNotices();
+
+        self::assertCount(1, $notices, 'reading the notices is itself the check, so Settings says so first');
+        $aside = glob($this->dir . '/restored-*') ?: [];
+        self::assertSame($aside[0] ?? null, $notices[0]['dir']);
+        self::assertSame(
+            ['changes' => 1, 'idempotency' => 1, 'jobs' => 1, 'staged_changes' => 1],
+            (static function (array $c): array {
+                ksort($c);
+
+                return $c;
+            })($notices[0]['counts'])
+        );
+        self::assertEqualsWithDelta(time(), $notices[0]['at'], 5);
+        self::assertSame($notices[0]['at'] + ServerStateStore::SET_ASIDE_KEPT_SECONDS, $notices[0]['kept_until']);
+        self::assertCount(1, $this->store($epoch)->restoreNotices(), 'it stays until it is dismissed');
+
+        self::assertSame(basename($aside[0]), $notices[0]['name']);
+        $this->store($epoch)->dismissRestoreNotices(['restored-not-a-name', '../epoch.json']);
+        self::assertCount(1, $this->store($epoch)->restoreNotices(), 'only a set-aside directory is dismissed');
+        $this->store($epoch)->dismissRestoreNotices([$notices[0]['name']]);
+        self::assertSame([], $this->store($epoch)->restoreNotices());
+        self::assertDirectoryExists($aside[0], 'dismissing removes nothing');
+    }
+
+    public function testDismissingWhatWasShownKeepsTheNoticeOfARestoreMadeSince(): void
+    {
+        $epoch = new FakeStateEpoch(10);
+        self::writeEachKind($this->store($epoch));
+        $epoch->value = 10;
+        $shown = $this->store($epoch)->restoreNotices();
+        self::assertCount(1, $shown);
+
+        // A second restore, after the page was drawn and before Dismiss is pressed.
+        $later = $this->dir . '/restored-' . gmdate('Ymd\THis\Z', time() + 60) . '-0a1b2c';
+        mkdir($later . '/staged_changes', 0700, true);
+        file_put_contents($later . '/staged_changes/1.json', '{"items":{"chg-z":{"state_epoch":12}}}');
+
+        $this->store($epoch)->dismissRestoreNotices(array_column($shown, 'name'));
+
+        $left = $this->store($epoch)->restoreNotices();
+        self::assertSame([basename($later)], array_column($left, 'name'));
+        self::assertSame(['staged_changes' => 1], $left[0]['counts']);
+    }
+
+    public function testASetAsideInterruptedHalfWayIsToldWhole(): void
+    {
+        // What a run that failed part way left: records moved, nothing else written.
+        $epoch = new FakeStateEpoch(10);
+        $this->store($epoch);
+        $half = $this->dir . '/restored-' . gmdate('Ymd\THis\Z', time() - 5) . '-0a1b2c';
+        mkdir($half . '/idempotency', 0700, true);
+        mkdir($half . '/jobs', 0700, true);
+        file_put_contents($half . '/idempotency/a.json', '{"items":{"k1":{},"k2":{}}}');
+        file_put_contents($half . '/jobs/j1.json', '{}');
+        file_put_contents($half . '/jobs/j1.events.json', '{"items":[]}');
+
+        $notices = $this->store($epoch)->restoreNotices();
+
+        self::assertCount(1, $notices);
+        self::assertSame(['idempotency' => 2, 'jobs' => 1], $notices[0]['counts']);
+    }
+
+    public function testADirectoryThatCannotBeRemovedDoesNotHoldBackTheOthers(): void
+    {
+        if (function_exists('posix_geteuid') && posix_geteuid() === 0) {
+            self::markTestSkipped('root may remove anything');
+        }
+        $epoch = new FakeStateEpoch(10);
+        $store = $this->store($epoch);
+        $old = time() - ServerStateStore::SET_ASIDE_KEPT_SECONDS - 3600;
+        $stuck = $this->dir . '/restored-' . gmdate('Ymd\THis\Z', $old) . '-aaaaaa';
+        $free = $this->dir . '/restored-' . gmdate('Ymd\THis\Z', $old + 60) . '-bbbbbb';
+        foreach ([$stuck, $free] as $dir) {
+            mkdir($dir . '/jobs', 0700, true);
+            file_put_contents($dir . '/jobs/j.json', '{}');
+        }
+        chmod($stuck . '/jobs', 0500);
+        $log = (string) ini_get('error_log');
+        $logged = (string) tempnam(sys_get_temp_dir(), 'p202-prune-log-');
+        ini_set('error_log', $logged);
+        $now = time();
+        try {
+            self::assertSame(1, $store->pruneSetAside(ServerStateStore::SET_ASIDE_KEPT_SECONDS, $now));
+            self::assertDirectoryDoesNotExist($free);
+            self::assertDirectoryExists($stuck);
+            self::assertSame(1, substr_count((string) file_get_contents($logged), 'could not be removed'));
+
+            // Not tried, and not logged, on the requests that follow; a day later it is.
+            chmod($stuck . '/jobs', 0700);
+            $kept = ServerStateStore::SET_ASIDE_KEPT_SECONDS;
+            self::assertSame(0, $this->store($epoch)->pruneSetAside($kept, $now + 60));
+            self::assertDirectoryExists($stuck);
+            self::assertSame(1, substr_count((string) file_get_contents($logged), 'could not be removed'));
+            self::assertSame(
+                1,
+                $this->store($epoch)->pruneSetAside(ServerStateStore::SET_ASIDE_KEPT_SECONDS, $now + 86401)
+            );
+            self::assertDirectoryDoesNotExist($stuck);
+        } finally {
+            ini_set('error_log', $log);
+            unlink($logged);
+            if (is_dir($stuck . '/jobs')) {
+                chmod($stuck . '/jobs', 0700);
+            }
+        }
+    }
+
+    public function testADismissedDirectoryRemovedByHandIsForgotten(): void
+    {
+        $epoch = new FakeStateEpoch(10);
+        $store = $this->store($epoch);
+        $old = time() - ServerStateStore::SET_ASIDE_KEPT_SECONDS - 3600;
+        $byHand = 'restored-' . gmdate('Ymd\THis\Z', time() - 60) . '-cccccc';
+        $aged = 'restored-' . gmdate('Ymd\THis\Z', $old) . '-dddddd';
+        foreach ([$byHand, $aged] as $name) {
+            mkdir($this->dir . '/' . $name . '/jobs', 0700, true);
+            file_put_contents($this->dir . '/' . $name . '/jobs/j.json', '{}');
+        }
+        $store->dismissRestoreNotices([$byHand, $aged]);
+        unlink($this->dir . '/' . $byHand . '/jobs/j.json');
+        rmdir($this->dir . '/' . $byHand . '/jobs');
+        rmdir($this->dir . '/' . $byHand);
+
+        self::assertSame(1, $store->pruneSetAside());
+
+        $state = json_decode((string) file_get_contents($this->dir . '/restore-notices.json'), true);
+        self::assertSame([], $state['dismissed']);
+    }
+
+    public function testWhatWasSetAsideIsRemovedAfterThirtyDaysAndNotBefore(): void
+    {
+        $epoch = new FakeStateEpoch(10);
+        self::writeEachKind($this->store($epoch));
+        $epoch->value = 10;
+        $store = $this->store($epoch);
+        $notice = $store->restoreNotices()[0];
+
+        $kept = ServerStateStore::SET_ASIDE_KEPT_SECONDS;
+        self::assertSame(0, $store->pruneSetAside($kept, $notice['at'] + $kept - 1));
+        self::assertDirectoryExists($notice['dir']);
+        // Not this store's: another name, and a link under a name it would take.
+        mkdir($this->dir . '/restored-by-hand');
+        mkdir($this->dir . '/elsewhere');
+        touch($this->dir . '/elsewhere/keep.json');
+        symlink($this->dir . '/elsewhere', $this->dir . '/restored-20200101T000000Z-abcdef');
+
+        self::assertSame(1, $store->pruneSetAside($kept, $notice['at'] + $kept));
+        self::assertDirectoryDoesNotExist($notice['dir']);
+        self::assertSame([], $store->restoreNotices(), 'a notice goes with its directory');
+        self::assertDirectoryExists($this->dir . '/restored-by-hand');
+        self::assertFileExists($this->dir . '/elsewhere/keep.json', 'a link is not followed');
+        unlink($this->dir . '/restored-20200101T000000Z-abcdef');
+    }
+
+    public function testAnOldSetAsideDirectoryIsRemovedOnTheNextUseOfTheStore(): void
+    {
+        $epoch = new FakeStateEpoch(10);
+        $this->store($epoch);
+        $old = $this->dir . '/restored-' . gmdate('Ymd\THis\Z', time() - ServerStateStore::SET_ASIDE_KEPT_SECONDS - 60)
+            . '-0a1b2c';
+        mkdir($old . '/staged_changes', 0700, true);
+        file_put_contents($old . '/staged_changes/1.json', '{"items":{}}');
+        $recent = $this->dir . '/restored-' . gmdate('Ymd\THis\Z', time() - 3600) . '-0a1b2c';
+        mkdir($recent);
+
+        $this->store($epoch)->lookupIdempotent('user:1', 'any');
+
+        self::assertDirectoryDoesNotExist($old);
+        self::assertDirectoryExists($recent);
+    }
 }
