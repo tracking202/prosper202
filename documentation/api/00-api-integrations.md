@@ -618,8 +618,10 @@ install's directory and are not used, and the error log names it: a create
 retried under an `Idempotency-Key` recorded after the backup is made again
 rather than answered as done, and a staged change proposed or applied after
 it is no longer listed. Records from before the backup stay, so a create the
-restored database has is still answered as done. Nothing is deleted: remove
-`restored-*` once nothing in it is needed. The change feed keeps counting,
+restored database has is still answered as done. Settings shows a notice
+with how many records of each kind were set aside, where, and until when;
+it stays until an administrator dismisses it. A `restored-*` directory is
+kept for 30 days and then removed. The change feed keeps counting,
 so a cursor never goes back; a client that read entries after the backup
 should resync. A record written inside a database transaction carries the
 counter as it was, and a restore to that same point does not set it aside.

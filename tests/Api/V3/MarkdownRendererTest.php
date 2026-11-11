@@ -126,4 +126,59 @@ final class MarkdownRendererTest extends TestCase
         self::assertStringContainsString('<ul><li>Bullet</li></ul>', $mixed, 'a numbered item starts a new list');
         self::assertStringContainsString('<ol><li>Number</li></ol>', $mixed);
     }
+
+    public function testThePaid1956NotesRenderWholeAndTheirLinksLead(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $path = \Prosper202\Update\PaidOrigin::NOTES_FILE;
+        self::assertFileExists($root . '/' . $path);
+        self::assertFileExists($root . '/' . \Prosper202\Update\PaidOrigin::NOTES_PAGE);
+        $pages = ['202-config/upgrade.php', '202-account/help.php', '202-account/auto-upgrade.php',
+            '202-account/auto-upgrade-premium.php'];
+        foreach ($pages as $page) {
+            self::assertStringContainsString(
+                'p202_came_from_paid_1956($db)',
+                (string) file_get_contents($root . '/' . $page),
+                "$page links the notes for an install that came from paid 1.9.56"
+            );
+        }
+        $html = markdownDocLinks(markdownToHtml((string) file_get_contents($root . '/' . $path)), $path);
+
+        self::assertSame(0, preg_match_all('~<p>\s*[-*+]\s~', $html), 'a bullet reached the reader as text');
+        self::assertSame(0, preg_match_all('~<p>[^<]{0,40}\|~', $html), 'a table row reached the reader as text');
+        self::assertStringNotContainsString('```', $html);
+        preg_match_all('~<a href="([^"]*)"~', $html, $links);
+        self::assertNotSame([], $links[1]);
+        foreach ($links[1] as $href) {
+            if ($href[0] === '#') {
+                $id = ' id="' . substr($href, 1) . '"';
+                self::assertStringContainsString($id, $html, "$href names a heading on the page");
+                continue;
+            }
+            self::assertMatchesRegularExpression('~^https://~', $href, 'any other link leaves the install');
+            $prefix = 'https://github.com/tracking202/prosper202/blob/master/';
+            if (str_starts_with($href, $prefix)) {
+                $file = explode('#', substr($href, strlen($prefix)))[0];
+                self::assertFileExists($root . '/' . $file, "$href names a file of the repository");
+            }
+        }
+    }
+
+    public function testDocumentLinksAreResolvedFromTheDocumentsOwnDirectory(): void
+    {
+        $html = markdownDocLinks(
+            markdownToHtml("## Not working yet, after `1.9.80`\n\nSee [PurLinks](../features/purlinks.md#snippet),"
+                . " [this page](#not-working-yet-after-1980) and [the site](https://example.com/a.md)."),
+            'documentation/upgrading/from-paid-1.9.56.md'
+        );
+
+        self::assertStringContainsString('<h2 id="not-working-yet-after-1980">', $html);
+        self::assertStringContainsString(
+            '<a href="https://github.com/tracking202/prosper202/blob/master/documentation/features/purlinks.md#snippet"'
+            . ' target="_blank" rel="noopener">',
+            $html
+        );
+        self::assertStringContainsString('<a href="#not-working-yet-after-1980">', $html);
+        self::assertStringContainsString('<a href="https://example.com/a.md">', $html);
+    }
 }

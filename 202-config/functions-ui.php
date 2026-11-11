@@ -206,6 +206,39 @@ function p202_flash(string $kind, string $text): string
 }
 
 /**
+ * Home's and Account Overview's notice that Google Ads is still fetching
+ * paid 1.9.56's retired feed (Prosper202\OfflineConversion\
+ * LegacyGoogleFeedFetches), linking to where each schedule is moved over.
+ * '' when there is none to move, or for a role that could not move one.
+ * A notice is not worth a failed page: a read that fails is logged and
+ * nothing is shown.
+ */
+function p202_old_google_feed_notice(mixed $db, int $userId, bool $mayMove, string $base, ?int $now = null): string
+{
+    if (!$mayMove || !$db instanceof \mysqli || $userId <= 0) {
+        return '';
+    }
+    try {
+        $waiting = (new \Prosper202\OfflineConversion\LegacyGoogleFeedFetches(new \Prosper202\Database\Connection($db)))
+            ->waiting($userId, $now ?? time());
+    } catch (\Throwable $e) {
+        error_log('Prosper202: the old Google Ads feed notice could not be read: ' . $e->getMessage());
+
+        return '';
+    }
+    if ($waiting === 0) {
+        return '';
+    }
+    $href = htmlspecialchars($base . 'tracking202/setup/offline_conversions.php#old-feed', ENT_QUOTES, 'UTF-8');
+
+    return '<div class="alert alert-warning p202-flash" role="status"><i class="bi bi-exclamation-triangle"></i>'
+        . '<div class="p202-flash__body"><strong>Your Google Ads conversion uploads have stopped.</strong> Google Ads is still fetching '
+        . ($waiting === 1 ? 'a scheduled feed' : $waiting . ' scheduled feeds')
+        . ' from before your upgrade, which no longer ' . ($waiting === 1 ? 'sends' : 'send') . ' conversions. '
+        . '<a href="' . $href . '">Move ' . ($waiting === 1 ? 'it' : 'them') . ' over</a></div></div>';
+}
+
+/**
  * The warning every page that starts a database upgrade shows inside its
  * form, directly above its button: the upgrade page (202-config/upgrade.php)
  * and both 1-click pages (202-account/auto-upgrade.php,
@@ -236,6 +269,209 @@ function p202_upgrade_backup_warning(string $fromVersion): string
         . ' This upgrade is one-way: it changes the database in place, and restoring that backup is the only way back.'
         . $why
         . '</div></div>';
+}
+
+/**
+ * Whether a signed-in page links the paid 1.9.56 upgrade notes: the install
+ * looks to have come from that release (PaidOrigin). A read that fails is
+ * logged and links nothing.
+ */
+function p202_came_from_paid_1956(\mysqli $db): bool
+{
+    try {
+        return \Prosper202\Update\PaidOrigin::isPaid1956($db, (string) PROSPER202::prosper202_version());
+    } catch (\Throwable $e) {
+        error_log('Prosper202: ' . $e->getMessage() . '; the paid 1.9.56 notes are not linked.');
+
+        return false;
+    }
+}
+
+/** The link to the paid 1.9.56 upgrade notes, for the pages an install that came from it meets. */
+function p202_paid_1956_notes_link(): string
+{
+    $url = get_absolute_url() . \Prosper202\Update\PaidOrigin::NOTES_PAGE;
+
+    return '<p id="paid-1956-notes">Coming from the paid 1.9.56 release? <a href="'
+        . htmlspecialchars($url, ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="noopener">Read what this upgrade'
+        . ' keeps working, what it changes and what is not back yet</a>.</p>';
+}
+
+/**
+ * Shown in place of a 1-click upgrade's button when it cannot run here
+ * (OneClickReadiness::blockers()): each reason with what changes it, and
+ * the upgrade by hand.
+ *
+ * @param list<array{what: string, fix: string}> $blockers
+ */
+function p202_one_click_blocked(array $blockers): string
+{
+    $h = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
+    $reasons = '';
+    foreach ($blockers as $blocker) {
+        $reasons .= '<li>' . $h($blocker['what']) . ' ' . $h($blocker['fix']) . '</li>';
+    }
+
+    return '<div class="alert alert-warning p202-flash" role="status" id="one-click-blocked">'
+        . '<i class="bi bi-exclamation-triangle"></i><div class="p202-flash__body">'
+        . '<strong>The 1-click upgrade cannot run on this server.</strong> Nothing was changed.'
+        . '<ul class="mb-0">' . $reasons . '</ul></div></div>'
+        . '<p class="mb-1"><strong>Upgrade by hand</strong></p>'
+        . '<ol><li>Back up your database and your <code>202-config.php</code> file.</li>'
+        . '<li><a href="' . $h(\Prosper202\Update\OneClickReadiness::MANUAL_DOWNLOAD_URL)
+        . '" target="_blank" rel="noopener">Download the latest version</a>.</li>'
+        . '<li>Replace this install\'s files with the download\'s, keeping your <code>202-config.php</code>.</li>'
+        . '<li>Open Prosper202 again. It asks to upgrade the database: press the button.</li></ol>';
+}
+
+/**
+ * What to do about a database upgrade that stopped, read from the errno of
+ * each failed statement in $failures (UPGRADE::failures()); one sentence per
+ * cause, and the general one when none is recognised.
+ *
+ * @param list<string> $failures
+ * @return list<string>
+ */
+function p202_upgrade_failure_advice(array $failures): array
+{
+    $errnos = [];
+    foreach ($failures as $line) {
+        if (preg_match('/\[errno (\d+)\]/', $line, $m) === 1) {
+            $errnos[] = (int) $m[1];
+        }
+    }
+    $causes = [
+        'The database user Prosper202 connects as may not change tables. Ask your host to grant it ALTER, CREATE,'
+            . ' DROP, INDEX, SELECT, INSERT, UPDATE and DELETE on this database, then run the upgrade again.'
+            => [1044, 1142, 1143, 1227, 1370],
+        'The database server is out of disk space or the table is full. Free space on the server (or ask your host'
+            . ' to), then run the upgrade again.' => [1021, 1114],
+        'The database was busy and a lock did not clear. Run the upgrade again in a few minutes.' => [1205, 1213],
+        'The connection to the database server was lost while the upgrade ran. Run it again; if it stops at the'
+            . ' same place, ask your host to raise the database server\'s timeouts (wait_timeout,'
+            . ' net_read_timeout).' => [2006, 2013],
+    ];
+    $advice = [];
+    foreach ($causes as $sentence => $codes) {
+        if (array_intersect($codes, $errnos) !== []) {
+            $advice[] = $sentence;
+        }
+    }
+
+    return $advice !== [] ? $advice : [
+        'Run the upgrade again. If it stops at the same place, send the report below to support.',
+    ];
+}
+
+/**
+ * The report of a database upgrade that stopped, as text to copy to
+ * support: where the database stands and each thing the upgrade could not
+ * do (UPGRADE::failures(), whose words a signed-out visitor may read).
+ *
+ * @param list<string> $failures
+ */
+function p202_upgrade_failure_text(array $failures, ?string $storedVersion, string $codeVersion): string
+{
+    $lines = ['Prosper202 database upgrade stopped at '
+        . ($storedVersion === null ? 'a version the database could not be read for' : 'version ' . $storedVersion)
+        . ' (the files are version ' . $codeVersion . ').'];
+    foreach ($failures as $line) {
+        $lines[] = '- ' . $line;
+    }
+    if ($failures === []) {
+        $lines[] = "- The upgrade named no failed step. The server's PHP error log may say more.";
+    }
+
+    return implode("\n", $lines);
+}
+
+/**
+ * The same with what to do, for a 1-click page's "What happened" log.
+ *
+ * @param list<string> $failures
+ */
+function p202_upgrade_failure_log(array $failures, ?string $storedVersion, string $codeVersion): string
+{
+    return "The files were replaced, and the database upgrade did not finish.\n"
+        . p202_upgrade_failure_text($failures, $storedVersion, $codeVersion) . "\n"
+        . 'Running the upgrade again is safe: reload any page and press the upgrade button. It carries on from '
+        . ($storedVersion === null ? 'the version the database is at' : 'version ' . $storedVersion)
+        . ".\n" . implode("\n", p202_upgrade_failure_advice($failures)) . "\n";
+}
+
+/**
+ * What a 1-click page shows when its database step failed and the database
+ * no longer answers: the log, and the way on. The page draws it on the
+ * standalone shell and ends there, since the signed-in shell and the retry
+ * form read the database.
+ */
+function p202_one_click_database_lost(string $log): string
+{
+    $h = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
+
+    return '<div class="alert alert-danger p202-flash" role="alert" id="one-click-database-lost">'
+        . '<i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>The files were replaced, and the'
+        . ' database upgrade did not finish.</strong> The database stopped answering, so this page cannot show'
+        . ' more than what happened. Running the database upgrade again is safe.</div></div>'
+        . '<label class="form-label" for="upgrade-log">What happened</label>'
+        . '<textarea id="upgrade-log" rows="10" class="form-control font-monospace mb-3" readonly>' . $h($log)
+        . '</textarea>'
+        . '<a class="btn btn-primary w-100" href="' . $h(get_absolute_url() . '202-config/upgrade.php')
+        . '">Run the database upgrade again</a>';
+}
+
+/**
+ * A 1-click page after its database step failed. When the database no
+ * longer answers, the log is drawn on the standalone shell and the request
+ * ends here: the signed-in shell and the retry form read the database.
+ * Otherwise answers the version the database now stands at.
+ */
+function p202_one_click_after_failed_database_step(string $log): string
+{
+    $stored = _upgrade_stored_version_or_null();
+    if ($stored !== null) {
+        return $stored;
+    }
+    info_top(['title' => '1-Click Upgrade - Prosper202 ClickServer', 'wide' => true]);
+    echo p202_standalone_card('1-click upgrade', 'The database upgrade did not finish.');
+    echo p202_one_click_database_lost($log);
+    echo p202_standalone_card_end();
+    info_bottom();
+    exit;
+}
+
+/**
+ * The same, for a page: that running it again is safe, what to do, and the
+ * report in a box with a Copy button.
+ *
+ * @param list<string> $failures
+ */
+function p202_upgrade_failure_report(array $failures, ?string $storedVersion, string $codeVersion): string
+{
+    $h = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
+    $text = p202_upgrade_failure_text($failures, $storedVersion, $codeVersion);
+    $advice = '';
+    foreach (p202_upgrade_failure_advice($failures) as $sentence) {
+        $advice .= '<li>' . $h($sentence) . '</li>';
+    }
+
+    return '<div class="alert alert-danger p202-flash" role="alert" id="upgrade-failure"><i class="bi bi-x-circle"></i>'
+        . '<div class="p202-flash__body"><strong>'
+        . ($storedVersion === null
+            ? 'The database did not reach ' . $h($codeVersion) . ', and could not be read to say which version it'
+                . ' is at.'
+            : 'The database is at version ' . $h($storedVersion) . ' and did not reach ' . $h($codeVersion) . '.')
+        . '</strong> Running the upgrade again is safe: it carries on from '
+        . ($storedVersion === null ? 'the version the database is at' : 'version ' . $h($storedVersion))
+        . ' and skips what is already done.</div></div>'
+        . '<p class="mb-1"><strong>What to do</strong></p><ul>' . $advice . '</ul>'
+        . '<label class="form-label" for="upgrade-failure-report">What the upgrade reported</label>'
+        . '<textarea id="upgrade-failure-report" rows="' . min(12, max(3, count($failures) + 2))
+        . '" class="form-control font-monospace mb-2" readonly>' . $h($text) . '</textarea>'
+        . '<p><button type="button" class="btn btn-secondary btn-sm p202-copy" data-p202-copy="' . $h($text) . '">'
+        . '<i class="bi bi-clipboard"></i> Copy</button>'
+        . ' <a class="ms-2" href="https://support.tracking202.com/" target="_blank" rel="noopener">Support docs</a>'
+        . '</p>';
 }
 
 /**

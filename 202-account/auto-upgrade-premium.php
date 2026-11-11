@@ -21,6 +21,9 @@ if (!isset($userObj) || !$userObj->hasPermission('access_to_settings')) {
 die_if_auto_upgrade_disabled();
 
 ini_set('memory_limit', '-1');
+
+// Asked before the button is shown, and again before anything is downloaded.
+$blockers = \Prosper202\Update\OneClickReadiness::blockers(dirname(__DIR__));
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT install_hash, p202_customer_api_key FROM 202_users WHERE user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = _mysqli_query($db, $user_sql);
@@ -50,6 +53,11 @@ $release_signature = is_array($array) && is_string($array['signature'] ?? null)
 	: null;
 $signature_problem = null;
 
+// Read once, before anything is replaced: what is drawn after a failed
+// database step may have no database to ask.
+$stored_version = (string) PROSPER202::prosper202_version();
+$database_step_failed = false;
+
 $installlog = '';
 $upgrade_done = false;
 $FilesUpdated = null;
@@ -62,7 +70,7 @@ if (($_POST['start_upgrade'] ?? '') === '1' && !AUTH::check_csrf_token()) {
 	$token_refused = true;
 }
 
-if (($_POST['start_upgrade'] ?? '') === '1' && AUTH::check_csrf_token()) {
+if (($_POST['start_upgrade'] ?? '') === '1' && AUTH::check_csrf_token() && $blockers === []) {
 
     // A client that gives up (a proxy's read timeout, a closed tab) must not
     // stop the download, the file swap or the ladder halfway.
@@ -77,7 +85,9 @@ if (($_POST['start_upgrade'] ?? '') === '1' && AUTH::check_csrf_token()) {
 		: ['body' => null, 'error' => $signature_problem];
 	$GetUpdate = $download['body'] ?? false;
 	if ($GetUpdate === false) {
-		$installlog .= $download['error'] . "\nOperation aborted.";
+        $installlog .= $download['error'] . "\n"
+            . \Prosper202\Update\OneClickReadiness::afterProblem((string) $download['error'])
+            . "\nOperation aborted.";
 		$FilesUpdated = false;
 	} else {
 		$checkError = json_decode($GetUpdate, true);
@@ -89,7 +99,9 @@ if (($_POST['start_upgrade'] ?? '') === '1' && AUTH::check_csrf_token()) {
 			// Nothing is written until the download's signature checks out.
 			$signature_problem = \Prosper202\Update\ReleaseSignature::problem($GetUpdate, $release_signature);
 			if ($signature_problem !== null) {
-				$installlog .= $signature_problem . "\nOperation aborted.";
+                $installlog .= $signature_problem . "\n"
+                    . \Prosper202\Update\OneClickReadiness::afterProblem($signature_problem)
+                    . "\nOperation aborted.";
 				$FilesUpdated = false;
 				$GetUpdate = false;
 			}
@@ -107,7 +119,9 @@ if (($_POST['start_upgrade'] ?? '') === '1' && AUTH::check_csrf_token()) {
 				// A signed release that is not the version offered, or not newer, is never extracted.
 				$signature_problem = \Prosper202\Update\ReleaseSignature::versionProblem($zipFile, $latest_version, (string) $version);
 				if ($signature_problem !== null) {
-					$installlog .= $signature_problem . "\nOperation aborted.";
+                    $installlog .= $signature_problem . "\n"
+                    . \Prosper202\Update\OneClickReadiness::afterProblem($signature_problem)
+                        . "\nOperation aborted.";
 					$FilesUpdated = false;
 				}
 
@@ -190,10 +204,21 @@ if (($_POST['start_upgrade'] ?? '') === '1' && AUTH::check_csrf_token()) {
 		} else {
             $installlog .= UPGRADE::$lastRunBusy
                 ? "Another upgrade of this database is running (its page may have timed out; it carries on). Nothing was changed; reload in a few minutes.\n"
-                : "Database upgrade failed! Please try again!\n";
+                : p202_upgrade_failure_log(
+                    UPGRADE::failures(),
+                    _upgrade_stored_version_or_null(),
+                    (string) $latest_version
+                );
 			$upgrade_done = false;
+            $database_step_failed = !UPGRADE::$lastRunBusy;
 		}
 	}
+}
+
+// The database step failed: the database may no longer answer, and the shell
+// and the form below read it (p202_one_click_after_failed_database_step()).
+if ($database_step_failed) {
+    $stored_version = p202_one_click_after_failed_database_step($installlog);
 }
 
 $e = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
@@ -240,11 +265,17 @@ template_top('1-Click Upgrade');
 		<div>Your Prosper202 version <?php echo $e($version); ?> is the latest.</div>
 		<div class="p202-empty__action"><a class="btn btn-secondary btn-sm" href="<?php echo $e(get_absolute_url() . '202-account/'); ?>">Back to Home</a></div>
 	</div>
-<?php } elseif (!function_exists('zip_open')) { ?>
-	<?php echo p202_flash('bad', 'PHP zip module missing. The 1-click upgrade needs PHP compiled with zip support (the --enable-zip configure option); upgrade manually until it is.'); ?>
+<?php } elseif ($blockers !== []) { ?>
+    <section class="p202-panel mb-4">
+        <div class="p202-panel__head">
+            <h2 class="p202-panel__title">Prosper202 <?php echo $e($latest_version); ?> is available</h2>
+            <span class="p202-pill">you have <?php echo $e($version); ?></span>
+        </div>
+        <div class="p202-panel__body"><?php echo p202_one_click_blocked($blockers); ?></div>
+    </section>
 <?php } ?>
 
-<?php if ($missing_api_key == true || ($update_needed == true && function_exists('zip_open'))) { ?>
+<?php if ($missing_api_key == true || ($update_needed == true && $blockers === [])) { ?>
 	<div class="row g-4">
 		<?php if ($missing_api_key != true) { ?>
 			<div class="col-12 col-lg-7">
@@ -266,7 +297,8 @@ template_top('1-Click Upgrade');
 							<form method="post" action="">
 								<input type="hidden" name="start_upgrade" value="1">
 								<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
-								<?php echo p202_upgrade_backup_warning((string) PROSPER202::prosper202_version()); ?>
+                                <?php echo p202_came_from_paid_1956($db) ? p202_paid_1956_notes_link() : ''; ?>
+                                <?php echo p202_upgrade_backup_warning($stored_version); ?>
 								<div class="p202-form-actions">
 									<button class="btn btn-primary" id="upgrade-submit" type="submit"><?php echo $e($detail('order-button-text') !== '' ? $detail('order-button-text') : 'Upgrade Prosper202'); ?></button>
 								</div>
@@ -277,7 +309,7 @@ template_top('1-Click Upgrade');
 						<?php } else { ?>
 							<?php echo p202_flash('bad', 'Prosper202 was unable to upgrade. Make sure PHP has permission to change files; your old version keeps working.'); ?>
 							<div class="p202-toolbar">
-								<a class="btn btn-secondary" href="http://support.tracking202.com" target="_blank" rel="noopener">Get help</a>
+								<a class="btn btn-secondary" href="https://support.tracking202.com/" target="_blank" rel="noopener">Get help</a>
 								<a class="btn btn-secondary" href="<?php echo $e(get_absolute_url() . '202-account/signout.php'); ?>">Continue with the old version</a>
 							</div>
 						<?php } ?>

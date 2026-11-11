@@ -8,11 +8,21 @@ $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
 
 /** Where to find help, [title, what it is, url, opens elsewhere]. */
 $resources = [
-	['Tracking202 tutorials', 'Step-by-step guides to every part of Prosper202.', 'http://support.tracking202.com/', true],
+	['Tracking202 tutorials', 'Step-by-step guides to every part of Prosper202.', 'https://support.tracking202.com/', true],
 	['202 on YouTube', 'Walkthroughs and interviews.', 'https://youtube.com/t202nana', true],
 	['Tracking202 videos', 'Short videos on setting up campaigns and reading reports.', 'http://tracking202.com/videos/', true],
 	['Prosper202 blog', 'Release notes and tracking tips.', 'http://prosper.tracking202.com/blog/', true],
 ];
+// An install that came from paid 1.9.56 finds its upgrade notes here too.
+if (p202_came_from_paid_1956($db)) {
+    array_unshift($resources, [
+        'Upgrading from paid Prosper202 1.9.56',
+        'Coming from the paid 1.9.56 release? What the upgrade keeps working, what it changes and what is not'
+            . ' back yet.',
+        get_absolute_url() . \Prosper202\Update\PaidOrigin::NOTES_PAGE,
+        true,
+    ]);
+}
 $attributionDocs = [
 	['Advanced Attribution Engine', 'Setup guide.', 'docs.php?doc=attribution-engine'],
 	['Attribution troubleshooting', 'When numbers look wrong, start here.', 'docs.php?doc=attribution-troubleshooting'],
@@ -28,7 +38,7 @@ template_top('Help Resources');  ?>
 		<p class="p202-page-header__desc">Where to find help with Tracking202 and Prosper202.</p>
 	</div>
 	<div class="p202-page-header__actions">
-		<a class="btn btn-primary" href="http://support.tracking202.com/" target="_blank" rel="noopener"><i class="bi bi-life-preserver"></i> Open the tutorials</a>
+		<a class="btn btn-primary" href="https://support.tracking202.com/" target="_blank" rel="noopener"><i class="bi bi-life-preserver"></i> Open the tutorials</a>
 	</div>
 </div>
 
