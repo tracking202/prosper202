@@ -7,10 +7,14 @@ namespace Api\V3\Controllers;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\TrackingBaseLookup;
 use Prosper202\Conversion\PostbackAuth\PostbackAuthStore;
 use Prosper202\Database\Connection;
+use Prosper202\Setup\LandingPageCheck;
+use Prosper202\Setup\LandingPageCheckResult;
+use Prosper202\Setup\LandingPageCheckStore;
 use Prosper202\Setup\LandingPageCode;
 use Prosper202\Setup\PostbackCode;
 
@@ -20,6 +24,8 @@ use Prosper202\Setup\PostbackCode;
  * - GET /landing-pages/{id}/code — Setup › Get LP Code: the loader script
  *   and the ways out to the offer, for a simple page, or for each offer of
  *   an advanced one (`?offers=campaign:12,rotator:3`);
+ * - POST /landing-pages/{id}/check — its "Check my page": whether the page
+ *   at the saved URL carries that code;
  * - GET /conversions/postback-code — Setup › Postback / Pixel: the simple,
  *   advanced and universal pixels and postback URLs, filled with the amount,
  *   sub id and campaign given.
@@ -118,6 +124,49 @@ final class SetupCodeController
         $data['segments'] = LandingPageCode::SEGMENTS;
 
         return ['data' => $data];
+    }
+
+    /**
+     * POST /landing-pages/{id}/check: "Check my page" (Setup › Get LP Code).
+     * Fetches the page's saved URL as the page's button does
+     * (LandingPageCheck: public addresses only, each redirect checked),
+     * keeps the answer for Setup › Landing Pages (LandingPageCheckStore) and
+     * returns it. A page that could not be fetched is an answer too
+     * (`status: error`, `found: false`), not a failed request.
+     *
+     * @param array<string, mixed> $query the query string, as sent
+     * @param array<array-key, mixed> $payload the body, as decoded
+     * @param array<string, mixed>|null $server the request ($_SERVER)
+     * @return array{data: array<string, mixed>}
+     */
+    public function landingPageCheck(int $id, array $query, array $payload, ?array $server = null, ?LandingPageCheck $checker = null): array
+    {
+        self::refuseUnknown($query, [], 'POST /landing-pages/{id}/check takes no parameters');
+        PayloadKeys::refuseUnknown($payload, [], 'a landing page check');
+
+        (new LandingPagesController($this->db, $this->userId))->repairMissingPublicIds();
+        $page = $this->landingPage($id);
+        $store = new LandingPageCheckStore(new Connection($this->db), $checker);
+        try {
+            $result = $store->run($this->userId, $id, LandingPageCheckStore::hostOf($this->trackingBaseUrl($server)));
+        } catch (\Api\V3\HttpException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new DatabaseException('Landing page check: ' . $e->getMessage(), $e);
+        }
+        if ($result === null) {
+            throw new NotFoundException("Landing page $id not found");
+        }
+
+        return ['data' => [
+            'landing_page_id' => (int) $page['landing_page_id'],
+            'landing_page_id_public' => (int) $page['landing_page_id_public'],
+            'landing_page_url' => (string) $page['landing_page_url'],
+            'status' => $result->status,
+            'found' => in_array($result->status, [LandingPageCheckResult::PRESENT, LandingPageCheckResult::LEGACY], true),
+            'message' => str_replace('the code above', 'the code from GET /landing-pages/' . $id . '/code', $result->message),
+            'other_landing_page_ids_public' => $result->otherIds,
+        ]];
     }
 
     /**

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Controller;
+use Api\V3\Exception\ValidationException;
 
 class LandingPagesController extends Controller
 {
@@ -15,7 +16,7 @@ class LandingPagesController extends Controller
     protected function fields(): array
     {
         return [
-            // Held to Setup › Landing Pages' rule (HttpUrlPrefix).
+            // Held to Setup › Landing Pages' rule (HttpUrlPrefix): a host sent without a scheme takes https://.
             'landing_page_url'      => ['type' => 's', 'format' => 'http_url', 'required' => true, 'max_length' => 255],
             'aff_campaign_id'       => ['type' => 'i', 'required' => true, 'range' => self::MEDIUMINT_UNSIGNED],
             'landing_page_nickname' => ['type' => 's', 'required' => true, 'max_length' => 50],
@@ -26,6 +27,54 @@ class LandingPagesController extends Controller
             // made through the API had none, and no code could track it.
             'landing_page_id_public' => ['type' => 'i', 'readonly' => true],
         ];
+    }
+
+    /**
+     * A leave-behind URL sent as a bare host is stored with https://, as
+     * Setup › Landing Pages stores it; any other value is kept as sent, as
+     * the page keeps it.
+     */
+    #[\Override]
+    protected function validatePayload(array $payload, bool $requireRequired = false, ?array $current = null): array
+    {
+        $clean = parent::validatePayload($payload, $requireRequired, $current);
+        if (is_string($clean['leave_behind_page_url'] ?? null)) {
+            $this->completeUrl('leave_behind_page_url', $clean);
+            if (mb_strlen($clean['leave_behind_page_url']) > 255) {
+                throw new ValidationException('Validation failed', [
+                    'leave_behind_page_url' => "Field 'leave_behind_page_url' exceeds max length of 255 once https:// is added",
+                ]);
+            }
+        }
+
+        return $clean;
+    }
+
+    /** The answer says which URL was completed: `meta.normalized.<field>` holds what was sent and what is stored. */
+    #[\Override]
+    public function create(array $payload): array
+    {
+        return $this->withNormalized(parent::create($payload));
+    }
+
+    #[\Override]
+    public function update(int|string $id, array $payload): array
+    {
+        return $this->withNormalized(parent::update($id, $payload));
+    }
+
+    /**
+     * @param array<string, mixed> $answer
+     * @return array<string, mixed>
+     */
+    private function withNormalized(array $answer): array
+    {
+        $completed = $this->completedUrls();
+        if ($completed !== []) {
+            $answer['meta'] = ['normalized' => $completed] + (is_array($answer['meta'] ?? null) ? $answer['meta'] : []);
+        }
+
+        return $answer;
     }
 
     #[\Override]

@@ -1321,5 +1321,5 @@ $modelSettings = static function (array $m): string {
 
 <?php } ?>
 
-<script src="<?php echo $h($base . '202-js/p202-setup.js?v=1'); ?>" defer></script>
+<script src="<?php echo $h($base . '202-js/p202-setup.js?v=2'); ?>" defer></script>
 <?php template_bottom();

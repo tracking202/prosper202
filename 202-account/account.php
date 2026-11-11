@@ -55,7 +55,7 @@ $slack = Slack::forAccount($db, (int) ($_SESSION['user_id'] ?? 0)) ?? false;
 // Account/key settings require the same permission that gates their UI; reject
 // forged requests from users who lack it (the password-change flow is excluded
 // because every user may change their own password).
-$personalSettingsPost = ['add_rest_api_key', 'remove_rest_api_key', 'stop_ai_watcher', 'update_account_currency', 'update_clickserver_api_key', 'change_user_api_key', 'change_user_stats202_app_key', 'update_p202_customer_api_key', 'update_click_filter', 'add_click_filter_entry', 'remove_click_filter_entry', 'update_money_loss_alerts', 'send_test_money_loss_alert'];
+$personalSettingsPost = ['add_rest_api_key', 'remove_rest_api_key', 'replace_rest_api_key', 'stop_ai_watcher', 'update_account_currency', 'update_clickserver_api_key', 'change_user_api_key', 'change_user_stats202_app_key', 'update_p202_customer_api_key', 'update_click_filter', 'add_click_filter_entry', 'remove_click_filter_entry', 'update_money_loss_alerts', 'send_test_money_loss_alert'];
 $personalSettingsGet = ['customers_api_key', 'remove_user_stats202_app_key', 'remove_user_api_key', 'test_click_filter'];
 $wantsPersonalSettingsAction = false;
 foreach ($personalSettingsPost as $personalSettingsAction) {
@@ -94,11 +94,17 @@ if (isset($_POST['add_rest_api_key'])) {
 		p202_account_flash('bad', 'An API key is 32 to 128 letters and digits. Leave it out and one is generated for you.');
 		p202_account_redirect('202-account/account.php#api-keys');
 	}
+	$newKeyLabel = \Prosper202\User\ApiKeyStore::labelFrom($_POST['rest_api_key_label'] ?? '');
+	if ($newKeyLabel === false) {
+		p202_account_flash('bad', 'A key\'s name is up to ' . \Prosper202\User\ApiKeyStore::LABEL_LENGTH
+			. ' characters on one line, and does not start with "AI:". Nothing was created.');
+		p202_account_redirect('202-account/account.php#api-keys');
+	}
 	$newKey = $postedKey !== '' ? $postedKey : bin2hex(random_bytes(32));
 	$keyUserId = (int)$_SESSION['user_id'];
 	$keyCreated = time();
     try {
-        \Prosper202\User\ApiKeyStore::insert($db, $keyUserId, $newKey, null, null, $keyCreated);
+        \Prosper202\User\ApiKeyStore::insert($db, $keyUserId, $newKey, null, $newKeyLabel, $keyCreated);
     } catch (\Prosper202\Database\Exceptions\QueryException | \Api\V3\AuthException | \mysqli_sql_exception) {
         p202_account_flash('bad', 'The API key could not be saved. Nothing was created; try again.');
         p202_account_redirect('202-account/account.php#api-keys');
@@ -153,6 +159,49 @@ if (isset($_POST['remove_rest_api_key'])) {
         p202_account_flash('warn', 'Tracking202\'s MCP server did not confirm that this key\'s watchers stopped;'
             . ' without the key they can read nothing more.');
     }
+    p202_account_redirect('202-account/account.php#api-keys');
+}
+
+if (isset($_POST['replace_rest_api_key'])) {
+    if (!AUTH::check_csrf_token()) {
+        p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
+        p202_account_redirect('202-account/account.php#api-keys');
+    }
+    $replaceRef = (string)($_POST['api_key_ref'] ?? '');
+    if (!\Prosper202\User\ApiKeyStore::isRef($replaceRef)) {
+        p202_account_flash('warn', 'That API key was not found on this account; nothing was replaced.');
+        p202_account_redirect('202-account/account.php#api-keys');
+    }
+    $replacementKey = bin2hex(random_bytes(32));
+    try {
+        $replaced = \Prosper202\User\ApiKeyStore::replace(
+            $db,
+            (int)$_SESSION['user_id'],
+            $replaceRef,
+            $replacementKey,
+            time()
+        );
+    } catch (\DomainException $refused) {
+        p202_account_flash('warn', $refused->getMessage() . ' Nothing was replaced.');
+        p202_account_redirect('202-account/account.php#api-keys');
+    } catch (\Throwable $failed) {
+        error_log('account.php: an API key could not be replaced: ' . $failed->getMessage());
+        p202_account_flash('bad', 'The API key could not be replaced. Nothing was changed; try again.');
+        p202_account_redirect('202-account/account.php#api-keys');
+    }
+    if ($replaced === null) {
+        p202_account_flash('warn', 'That API key was not found on this account; nothing was replaced.');
+        p202_account_redirect('202-account/account.php#api-keys');
+    }
+
+    if ($slack) {
+        $slack->push('user_added_app_api_key', ['user' => $username]);
+    }
+
+    $_SESSION['p202_new_api_key'] = $replacementKey;
+    p202_account_flash('ok', 'Replacement key created, with the same access. Copy it now: it is not shown again.'
+        . ' The old key keeps working until ' . date('M j, Y H:i', $replaced['ends_at'])
+        . ', so you have time to switch; revoke it to end it sooner.');
     p202_account_redirect('202-account/account.php#api-keys');
 }
 
@@ -888,6 +937,12 @@ $pageFlashes = array_merge($pageFlashes, $alertsView['flashes'] ?? []);
 /** A stored key as its prefix around a mask: only its hash is kept (ApiKeyStore). */
 $maskKey = static fn (string $prefix): string => $prefix . str_repeat("\u{2022}", 20);
 // The key created on the request before this one: shown once, then forgotten.
+$keysAt = get_absolute_url() . '202-account/account.php#api-keys';
+$replaceConfirm = 'Replace this API key? A new key with the same access is made and shown once.'
+    . ' This key keeps working for 24 hours, so you can switch without an outage.';
+$keyUseNote = $apiKeys && ($apiKeys[0]['use_recorded'] ?? false)
+    ? ' A key\'s last use is recorded from version 1.9.80 on, to within five minutes.'
+    : '';
 $newApiKey = $canPersonal && is_string($_SESSION['p202_new_api_key'] ?? null) ? $_SESSION['p202_new_api_key'] : '';
 unset($_SESSION['p202_new_api_key']);
 /** What a key may do, in words: the same reading api/v3/Auth.php applies. */
@@ -1171,18 +1226,9 @@ echo p202_account_render_flashes($extraFlashes);
 				<div class="p202-panel__head">
 					<h2 class="p202-panel__title">API keys</h2>
 					<span class="p202-pill"><?php echo count($apiKeys) === 1 ? '1 key' : count($apiKeys) . ' keys'; ?></span>
-					<?php if ($apiKeys) { ?>
-						<div class="p202-panel__aside">
-							<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php#api-keys'); ?>">
-								<input type="hidden" name="add_rest_api_key" value="1">
-								<?php echo p202_account_token_field(); ?>
-								<button class="btn btn-secondary btn-sm" type="submit"><i class="bi bi-plus-lg"></i> Generate key</button>
-							</form>
-						</div>
-					<?php } ?>
 				</div>
 				<div class="p202-panel__body">
-					<p class="form-text mt-0">For the REST API, the p202 command line and agents. Make one key per integration, so revoking one stops only that one.</p>
+                    <p class="form-text mt-0">For the REST API, the p202 command line and agents. Make one key per integration, so revoking one stops only that one.<?php echo $e($keyUseNote); ?></p>
 					<?php if ($newApiKey !== '') { ?>
 						<div class="mb-3" data-new-api-key>
 							<div class="form-text mt-0 mb-1"><strong>Your new key.</strong> Copy it now: Prosper202 keeps only a fingerprint of it, so it cannot be shown again.</div>
@@ -1192,29 +1238,50 @@ echo p202_account_render_flashes($extraFlashes);
 							</div>
 						</div>
 					<?php } ?>
+					<form method="post" action="<?php echo $e($keysAt); ?>" class="mb-3">
+						<input type="hidden" name="add_rest_api_key" value="1">
+						<?php echo p202_account_token_field(); ?>
+						<label class="form-label" for="rest_api_key_label">New key</label>
+						<div class="input-group">
+							<input type="text" class="form-control" id="rest_api_key_label" name="rest_api_key_label" maxlength="100" autocomplete="off" placeholder="Name it for what will use it, e.g. Nightly store sync (optional)">
+							<button class="btn btn-secondary" type="submit"><i class="bi bi-plus-lg"></i> Generate key</button>
+						</div>
+					</form>
 					<?php if (!$apiKeys) { ?>
 						<div class="p202-empty">
 							<i class="bi bi-key p202-empty__icon"></i>
 							<strong class="p202-empty__title">No API keys yet</strong>
-							<div>Generate one to connect the command line, an agent or your own scripts.</div>
-							<div class="p202-empty__action">
-								<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php#api-keys'); ?>">
-									<input type="hidden" name="add_rest_api_key" value="1">
-									<?php echo p202_account_token_field(); ?>
-									<button class="btn btn-secondary btn-sm" type="submit">Generate an API key</button>
-								</form>
-							</div>
+							<div>Generate one above to connect the command line, an agent or your own scripts.</div>
 						</div>
 					<?php } else { ?>
 						<?php foreach ($apiKeys as $index => $apiKey) {
 							$keyRef = (string)$apiKey['ref'];
 							[$scopeLabel, $scopeTone] = $keyScope($apiKey['scope'] ?? null);
 							$keyId = 'api-key-' . $index;
+                            $keyUse = p202_account_key_use($apiKey, time());
+                            $keyUseHtml = '';
+                            if ($keyUse['ending'] !== '') {
+                                $keyUseHtml .= ' · <span class="p202-pill '
+                                    . ($keyUse['ended'] ? 'p202-pill--bad' : 'p202-pill--warn')
+                                    . '" data-api-key-ending>' . $e($keyUse['ending']) . '</span>';
+                            }
+                            if ($keyUse['used'] !== '') {
+                                $keyUseHtml .= ' · <span data-api-key-last-used>' . $e($keyUse['used']) . '</span>';
+                            }
 							?>
 							<div class="mb-3" data-api-key-row>
-								<div class="form-text mt-0 mb-1"><?php echo (string)($apiKey['label'] ?? '') !== '' ? '<strong>' . $e((string)$apiKey['label']) . '</strong> · ' : ''; ?>Created <?php echo $e(date('M j, Y', (int)$apiKey['created_at'])); ?> · <span class="p202-pill<?php echo $scopeTone; ?>"><?php echo $e($scopeLabel); ?></span></div>
+                                <div class="form-text mt-0 mb-1"><?php echo (string)($apiKey['label'] ?? '') !== '' ? '<strong>' . $e((string)$apiKey['label']) . '</strong> · ' : ''; ?>Created <?php echo $e(date('M j, Y', (int)$apiKey['created_at'])); ?> · <span class="p202-pill<?php echo $scopeTone; ?>"><?php echo $e($scopeLabel); ?></span><?php echo $keyUseHtml; ?></div>
 								<div class="p202-code">
 									<pre class="p202-code__value p202-code__value--masked" id="<?php echo $keyId; ?>"><?php echo $e($maskKey((string)$apiKey['prefix'])); ?></pre>
+                                    <?php if ($keyUse['replaceable']) { ?>
+                                    <form method="post" action="<?php echo $e($keysAt); ?>" class="d-inline"
+                                        data-p202-confirm="<?php echo $e($replaceConfirm); ?>">
+                                        <input type="hidden" name="replace_rest_api_key" value="1">
+                                        <input type="hidden" name="api_key_ref" value="<?php echo $e($keyRef); ?>">
+                                        <?php echo p202_account_token_field(); ?>
+                                        <button class="btn btn-secondary btn-sm" type="submit">Replace…</button>
+                                    </form>
+                                    <?php } ?>
 									<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php#api-keys'); ?>" class="d-inline" data-p202-confirm="Revoke this API key? Anything still using it is refused from the next request. Your other keys keep working.">
 										<input type="hidden" name="remove_rest_api_key" value="1">
 										<input type="hidden" name="api_key_ref" value="<?php echo $e($keyRef); ?>">

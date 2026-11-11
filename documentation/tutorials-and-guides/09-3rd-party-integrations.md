@@ -24,6 +24,17 @@ count it as filtered once its report row is rolled up again, which the same
 run does. A click that has converted is never filtered, and one already
 filtered for another reason keeps that reason.
 
+**Visitors** and **Spy** show why each filtered click was filtered, the
+**Show** select above the list lists only the clicks filtered for one
+reason, and a click filtered for its score has a **Not fraud** button
+(`p202 click not-fraud <id>`, `POST /clicks/{id}/not-fraud`). Choosing it counts
+that click again, with your other clicks from the same address that were
+filtered for their score (200 at a time), and puts the address on your click
+filter list (**My Account › Personal Settings**) as *always count*: an
+address on that list as always count is never sent to IPQualityScore. The
+card says how many addresses were scored and how many clicks were filtered in
+the last 24 hours.
+
 What is sent, and what is not:
 
 - **Only the visitor's IP address**, as Prosper202 stored it, with

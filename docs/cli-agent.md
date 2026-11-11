@@ -552,7 +552,8 @@ neither). `read,stage` is the propose-only agent shape: it reads everything
 and stages writes for a person to apply, but can perform none itself. A
 scoped key is attenuated even for admins, cannot mint a key broader than
 itself, and is refused by the legacy v1/v2 APIs. `p202 user apikey rotate`
-carries the old key's scope onto the replacement unless you pass `--scope`.
+carries the old key's scope and label onto the replacement; the old key
+works for 24 hours more, and `p202 user apikey delete` ends it at once.
 A 403 whose message names a required scope means the key, not the command,
 is wrong -- switch keys or mint one with the scope the message names.
 
@@ -819,6 +820,7 @@ Landing page code (Setup > Get LP Code):
 
 ```
 p202 landing-page code <id> [--offer campaign:N|rotator:N]... [--json]
+p202 landing-page check <id> [--json]   # the server fetches the page: data.found, data.status, data.message
 ```
 
 `data`: `landing_page_type` (`simple`/`advanced`), `base_url`, `loader`,
@@ -856,6 +858,7 @@ p202 click list --follow [--limit 10] [--interval 5s] [--stop-after 10m] [--ndjs
 p202 click get <id> [--json]           # filter_reason: why a filtered click is (null before 1.9.79)
 p202 click list --filter-reason sign_in_address|crawler_range|repeat_visit|filter_list|fraud_score|bot|not_recorded
 p202 click conversions <id> [--json]   # every conversion on the click, counted or not and why
+p202 click not-fraud <id> [--json]     # a fraud_score click and its address's others count again; the address is always counted
 p202 click update-cpc --from YYYY-MM-DD --to YYYY-MM-DD --cpc D
                 [--aff-network-id N] [--aff-campaign-id N] [--ppc-network-id N] [--ppc-account-id N]
                 [--landing-page-id N] [--text-ad-id N] [--method-of-promotion directlink|landingpage]
@@ -1251,11 +1254,11 @@ p202 user role assign <user_id> --role-id N [--json]
 p202 user role remove <user_id> <role_id> [--force] [--dry-run] [--json]
 
 p202 user apikey list   <user_id> [--json]                # includes each key's scope
-p202 user apikey create <user_id> [--scope S] [--json]    # S: *, read, write, or <area>:read/<area>:write tokens
+p202 user apikey create <user_id> [--scope S] [--name N] [--json]    # S: *, read, write, or <area>:read/<area>:write tokens; N: what will use the key
 p202 user apikey delete <user_id> <api_key> [--force] [--dry-run] [--json]
-p202 user apikey rotate <user_id> <old_api_key> [--scope S] [--keep-old] [--force]
-                       [--update-config] [--force-config-update] [--json]
-                       # without --scope, the old key's scope carries onto the new key
+p202 user apikey rotate <user_id> <old_api_key> [--update-config] [--force-config-update] [--json]
+                       # new key with the old key's scope and label; the old key works 24 hours more
+                       # (end it now with `user apikey delete`)
 
 p202 user identity-key get    <user_id> [--json]          # the key your server signs customer ids with
 p202 user identity-key rotate <user_id> [--force] [--json]
@@ -1511,6 +1514,7 @@ Rules:
 | conversion upload-revenue | Yes (same file) | Each upload is a new batch whose values replace the earlier batch's for its clicks |
 | --dry-run on the Update commands | Yes | None (the endpoint's own `?dry_run=1`) |
 | landing-page code, conversion postback-url / pixel | Yes | None (reads) |
+| landing-page check | Yes | The answer kept beside the page is replaced by the newer one |
 | ppc-network variable create / ppc-account pixel create | With `--idempotency-key` | Without a key, adds another each call |
 | ppc-network variable / ppc-account pixel update, delete | Yes | Same state; a second delete is a 404 |
 | any write --staged | No (each staging records a new proposal) | Records a staged change; nothing changes until `change apply` |

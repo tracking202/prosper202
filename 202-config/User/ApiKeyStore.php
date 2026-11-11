@@ -33,6 +33,27 @@ final class ApiKeyStore
 {
     public const PREFIX_LENGTH = 8;
 
+    /** A key's last use is written at most this often, in seconds. */
+    public const USE_STAMP_INTERVAL = 300;
+
+    /** How long a replaced key keeps working, in seconds. */
+    public const REPLACED_KEY_GRACE = 86400;
+
+    /** How long a key that has ended stays listed before it is removed, in seconds. */
+    public const ENDED_KEY_KEPT = 604800;
+
+    /**
+     * What a name shown in a list or a terminal does not carry: control
+     * characters (C0, DEL, C1) and the characters that reorder text.
+     */
+    private const UNPRINTED = '[\p{Cc}\x{061C}\x{200E}\x{200F}\x{202A}-\x{202E}\x{2066}-\x{2069}]';
+
+    /** label's width, in characters. */
+    public const LABEL_LENGTH = 100;
+
+    /** last_used_client's width, in characters. */
+    public const CLIENT_LENGTH = 190;
+
     private const REF_PATTERN = '/^[0-9a-f]{64}$/D';
 
     /** Starts every placeholder; no key P202 makes contains it. */
@@ -236,6 +257,230 @@ final class ApiKeyStore
             . implode(', ', array_fill(0, count($columns), '?')) . ')');
         $conn->bind($stmt, $types, $values);
         $conn->executeInsert($stmt);
+    }
+
+    /**
+     * The use and ending columns a key row is read with, where the 1.9.80
+     * upgrade has added them; '' before it has.
+     */
+    public static function useColumns(\mysqli $db, string $alias = ''): string
+    {
+        if (!Auth::apiKeyUseColumnsExist($db)) {
+            return '';
+        }
+        $c = $alias === '' ? '' : $alias . '.';
+        return ', ' . $c . 'last_used_at, ' . $c . 'last_used_api, ' . $c . 'last_used_client, ' . $c . 'ends_at';
+    }
+
+    /**
+     * When the key of $row stopped working, or null while it works. A
+     * replaced key carries ends_at; a row read before the upgrade added the
+     * column has none and never ends. A value that cannot be read as a time
+     * has ended.
+     *
+     * @param array<string, mixed> $row a 202_api_keys row
+     */
+    public static function endedAt(array $row, int $now): ?int
+    {
+        $endsAt = $row['ends_at'] ?? null;
+        if ($endsAt === null) {
+            return null;
+        }
+        if (!is_int($endsAt) && !(is_string($endsAt) && preg_match('/^\d{1,10}$/D', $endsAt) === 1)) {
+            return 0;
+        }
+        return (int) $endsAt <= $now ? (int) $endsAt : null;
+    }
+
+    /**
+     * The condition a key list adds, so a key that ended more than
+     * ENDED_KEY_KEPT ago is not listed while it waits for removeEnded(); ''
+     * before the upgrade adds the column.
+     */
+    public static function listedCondition(\mysqli $db, int $now): string
+    {
+        return Auth::apiKeyUseColumnsExist($db)
+            ? ' AND (ends_at IS NULL OR ends_at > ' . ($now - self::ENDED_KEY_KEPT) . ')'
+            : '';
+    }
+
+    /**
+     * Removes, for every account, the replaced keys that ended more than
+     * ENDED_KEY_KEPT before $now: the rows listedCondition() no longer
+     * lists. A key that works has no ending or a later one, so none is
+     * touched. The number removed.
+     *
+     * @throws QueryException when the rows could not be removed
+     */
+    public static function removeEnded(\mysqli $db, int $now): int
+    {
+        if (!Auth::apiKeyUseColumnsExist($db)) {
+            return 0;
+        }
+        $conn = new Connection($db);
+        $stmt = $conn->prepareWrite('DELETE FROM 202_api_keys WHERE ends_at IS NOT NULL AND ends_at <= ?');
+        $conn->bind($stmt, 'i', [$now - self::ENDED_KEY_KEPT]);
+        return $conn->executeUpdate($stmt);
+    }
+
+    /** What a refused request is told about a key that has ended. */
+    public static function endedMessage(int $endedAt): string
+    {
+        return 'This API key was replaced and stopped working'
+            . ($endedAt > 0 ? ' on ' . gmdate('Y-m-d H:i', $endedAt) . ' UTC' : '')
+            . '. Use the key that replaced it, or make a new one in My Account.';
+    }
+
+    /**
+     * The name a person gave a new key: null for none, false for one that
+     * cannot be stored (too long, more than a line, not text) or that reads
+     * as an AI connection's label, which decides what a key is.
+     */
+    public static function labelFrom(mixed $posted): string|false|null
+    {
+        if (!is_string($posted) || !mb_check_encoding($posted, 'UTF-8')) {
+            return false;
+        }
+        $label = trim($posted);
+        if ($label === '') {
+            return null;
+        }
+        if (
+            mb_strlen($label, 'UTF-8') > self::LABEL_LENGTH
+            || preg_match('/' . self::UNPRINTED . '/u', $label) === 1
+            || stripos($label, rtrim(AiConnect::LABEL_PREFIX)) === 0
+        ) {
+            return false;
+        }
+        return $label;
+    }
+
+    /** The client a request names itself as, cut to what last_used_client holds. */
+    public static function clientName(mixed $userAgent): ?string
+    {
+        if (is_array($userAgent)) {
+            $userAgent = $userAgent[0] ?? '';
+        }
+        if (!is_string($userAgent)) {
+            return null;
+        }
+        $name = preg_replace('/' . self::UNPRINTED . '+/u', ' ', mb_scrub($userAgent, 'UTF-8'));
+        $name = mb_substr(trim((string) $name), 0, self::CLIENT_LENGTH, 'UTF-8');
+        return $name === '' ? null : $name;
+    }
+
+    /**
+     * Records that the key of $row just authenticated a request on $api
+     * ('v1', 'v2', 'v3'), at most once per USE_STAMP_INTERVAL for a key. It
+     * never fails the request: a stamp that cannot be written is logged.
+     * Nothing is written before the upgrade has added the columns.
+     *
+     * @param array<string, mixed> $row the key's row as the lookup read it (k.*)
+     */
+    public static function stampUse(\mysqli $db, array $row, string $key, string $api, mixed $userAgent, int $now): void
+    {
+        foreach (['last_used_at', 'last_used_api', 'last_used_client'] as $column) {
+            if (!array_key_exists($column, $row)) {
+                return;
+            }
+        }
+        $last = $row['last_used_at'];
+        if ($last !== null && is_numeric($last) && $now - (int) $last < self::USE_STAMP_INTERVAL) {
+            return;
+        }
+        // One failure is enough for a process: a server that refuses the
+        // write would refuse it for every request this process serves.
+        static $refused = null;
+        $refused ??= new \WeakMap();
+        if (isset($refused[$db])) {
+            return;
+        }
+        $client = self::clientName($userAgent);
+        $write = static function (?string $client) use ($db, $row, $key, $api, $now): void {
+            [$keyMatch, $keyTypes, $keyValues] = self::matchKey($db, $key);
+            $conn = new Connection($db);
+            $stmt = $conn->prepareWrite(
+                'UPDATE 202_api_keys SET last_used_at = ?, last_used_api = ?, last_used_client = ?'
+                . ' WHERE user_id = ? AND ' . $keyMatch . ' AND (last_used_at IS NULL OR last_used_at < ?)'
+            );
+            $conn->bind($stmt, 'issi' . $keyTypes . 'i', [
+                $now,
+                $api,
+                $client,
+                (int) ($row['user_id'] ?? 0),
+                ...$keyValues,
+                $now,
+            ]);
+            $conn->executeUpdate($stmt);
+        };
+        try {
+            $write($client);
+            return;
+        } catch (\Throwable $e) {
+            $failed = $e;
+        }
+        // The time matters more than the name: a name the column cannot hold
+        // must not leave the key reading as unused, and stamped on every request.
+        if ($client !== null) {
+            try {
+                $write(null);
+                error_log('Prosper202: an API key\'s last use was recorded without its client\'s name: '
+                    . $failed->getMessage());
+                return;
+            } catch (\Throwable $e) {
+                $failed = $e;
+            }
+        }
+        $refused[$db] = true;
+        error_log('Prosper202: an API key\'s last use could not be recorded: ' . $failed->getMessage());
+    }
+
+    /**
+     * Replaces the key $ref names: stores $newKey with the old key's scope
+     * and label, and sets the old key to end REPLACED_KEY_GRACE from $now, in
+     * one transaction. Null when $userId has no such key; a
+     * key already ending, or an AI connection's, is refused.
+     *
+     * @return array{ends_at: int, scope: ?string, label: ?string}|null
+     * @throws \DomainException naming why the key cannot be replaced
+     * @throws QueryException when nothing was changed
+     */
+    public static function replace(\mysqli $db, int $userId, string $ref, string $newKey, int $now): ?array
+    {
+        if (!Auth::apiKeyUseColumnsExist($db)) {
+            throw new \DomainException('Replacing a key needs the 1.9.80 database upgrade, which has not run yet.');
+        }
+        $hasLabel = Auth::apiKeyLabelColumnExists($db);
+        [$refMatch, $refTypes, $refValues] = self::matchRef($db, $ref);
+        $conn = new Connection($db);
+        $refBind = ['i' . $refTypes, [$userId, ...$refValues]];
+        $replace = static function () use ($conn, $db, $userId, $newKey, $now, $hasLabel, $refMatch, $refBind): ?array {
+            $read = $conn->prepareWrite('SELECT scope, ends_at' . ($hasLabel ? ', label' : '')
+                . ' FROM 202_api_keys WHERE user_id = ? AND ' . $refMatch . ' LIMIT 1 FOR UPDATE');
+            $conn->bind($read, $refBind[0], $refBind[1]);
+            $old = $conn->fetchOne($read);
+            if ($old === null) {
+                return null;
+            }
+            $label = isset($old['label']) ? (string) $old['label'] : null;
+            if (AiConnect::isConnectionLabel($label)) {
+                throw new \DomainException('An AI app\'s key is replaced by connecting the app again.');
+            }
+            if ($old['ends_at'] !== null) {
+                throw new \DomainException('That key was already replaced.');
+            }
+            $scope = $old['scope'] === null ? null : (string) $old['scope'];
+            self::insert($db, $userId, $newKey, $scope, $label, $now);
+            $endsAt = $now + self::REPLACED_KEY_GRACE;
+            $end = $conn->prepareWrite('UPDATE 202_api_keys SET ends_at = ? WHERE user_id = ? AND ' . $refMatch
+                . ' AND ends_at IS NULL');
+            $conn->bind($end, 'i' . $refBind[0], [$endsAt, ...$refBind[1]]);
+            if ($conn->executeUpdate($end) !== 1) {
+                throw new QueryException('The replaced API key could not be set to end');
+            }
+            return ['ends_at' => $endsAt, 'scope' => $scope, 'label' => $label];
+        };
+        return $conn->transaction($replace);
     }
 
     /**
