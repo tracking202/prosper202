@@ -1090,7 +1090,8 @@ p202 attribution breakdown       [--group-by D] [--model ID] [--compare-model ID
                                  [--period P | --time-from T --time-to T] [--limit N] [--json]
 p202 attribution journeys        [--period P | --time-from T --time-to T] [--json]
 p202 attribution journey         <conv_id> [--json]
-p202 attribution queue           [--limit N] [--json]
+p202 attribution queue           [--limit N] [--json]     (what is failing, each with last_error)
+p202 attribution retry           [--json]                 (failed work made due, the worker run once)
 
 p202 attribution export create   [--group-by D] [--model ID] [--compare-model ID]
                                  [--period P | --time-from T --time-to T] [--run-at T]
@@ -1339,7 +1340,8 @@ p202 system traffic-source-owners repair <ppc_network_id> [--to-user-id N] [--fo
 p202 system traffic-source-owners repair --all [--force]                             # every source the report names a user for
 p202 system traffic-source-owners split <ppc_network_id> [--force]                  # a copy of its own for each named_by user; their accounts move onto it
 # Admin and a role with access_to_api_integrations:
-p202 system integrations [--json]   # notification URLs per integration; secret_stored, never the secret
+p202 system integrations [--json]   # notification URLs per integration; secret_stored, never the secret; held_notifications (recordable, waiting) and jvzoo no_role_url
+p202 system integrations record-held <paykickstart|shopify|zaxaa> [--json]   # record the notifications held for their currency, once the account counts in it; run again while left > 0
 ```
 
 - A key whose user is not an Admin or the Super user gets exit 2 with

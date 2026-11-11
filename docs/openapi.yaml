@@ -957,8 +957,128 @@ paths:
                             keys_stored:
                               type: integer
                               description: PayKickstart only, how many IPN secret keys are stored
+                            held_notifications:
+                              type: object
+                              description: >-
+                                PayKickstart, Shopify and Zaxaa only. Notifications
+                                refused because they state another currency than the
+                                account counts in are held; Account › API integrations
+                                records the recordable ones. Left out when the held
+                                notifications cannot be read (before the upgrade has run).
+                              properties:
+                                recordable:
+                                  type: integer
+                                  description: Held and stated in the currency the account counts in now
+                                waiting:
+                                  type: integer
+                                  description: Held and stated in another currency
+                                waiting_currencies:
+                                  type: array
+                                  items:
+                                    type: string
+                            no_role_url:
+                              type: object
+                              description: >-
+                                The `jvzoo` entry only. What the URL Prosper202 1.9.56
+                                showed (jvzoo.php with no role) received in the last 30
+                                days, counting notifications that move money.
+                              properties:
+                                read_as:
+                                  type: string
+                                  enum: [affiliate, vendor]
+                                  description: How the account reads that URL (jvzoo_roleless_role)
+                                vendor_no_affiliate:
+                                  type: integer
+                                  description: Named no affiliate, so read as a vendor's whatever read_as is
+                                refused:
+                                  type: integer
+                                  description: Read as an affiliate's and recorded nothing
+                                as_affiliate:
+                                  type: integer
+                                  description: Read as an affiliate's and accepted
+                                as_vendor:
+                                  type: integer
+                                  description: Read as a vendor's because the account chose it
+                                conflict:
+                                  type: integer
+                                  description: Refused because accounts sharing the key read the URL differently
+                                more:
+                                  type: boolean
+                                  description: >-
+                                    The newest 499 JVZoo requests did not reach back 30
+                                    days, so the counts are at least these
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /system/integrations/record-held:
+    post:
+      tags: [System]
+      summary: Record the notifications held for their currency
+      description: |
+        The Record button of Account › API integrations. A PayKickstart,
+        Shopify or Zaxaa notification that states another currency than the
+        account counts in records nothing and is held (`held_notifications`
+        on `GET /system/integrations`). This records the caller's held
+        notifications of one integration that are stated in the currency the
+        account counts in now: each goes through the checks a notification
+        arriving now goes through, in the order it arrived, at most 200 a
+        request (`left` says how many remain; send it again). Sent twice,
+        each is recorded once. One the checks refuse for good is held no
+        longer (`refused`, and `first_refusal` says why); one that failed
+        stays held (`failed`).
+
+        Admin (or Super user) with `access_to_api_integrations`, and
+        `system:write`. Not stageable, and no preview.
+      operationId: systemRecordHeldNotifications
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [integration]
+              additionalProperties: false
+              properties:
+                integration:
+                  type: string
+                  enum: [paykickstart, shopify, zaxaa]
+      responses:
+        "200":
+          description: What was recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      integration:
+                        type: string
+                      recorded:
+                        type: integer
+                        description: Conversions and reversals written
+                      on_file:
+                        type: integer
+                        description: On file already, so nothing was added
+                      refused:
+                        type: integer
+                        description: Refused as one arriving now would be, and held no longer
+                      failed:
+                        type: integer
+                        description: >-
+                          Still held, to be sent again: it could not be recorded just
+                          now, or it is a refund whose sale is itself still held
+                      left:
+                        type: integer
+                        description: Held, recordable and not reached by this request
+                      first_refusal:
+                        type: string
+                        description: What the first refused one was told
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /system/traffic-source-owners:
     get:
@@ -4367,6 +4487,51 @@ paths:
                 properties:
                   data:
                     $ref: "#/components/schemas/AttributionQueue"
+
+  /attribution/queue/retry:
+    post:
+      tags: [Attribution]
+      summary: Try the account's failed attribution work again now
+      description: >-
+        Makes the account's failed conversions, identity merges and model recomputes due at once and
+        runs the attribution worker once, briefly. Another account's rows wait their turn. An account
+        may ask once every 30 seconds, and the worker is run only when something was made due. Takes
+        no body. Role permission `view_attribution_reports`.
+      operationId: retryAttributionQueue
+      responses:
+        "200":
+          description: What was made due, what became of the run, and the backlog after
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      made_due:
+                        type: object
+                        properties:
+                          conversions:
+                            type: integer
+                          merges:
+                            type: integer
+                          models:
+                            type: integer
+                      worker:
+                        type: string
+                        enum: [ran, busy, failed, idle, waiting]
+                        description: >-
+                          `ran` when the worker ran; `busy` when another run held its lock and takes the
+                          rows next; `failed` when the run itself failed (logged), and the cron job's next
+                          run takes them; `idle` when nothing was waiting on a failure, so nothing was
+                          run; `waiting` when the account asked less than 30 seconds ago and nothing was
+                          done.
+                      retry_after_seconds:
+                        type: integer
+                        description: The seconds until the account may ask again; 0 unless worker is `waiting`.
+                      queue:
+                        $ref: "#/components/schemas/AttributionQueue"
 
   /attribution/exports:
     get:
@@ -10491,7 +10656,7 @@ paths:
                     type: string
                   description: The events to deliver, each one this install sends — `customer.updated`,
                     `revenue.recorded`, `subscription.changed`, `conversion.recorded`, `engagement.recorded`,
-                    `alert.conversions_stopped`, `alert.spend_without_conversions`, `alert.postback_refusals_spiked` — or `["*"]` alone, which also takes the events later versions add. Omitted, null or [] is every event
+                    `alert.conversions_stopped`, `alert.spend_without_conversions`, `alert.postback_refusals_spiked`, `alert.test` — or `["*"]` alone, which also takes the events later versions add. Omitted, null or [] is every event
                     this version sends. Any other name is a 422 naming it by position (`events.0`) with the list (a
                     name checked only for its form, `revenue.recoded`, made a hook that received nothing), and
                     anything but a list of strings is a 422 (a lone string was read as no list, and subscribed the

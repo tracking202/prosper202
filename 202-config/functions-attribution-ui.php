@@ -251,3 +251,141 @@ function p202_attr_sentence(string $sentence): string
 
     return $sentence . (preg_match('/[.!?]$/', $sentence) === 1 ? '' : '.');
 }
+
+/**
+ * What is failing in the account's attribution queue and why, with the
+ * button that tries all of it again now; '' when nothing is failing.
+ *
+ * @param array<string, mixed> $queue AttributionReports::queue()
+ * @param string $pageUrl the Attribution page's address
+ * @param ?string $tokenField the form's hidden session-token input; the account pages' own when null
+ */
+function p202_attr_failures(array $queue, string $pageUrl, string $view, int $now, ?string $tokenField = null): string
+{
+    $tokenField ??= p202_account_token_field();
+    $e = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+    $next = static fn (int $retryAt): string => $retryAt <= $now
+        ? 'in the next run, within a minute'
+        : 'in ' . p202_attr_before($retryAt - $now);
+    $why = static fn (mixed $error): string => is_string($error) && trim($error) !== ''
+        ? $e(trim($error))
+        : 'No reason was recorded.';
+    $rows = [];
+    foreach ((array) ($queue['rows'] ?? []) as $r) {
+        if ((int) $r['attempts'] === 0) {
+            continue;
+        }
+        $journey = $pageUrl . '?view=journey&conv_id=' . (int) $r['conv_id'];
+        $rows[] = [
+            '<a href="' . $e($journey) . '">Conversion ' . (int) $r['conv_id'] . '</a>',
+            (int) $r['attempts'],
+            $why($r['last_error']),
+            $next((int) $r['retry_at']),
+        ];
+    }
+    foreach ((array) ($queue['merge_rows'] ?? []) as $r) {
+        $retired = $r['retired_at'] !== null && (int) $r['failures'] === 0;
+        $rows[] = [
+            'Visitor merge ' . (int) $r['merge_id'] . ' of ' . $e(date('Y-m-d H:i', (int) $r['merged_at'])),
+            (int) $r['failures'],
+            $retired
+                ? 'Set aside by an earlier version: the person has more visitor keys than it could join at once.'
+                : $why($r['last_error']),
+            $next((int) $r['retry_at']),
+        ];
+    }
+    foreach ((array) ($queue['model_rows'] ?? []) as $r) {
+        $rows[] = [
+            'Model ' . $e((string) $r['model_name']) . ', its change of '
+                . $e(date('Y-m-d H:i', (int) $r['requested_at'])),
+            (int) $r['failures'],
+            $why($r['last_error']),
+            $next((int) $r['retry_at']),
+        ];
+    }
+    // A merge can be both failing and set aside, so the larger of the two counts it once.
+    $failing = max(count($rows), (int) ($queue['failing'] ?? 0)
+        + max((int) ($queue['merges_failing'] ?? 0), (int) ($queue['merges_retired'] ?? 0))
+        + (int) ($queue['models_failing'] ?? 0));
+    if ($failing === 0) {
+        return '';
+    }
+    $body = '';
+    foreach ($rows as [$what, $tries, $reason, $when]) {
+        $body .= '<tr><td>' . $what . '</td><td class="text-end">' . $tries . '</td><td>' . $reason . '</td><td>'
+            . $e($when) . '</td></tr>';
+    }
+    $more = $failing - count($rows);
+
+    return '<section class="p202-panel mb-3" id="attribution-failures"><div class="p202-panel__body">'
+        . '<form method="post" action="' . $e($pageUrl . '?view=' . $view) . '" class="mb-2">' . $tokenField
+        . '<input type="hidden" name="action" value="retry_failed">'
+        . '<button type="submit" class="btn btn-primary btn-sm" id="attribution-retry">Try again now</button>'
+        . '<div class="form-text">Each of these is tried again by itself, less often the longer it fails.'
+        . ' Fix what its reason names, then try them all again here.</div></form>'
+        . '<details class="p202-disclosure" id="attribution-failure-reasons">'
+        . '<summary>What failed and why <span class="p202-disclosure__hint">' . count($rows)
+        . ($more > 0 ? ' of ' . $failing : '') . ' shown</span></summary>'
+        . '<div class="p202-disclosure__body"><div class="p202-table-wrap"><table class="table p202-table">'
+        . '<thead><tr><th>What</th><th class="text-end">Tries</th><th>Why it failed</th><th>Next try</th></tr>'
+        . '</thead><tbody>' . $body . '</tbody></table></div>'
+        . ($more > 0
+            ? '<p class="form-text mb-0">At least ' . $more . ' more are failing; they are listed here as these'
+                . ' clear.</p>'
+            : '')
+        . '</div></details></div></section>';
+}
+
+/**
+ * "Try again now" (QueueRetry::tryNow()) as the page says it: the flash's
+ * kind and its sentence.
+ *
+ * @return array{0: 'ok'|'warn'|'bad', 1: string}
+ */
+function p202_attr_retry_failed(\mysqli $db, int $userId): array
+{
+    try {
+        $conn = new \Prosper202\Database\Connection($db);
+        $tried = \Prosper202\Attribution\QueueRetry::tryNow($conn, $userId);
+        $left = (new \Prosper202\Attribution\AttributionReports($conn))->queue($userId, 1);
+    } catch (\Throwable $e) {
+        error_log('attribution page retry_failed: ' . get_class($e) . ': ' . $e->getMessage());
+
+        return ['bad', 'Trying again failed: the attribution tables could not be read or written. The server'
+            . ' error log says why; the worker keeps trying by itself.'];
+    }
+    $due = $tried['made_due'];
+    $count = static fn (int $n, string $one): string => $n . ' ' . $one . ($n === 1 ? '' : 's');
+    $what = $count($due['conversions'], 'conversion') . ', ' . $count($due['merges'], 'visitor merge')
+        . ' and ' . $count($due['models'], 'model change');
+    $pending = (int) $left['pending'];
+    $stillFailing = (int) $left['failing'] + (int) $left['merges_failing'] + (int) $left['models_failing'];
+    if ($tried['worker'] === \Prosper202\Attribution\QueueRetry::WAITING) {
+        return ['warn', 'Nothing was tried again: it was tried less than '
+            . \Prosper202\Attribution\QueueRetry::EVERY . ' seconds ago. Try again in '
+            . $tried['retry_after_seconds'] . ' seconds.'];
+    }
+    if ($tried['worker'] === \Prosper202\Attribution\QueueRetry::IDLE) {
+        return ['ok', 'Nothing was waiting on a failure to be tried again'
+            . ($stillFailing > 0 ? '; what is listed as failing is already due, and the worker\'s next run,'
+                . ' within a minute, takes it.' : '.')];
+    }
+    if ($tried['worker'] === \Prosper202\Attribution\QueueRetry::BUSY) {
+        return ['ok', $what . ' are due again. The attribution worker is running right now and takes them next;'
+            . ' reload in a minute.'];
+    }
+    if ($tried['worker'] === \Prosper202\Attribution\QueueRetry::FAILED) {
+        return ['warn', $what . ' are due again, but the run made for them here failed; the server error log'
+            . ' says why. The cron job\'s next run, within a minute, takes them.'];
+    }
+    if ($stillFailing > 0) {
+        return ['warn', $what . ' were tried again, and ' . $stillFailing . ' still '
+            . ($stillFailing === 1 ? 'fails' : 'fail') . '. The reasons are under "What failed and why".'];
+    }
+    if ($pending > 0) {
+        return ['ok', $what . ' were tried again and nothing is failing now. ' . $count($pending, 'conversion')
+            . ($pending === 1 ? ' is' : ' are') . ' still waiting for the worker, which runs every minute.'];
+    }
+
+    return ['ok', $what . ' were tried again, and nothing is failing or waiting now.'];
+}

@@ -46,6 +46,7 @@ final class TableRegistry
     public const string IPQS_PROGRESS = '202_ipqs_progress';
     public const string ALERT_SETTINGS = '202_alert_settings';
     public const string ALERT_STATE = '202_alert_state';
+    public const string ALERT_LOG = '202_alert_log';
     public const string USER_DATA_FEEDBACK = 'user_data_feedback';
 
     // Click tables
@@ -124,6 +125,7 @@ final class TableRegistry
     public const string DESTINATIONS = '202_destinations';
     public const string DESTINATION_DELIVERIES = '202_destination_deliveries';
     public const string INBOUND_LOG = '202_inbound_log';
+    public const string HELD_PAYMENT_NOTIFICATIONS = '202_held_payment_notifications';
     public const string SHOPIFY_PENDING_REFUNDS = '202_shopify_pending_refunds';
     public const string SHOPIFY_REFUND_TRANSACTIONS = '202_shopify_refund_transactions';
 

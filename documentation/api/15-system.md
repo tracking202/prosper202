@@ -371,11 +371,15 @@ minutes.
     "base_url": "https://track.example.com/",
     "integrations": [
       { "integration": "clickbank", "name": "ClickBank", "label": "INS URL", "url": "https://track.example.com/tracking202/static/cb202.php", "secret_stored": true, "verified": false },
-      { "integration": "jvzoo", "name": "JVZoo", "label": "Affiliate IPN URL", "url": "https://track.example.com/tracking202/static/jvzoo.php?role=affiliate", "secret_stored": true },
+      { "integration": "jvzoo", "name": "JVZoo", "label": "Affiliate IPN URL", "url": "https://track.example.com/tracking202/static/jvzoo.php?role=affiliate", "secret_stored": true,
+        "no_role_url": { "read_as": "affiliate", "vendor_no_affiliate": 0, "refused": 0, "as_affiliate": 0, "as_vendor": 0, "conflict": 0, "more": false } },
       { "integration": "jvzoo_vendor", "name": "JVZoo", "label": "Vendor JVZIPN URL", "url": "https://track.example.com/tracking202/static/jvzoo.php?role=vendor", "secret_stored": true },
-      { "integration": "zaxaa", "name": "Zaxaa", "label": "ZPN URL", "url": "https://track.example.com/tracking202/static/zpn.php", "secret_stored": false },
-      { "integration": "paykickstart", "name": "PayKickstart", "label": "IPN URL", "url": "https://track.example.com/tracking202/static/paykickstart.php", "secret_stored": true, "keys_stored": 2 },
-      { "integration": "shopify", "name": "Shopify", "label": "Webhook URL", "url": "https://track.example.com/tracking202/static/shopify.php", "secret_stored": false }
+      { "integration": "zaxaa", "name": "Zaxaa", "label": "ZPN URL", "url": "https://track.example.com/tracking202/static/zpn.php", "secret_stored": false,
+        "held_notifications": { "recordable": 0, "waiting": 0, "waiting_currencies": [] } },
+      { "integration": "paykickstart", "name": "PayKickstart", "label": "IPN URL", "url": "https://track.example.com/tracking202/static/paykickstart.php", "secret_stored": true, "keys_stored": 2,
+        "held_notifications": { "recordable": 0, "waiting": 0, "waiting_currencies": [] } },
+      { "integration": "shopify", "name": "Shopify", "label": "Webhook URL", "url": "https://track.example.com/tracking202/static/shopify.php", "secret_stored": true,
+        "held_notifications": { "recordable": 0, "waiting": 3, "waiting_currencies": ["EUR"] } }
     ]
   }
 }
@@ -388,6 +392,31 @@ none); PayKickstart's `keys_stored` counts its IPN secret keys, one for each
 PayKickstart campaign. The secrets are never served — `PUT
 /users/{id}/preferences` sets them, and its `GET` answers each only as
 `{"stored": true}` or `{"stored": false}`.
+
+`held_notifications` (PayKickstart, Shopify, Zaxaa) is what the page's card
+says: a notification stating another currency than the account counts in
+records nothing and is held. `waiting` are held in a currency the account
+does not count in (`waiting_currencies`); `recordable` are held in the one
+it counts in now, and Account › API integrations records them with one
+button. `no_role_url`, on the `jvzoo` entry, is the JVZoo card's count of
+what the URL Prosper202 1.9.56 showed (no `?role=`) received in the last 30
+days, and how the account reads that URL (`read_as`); `more` is true when
+the newest 499 JVZoo requests do not reach back that far, so the counts are
+at least these. Either key is left out when it cannot be read (before the
+upgrade has run), never served as zero. A notification is held for 90 days,
+and only in a currency an account can count in.
+
+`POST /system/integrations/record-held` with `{"integration": "shopify"}`
+(or `paykickstart`, `zaxaa`) is the card's Record button: the caller's held
+notifications of that integration stated in the currency the account counts
+in now go through the checks one arriving now goes through, in the order
+they arrived, at most 200 a request. It answers
+`{"data": {"integration": "shopify", "recorded": 3, "on_file": 0, "refused": 0, "failed": 0, "left": 0, "first_refusal": ""}}`;
+send it again while `left` is above 0. Sent twice, each is recorded once.
+`refused` ones would be refused arriving now too and are held no longer
+(`first_refusal` says why); `failed` ones stay held: they could not be
+recorded just now, or are refunds whose sale is itself still held. Any other `integration`
+is a `422`. Not stageable, and it has no preview.
 
 PayKickstart's URL takes its **product (vendor) IPN**, which a vendor sets
 under each product's IPN Integration tab: a sale is recorded on the click the

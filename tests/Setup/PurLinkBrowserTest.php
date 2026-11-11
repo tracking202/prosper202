@@ -59,4 +59,17 @@ final class PurLinkBrowserTest extends TestCase
         self::assertSame(0, $status, implode("\n", $lines));
         self::assertSame('Landing original-subid harness passed', implode("\n", $lines));
     }
+
+    public function testLandingScriptAppliesThePagesSettingsBeforeThePageview(): void
+    {
+        $node = trim((string) shell_exec('command -v node 2>/dev/null'));
+        if ($node === '') {
+            self::markTestSkipped('node is not installed; the landing script cannot be run');
+        }
+        $command = escapeshellarg($node) . ' ' . escapeshellarg(__DIR__ . '/landing-settings-harness.js') . ' '
+            . escapeshellarg(dirname(__DIR__, 2) . '/tracking202/static/landing.php') . ' 2>&1';
+        exec($command, $lines, $status);
+        self::assertSame(0, $status, implode("\n", $lines));
+        self::assertSame('Landing settings harness passed', implode("\n", $lines));
+    }
 }

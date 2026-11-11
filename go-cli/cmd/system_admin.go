@@ -225,6 +225,51 @@ var systemIntegrationsCmd = &cobra.Command{
 	},
 }
 
+// systemHeldIntegrations are the integrations that hold a notification
+// stated in another currency than the account counts in.
+var systemHeldIntegrations = []string{"paykickstart", "shopify", "zaxaa"}
+
+var systemIntegrationsRecordHeldCmd = &cobra.Command{
+	Use:   "record-held <integration>",
+	Short: "Record the notifications an integration holds because they stated another currency",
+	Long: "A PayKickstart, Shopify or Zaxaa notification that states another currency than the account\n" +
+		"counts in records nothing and is held (`p202 system integrations --json` counts them as\n" +
+		"held_notifications). Once the account counts in that currency (`p202 user prefs update <user_id>\n" +
+		"--user-account-currency EUR`), this records the held ones: each goes through the checks a\n" +
+		"notification arriving now goes through, at most 200 a run. Run it again while `left` is above 0;\n" +
+		"run twice, each is recorded once. <integration> is paykickstart, shopify or zaxaa.\n\n" +
+		"Cannot be staged. " + systemIntegrationsNeeds + ", and system:write.",
+	Example: "  p202 system integrations record-held shopify\n  p202 system integrations record-held paykickstart --json",
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) != 1 {
+			return validationError("record-held takes one integration: %s", strings.Join(systemHeldIntegrations, ", ")).
+				WithHint("For example `p202 system integrations record-held shopify`. `p202 system integrations --json` shows which hold any (held_notifications).")
+		}
+		for _, name := range systemHeldIntegrations {
+			if args[0] == name {
+				return nil
+			}
+		}
+		return validationError("%q holds no notifications: the integrations that do are %s", args[0], strings.Join(systemHeldIntegrations, ", ")).
+			WithHint("`p202 system integrations --json` shows which hold any (held_notifications).")
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := refuseStagedSystem(cmd); err != nil {
+			return err
+		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		data, err := c.Post("system/integrations/record-held", map[string]interface{}{"integration": args[0]})
+		if err != nil {
+			return systemAdminError(err)
+		}
+		render(data)
+		return nil
+	},
+}
+
 // ─── p202 system retention ──────────────────────────────────────────────
 
 var systemRetentionCmd = &cobra.Command{
@@ -566,6 +611,7 @@ func init() {
 	systemRetentionCmd.AddCommand(systemRetentionShowCmd, systemRetentionSetCmd, systemRetentionDeleteBeforeCmd)
 
 	systemIspLookupCmd.AddCommand(systemIspLookupShowCmd, systemIspLookupEnableCmd, systemIspLookupDisableCmd)
+	systemIntegrationsCmd.AddCommand(systemIntegrationsRecordHeldCmd)
 
 	systemCmd.AddCommand(systemInfoCmd, systemLoginLogCmd, systemMetricsCmd, systemIntegrationsCmd,
 		systemRetentionCmd, systemIspLookupCmd)

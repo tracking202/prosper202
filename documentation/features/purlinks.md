@@ -201,8 +201,12 @@ URL, a cookie or a referrer, and the requests send no cookies.
 
 - Pages carrying the 1.9.56 snippet keep working, including `defpixel=1`.
 - `window.t202Settings` with `t202UseSubidOrig` and `t202ExpireSubidOrig`
-  works again ([above](#keeping-the-first-clicks-subid)). `t202UrlVars` is
-  not read.
+  works again ([above](#keeping-the-first-clicks-subid)). So do values set
+  in `t202Settings` and `t202UrlVars`, and `[[sourceid]]` in a PurLink takes
+  the click's traffic source account again; see
+  [Dynamic content](dynamic-content.md#setting-values-before-the-visit-is-recorded-t202settings).
+- A PurLink on a simple landing page whose campaign is cloaked keeps its own
+  deep link through the cloaked redirect too.
 - 1.9.56 SubIDs (`<click>-<offer>`) that networks send back after the upgrade
   are still accepted, for a click already on that offer.
 - The 1.9.80 upgrade creates the tables PurLinks need and carries over the

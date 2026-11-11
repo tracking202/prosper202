@@ -950,6 +950,7 @@ try {
             $r->get('/reports/journeys',           fn() => $crud($cls)->journeyMetrics($queryParams));
             $r->get('/conversions/{id}/journey',   fn($ctx) => $crud($cls)->journey(PathId::of($ctx)));
             $r->get('/queue',                      fn() => $crud($cls)->queue($queryParams));
+            $r->post('/queue/retry', fn() => $crud($cls)->retryQueue());
         }, [
             static function () use ($auth, $db): void {
                 $auth->requirePermission($db, 'view_attribution_reports');
@@ -1368,8 +1369,10 @@ try {
             $r->get('/isp-lookup',               fn() => $crud($cls)->ispLookup());
             $r->put('/isp-lookup',               fn() => $crud($cls)->setIspLookup($payload));
         }, [$auth->requireAdmin(...), $settingsPage]);
-        $router->group('/system', function (Router $r) use ($crud) {
-            $r->get('/integrations', fn() => $crud(\Api\V3\Controllers\AdministrationController::class)->integrations());
+        $router->group('/system', function (Router $r) use ($crud, $payload) {
+            $cls = \Api\V3\Controllers\AdministrationController::class;
+            $r->get('/integrations', fn() => $crud($cls)->integrations());
+            $r->post('/integrations/record-held', fn() => $crud($cls)->recordHeld($payload));
         }, [$auth->requireAdmin(...), $integrationsPage]);
 
         // ── Traffic sources another user's accounts name ─────────────────
@@ -1413,7 +1416,7 @@ try {
                 'destinations'  => '/destinations[/{id}][/test|/deliveries[/resend]|/backfill|/oauth/start|/google-ads/accounts|/google-ads/conversion-actions|/google-ads/pick]',
                 'events'        => '/events',
                 'users'         => '/users',
-                'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations|traffic-source-owners|traffic-source-owners/repair|traffic-source-owners/split}',
+                'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations|integrations/record-held|traffic-source-owners|traffic-source-owners/repair|traffic-source-owners/split}',
                 'sync'          => '/sync/{plan|jobs|status|history|re-sync}',
                 'changes'       => '/changes/{entity}',
                 'audit'         => '/audit/sync-jobs',

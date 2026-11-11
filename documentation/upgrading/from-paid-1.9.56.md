@@ -23,7 +23,9 @@ address below on a database shaped like a paid 1.9.56 one, after the upgrade.
   clicks from the 90 days before the upgrade that had not converted yet still
   convert when their postback arrives. A page's `t202Settings`
   (`t202UseSubidOrig`, `t202ExpireSubidOrig`) keeps a returning visitor's
-  original SubID in its PurLinks, with the visitor's consent. PurLinks are
+  original SubID in its PurLinks, with the visitor's consent. Values set in
+  `t202Settings`, `t202UrlVars`, `t202SubidOrig` and `t202SourceId` work as
+  before. PurLinks are
   refreshed when a visitor returns with the Back or Forward button. A PurLink
   that names a deeper URL of its campaign keeps it while its SubID is
   prepared. See [PurLinks](../features/purlinks.md).
@@ -60,7 +62,9 @@ address below on a database shaped like a paid 1.9.56 one, after the upgrade.
   (`tracking202/static/jvzoo.php`, no `?role=`) still records an affiliate's
   sales on the click in `caffitid`, verified with the stored JVZIPN secret
   key. A vendor's product JVZIPN URL needs the URL ending `?role=vendor` from
-  Account › API integrations › JVZoo.
+  Account › API integrations › JVZoo; until it is pasted, a vendor's sale that
+  names no affiliate is recorded at the old URL too, and the JVZoo card there
+  says when the old URL is still in use and offers to read it as a vendor's.
 - **Passwords.** Stored 1.9.56 passwords still sign in.
 - **Privacy.** Accounts that existed before the upgrade keep tracking as they
   did. Only accounts created on 1.9.79 or later start with privacy set to

@@ -10,6 +10,7 @@ use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\AccountSecrets;
 use Prosper202\PaymentNotification\ClickField;
 use Prosper202\PaymentNotification\InboundRequest;
+use Prosper202\PaymentNotification\NotesHowItReadTheRequest;
 use Prosper202\PaymentNotification\Notification;
 use Prosper202\PaymentNotification\NotificationKind;
 use Prosper202\PaymentNotification\OutcomeKind;
@@ -24,7 +25,9 @@ use Prosper202\PaymentNotification\Verification;
  * says which (JVZooRole), and that decides the field naming the click. The
  * URL 1.9.56 showed names none: it is read as the role the verifying
  * account chose for it (JVZooRole::ROLELESS_COLUMN), the affiliate's unless
- * it chose the vendor's.
+ * it chose the vendor's. One there that names no affiliate at all (no
+ * caffitid and no ctransaffiliate) is the vendor's whatever was chosen:
+ * JVZoo sends a sale to its vendor and its affiliate, and it has no affiliate.
  *
  * `ctransaction` decides what is done: SALE and BILL (a rebill, under its
  * own receipt) are recorded at `ctransamount`, the amount paid to the party
@@ -49,7 +52,7 @@ use Prosper202\PaymentNotification\Verification;
  * JVZIPN v2 is not taken: its cverify covers five fields, neither the
  * amount nor the tid, so anyone holding one notification could change both.
  */
-final class JVZooAdapter implements ProviderAdapter
+final class JVZooAdapter implements ProviderAdapter, NotesHowItReadTheRequest
 {
     /** Every field JVZIPN v1 posts (it always sends all of them; cupsellreceipt has a value for an upsell). */
     public const FIELDS = [
@@ -67,12 +70,29 @@ final class JVZooAdapter implements ProviderAdapter
     /** The vendor's pass-through variable on the buy link. */
     public const VENDOR_VARIABLE = 'subid';
 
-    /** At 1.9.56's URL read as the affiliate's, a notification with no caffitid: refused so JVZoo retries and says why. */
+    /**
+     * At 1.9.56's URL read as the affiliate's, a notification that names an
+     * affiliate and no caffitid: refused so JVZoo retries and says why.
+     */
     public const ROLELESS_NO_AFFILIATE = 'This notification has no caffitid, so it is not an affiliate\'s, and this URL'
         . ' (the one Prosper202 1.9.56 showed, with no ?role=) reads your notifications as an affiliate\'s.'
         . ' Nothing was recorded. If you sell your own product on JVZoo, choose "vendor" for the 1.9.56 URL on'
         . ' Account > API integrations > JVZoo, or paste the URL ending ?role=vendor from there into your'
         . ' product\'s JVZIPN URL.';
+
+    /** Added to the answer of a notification at 1.9.56's URL read as the vendor's because it names no affiliate. */
+    public const ROLELESS_READ_AS_VENDOR = ' This URL (the one Prosper202 1.9.56 showed, with no ?role=) read it as a'
+        . ' vendor\'s, since it names no affiliate. A sale an affiliate referred is read there as you chose on'
+        . ' Account > API integrations > JVZoo: choose "vendor" there, or paste the URL ending ?role=vendor into'
+        . ' your product\'s JVZIPN URL.';
+
+    /** The inbound log field saying how a verified request at 1.9.56's URL was read (READ_*). */
+    public const ROLELESS_LOG_FIELD = '_no_role_read_as';
+    public const READ_AFFILIATE = 'affiliate';
+    public const READ_VENDOR = 'vendor';
+    /** Read as the vendor's because it names no affiliate, whatever the account chose. */
+    public const READ_VENDOR_NO_AFFILIATE = 'vendor_no_affiliate';
+    public const READ_CONFLICT = 'conflict';
 
     /** Accounts sharing the key that verified a notification at 1.9.56's URL read it as different roles. */
     public const ROLELESS_CONFLICT = 'This notification verifies with the JVZIPN secret key of more than one account,'
@@ -82,6 +102,9 @@ final class JVZooAdapter implements ProviderAdapter
 
     /** Set by verify() at 1.9.56's URL when the verifying accounts' choices differ; parse() refuses. */
     private bool $rolelessConflict = false;
+
+    /** How verify() read a request at 1.9.56's URL (READ_*), or null before it verified one. */
+    private ?string $rolelessRead = null;
 
     /**
      * @param array<int, JVZooRole> $rolelessRoles account id => how it reads 1.9.56's URL; storedSecrets() fills
@@ -199,7 +222,11 @@ final class JVZooAdapter implements ProviderAdapter
         if ($verified === []) {
             return null;
         }
-        if ($this->roleless) {
+        if ($this->roleless && self::namesNoAffiliate($fields)) {
+            $this->rolelessConflict = false;
+            $this->role = JVZooRole::VENDOR;
+            $this->rolelessRead = self::READ_VENDOR_NO_AFFILIATE;
+        } elseif ($this->roleless) {
             // At 1.9.56's URL the verifying accounts' setting picks the role.
             $roles = array_unique(array_map(
                 fn (int $id): string => ($this->rolelessRoles[$id] ?? JVZooRole::AFFILIATE)->value,
@@ -207,9 +234,32 @@ final class JVZooAdapter implements ProviderAdapter
             ));
             $this->rolelessConflict = count($roles) > 1;
             $this->role = $this->rolelessConflict ? JVZooRole::AFFILIATE : JVZooRole::from($roles[array_key_first($roles)]);
+            $this->rolelessRead = $this->rolelessConflict ? self::READ_CONFLICT : $this->role->value;
         }
 
         return new Verification($verified);
+    }
+
+    public function readingNote(): string
+    {
+        return $this->rolelessRead === self::READ_VENDOR_NO_AFFILIATE ? self::ROLELESS_READ_AS_VENDOR : '';
+    }
+
+    public function logFields(): array
+    {
+        return $this->rolelessRead === null ? [] : [self::ROLELESS_LOG_FIELD => $this->rolelessRead];
+    }
+
+    /**
+     * A verified notification that names no affiliate: no tid from an
+     * affiliate link, and no affiliate on the sale (JVZoo's id for one, which
+     * starts at 1). JVZoo sends it only to the vendor.
+     *
+     * @param array<array-key, mixed> $fields
+     */
+    private static function namesNoAffiliate(array $fields): bool
+    {
+        return ($fields['caffitid'] ?? '') === '' && in_array($fields['ctransaffiliate'] ?? '', ['', '0'], true);
     }
 
     public function parse(InboundRequest $request): Notification

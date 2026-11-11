@@ -193,7 +193,9 @@ if (!function_exists('_upgrade_seed_licence_answers')) {
 
     /**
      * Hash the API keys still stored whole (ApiKeyStore::hashStoredKeys()),
-     * for the 1.9.80 rung. False when one is left whole.
+     * and convert a label column that cannot hold every name
+     * (ApiKeyStore::widenLabel()), for the 1.9.80 rung. False when a key is
+     * left whole or the column unconverted.
      */
     function _upgrade_hash_api_keys(): bool
     {
@@ -201,7 +203,9 @@ if (!function_exists('_upgrade_seed_licence_answers')) {
 
         try {
             $conn = ($db instanceof \mysqli) ? $db : $db->getConnection();
-            return \Prosper202\User\ApiKeyStore::hashStoredKeys($conn);
+            // Both run, so one failure does not hide the other.
+            $named = \Prosper202\User\ApiKeyStore::widenLabel($conn);
+            return \Prosper202\User\ApiKeyStore::hashStoredKeys($conn) && $named;
         } catch (\Throwable $e) {
             error_log('Prosper202 upgrade: the API keys could not be hashed: ' . $e->getMessage());
             return false;
@@ -4989,6 +4993,8 @@ class UPGRADE
                 \Prosper202\Database\Tables\CoreTables::messagingAttributes(),
                 // The inbound postback and notification log (Prosper202\InboundLog).
                 \Prosper202\Database\Tables\ConversionTables::inboundLog(),
+                // Payment notifications held for their currency (HeldNotifications).
+                \Prosper202\Database\Tables\ConversionTables::heldPaymentNotifications(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
                 // The publisher a publisher link's click is credited to
@@ -5017,6 +5023,9 @@ class UPGRADE
                 // sent for (Prosper202\Alerts).
                 \Prosper202\Database\Tables\UserTables::alertSettings(),
                 \Prosper202\Database\Tables\UserTables::alertState(),
+                // The alerts each account was raised, shown on Home and the
+                // settings card (MysqlAlertStore).
+                \Prosper202\Database\Tables\UserTables::alertLog(),
                 // 202_conversion_logs gains user_conv_time, the alerts' read of
                 // an account's last week of conversions.
                 \Prosper202\Database\Tables\ConversionTables::conversionLogs(),
