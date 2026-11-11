@@ -21,6 +21,11 @@ use Prosper202\Attribution\WebhookSender;
  * Every wait ends: past CLICK_MAX_AGE the row fails, measured from the click,
  * or from the conversion when the click's time is unknown (a click is never
  * later than its conversion, so that age is a floor).
+ *
+ * The customer and the conversion action may be left out when the
+ * destination is made: Setup › Destinations lists the connected Google
+ * user's accounts and their actions to pick from (GoogleAdsAccounts). Until
+ * both are set the destination's conversions wait (configured()).
  */
 final class GoogleAdsDestination implements DestinationType, AuthorisedDestination
 {
@@ -91,14 +96,38 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
         return $given;
     }
 
+    /** Whether the settings name the customer and the conversion action a send needs. */
+    public function configured(array $settings): bool
+    {
+        return is_string($settings['customer_id'] ?? null) && $settings['customer_id'] !== ''
+            && is_string($settings['conversion_action'] ?? null) && $settings['conversion_action'] !== '';
+    }
+
     public function validate(array $settings, ?array $credentials): array
     {
-        $out = ['customer_id' => self::customerId($settings['customer_id'] ?? null, 'customer_id', true)];
+        $out = [];
+        $customer = self::customerId($settings['customer_id'] ?? null, 'customer_id', false);
+        if ($customer !== null) {
+            $out['customer_id'] = $customer;
+        }
         $login = self::customerId($settings['login_customer_id'] ?? null, 'login_customer_id', false);
         if ($login !== null) {
             $out['login_customer_id'] = $login;
         }
-        $out['conversion_action'] = self::action($settings['conversion_action'] ?? null, 'settings.conversion_action');
+        $action = $settings['conversion_action'] ?? null;
+        if ($action !== null && $action !== '') {
+            $out['conversion_action'] = self::action($action, 'settings.conversion_action');
+        }
+        // Everything else belongs to an account: none of it is kept without one.
+        $needsCustomer = array_filter([
+            'login_customer_id' => $login !== null,
+            'conversion_action' => isset($out['conversion_action']),
+            'campaign_conversion_actions' => ($settings['campaign_conversion_actions'] ?? []) !== [],
+        ]);
+        if ($customer === null && $needsCustomer !== []) {
+            throw new DestinationInputException('settings.customer_id', 'customer_id is required with ' . implode(', ', array_keys($needsCustomer))
+                . ': the Google Ads customer ID, 10 digits (123-456-7890). Leave them all out to pick the account on Setup › Destinations after connecting.');
+        }
         $byCampaign = $settings['campaign_conversion_actions'] ?? [];
         if (!is_array($byCampaign) || count($byCampaign) > 500) {
             throw new DestinationInputException('settings.campaign_conversion_actions', 'campaign_conversion_actions must be an object of campaign id to conversion action, at most 500.');
@@ -141,6 +170,9 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
         $secrets = [$credentials['developer_token'] ?? null, $credentials['oauth_client_secret'] ?? null, $credentials[self::GRANT] ?? null];
         if (!$this->authorised($credentials)) {
             return new SendResult(false, true, null, SendResult::FOR_OPERATOR . 'Google Ads is not connected yet; press Connect Google Ads on Setup › Destinations', waitUntil: $now + self::AUTH_WAIT, destinationWaits: true);
+        }
+        if (!$this->configured($settings)) {
+            return new SendResult(false, true, null, SendResult::FOR_OPERATOR . 'pick the Google Ads account and conversion action on Setup › Destinations', waitUntil: $now + self::AUTH_WAIT, destinationWaits: true);
         }
         if ($test) {
             $facts = self::withTestClick($facts);
@@ -433,6 +465,28 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
         }
 
         return $out;
+    }
+
+    /**
+     * What a refused request's body says, in a sentence: Google's error
+     * codes and messages, else its message, else nothing.
+     */
+    public static function failureText(string $body): string
+    {
+        try {
+            $decoded = json_decode($body, true, 32, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return '';
+        }
+        $error = is_array($decoded) ? ($decoded['error'] ?? null) : null;
+        $errors = self::errors($error);
+        if ($errors !== []) {
+            return self::describe($errors) . self::allowlistNote($errors);
+        }
+
+        return is_array($error) && is_string($error['message'] ?? null)
+            ? trim(mb_substr((string) preg_replace('/\s+/', ' ', $error['message']), 0, 200))
+            : '';
     }
 
     /**

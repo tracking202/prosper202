@@ -126,7 +126,9 @@ final class GoogleAdsDestinationTest extends TestCase
             ['settings.customer_id', ['customer_id' => '123-456-789', 'conversion_action' => '5']],
             ['settings.customer_id', ['conversion_action' => '5']],
             ['settings.login_customer_id', ['customer_id' => '1234567890', 'login_customer_id' => 'mcc', 'conversion_action' => '5']],
-            ['settings.conversion_action', ['customer_id' => '1234567890']],
+            ['settings.customer_id', ['login_customer_id' => '1112223333']],
+            ['settings.customer_id', ['campaign_conversion_actions' => [31 => '6']]],
+            ['settings.customer_id', ['customer_id' => '', 'conversion_action' => '5']],
             ['settings.conversion_action', ['customer_id' => '1234567890', 'conversion_action' => 'Purchase']],
             ['settings.conversion_action', ['customer_id' => '1234567890', 'conversion_action' => '0']],
             ['settings.campaign_conversion_actions', ['customer_id' => '1234567890', 'conversion_action' => '5', 'campaign_conversion_actions' => ['abc' => '6']]],
@@ -135,6 +137,46 @@ final class GoogleAdsDestinationTest extends TestCase
         foreach ($refused as [$field, $settings]) {
             self::refused(fn () => $this->ads()->validate($settings, null), $field);
         }
+    }
+
+    public function testTheAccountAndActionMayWaitToBePickedAndNothingIsSentUntilTheyAre(): void
+    {
+        $ads = $this->ads();
+        // Left out (or empty, as a form posts them), they are picked on Setup › Destinations after connecting.
+        self::assertSame([], $ads->validate([], null)[0]);
+        self::assertSame([], $ads->validate(['customer_id' => '', 'login_customer_id' => '', 'conversion_action' => ''], null)[0]);
+        self::assertSame(['customer_id' => '1234567890'], $ads->validate(['customer_id' => '123-456-7890'], null)[0]);
+        self::assertSame(
+            ['customer_id' => '1234567890', 'login_customer_id' => '1112223333'],
+            $ads->validate(['customer_id' => '1234567890', 'login_customer_id' => '1112223333'], null)[0]
+        );
+        self::assertFalse($ads->configured([]));
+        self::assertFalse($ads->configured(['customer_id' => '1234567890']));
+        self::assertFalse($ads->configured(['customer_id' => '1234567890', 'campaign_conversion_actions' => [31 => '6']]));
+        self::assertTrue($ads->configured(['customer_id' => '1234567890', 'conversion_action' => '5']));
+
+        foreach ([[], ['customer_id' => '1234567890']] as $settings) {
+            foreach ([false, true] as $test) {
+                $result = $ads->send($settings, self::credentials(), self::facts(), $test, self::NOW);
+                self::assertFalse($result->delivered);
+                self::assertTrue($result->retry, 'the conversion waits, it is not failed');
+                self::assertTrue($result->destinationWaits);
+                self::assertSame(self::NOW + GoogleAdsDestination::AUTH_WAIT, $result->waitUntil);
+                self::assertStringStartsWith(SendResult::FOR_OPERATOR . 'pick the Google Ads account', $result->reason);
+            }
+        }
+        self::assertSame([], $this->sent, 'nothing is asked of Google without an account');
+        // Not connected is said first: connecting comes before picking.
+        self::assertStringContainsString('not connected', $ads->send([], self::credentials(false), self::facts(), false, self::NOW)->reason);
+    }
+
+    public function testARefusedRequestsBodyIsSaidInASentence(): void
+    {
+        $failure = '{"error":{"code":403,"message":"The caller does not have permission","status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.ads.googleads.v26.errors.GoogleAdsFailure","errors":[{"errorCode":{"authorizationError":"DEVELOPER_TOKEN_NOT_APPROVED"},"message":"The developer token is only approved for use with test accounts."}]}]}}';
+        self::assertSame('DEVELOPER_TOKEN_NOT_APPROVED: The developer token is only approved for use with test accounts.', GoogleAdsDestination::failureText($failure));
+        self::assertSame('Request had invalid authentication credentials.', GoogleAdsDestination::failureText('{"error":{"code":401,"message":"Request had invalid   authentication credentials.","status":"UNAUTHENTICATED"}}'));
+        self::assertSame('', GoogleAdsDestination::failureText('<html>502</html>'));
+        self::assertSame('', GoogleAdsDestination::failureText('[]'));
     }
 
     public function testCredentialsNeedTheTokenAndTheClientAndNeverTakeATypedRefreshToken(): void

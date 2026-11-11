@@ -160,21 +160,39 @@ client: nothing passes through Tracking202.
      client ID and secret.
 3. **A conversion action** for uploads: *Goals › Conversions › New
    conversion action › Import › other data sources or CRMs › Track
-   conversions from clicks*. Its ID is the number after `ctId=` in its
-   address. For hashed email and phone, turn on *enhanced conversions for
-   leads* and accept the customer data terms in *Goals › Settings*.
-4. **The customer ID** of the account the conversions go to (`123-456-7890`,
-   top of Google Ads) and, when you reach it through a manager account, that
-   manager's ID as the login customer ID.
+   conversions from clicks*. For hashed email and phone, turn on *enhanced
+   conversions for leads* and accept the customer data terms in *Goals ›
+   Settings*.
+
+The account and the conversion action are picked on Setup › Destinations
+after you connect; their IDs are needed only for the CLI and the API: the
+customer ID of the account the conversions go to (`123-456-7890`, top of
+Google Ads), the manager's ID as the login customer ID when you reach the
+account through a manager, and the conversion action's ID, the number after
+`ctId=` in its address.
 
 ### Connect it
 
-Add the destination on Setup › Destinations (*Add Google Ads*) or with
-`p202 destination create --type google_ads`, then press **Connect Google
-Ads** (or run `p202 destination connect <id>` and open the address it
-prints, in a browser signed in to Prosper202 as the same user, within 10
-minutes). Google asks you to allow access to your Google Ads account and
-sends you back to the callback, which stores the refresh token. Until then
+On Setup › Destinations, *Add Google Ads* takes a name, the developer token
+and the OAuth client's ID and secret, and sends you straight to Google to
+allow access to your Google Ads account. Back on the page, the destination
+lists the accounts that Google user can open, each with the manager it is
+reached through, if any: pick the one the conversions go to, then its
+conversion action from the account's enabled actions that take uploaded
+clicks. One account or one action is picked for you to confirm. Until both
+are set the status is `needs_account` and conversions wait, using none of
+their tries. *change account or action* on a working destination opens the
+same lists. The lists are read from Google when the page shows them and are
+not stored; if Google refuses, the page says what it answered, and the IDs
+can be typed under *Advanced* when adding, or set with `p202 destination
+update`.
+
+With `p202 destination create --type google_ads` the IDs are flags; then
+press **Connect Google Ads** (or run `p202 destination connect <id>` and
+open the address it prints, in a browser signed in to Prosper202 as the same
+user, within 10 minutes). Google asks you to allow access to your Google Ads
+account and sends you back to the callback, which stores the refresh token.
+Until then
 the destination's status is `needs_authorisation` and its conversions wait
 as `pending`, using none of their tries; connecting makes them due at once.
 Access tokens are minted from the refresh token for each run and never
@@ -297,7 +315,9 @@ POST /api/v3/destinations
 ```
 
 A read shows `status`: `ready`, `needs_authorisation` (a Google Ads
-destination not connected yet) or `credentials_unreadable`, and `waiting`:
+destination not connected yet), `needs_account` (connected, with no
+`customer_id` or `conversion_action` yet: pick them on Setup › Destinations
+or set them with an update) or `credentials_unreadable`, and `waiting`:
 null, or `{"reason", "status_code", "until"}` while conversions wait for you
 (not connected, a refused refresh token, a developer token Google has not
 approved, lost access, a wrong customer ID or conversion action). `until` is

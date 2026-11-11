@@ -17500,11 +17500,15 @@ components:
           description: Whether credentials are stored. They are never served.
         status:
           type: string
-          enum: [ready, needs_authorisation, credentials_unreadable]
+          enum: [ready, needs_authorisation, needs_account, credentials_unreadable]
           description: |
             needs_authorisation: a Google Ads destination not yet connected
             to Google (POST /destinations/{id}/oauth/start); its conversions
-            wait, pending, and are sent once it is.
+            wait, pending, and are sent once it is. needs_account: a
+            connected Google Ads destination with no customer_id or
+            conversion_action yet; its conversions wait the same way until
+            both are set, by an update or by picking them on Setup ›
+            Destinations.
         waiting:
           type: object
           nullable: true
@@ -17573,7 +17577,10 @@ components:
           description: GA4 event parameter name to the click field it carries.
         customer_id:
           type: string
-          description: Google Ads customer ID the conversions are uploaded to, 10 digits (dashes are stripped).
+          description: >-
+            Google Ads customer ID the conversions are uploaded to, 10 digits (dashes are stripped).
+            May be left out with conversion_action when the destination is made,
+            to pick both on Setup › Destinations after connecting (status needs_account until then).
         login_customer_id:
           type: string
           description: The manager account the access goes through, when it is not the customer itself (10 digits).

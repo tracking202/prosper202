@@ -160,6 +160,71 @@ final class GoogleAdsIntegrationTest extends TestCase
         self::assertCount(1, $tokenRequests, 'one access token for the run');
     }
 
+    public function testADestinationMadeWithoutItsAccountWaitsUntilOneIsPickedAndLosesNothing(): void
+    {
+        require_once dirname(__DIR__, 2) . '/tracking202/setup/_includes/google_ads_picker.php';
+        // Made as Setup › Destinations makes it: a name and the three credentials.
+        $id = (int) $this->store()->create(1, GoogleAdsDestination::TYPE, 'Search', [], self::CREDENTIALS, time())['destination_id'];
+        self::assertSame('needs_authorisation', $this->store()->get(1, $id)['status']);
+        $now = time() + 1;
+        self::assertTrue($this->store()->authorise(1, $id, self::REFRESH, $now));
+        self::assertSame('needs_account', $this->store()->get(1, $id)['status'], 'connected, with nothing picked yet');
+
+        $this->adsClick(100, time() - 7 * 3600);
+        $this->record(100, 'ORD-1');
+        $out = $this->worker()->sendDue(10, 5, $now);
+        self::assertSame(1, $out['retrying']);
+        self::assertSame([], $this->requests, 'nothing is asked of Google without an account');
+        $row = self::deliveries($id)[0];
+        self::assertSame(['pending', '0'], [$row['status'], $row['attempts']], 'waiting is not a try');
+        self::assertStringContainsString('pick the Google Ads account and conversion action', (string) $this->store()->get(1, $id)['waiting']['reason']);
+
+        // Another account cannot pick for it, and a value that is no account is refused.
+        self::assertNull(p202_gads_pick($this->store(), 2, $id, ['gads_account' => '1234567890'], $now));
+        foreach (['', '12abc', '1234567890:', '1234567890:12', ['1234567890']] as $bad) {
+            try {
+                p202_gads_pick($this->store(), 1, $id, ['gads_account' => $bad, 'gads_conversion_action' => '987654'], $now);
+                self::fail('picked ' . json_encode($bad));
+            } catch (DestinationInputException $e) {
+                self::assertSame('settings.customer_id', $e->field);
+            }
+        }
+        try {
+            p202_gads_pick($this->store(), 1, $id, ['gads_account' => '1234567890', 'gads_conversion_action' => 'Purchase'], $now);
+            self::fail('picked a conversion action that is no ID');
+        } catch (DestinationInputException $e) {
+            self::assertSame('settings.conversion_action', $e->field);
+        }
+        self::assertSame('needs_account', $this->store()->get(1, $id)['status']);
+
+        // The account alone, reached through a manager: still nothing to send to.
+        self::assertFalse(p202_gads_pick($this->store(), 1, $id, ['gads_account' => '1234567890:1112223333'], $now));
+        self::assertSame('needs_account', $this->store()->get(1, $id)['status']);
+        // Then its action: ready, and what waited is due at once.
+        self::assertTrue(p202_gads_pick($this->store(), 1, $id, ['gads_account' => '1234567890:1112223333', 'gads_conversion_action' => '987654'], $now + 60));
+        $saved = $this->store()->get(1, $id);
+        self::assertSame('ready', $saved['status']);
+        self::assertSame(
+            ['customer_id' => '1234567890', 'login_customer_id' => '1112223333', 'conversion_action' => '987654', 'campaign_ids' => [], 'send_user_data' => false, 'consent' => []],
+            (array) $saved['settings']
+        );
+        $out = $this->worker()->sendDue(10, 5, $now + 60);
+        self::assertSame(1, $out['sent']);
+        self::assertSame('customers/1234567890/conversionActions/987654', $this->uploads()[0]['conversionAction']);
+
+        // Another account picked: its conversion actions are not the old account's, so they go;
+        // one reached directly drops the manager.
+        $this->store()->update(1, $id, ['settings' => ['campaign_conversion_actions' => [31 => '555']] + (array) $saved['settings']], $now + 61);
+        self::assertFalse(p202_gads_pick($this->store(), 1, $id, ['gads_account' => '5556667777'], $now + 62));
+        $moved = $this->store()->get(1, $id);
+        self::assertSame(['customer_id' => '5556667777', 'campaign_ids' => [], 'send_user_data' => false, 'consent' => []], (array) $moved['settings']);
+        self::assertSame('needs_account', $moved['status']);
+        // The same account picked again keeps what it has.
+        p202_gads_pick($this->store(), 1, $id, ['gads_account' => '5556667777', 'gads_conversion_action' => 'customers/1112223333/conversionActions/55'], $now + 63);
+        self::assertTrue(p202_gads_pick($this->store(), 1, $id, ['gads_account' => '5556667777'], $now + 64));
+        self::assertSame('customers/1112223333/conversionActions/55', ((array) $this->store()->get(1, $id)['settings'])['conversion_action']);
+    }
+
     public function testAClickUnderSixHoursOldWaitsForGoogleUncounted(): void
     {
         $id = $this->destination();

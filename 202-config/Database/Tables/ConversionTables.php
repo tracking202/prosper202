@@ -60,6 +60,7 @@ final class ConversionTables
             self::attributionRollupDirtyClicks(),
             self::offlineConversionFeeds(),
             self::offlineConversionNames(),
+            self::legacyGoogleFeedFetches(),
             self::postbackAuth(),
             self::destinations(),
             self::destinationDeliveries(),
@@ -381,6 +382,32 @@ final class ConversionTables
                 `conversion_name` varchar(100) NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`user_id`,`platform`,`aff_campaign_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The schedules still fetching paid 1.9.56's retired Google Ads feed
+     * (Prosper202\OfflineConversion\LegacyGoogleFeedFetches): one row per
+     * conversion action and campaign the old address named (aff_campaign_id
+     * 0 is its ac=--), with when it was last fetched. Written by a request
+     * nobody signed, so it is bounded (MAX_ROWS) and names no account.
+     * From 1.9.80, added by its rung.
+     */
+    public static function legacyGoogleFeedFetches(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::LEGACY_GOOGLE_FEED_FETCHES,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::LEGACY_GOOGLE_FEED_FETCHES . "` (
+                `fetch_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+                `aff_campaign_id` int(10) unsigned NOT NULL DEFAULT '0',
+                `conversion_name` varchar(100) COLLATE utf8mb4_bin NOT NULL,
+                `first_fetched_at` int(10) unsigned NOT NULL,
+                `last_fetched_at` int(10) unsigned NOT NULL,
+                `fetches` int(10) unsigned NOT NULL DEFAULT '1',
+                PRIMARY KEY (`fetch_id`),
+                UNIQUE KEY `schedule` (`aff_campaign_id`,`conversion_name`),
+                KEY `last_fetched_at` (`last_fetched_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

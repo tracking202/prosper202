@@ -355,7 +355,9 @@ final class DestinationStore
 
     /**
      * ready, or needs_authorisation (an AuthorisedDestination without its
-     * grant: its conversions wait), or credentials_unreadable.
+     * grant: its conversions wait), or needs_account (a connected Google Ads
+     * destination with no customer or conversion action picked yet: they
+     * wait too), or credentials_unreadable.
      *
      * @param array<string, mixed> $row
      */
@@ -382,7 +384,19 @@ final class DestinationStore
             }
         }
 
-        return $adapter->authorised($credentials) ? 'ready' : 'needs_authorisation';
+        if (!$adapter->authorised($credentials)) {
+            return 'needs_authorisation';
+        }
+        if ($adapter instanceof GoogleAdsDestination) {
+            try {
+                return $adapter->configured(self::decode((string) $row['settings'])) ? 'ready' : 'needs_account';
+            } catch (\JsonException | \RuntimeException) {
+                // Unreadable settings are shown as such by shape().
+                return 'ready';
+            }
+        }
+
+        return 'ready';
     }
 
     /**

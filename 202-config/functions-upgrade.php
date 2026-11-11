@@ -5009,6 +5009,9 @@ class UPGRADE
                 // attribution worker's run carries on (AttributionWorker::
                 // fanOutModelRecomputes()). Every model already there is at 0.
                 \Prosper202\Database\Tables\AttributionTables::attributionModels(),
+                // The schedules still fetching paid 1.9.56's retired Google Ads
+                // feed (Prosper202\OfflineConversion\LegacyGoogleFeedFetches).
+                \Prosper202\Database\Tables\ConversionTables::legacyGoogleFeedFetches(),
             ], [], [], true) && $paid_ok;
             if ($step_ok) {
                 _upgrade_seed_bot202_facebook_pixel_lookups();

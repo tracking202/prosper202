@@ -954,7 +954,8 @@ routes are not stageable. A `withheld` delivery is never retried: a guessed clic
 EEA/UK visitor without both consent signals stated `granted` (`last_error` says which);
 `failed` with `last_error` says why (GA4's answer, an event over 72 hours old, an address never called).
 A Google Ads destination with `status` `needs_authorisation` holds its conversions `pending` (no tries used)
-until a person opens `connect`'s `authorisation_url`; an agent cannot complete that step. A click under 6 hours
+until a person opens `connect`'s `authorisation_url`; an agent cannot complete that step. `needs_account` is one
+made on the Setup page whose account is not picked yet: `destination update <id> --customer-id … --conversion-action …` sets them. A click under 6 hours
 old also waits; one with no gclid/wbraid/gbraid and no hashed data is `withheld`. While conversions wait on
 something only a person can fix (a developer token Google has not approved, lost access, a wrong customer ID or
 conversion action), `destination get` shows `waiting` (`reason`, `status_code`, `until`); report the `reason`,

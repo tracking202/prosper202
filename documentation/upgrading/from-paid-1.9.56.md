@@ -95,7 +95,9 @@ These differ from 1.9.56 on purpose and stay that way.
   and Microsoft Advertising files for a rolling window of 1 to 90 days, and
   gives scheduled fetch URLs. See
   [Offline conversions](../features/offline-conversions.md). The old
-  scheduled Google feed URL answers `410 Gone` and names its replacement.
+  scheduled Google feed URL answers `410 Gone` and names its replacement;
+  while Google Ads keeps fetching it, Setup › Offline Conversions lists the
+  schedule and moves it over with one button.
 - **The daily email report is retired.** Its cron address,
   `202-cronjobs/daily-email.php`, now answers `410 Gone`.
 - **The `landing.js` loader ignores `rsid`** in old snippets.

@@ -213,4 +213,86 @@ final class WebhookSenderTest extends TestCase
             fclose($server);
         }
     }
+    /**
+     * read() makes a request as post() does, as a GET when it has no body,
+     * and hands back what the transport read.
+     */
+    public function testAReadIsAGetOrAPostWithTheSameHardening(): void
+    {
+        $sender = $this->sender(static fn (): array => ['93.184.216.34'], ['primary_ip' => '93.184.216.34', 'body' => '{"ok":true}']);
+        $got = $sender->read('https://api.example.com/list', null, ['Accept: application/json'], [443]);
+        $posted = $sender->read('https://api.example.com/search', '{"query":"x"}', ['Content-Type: application/json'], [443]);
+
+        self::assertSame([null, null, 200, '{"ok":true}'], [$got['refused'], $got['strayed'], $got['status'], $got['body']]);
+        self::assertSame(200, $posted['status']);
+        [$get, $post] = $this->sent;
+        self::assertTrue($get[CURLOPT_HTTPGET]);
+        self::assertArrayNotHasKey(CURLOPT_POST, $get);
+        self::assertArrayNotHasKey(CURLOPT_POSTFIELDS, $get);
+        self::assertTrue($post[CURLOPT_POST]);
+        self::assertSame('{"query":"x"}', $post[CURLOPT_POSTFIELDS]);
+        // Everything else is post()'s set, value for value.
+        $target = (new WebhookGuard(static fn (): array => ['93.184.216.34'], ''))->check('https://api.example.com/search', [443]);
+        self::assertSame(WebhookSender::curlOptions($target, '{"query":"x"}', ['Content-Type: application/json']), $post);
+        $rest = $get;
+        unset($rest[CURLOPT_HTTPGET]);
+        $expected = WebhookSender::curlOptions((new WebhookGuard(static fn (): array => ['93.184.216.34'], ''))->check('https://api.example.com/list', [443]), '', ['Accept: application/json']);
+        unset($expected[CURLOPT_POST], $expected[CURLOPT_POSTFIELDS]);
+        self::assertSame($expected, $rest);
+
+        // The guard refuses a read as it refuses a post: nothing is sent.
+        $this->sent = [];
+        $refused = $this->sender(static fn (): array => ['10.0.0.5'])->read('https://internal.example.com/list', null, [], [443]);
+        self::assertNotNull($refused['refused']);
+        self::assertSame([], $this->sent);
+    }
+
+    /**
+     * The real transport keeps a read's answer whole up to its cap, where
+     * post() keeps the first 1,000 bytes (plain http here, the one change to
+     * the options, so the listener needs no certificate).
+     */
+    public function testTheRealTransportKeepsAReadWholeUpToItsCap(): void
+    {
+        $listener = <<<'PHP'
+            $s = @stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr);
+            if ($s === false) { echo "no: $errstr\n"; exit; }
+            $name = stream_socket_get_name($s, false);
+            echo substr($name, strrpos($name, ':') + 1), "\n";
+            for ($n = 0; $n < 2; $n++) {
+                $c = @stream_socket_accept($s, 10);
+                if ($c === false) { exit; }
+                fread($c, 65536);
+                fwrite($c, "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 200000\r\n\r\n");
+                for ($i = 0; $i < 20 && @fwrite($c, str_repeat('y', 10000)) !== false; $i++) {}
+                fclose($c);
+            }
+            PHP;
+        $process = proc_open([PHP_BINARY, '-r', $listener], [1 => ['pipe', 'w']], $pipes);
+        self::assertIsResource($process);
+        try {
+            $port = trim((string) fgets($pipes[1]));
+            if (!ctype_digit($port)) {
+                self::markTestSkipped('no listener on 127.0.0.1 here: ' . $port);
+            }
+            $target = (new WebhookGuard(static fn (): array => ['127.0.0.1'], '127.0.0.1/32'))->check('https://list.invalid:' . $port . '/p202');
+            $options = WebhookSender::curlOptions($target, '', []);
+            unset($options[CURLOPT_POST], $options[CURLOPT_POSTFIELDS]);
+            $options[CURLOPT_HTTPGET] = true;
+            $options[CURLOPT_URL] = 'http://list.invalid:' . $port . '/p202';
+            $options[CURLOPT_PROTOCOLS] = CURLPROTO_HTTP;
+
+            $whole = WebhookSender::curlTransport($options, WebhookSender::MAX_READ_BYTES, WebhookSender::MAX_READ_BYTES);
+            self::assertSame([200, null, 200000], [$whole['status'], $whole['error'], strlen($whole['body'])]);
+            self::assertSame('127.0.0.1', $whole['primary_ip'], 'connected through the pin');
+
+            $cut = WebhookSender::curlTransport($options, 50000, 50000);
+            self::assertSame(200, $cut['status']);
+            self::assertNotNull($cut['error'], 'cut off at the cap');
+            self::assertLessThanOrEqual(50000, strlen($cut['body']));
+        } finally {
+            proc_terminate($process);
+            proc_close($process);
+        }
+    }
 }
