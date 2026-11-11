@@ -55,7 +55,7 @@ $slack = Slack::forAccount($db, (int) ($_SESSION['user_id'] ?? 0)) ?? false;
 // Account/key settings require the same permission that gates their UI; reject
 // forged requests from users who lack it (the password-change flow is excluded
 // because every user may change their own password).
-$personalSettingsPost = ['add_rest_api_key', 'remove_rest_api_key', 'replace_rest_api_key', 'stop_ai_watcher', 'update_account_currency', 'record_unrecorded_currency', 'update_clickserver_api_key', 'change_user_api_key', 'change_user_stats202_app_key', 'update_p202_customer_api_key', 'update_click_filter', 'add_click_filter_entry', 'remove_click_filter_entry', 'update_money_loss_alerts', 'send_test_money_loss_alert'];
+$personalSettingsPost = ['add_rest_api_key', 'remove_rest_api_key', 'replace_rest_api_key', 'stop_ai_watcher', 'update_account_currency', 'record_earlier_currency', 'update_clickserver_api_key', 'change_user_api_key', 'change_user_stats202_app_key', 'update_p202_customer_api_key', 'update_click_filter', 'add_click_filter_entry', 'remove_click_filter_entry', 'update_money_loss_alerts', 'send_test_money_loss_alert'];
 $personalSettingsGet = ['customers_api_key', 'remove_user_stats202_app_key', 'remove_user_api_key', 'test_click_filter'];
 $wantsPersonalSettingsAction = false;
 foreach ($personalSettingsPost as $personalSettingsAction) {
@@ -631,26 +631,49 @@ if (!empty($_POST['update_account_currency']) && $_POST['update_account_currency
 	}
 }
 
-// Conversions the upgrade could not give a currency (the account's currency was
-// changed before each conversion kept its own): recorded on the owner's word.
-if (!empty($_POST['record_unrecorded_currency']) && $_POST['record_unrecorded_currency'] == '1') {
+// Conversions recorded before 1.9.80 kept no currency of their own: the upgrade
+// labelled them with the account's currency then, or left them unrecorded when
+// it could not tell (RowCurrency). The owner says which currency those before a
+// date were in; a conversion recorded with its currency is never changed.
+if (!empty($_POST['record_earlier_currency']) && $_POST['record_earlier_currency'] == '1') {
 	if (!AUTH::check_csrf_token()) {
 		p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
 		p202_account_redirect('202-account/account.php#currency');
 	}
 	$earlierCurrency = (string) ($_POST['earlier_currency'] ?? '');
+	$earlierZone = new DateTimeZone(\Prosper202\Report\AccountZone::normalize((string) ($user_row['user_timezone'] ?? '')));
+	// A day's midnight in the account's zone (CLAUDE.md #26).
+	$earlierDay = static function (string $field) use ($earlierZone): ?int {
+		$day = trim((string) ($_POST[$field] ?? ''));
+		$at = preg_match('/\A\d{4}-\d{2}-\d{2}\z/', $day) === 1 ? DateTimeImmutable::createFromFormat('!Y-m-d', $day, $earlierZone) : false;
+		return $at !== false && $at->format('Y-m-d') === $day ? $at->getTimestamp() : null;
+	};
+	$earlierBefore = $earlierDay('earlier_before');
+	$earlierSinceGiven = trim((string) ($_POST['earlier_since'] ?? '')) !== '';
+	$earlierSince = $earlierSinceGiven ? $earlierDay('earlier_since') : null;
 	if (!in_array($earlierCurrency, \Api\V3\Controllers\UsersController::SUPPORTED_CURRENCIES, true)) {
 		$keyErrors['earlier_currency'] = 'Choose a currency from the list.';
-	} else {
+	}
+	if ($earlierBefore === null) {
+		$keyErrors['earlier_before'] = 'Enter the date of the change, as YYYY-MM-DD.';
+	}
+	if ($earlierSinceGiven && $earlierSince === null) {
+		$keyErrors['earlier_since'] = 'Enter a date as YYYY-MM-DD, or leave it empty.';
+	} elseif ($earlierSince !== null && $earlierBefore !== null && $earlierSince >= $earlierBefore) {
+		$keyErrors['earlier_since'] = 'This date must be before the date of the change.';
+	}
+	if (!isset($keyErrors['earlier_currency']) && !isset($keyErrors['earlier_before']) && !isset($keyErrors['earlier_since'])) {
 		try {
-			$recorded = \Prosper202\Conversion\Ledger\RowCurrency::recordForUnrecorded(
-				new \Prosper202\Database\Connection($db), (int) $_SESSION['user_id'], $earlierCurrency
+			$recorded = \Prosper202\Conversion\Ledger\RowCurrency::recordBefore(
+				new \Prosper202\Database\Connection($db), (int) $_SESSION['user_id'], $earlierCurrency, $earlierBefore, $earlierSince
 			);
 			// What was held back from the ad platforms for want of a currency goes out at the worker's next run.
 			(new \Prosper202\Destinations\DestinationQueue(new \Prosper202\Database\Connection($db)))
 				->releaseHeldForCurrency((int) $_SESSION['user_id'], time());
-			p202_account_flash($recorded['left'] === 0 ? 'ok' : 'warn', number_format($recorded['stamped']) . ' earlier conversion'
-				. ($recorded['stamped'] === 1 ? ' is' : 's are') . ' now recorded in ' . $earlierCurrency . '.'
+			p202_account_flash($recorded['left'] === 0 ? 'ok' : 'warn', ($recorded['stamped'] === 0
+				? 'No conversion changed: every one in that range was already recorded in ' . $earlierCurrency . ', or was recorded with its own currency.'
+				: number_format($recorded['stamped']) . ' earlier conversion' . ($recorded['stamped'] === 1 ? ' is' : 's are')
+					. ' now recorded in ' . $earlierCurrency . '.')
 				. ($recorded['left'] > 0 ? ' ' . number_format($recorded['left']) . ' are still to do: save again to continue.' : ''));
 			p202_account_redirect('202-account/account.php#currency');
 		} catch (Throwable $failed) {
@@ -1001,10 +1024,15 @@ $keyScope = static function (mixed $raw): array {
 
 $currencyValue = (string)($_POST['account_currency'] ?? ($user_row['user_account_currency'] ?? 'USD'));
 $sel = static fn (string $code): string => $currencyValue === $code ? ' selected' : '';
-// Ledger rows the upgrade could give no currency (RowCurrency): the Currency panel offers to record one.
+// Ledger rows the upgrade could give no currency (RowCurrency), and the
+// account's recorded changes of currency: the Currency panel shows both.
 $unrecordedConversions = $canPersonal
 	? \Prosper202\Conversion\Ledger\RowCurrency::unrecorded(new \Prosper202\Database\Connection($db), (int) $_SESSION['user_id'])
 	: 0;
+$currencyChanges = $canPersonal
+	? \Prosper202\User\CurrencyChange::history(new \Prosper202\Database\Connection($db), (int) $_SESSION['user_id'])
+	: [];
+$currencyChangeZone = new DateTimeZone(\Prosper202\Report\AccountZone::normalize((string) ($user_row['user_timezone'] ?? '')));
 $currentTimezone = $profileValue('user_timezone', 'user_timezone');
 // The select offers PHP's list, which leaves out the backward-compatible
 // names a renamed zone keeps (Europe/Kiev, Europe/Kyiv since 2022). An
@@ -1265,25 +1293,47 @@ echo p202_account_render_flashes($extraFlashes);
 						<div class="form-text">Changing it converts your campaign payouts to the new currency (a paid feature). Conversions already recorded are not converted: each keeps the currency it was recorded in, new ones are recorded in the new currency, and reports say how much of a period is in each.</div>
 						<?php echo p202_account_field_error($keyErrors, 'account_currency'); ?>
 					</form>
-					<?php if ($unrecordedConversions > 0) { ?>
+					<?php if ($currencyChanges !== []) { ?>
+					<div class="form-text mt-3">Changes of currency:
+						<?php echo implode('; ', array_map(
+							static fn (array $c): string => $e((new DateTimeImmutable('@' . $c['changed_at']))->setTimezone($currencyChangeZone)->format('Y-m-d')
+								. ' from ' . $c['from'] . ' to ' . $c['to']),
+							$currencyChanges
+						)); ?>.
+					</div>
+					<?php } ?>
 					<form method="post" class="mt-3" action="<?php echo $e(get_absolute_url() . '202-account/account.php#currency'); ?>">
-						<input type="hidden" name="record_unrecorded_currency" value="1">
+						<input type="hidden" name="record_earlier_currency" value="1">
 						<?php echo p202_account_token_field(); ?>
-						<label class="form-label" for="earlier_currency"><?php echo $e(number_format($unrecordedConversions)); ?> earlier conversion<?php echo $unrecordedConversions === 1 ? ' has' : 's have'; ?> no currency recorded</label>
-						<div class="input-group">
-							<select class="form-select<?php echo p202_account_invalid($keyErrors, 'earlier_currency'); ?>" name="earlier_currency" id="earlier_currency" required>
+						<span class="form-label d-block" id="earlier_label"><?php echo $unrecordedConversions > 0
+							? $e(number_format($unrecordedConversions)) . ' earlier conversion' . ($unrecordedConversions === 1 ? ' has' : 's have') . ' no currency recorded'
+							: 'Conversions recorded before 1.9.80'; ?></span>
+						<div class="input-group" role="group" aria-labelledby="earlier_label">
+							<span class="input-group-text">Before</span>
+							<input type="date" class="form-control<?php echo p202_account_invalid($keyErrors, 'earlier_before'); ?>" name="earlier_before" id="earlier_before" aria-label="The date of the change" required value="<?php echo $e((string) ($_POST['earlier_before'] ?? '')); ?>">
+							<span class="input-group-text">they were in</span>
+							<select class="form-select<?php echo p202_account_invalid($keyErrors, 'earlier_currency'); ?>" name="earlier_currency" id="earlier_currency" aria-label="Their currency" required>
 								<?php // None is offered as the answer: only the owner knows which it was. ?>
 								<option value="" selected disabled>Choose a currency</option>
 								<?php foreach (\Api\V3\Controllers\UsersController::SUPPORTED_CURRENCIES as $code) {
 									echo '<option value="' . $e($code) . '">' . $e($code) . '</option>';
 								} ?>
 							</select>
-							<button class="btn btn-secondary" type="submit">Record this currency</button>
+							<button class="btn btn-secondary" type="submit">Record</button>
 						</div>
-						<div class="form-text">Prosper202 cannot tell which currency these were recorded in: the account's currency was changed, or a campaign was paid in another currency, before each conversion kept its own. It shows them without one. If they were all recorded in one currency, choose it.</div>
+						<div class="form-text">Before 1.9.80 a conversion kept no currency of its own. The upgrade labelled each with your account's currency then<?php echo $unrecordedConversions > 0 ? ', and left these without one because it could not tell' : ''; ?>. If you changed your account currency before the upgrade, give the date of the change and the currency you counted in before it. Only those conversions change, with their refunds: one recorded with its own currency, as every conversion has been since the upgrade, keeps it.</div>
+						<?php echo p202_account_field_error($keyErrors, 'earlier_before'); ?>
 						<?php echo p202_account_field_error($keyErrors, 'earlier_currency'); ?>
+						<details class="p202-disclosure mt-2"<?php echo isset($keyErrors['earlier_since']) ? ' open' : ''; ?>>
+							<summary>Advanced <span class="p202-disclosure__hint">changed more than once</span></summary>
+							<div class="p202-disclosure__body">
+								<label class="form-label" for="earlier_since">From</label>
+								<input type="date" class="form-control<?php echo p202_account_invalid($keyErrors, 'earlier_since'); ?>" name="earlier_since" id="earlier_since" value="<?php echo $e((string) ($_POST['earlier_since'] ?? '')); ?>">
+								<div class="form-text">Only the conversions on or after this date. If you changed currency twice, record each period: the first change's date and the currency before it, with this empty; then the second change's date and the currency between the two, with the first change's date here.</div>
+								<?php echo p202_account_field_error($keyErrors, 'earlier_since'); ?>
+							</div>
+						</details>
 					</form>
-					<?php } ?>
 				</div>
 			</section>
 

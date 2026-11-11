@@ -40,6 +40,10 @@ use Prosper202\Database\Schema\TableRegistry;
  * pixel sent when `click_payout` is that amount converted into the account's
  * currency; NULL on every other row. Only codes this code wrote are stored
  * and no key is over them, so they keep the table's collation.
+ * `currency_basis` says how `currency` is known (RowCurrency::BASIS_*):
+ * written with the row (0), labelled by the 1.9.80 upgrade with the
+ * account's currency then (1), or said by the owner (2). Personal settings
+ * lets the owner correct the rows that are not 0.
  *
  * `user_currency_click_time` is the reports' read of a period's revenue that
  * is not in the account's currency (Ledger\RevenueCurrencies): it reads only
@@ -115,6 +119,7 @@ final class ConversionTables
                 `currency` char(3) NOT NULL DEFAULT '',
                 `stated_amount` decimal(11,5) DEFAULT NULL,
                 `stated_currency` char(3) DEFAULT NULL,
+                `currency_basis` tinyint(1) unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`conv_id`),
                 UNIQUE KEY `uniq_click_dedupe` (`click_id`,`dedupe_key`),
                 KEY `click_transaction` (`click_id`,`transaction_id`),

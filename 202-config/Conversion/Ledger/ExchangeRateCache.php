@@ -118,9 +118,10 @@ final class ExchangeRateCache
     /**
      * Ask the rate service for every pair a campaign needs whose kept rate
      * is missing or a day old, at most $limit a run. A pair the service does
-     * not answer keeps the rate it has, and is asked again next run. Past
-     * $limit due pairs the run starts at a different one each hour, so pairs
-     * that never answer cannot keep the others from being asked.
+     * not answer keeps the rate it has, and is asked again next run. Each
+     * hour's run starts at a different due pair, so pairs that never answer
+     * cannot keep the others from being asked, whether the run stops at
+     * $limit or at its caller's time budget (ExchangeRates::refreshKept()).
      *
      * @param callable(string $from, string $to, string $amount): ?string $convert
      *        $amount in $from, in $to; null when no rate could be had
@@ -131,7 +132,7 @@ final class ExchangeRateCache
         $fetched = 0;
         $failed = [];
         $due = self::duePairs($conn, $now);
-        if (count($due) > $limit) {
+        if (count($due) > 1) {
             usort($due, static fn (array $a, array $b): int => strcmp($a[0] . '>' . $a[1], $b[0] . '>' . $b[1]));
             $start = intdiv($now, 3600) % count($due);
             $due = array_merge(array_slice($due, $start), array_slice($due, 0, $start));

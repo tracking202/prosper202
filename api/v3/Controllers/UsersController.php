@@ -1091,6 +1091,9 @@ class UsersController
         unset($clean['chart_time_range']);
 
         $currencyUpdates = [];
+        // The live service, unless a caller passed its own: the rate refresh
+        // after the write then waits 10 s a pair, not the service's 60.
+        $liveRates = $rate === null;
         if (isset($clean['user_account_currency'])) {
             $currency = (string) $clean['user_account_currency'];
             $rate ??= ExchangeRates::foreignPayout(...);
@@ -1114,7 +1117,8 @@ class UsersController
             $clean['cb_verified'] = 0;
         }
 
-        $conn->transaction(function () use ($conn, $userId, $clean, $chartRange, $currencyUpdates): void {
+        $storedCurrency = (string) ($current['user_account_currency'] ?? '');
+        $conn->transaction(function () use ($conn, $userId, $clean, $chartRange, $currencyUpdates, $storedCurrency): void {
             if ($clean !== []) {
                 $sets = [];
                 $types = '';
@@ -1127,6 +1131,9 @@ class UsersController
                 $conn->executeUpdate($stmt);
             }
             CurrencyChange::apply($conn, $currencyUpdates);
+            if (isset($clean['user_account_currency'])) {
+                CurrencyChange::record($conn, $userId, $storedCurrency, (string) $clean['user_account_currency'], time());
+            }
             if ($chartRange !== null) {
                 $this->saveChartRange($conn, $userId, (string) $chartRange);
             }
@@ -1138,7 +1145,10 @@ class UsersController
             // converted with (ExchangeRateCache), from the same service.
             \Prosper202\Conversion\Ledger\ExchangeRateCache::refreshQuietly(
                 $conn,
-                static function (string $from, string $to, string $amount) use ($rate): ?string {
+                static function (string $from, string $to, string $amount) use ($rate, $liveRates): ?string {
+                    if ($liveRates) {
+                        return ExchangeRates::convert($from, $to, $amount, 10);
+                    }
                     $answer = $rate($from, $to, $amount);
                     $value = is_array($answer) ? ($answer['exchange_payout'] ?? null) : null;
 

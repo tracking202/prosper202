@@ -83,7 +83,7 @@ final class LedgerRowsCarryTheirCurrencyTest extends TestCase
             'record() names the currency columns on its insert'
         );
         self::assertStringContainsString(
-            'UPDATE 202_conversion_logs SET currency = ? WHERE conv_id = ?',
+            'UPDATE 202_conversion_logs SET currency = ?, currency_basis = ? WHERE conv_id = ?',
             $files['202-config/Conversion/Ledger/MysqlConversionLedger.php'],
             'the legacy baseline is stamped in the transaction that inserts it'
         );

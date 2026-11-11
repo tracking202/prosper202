@@ -47,6 +47,7 @@ final class TableRegistry
     public const string ALERT_SETTINGS = '202_alert_settings';
     public const string ALERT_STATE = '202_alert_state';
     public const string ALERT_LOG = '202_alert_log';
+    public const string CURRENCY_CHANGES = '202_currency_changes';
     public const string USER_DATA_FEEDBACK = 'user_data_feedback';
 
     // Click tables

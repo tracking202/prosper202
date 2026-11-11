@@ -303,12 +303,14 @@ final class LedgerCurrencyIntegrationTest extends TestCase
         $this->campaign(7);
         $this->click(100, 7);
 
+        $refusal = null;
         try {
             $this->record(100, ['transaction_id' => 'A', 'payout' => '7.00', 'currency' => 'dollars'], 'clickbank');
-            self::fail('a currency that is not a three-letter code was accepted');
         } catch (\RuntimeException $e) {
-            self::assertStringContainsString('three-letter code', $e->getMessage());
+            $refusal = $e->getMessage();
         }
+        self::assertNotNull($refusal, 'a currency that is not a three-letter code was accepted');
+        self::assertStringContainsString('three-letter code', $refusal);
         self::assertSame('0', (string) self::$db->query('SELECT COUNT(*) AS n FROM 202_conversion_logs')->fetch_assoc()['n']);
     }
 
@@ -366,34 +368,72 @@ final class LedgerCurrencyIntegrationTest extends TestCase
         $this->click(102, 7, '12.00', 1);
         $old = static fn (int $click, string $currency): string => "INSERT INTO 202_conversion_logs SET click_id=$click, transaction_id='OLD-$click',
             campaign_id=7, click_payout=12, user_id=1, click_time=1, conv_time=1, source='postback', dedupe_key='tx:OLD-$click',
-            superseded_reason='pre_ledger', currency='$currency'";
+            superseded_reason='pre_ledger', currency='$currency', currency_basis=" . ($currency === '' ? 0 : 1);
         self::fixture($old(100, 'GBP'));
         $this->account('EUR');
-        $baseline = static fn (int $click): string => (string) self::$db->query(
-            "SELECT currency FROM 202_conversion_logs WHERE click_id=$click AND source='legacy_baseline'"
-        )->fetch_assoc()['currency'];
+        // Its currency and how that is known: from before the upgrade, so as the upgrade labelled it.
+        $baseline = static fn (int $click): string => implode('/', self::$db->query(
+            "SELECT currency, currency_basis FROM 202_conversion_logs WHERE click_id=$click AND source='legacy_baseline'"
+        )->fetch_row());
 
         $this->record(100, ['transaction_id' => 'NEW']);
-        self::assertSame('GBP', $baseline(100), 'its pre-ledger row\'s currency');
+        self::assertSame('GBP/1', $baseline(100), 'its pre-ledger row\'s currency');
 
         $this->record(101, ['transaction_id' => 'NEW']);
-        self::assertSame('EUR', $baseline(101), 'no row, and every row of the account has a currency: the account\'s');
+        self::assertSame('EUR/1', $baseline(101), 'no row, and every row of the account has a currency: the account\'s');
 
         self::fixture($old(103, ''));
         $this->record(102, ['transaction_id' => 'NEW']);
-        self::assertSame('', $baseline(102), 'the account holds rows with no currency recorded, so this value\'s is not known either');
+        self::assertSame('/0', $baseline(102), 'the account holds rows with no currency recorded, so this value\'s is not known either');
     }
 
-    public function testTheOwnerCanRecordACurrencyForTheRowsThatHaveNone(): void
+    public function testTheOwnerSaysWhichCurrencyTheConversionsBeforeADateWereIn(): void
     {
-        self::fixture("INSERT INTO 202_conversion_logs (click_id, campaign_id, click_payout, user_id, click_time, conv_time, dedupe_key, currency) VALUES
-            (1, 7, 5, 1, 1, 1, 'row:1', ''), (2, 7, 5, 1, 1, 1, 'row:2', ''), (3, 7, 5, 1, 1, 1, 'row:3', 'USD'), (4, 7, 5, 2, 1, 1, 'row:4', '')");
+        $w = RowCurrency::BASIS_WRITTEN;
+        $u = RowCurrency::BASIS_UPGRADE;
+        self::fixture("INSERT INTO 202_conversion_logs (conv_id, click_id, campaign_id, click_payout, user_id, click_time, conv_time, dedupe_key, currency, currency_basis, reverses_conv_id) VALUES
+            (1, 1, 7, 5, 1, 1, 100, 'row:1', '', $w, NULL),
+            (2, 2, 7, 5, 1, 1, 100, 'row:2', 'EUR', $u, NULL),
+            (3, 3, 7, 5, 1, 1, 100, 'row:3', 'USD', $w, NULL),
+            (4, 4, 7, 5, 2, 1, 100, 'row:4', '', $w, NULL),
+            (5, 5, 7, 5, 1, 1, 500, 'row:5', 'EUR', $u, NULL),
+            (6, 2, 7, -5, 1, 1, 600, 'row:6', 'EUR', $w, 2),
+            (7, 7, 7, 5, 1, 1, 40, 'row:7', 'EUR', $u, NULL),
+            (8, 7, 7, -5, 1, 1, 100, 'row:8', 'EUR', $u, 7)");
+        $rows = static fn (): array => array_map(
+            static fn (array $r): string => $r['currency'] . '/' . $r['currency_basis'],
+            array_column(self::$db->query('SELECT conv_id, currency, currency_basis FROM 202_conversion_logs ORDER BY conv_id')->fetch_all(MYSQLI_ASSOC), null, 'conv_id')
+        );
 
-        self::assertSame(2, RowCurrency::unrecorded($this->conn, self::USER));
-        self::assertSame(['stamped' => 2, 'left' => 0], RowCurrency::recordForUnrecorded($this->conn, self::USER, 'GBP'));
+        self::assertSame(1, RowCurrency::unrecorded($this->conn, self::USER));
+        self::assertSame(['stamped' => 5, 'left' => 0], RowCurrency::recordBefore($this->conn, self::USER, 'GBP', 300));
+        self::assertSame(
+            [1 => 'GBP/2', 2 => 'GBP/2', 3 => 'USD/0', 4 => '/0', 5 => 'EUR/1', 6 => 'GBP/0', 7 => 'GBP/2', 8 => 'GBP/1'],
+            $rows(),
+            'the account\'s rows before the date that nothing recorded a currency with (1, 2, 7), and the refunds of them'
+            . ' (6, 8) whenever recorded; not a row written with its currency (3), another account\'s (4), or a later one (5)'
+        );
+        self::assertSame(['stamped' => 0, 'left' => 0], RowCurrency::recordBefore($this->conn, self::USER, 'GBP', 300), 'said again, nothing changes');
 
-        $currencies = array_column(self::$db->query('SELECT click_id, currency FROM 202_conversion_logs ORDER BY click_id')->fetch_all(MYSQLI_ASSOC), 'currency', 'click_id');
-        self::assertSame([1 => 'GBP', 2 => 'GBP', 3 => 'USD', 4 => ''], $currencies, 'only this account\'s rows with none');
+        self::assertSame(['stamped' => 3, 'left' => 0], RowCurrency::recordBefore($this->conn, self::USER, 'EUR', 300, 50), 'a mistake is said again');
+        self::assertSame(
+            [1 => 'EUR/2', 2 => 'EUR/2', 3 => 'USD/0', 4 => '/0', 5 => 'EUR/1', 6 => 'EUR/0', 7 => 'GBP/2', 8 => 'GBP/1'],
+            $rows(),
+            'from the start date on; a refund in the range follows its sale before it (8), so nothing is left to do'
+        );
+    }
+
+    public function testTheOwnersRangeMustBeACurrencyAndNotEmpty(): void
+    {
+        foreach ([['dollars', 300, null], ['', 300, null], ['GBP', 300, 300], ['GBP', 300, 400]] as [$currency, $before, $since]) {
+            $refused = false;
+            try {
+                RowCurrency::recordBefore($this->conn, self::USER, $currency, $before, $since);
+            } catch (\InvalidArgumentException) {
+                $refused = true;
+            }
+            self::assertTrue($refused, $currency . ' ' . $before . ' ' . var_export($since, true));
+        }
     }
 
     public function testTheCronRefreshAsksOnlyForThePairsCampaignsNeedThatAreADayOld(): void
@@ -443,13 +483,28 @@ final class LedgerCurrencyIntegrationTest extends TestCase
             $starts,
             'each hour starts at another pair, so every pair is asked within three hours'
         );
+
+        // Under the limit too: a run its caller's time budget stops after the
+        // first pair (ExchangeRates::refreshKept()) still reaches every pair in turn.
+        $first = [];
+        foreach ([3, 4, 5] as $hour) {
+            $asked = 0;
+            ExchangeRateCache::refresh($this->conn, static function (string $from) use (&$asked, &$first): ?string {
+                if ($asked++ === 0) {
+                    $first[] = $from;
+                }
+
+                return null;
+            }, $hour * 3600 + 5, 10);
+        }
+        self::assertSame(['AUD', 'EUR', 'GBP'], $first, 'every pair is first within three hours, whatever the limit');
     }
 
     public function testBeforeTheUpgradeAddsTheColumnsARowIsStillWritten(): void
     {
         $this->campaign(7);
         $this->click(100, 7);
-        self::$db->query('ALTER TABLE 202_conversion_logs DROP KEY user_currency_click_time, DROP COLUMN currency, DROP COLUMN stated_amount, DROP COLUMN stated_currency');
+        self::$db->query('ALTER TABLE 202_conversion_logs DROP KEY user_currency_click_time, DROP COLUMN currency, DROP COLUMN stated_amount, DROP COLUMN stated_currency, DROP COLUMN currency_basis');
         try {
             // A new handle: one that saw the columns is not asked again.
             $db = mysqli_connect(
@@ -481,6 +536,7 @@ final class LedgerCurrencyIntegrationTest extends TestCase
         } finally {
             self::$db->query("ALTER TABLE 202_conversion_logs ADD COLUMN currency char(3) NOT NULL DEFAULT '' AFTER match_method,
                 ADD COLUMN stated_amount decimal(11,5) DEFAULT NULL AFTER currency, ADD COLUMN stated_currency char(3) DEFAULT NULL AFTER stated_amount,
+                ADD COLUMN currency_basis tinyint(1) unsigned NOT NULL DEFAULT '0' AFTER stated_currency,
                 ADD KEY user_currency_click_time (user_id, currency, click_time)");
         }
     }

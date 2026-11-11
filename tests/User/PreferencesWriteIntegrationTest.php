@@ -73,7 +73,7 @@ final class PreferencesWriteIntegrationTest extends TestCase
         $u = self::USER;
         foreach (["DELETE FROM 202_users WHERE user_id = $u", "DELETE FROM 202_users_pref WHERE user_id = $u",
             "DELETE FROM 202_aff_campaigns WHERE user_id = $u", "DELETE FROM 202_charts WHERE user_id = $u",
-            'DELETE FROM 202_exchange_rates'] as $sql) {
+            'DELETE FROM 202_exchange_rates', "DELETE FROM 202_currency_changes WHERE user_id = $u"] as $sql) {
             self::$db->query($sql);
         }
         self::$db->query("INSERT INTO 202_users SET user_id = $u, user_name = 'prefs$u', user_pass = 'x', user_email = 'p$u@example.com',"
@@ -134,6 +134,14 @@ final class PreferencesWriteIntegrationTest extends TestCase
         self::assertSame('EUR', $back['currency_change']['from']);
         self::assertSame([9101 => ['12.50', '0.00'], 9102 => ['4.00', '0.00']], $this->payouts());
         self::assertSame([], $asked);
+
+        // Each change is recorded with it, so nothing later has to infer it.
+        self::assertSame(
+            [['USD', 'EUR'], ['EUR', 'USD']],
+            self::$db->query('SELECT from_currency, to_currency FROM 202_currency_changes WHERE user_id = ' . self::USER . ' ORDER BY change_id')->fetch_all()
+        );
+        (new UsersController(self::$db))->updatePreferences(self::USER, ['user_pref_limit' => 50], $rate);
+        self::assertSame('2', (string) self::$db->query('SELECT COUNT(*) FROM 202_currency_changes WHERE user_id = ' . self::USER)->fetch_row()[0], 'a write that leaves the currency records none');
     }
 
     public function testACampaignWithNoForeignPayoutIsConvertedFromTheOldAccountCurrency(): void

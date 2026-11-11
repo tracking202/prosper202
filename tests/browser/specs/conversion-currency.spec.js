@@ -64,18 +64,21 @@ function seed(db) {
   });
 }
 
+/** The form that records the currency of conversions before a date. */
+const EARLIER_FORM = '#currency form:has(input[name="record_earlier_currency"])';
+
 /** What the Account currency panel says, as a reader sees it. */
 async function currencyPanel(ui) {
   return ui.page.evaluate(() => {
     const panel = document.querySelector('#currency');
     if (!panel) { return null; }
     const text = (el) => (el ? (el.innerText || '').replace(/\s+/g, ' ').trim() : null);
-    const record = panel.querySelector('form input[name="record_unrecorded_currency"]');
+    const record = panel.querySelector('form input[name="record_earlier_currency"]');
     const form = record ? record.closest('form') : null;
     return {
       help: text(panel.querySelector('form .form-text')),
       account: (panel.querySelector('#account_currency') || {}).value || null,
-      offer: form ? text(form.querySelector('label')) : null,
+      offer: form ? text(form.querySelector('#earlier_label')) : null,
       offerHelp: form ? text(form.querySelector('.form-text')) : null,
       offerButton: form ? text(form.querySelector('button[type="submit"]')) : null,
       offerChoice: form ? form.querySelector('select').value : null,
@@ -159,12 +162,12 @@ module.exports = {
             expect.ok(String(panel.help).includes(BEFORE_SAVING), 'what a change does to earlier conversions is said before saving', String(panel.help));
             expect.ok(String(panel.help).includes('new ones are recorded in the new currency'), 'and what it does to new ones', String(panel.help));
             expect.eq(panel.offer, '1 earlier conversion has no currency recorded', 'the conversions with no currency are counted');
-            expect.eq(panel.offerButton, 'Record this currency', 'with a control to record one');
+            expect.eq(panel.offerButton, 'Record', 'with a control to record one');
             expect.eq(panel.offerChoice, '', 'which chooses no currency for the owner');
-            expect.ok(String(panel.offerHelp).includes('If they were all recorded in one currency, choose it'), 'and why it is the owner\'s to say', String(panel.offerHelp));
+            expect.ok(String(panel.offerHelp).includes('If you changed your account currency before the upgrade, give the date of the change'), 'and why it is the owner\'s to say', String(panel.offerHelp));
             expect.ok(await onScreen(ui, '#currency'), 'the page lands on the panel');
             const select = await ui.box('#earlier_currency');
-            const button = await ui.box('#currency form + form button[type="submit"]');
+            const button = await ui.box(EARLIER_FORM + ' button[type="submit"]');
             expect.ok(select !== null && button !== null && select.width >= 80, 'the currency select keeps a usable width beside its button', JSON.stringify(select));
             await checks.baseline(sub);
             await checks.componentClassesAreStyled(sub);
@@ -246,12 +249,13 @@ module.exports = {
             const { ui, app } = session;
             expect.section('Recording a currency at ' + width + 'x' + height);
             await app.goto('/202-account/account.php#currency');
+            await ui.fill({ '#earlier_before': '2100-01-01' });
             await ui.select('#earlier_currency', 'USD');
-            await app.submit('#currency form + form button[type="submit"]');
+            await app.submit(EARLIER_FORM + ' button[type="submit"]');
             let panel = await currencyPanel(ui);
             expect.eq(panel.flashes, ['1 earlier conversion is now recorded in USD.'], 'the panel says what was recorded');
             expect.ok(await onScreen(ui, '#currency .p202-flash__body'), 'where the page lands');
-            expect.eq(panel.offer, null, 'and the offer is gone: no conversion is without a currency');
+            expect.eq(panel.offer, 'Conversions recorded before 1.9.80', 'and no conversion is counted as without a currency; the offer to correct stays');
             expect.eq(db.value("SELECT currency FROM 202_conversion_logs WHERE transaction_id='ORD-1003'"), 'USD', 'the conversion holds it');
             expect.eq(db.value("SELECT currency FROM 202_conversion_logs WHERE transaction_id='ORD-1001'"), 'EUR', 'and one that had a currency keeps it');
 

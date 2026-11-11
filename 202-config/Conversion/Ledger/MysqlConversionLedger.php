@@ -262,8 +262,9 @@ final class MysqlConversionLedger
         // The row's currency, in this transaction; without the column (the
         // upgrade has not run) the upgrade stamps it.
         if (RowCurrency::columnsPresent($this->conn)) {
-            $stamp = $this->conn->prepareWrite('UPDATE 202_conversion_logs SET currency = ? WHERE conv_id = ?');
-            $this->conn->bind($stamp, 'si', [$this->carriedCurrency($clickId, $userId, $baselineId), $baselineId]);
+            [$currency, $basis] = $this->carriedCurrency($clickId, $userId, $baselineId);
+            $stamp = $this->conn->prepareWrite('UPDATE 202_conversion_logs SET currency = ?, currency_basis = ? WHERE conv_id = ?');
+            $this->conn->bind($stamp, 'sii', [$currency, $basis, $baselineId]);
             $this->conn->executeUpdate($stamp);
         }
 
@@ -280,28 +281,34 @@ final class MysqlConversionLedger
     }
 
     /**
-     * The currency of the value a pre-ledger click carries: its newest
-     * pre-ledger row's, as the upgrade recorded it (none for an account
-     * whose currency it could not tell). A click whose value was set by
-     * writes that left no row takes the account's, unless the account holds
-     * rows with no currency recorded: then this value's is not known either.
+     * The currency of the value a pre-ledger click carries, with how it is
+     * known (RowCurrency::BASIS_*): its newest pre-ledger row's, as the
+     * upgrade or the owner recorded it (none for an account whose currency
+     * the upgrade could not tell). A click whose value was set by writes
+     * that left no row takes the account's, labelled as the upgrade labels
+     * (the value is from before it), unless the account holds rows with no
+     * currency recorded: then this value's is not known either.
+     *
+     * @return array{0: string, 1: int}
      */
-    private function carriedCurrency(int $clickId, int $userId, int $baselineId): string
+    private function carriedCurrency(int $clickId, int $userId, int $baselineId): array
     {
         $stmt = $this->conn->prepareWrite(
-            "SELECT currency FROM 202_conversion_logs
+            "SELECT currency, currency_basis FROM 202_conversion_logs
              WHERE click_id = ? AND superseded_reason = 'pre_ledger' ORDER BY conv_id DESC LIMIT 1"
         );
         $this->conn->bind($stmt, 'i', [$clickId]);
         $row = $this->conn->fetchOne($stmt);
         if ($row !== null) {
-            return RowCurrency::read($row['currency'] ?? null);
+            return [RowCurrency::read($row['currency'] ?? null), (int) $row['currency_basis']];
         }
         // The baseline itself is just inserted, and not stamped yet.
         $unrecorded = $this->conn->prepareWrite("SELECT 1 FROM 202_conversion_logs WHERE user_id = ? AND currency = '' AND conv_id <> ? LIMIT 1");
         $this->conn->bind($unrecorded, 'ii', [$userId, $baselineId]);
 
-        return $this->conn->fetchOne($unrecorded) !== null ? RowCurrency::UNKNOWN : RowCurrency::ofAccount($this->conn, $userId);
+        return $this->conn->fetchOne($unrecorded) !== null
+            ? [RowCurrency::UNKNOWN, RowCurrency::BASIS_WRITTEN]
+            : [RowCurrency::ofAccount($this->conn, $userId), RowCurrency::BASIS_UPGRADE];
     }
 
     /**

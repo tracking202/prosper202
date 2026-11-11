@@ -16,13 +16,26 @@ use Prosper202\Database\Connection;
  * whose account had no preferences row to read when the upgrade backfilled
  * it. Every reader takes a stored value through read(), which answers a
  * three-letter code or UNKNOWN and nothing else.
+ *
+ * currency_basis says how the currency is known: written with the row
+ * (BASIS_WRITTEN), labelled by the 1.9.80 upgrade with the account's
+ * currency at the time (BASIS_UPGRADE), or said by the owner
+ * (BASIS_OWNER). Only rows that are not BASIS_WRITTEN, and unrecorded ones,
+ * are the owner's to correct (recordBefore()).
  */
 final class RowCurrency
 {
     public const UNKNOWN = '';
 
+    public const BASIS_WRITTEN = 0;
+    public const BASIS_UPGRADE = 1;
+    public const BASIS_OWNER = 2;
+
     /** The ledger's currency columns, as a SELECT list names them. */
-    public const COLUMNS = 'currency, stated_amount, stated_currency';
+    public const COLUMNS = 'currency, stated_amount, stated_currency, currency_basis';
+
+    /** Rows one statement of recordBefore() changes. */
+    private const BATCH = 20000;
 
     /** @var \WeakMap<\mysqli, true>|null handles whose table was seen to have the columns */
     private static ?\WeakMap $present = null;
@@ -71,32 +84,73 @@ final class RowCurrency
     }
 
     /**
-     * Record $currency on the account's rows that have none, on the owner's
-     * word: the upgrade leaves a row unrecorded when it cannot tell which
-     * currency the account counted in when the row was written, and only
-     * the owner knows. In batches, so no write to a conversion waits long;
-     * returns how many rows were stamped and how many are still to do
-     * (above 0 only when $maxBatches ran out: ask again).
+     * Record, on the owner's word, that the account's conversions recorded
+     * before $before (and from $since, when given) were in $currency.
+     *
+     * Only rows whose currency nothing wrote with them change: those the
+     * upgrade labelled with the account's currency at the time, those it
+     * could not label, and those the owner said before (so a mistake can be
+     * said again). A row written with its currency is never touched, though
+     * its conversion time is in the range: an import of old conversions
+     * says its own. Each changed row is marked BASIS_OWNER.
+     *
+     * A reversal is in its sale's currency, so it is never chosen by its own
+     * time: the reversals of every row the owner has said follow it,
+     * whenever they were recorded.
+     *
+     * In batches, each leaving the selection (the rows it changed now hold
+     * $currency on the owner's word), so no write to a conversion waits long;
+     * returns how many rows were changed and how many are still to do (above
+     * 0 only when $maxBatches ran out: ask again).
      *
      * @return array{stamped: int, left: int}
      */
-    public static function recordForUnrecorded(Connection $conn, int $userId, string $currency, int $maxBatches = 200): array
-    {
+    public static function recordBefore(
+        Connection $conn,
+        int $userId,
+        string $currency,
+        int $before,
+        ?int $since = null,
+        int $maxBatches = 200
+    ): array {
         if (self::read($currency) !== $currency || $currency === self::UNKNOWN) {
             throw new \InvalidArgumentException('"' . $currency . '" is not a currency code');
         }
+        if ($since !== null && $since >= $before) {
+            throw new \InvalidArgumentException('the range is empty: it starts at or after its end');
+        }
+        // A reversal is never chosen by its own time: it follows its sale, below.
+        $where = ' WHERE user_id = ? AND reverses_conv_id IS NULL AND conv_time < ?' . ($since !== null ? ' AND conv_time >= ?' : '')
+            . " AND (currency = '' OR currency_basis <> " . self::BASIS_WRITTEN . ')'
+            . ' AND NOT (currency = ? AND currency_basis = ' . self::BASIS_OWNER . ')';
+        $types = 'ii' . ($since !== null ? 'i' : '') . 's';
+        $values = [$userId, $before, ...($since !== null ? [$since] : []), $currency];
+
         $stamped = 0;
         for ($batch = 0; $batch < $maxBatches; $batch++) {
-            $stmt = $conn->prepareWrite("UPDATE 202_conversion_logs SET currency = ? WHERE user_id = ? AND currency = '' LIMIT 20000");
-            $conn->bind($stmt, 'si', [$currency, $userId]);
+            $stmt = $conn->prepareWrite('UPDATE 202_conversion_logs SET currency = ?, currency_basis = '
+                . self::BASIS_OWNER . $where . ' LIMIT ' . self::BATCH);
+            $conn->bind($stmt, 's' . $types, [$currency, ...$values]);
             $changed = $conn->executeUpdate($stmt);
             $stamped += $changed;
-            if ($changed < 20000) {
+            if ($changed < self::BATCH) {
                 break;
             }
         }
 
-        return ['stamped' => $stamped, 'left' => self::unrecorded($conn, $userId)];
+        $follow = $conn->prepareWrite(
+            'UPDATE 202_conversion_logs r JOIN 202_conversion_logs s'
+            . ' ON s.conv_id = r.reverses_conv_id AND s.user_id = r.user_id'
+            . ' SET r.currency = s.currency'
+            . ' WHERE r.user_id = ? AND s.currency_basis = ' . self::BASIS_OWNER . ' AND r.currency <> s.currency'
+        );
+        $conn->bind($follow, 'i', [$userId]);
+        $stamped += $conn->executeUpdate($follow);
+
+        $left = $conn->prepareWrite('SELECT COUNT(*) AS n FROM 202_conversion_logs' . $where);
+        $conn->bind($left, $types, $values);
+
+        return ['stamped' => $stamped, 'left' => (int) ($conn->fetchOne($left)['n'] ?? 0)];
     }
 
     /**
@@ -143,7 +197,7 @@ final class RowCurrency
             if (!Connection::isMysqlError($current, 1054, '')) {
                 continue;
             }
-            foreach (["'currency'", "'stated_amount'", "'stated_currency'"] as $column) {
+            foreach (["'currency'", "'stated_amount'", "'stated_currency'", "'currency_basis'"] as $column) {
                 if (str_contains($current->getMessage(), $column)) {
                     return true;
                 }

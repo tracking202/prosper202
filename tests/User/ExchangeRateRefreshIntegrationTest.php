@@ -177,7 +177,10 @@ final class ExchangeRateRefreshIntegrationTest extends TestCase
         $result = ExchangeRates::refreshKept($this->conn, time());
 
         self::assertSame(0, $result['fetched']);
-        self::assertSame(['CAD>USD', 'CHF>USD', 'EUR>USD', 'GBP>USD', 'JPY>USD', 'SEK>USD'], $result['failed']);
+        // Each hour's run starts at another pair (ExchangeRateCache::refresh()), so the order is the hour's.
+        $failed = $result['failed'];
+        sort($failed);
+        self::assertSame(['CAD>USD', 'CHF>USD', 'EUR>USD', 'GBP>USD', 'JPY>USD', 'SEK>USD'], $failed);
         self::assertSame($before, $this->kept(), 'each pair keeps the rate it had');
         self::assertSame(
             ['/api/v2/get-foreign-payout'],
@@ -186,7 +189,9 @@ final class ExchangeRateRefreshIntegrationTest extends TestCase
         );
         $lines = $this->logged();
         self::assertCount(1, $lines, 'one line for the run, not one for each pair');
-        self::assertStringContainsString('CAD>USD, CHF>USD, EUR>USD, GBP>USD, JPY>USD, SEK>USD', $lines[0]);
+        foreach ($failed as $pair) {
+            self::assertStringContainsString($pair, $lines[0]);
+        }
     }
 
     public function testARunStopsAskingWhenItsTimeIsUpAndThePairsItDidNotReachAreNotFailures(): void

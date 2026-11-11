@@ -97,25 +97,36 @@ set the campaign's currency to it under Setup › Campaigns.
 
 Before 1.9.80 no conversion kept its currency, and every page showed it in
 the account's currency of the moment. The upgrade gives each earlier
-conversion a currency where it can tell:
+conversion a currency where it can tell, and marks it as given by the
+upgrade:
 
 - **An account whose currency shows no sign of having changed**: its
-  conversions are recorded in the account's currency. The only sign the
-  upgrade can read is the one a change leaves on the campaigns' payouts, and
-  a change can leave none (every campaign was already in the new currency,
-  or the account had no campaign): such an account's earlier conversions are
-  recorded in its current currency whichever currency they were in. If your
-  account changed currency before the upgrade, check the currency shown on
-  its earlier conversions.
+  conversions are labelled with the account's currency at the upgrade. The
+  only sign the upgrade can read is the one a change leaves on the
+  campaigns' payouts, and a change can leave none: every campaign was
+  already in the new currency, the campaigns are paid only by the amounts
+  their postbacks send (a payout of 0, as a store's are), or the account
+  had no campaign. Such an account's earlier conversions are labelled with
+  its current currency whichever currency they were in.
 - **An account whose currency was changed before the upgrade** (the change
   left its mark on the campaigns' payouts), or that has a campaign paid in
   another currency (a campaign paid in another currency counts even if the
-  account never changed currency): Prosper202 cannot tell which conversions were recorded
-  under which currency, so it records none for them. They show with
-  "currency not recorded", are counted apart in the reports' notice, and
-  are left out of offline conversion files.
+  account never changed currency): Prosper202 cannot tell which conversions
+  were recorded under which currency, so it records none for them. They
+  show with "currency not recorded", are counted apart in the reports'
+  notice, and are left out of offline conversion files and held back from
+  destinations.
 
-If you know those earlier conversions were all recorded in one currency,
-say so under **Account › Personal settings › Account currency**: choose the
-currency and press **Record this currency**. It applies only to conversions
-that have none.
+If you changed your account currency before the upgrade, say when under
+**Account › Personal settings › Account currency**: give the date of the
+change in **Before** and the currency you counted in before it, and press
+**Record**. The conversions recorded before that date that the upgrade
+labelled, or left without a currency, take it, and so do their refunds;
+what was held back from a destination for want of a currency goes out. A
+conversion recorded with its own currency, as every conversion has been
+since the upgrade, is never changed, and you can say it again if you got
+it wrong. If you changed currency more than once, record each period: open
+**Advanced** and give the date it starts in **From**.
+
+From 1.9.80 each change of the account's currency is recorded when it is
+made (when, from and to), and Personal settings lists them.

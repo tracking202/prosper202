@@ -252,7 +252,7 @@ final class LedgerCurrencyPagesIntegrationTest extends TestCase
             . self::str(\Prosper202\Destinations\DestinationQueue::NO_CURRENCY) . ', created_at = 1');
 
         $saved = self::request('202-account/account.php', [
-            'P202_SU_POST' => '{"record_unrecorded_currency":"1","earlier_currency":"GBP","token":"SESSION"}',
+            'P202_SU_POST' => '{"record_earlier_currency":"1","earlier_before":"2100-01-01","earlier_currency":"GBP","token":"SESSION"}',
         ]);
         self::assertNull($saved['result']['error'] ?? null, $saved['output']);
         $currencies = self::$db->query('SELECT transaction_id, currency FROM 202_conversion_logs WHERE user_id = ' . self::USER . ' ORDER BY transaction_id');
@@ -264,12 +264,31 @@ final class LedgerCurrencyPagesIntegrationTest extends TestCase
 
         // A request with no session token records nothing.
         self::q("UPDATE 202_conversion_logs SET currency = '' WHERE user_id = " . self::USER . " AND transaction_id = 'B'");
-        self::request('202-account/account.php', ['P202_SU_POST' => '{"record_unrecorded_currency":"1","earlier_currency":"GBP"}']);
+        self::request('202-account/account.php', ['P202_SU_POST' => '{"record_earlier_currency":"1","earlier_before":"2100-01-01","earlier_currency":"GBP"}']);
         $kept = self::$db->query('SELECT currency FROM 202_conversion_logs WHERE user_id = ' . self::USER . " AND transaction_id = 'B'");
         self::assertInstanceOf(\mysqli_result::class, $kept);
         self::assertSame([['']], $kept->fetch_all());
 
         $gone = self::request('202-account/account.php');
         self::assertStringContainsString('1 earlier conversion has no currency recorded', self::text($gone['output']));
+
+        // A date that is no day records nothing, and says which field.
+        $refused = self::request('202-account/account.php', [
+            'P202_SU_POST' => '{"record_earlier_currency":"1","earlier_before":"2026-02-30","earlier_currency":"GBP","token":"SESSION"}',
+        ]);
+        self::assertStringContainsString('Enter the date of the change, as YYYY-MM-DD.', self::text($refused['output']));
+        $still = self::$db->query('SELECT currency FROM 202_conversion_logs WHERE user_id = ' . self::USER . " AND transaction_id = 'B'");
+        self::assertInstanceOf(\mysqli_result::class, $still);
+        self::assertSame([['']], $still->fetch_all());
+
+        // The account's changes of currency are listed, in its zone's dates.
+        self::q('DELETE FROM 202_currency_changes WHERE user_id = ' . self::USER);
+        self::q('INSERT INTO 202_currency_changes SET user_id = ' . self::USER . ", changed_at = 1767268800, from_currency = 'USD', to_currency = 'EUR'");
+        try {
+            $listed = self::text(self::request('202-account/account.php')['output']);
+            self::assertStringContainsString('Changes of currency: 2026-01-01 from USD to EUR.', $listed);
+        } finally {
+            self::q('DELETE FROM 202_currency_changes WHERE user_id = ' . self::USER);
+        }
     }
 }

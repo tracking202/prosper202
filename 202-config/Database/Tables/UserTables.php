@@ -36,6 +36,7 @@ final class UserTables
             self::alertSettings(),
             self::alertState(),
             self::alertLog(),
+            self::currencyChanges(),
         ];
     }
 
@@ -485,6 +486,27 @@ final class UserTables
                 PRIMARY KEY (`alert_id`),
                 UNIQUE KEY `incident` (`user_id`, `aff_campaign_id`, `alert_kind`, `incident_key`),
                 KEY `user_seen` (`user_id`, `last_seen_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * Each change of an account's currency, from 1.9.80 (CurrencyChange::record()):
+     * when, and from and to which. Written in the transaction that changes
+     * it, so nothing later has to infer it. Personal settings lists them.
+     */
+    public static function currencyChanges(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::CURRENCY_CHANGES,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CURRENCY_CHANGES . "` (
+                `change_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `changed_at` int(10) unsigned NOT NULL,
+                `from_currency` char(3) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `to_currency` char(3) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                PRIMARY KEY (`change_id`),
+                KEY `user_changed` (`user_id`, `changed_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

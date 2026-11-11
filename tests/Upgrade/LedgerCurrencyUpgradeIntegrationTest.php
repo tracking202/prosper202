@@ -27,7 +27,7 @@ final class LedgerCurrencyUpgradeIntegrationTest extends TestCase
 {
     use \Tests\Report\ScratchReportDatabase;
 
-    private const TABLES = ['202_conversion_logs', '202_exchange_rates'];
+    private const TABLES = ['202_conversion_logs', '202_exchange_rates', '202_currency_changes'];
     private const STEADY = 7871;
     private const CHANGED = 7872;
     private const NO_PREFS = 7873;
@@ -79,8 +79,9 @@ final class LedgerCurrencyUpgradeIntegrationTest extends TestCase
     private static function as1979(): void
     {
         self::q('ALTER TABLE 202_conversion_logs DROP INDEX user_currency_click_time, DROP COLUMN currency,'
-            . ' DROP COLUMN stated_amount, DROP COLUMN stated_currency');
+            . ' DROP COLUMN stated_amount, DROP COLUMN stated_currency, DROP COLUMN currency_basis');
         self::q('DROP TABLE 202_exchange_rates');
+        self::q('DROP TABLE 202_currency_changes');
         self::q('DELETE FROM 202_version');
         self::row('202_version', ['version' => '1.9.79']);
     }
@@ -143,6 +144,13 @@ final class LedgerCurrencyUpgradeIntegrationTest extends TestCase
             self::currencies(),
             'the account\'s currency where nothing says it changed; none where it did, or where there is no account to ask'
         );
+        $basis = self::$db->query('SELECT click_id, currency_basis FROM 202_conversion_logs WHERE click_id BETWEEN 978710001 AND 978750001 ORDER BY click_id');
+        self::assertInstanceOf(\mysqli_result::class, $basis);
+        self::assertSame(
+            [978710001 => '1', 978710002 => '1', 978720001 => '0', 978730001 => '0', 978740001 => '1', 978750001 => '0'],
+            array_map('strval', array_column($basis->fetch_all(MYSQLI_ASSOC), 'currency_basis', 'click_id')),
+            'each row the upgrade labelled says so, for the owner to correct; an unrecorded one is known by its currency'
+        );
         $version = self::$db->query('SELECT version FROM 202_version');
         self::assertInstanceOf(\mysqli_result::class, $version);
         self::assertSame('1.9.80', $version->fetch_row()[0]);
@@ -161,6 +169,9 @@ final class LedgerCurrencyUpgradeIntegrationTest extends TestCase
         self::assertSame('RETURNED true', $out, $err);
         self::assertStringNotContainsString('Prosper202 upgrade', $err);
         self::assertSame([978710003 => 'USD', 978710004 => 'EUR'], self::currencies());
+        $basis = self::$db->query('SELECT click_id, currency_basis FROM 202_conversion_logs WHERE click_id IN (978710003, 978710004) ORDER BY click_id');
+        self::assertInstanceOf(\mysqli_result::class, $basis);
+        self::assertSame([978710003 => '0', 978710004 => '1'], array_map('strval', array_column($basis->fetch_all(MYSQLI_ASSOC), 'currency_basis', 'click_id')));
     }
 
     /** @return array<string, string> */

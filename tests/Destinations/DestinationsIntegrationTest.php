@@ -184,7 +184,7 @@ final class DestinationsIntegrationTest extends TestCase
 
         // The owner records the currency those conversions were in, and what was held goes out in it.
         $conn = new Connection(self::$db);
-        self::assertSame(['stamped' => 1, 'left' => 0], \Prosper202\Conversion\Ledger\RowCurrency::recordForUnrecorded($conn, 1, 'GBP'));
+        self::assertSame(['stamped' => 1, 'left' => 0], \Prosper202\Conversion\Ledger\RowCurrency::recordBefore($conn, 1, 'GBP', 4102444800));
         self::assertSame(1, (new DestinationQueue($conn))->releaseHeldForCurrency(1, $now + 10), 'this account\'s one held row');
         self::assertSame('withheld', self::deliveries($other)[0]['status'], 'another account\'s is left as it is');
 

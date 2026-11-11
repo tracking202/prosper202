@@ -269,6 +269,7 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
                 "ALTER TABLE `202_conversion_logs` ADD COLUMN `currency` char(3) NOT NULL DEFAULT '' AFTER `match_method`",
                 'ALTER TABLE `202_conversion_logs` ADD COLUMN `stated_amount` decimal(11,5) DEFAULT NULL AFTER `currency`',
                 'ALTER TABLE `202_conversion_logs` ADD COLUMN `stated_currency` char(3) DEFAULT NULL AFTER `stated_amount`',
+                "ALTER TABLE `202_conversion_logs` ADD COLUMN `currency_basis` tinyint(1) unsigned NOT NULL DEFAULT '0' AFTER `stated_currency`",
                 'ALTER TABLE `202_conversion_logs` ADD KEY `user_conv_time` (`user_id`,`conv_time`)',
                 'ALTER TABLE `202_conversion_logs` ADD KEY `user_currency_click_time` (`user_id`,`currency`,`click_time`)',
             ],

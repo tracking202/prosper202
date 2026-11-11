@@ -322,11 +322,17 @@ if (!function_exists('_upgrade_ledger_currency_backfill')) {
      * cannot be known, so its rows keep '' (not recorded, RowCurrency): they
      * are shown without a currency, and Personal settings lets the owner say
      * which one they were. So does a row whose account has no preferences
-     * row. The sign is not reliable either way, and nothing else records a
-     * change: a change that cleared it (every campaign already in the new
-     * currency, or none left) is not seen, and those rows take the current
-     * currency; one foreign-paid campaign with no change at all leaves the
-     * rows unrecorded. Both are said in the upgrade's changelog entry.
+     * row. The sign is not reliable either way, and nothing else recorded a
+     * change: a change that cleared it is not seen (every campaign already
+     * in the new currency, campaigns paid only by postback amounts with a
+     * payout of 0, or none left), and those rows take the current currency;
+     * one foreign-paid campaign with no change at all leaves the rows
+     * unrecorded. So every row this labels is marked as labelled
+     * (currency_basis, RowCurrency::BASIS_UPGRADE), and Personal settings
+     * lets the owner say which currency the conversions before a date were
+     * in, for those rows and the unrecorded ones (RowCurrency::recordBefore()).
+     * From 1.9.80 a change of currency is recorded when it is made
+     * (CurrencyChange::record()).
      *
      * Only rows with no currency are touched, so a re-run changes nothing
      * (0.05 s a range), and rows the new code wrote are left alone. In
@@ -344,6 +350,7 @@ if (!function_exists('_upgrade_ledger_currency_backfill')) {
             ['currency', "`currency` char(3) NOT NULL DEFAULT '' AFTER `match_method`"],
             ['stated_amount', '`stated_amount` decimal(11,5) DEFAULT NULL AFTER `currency`'],
             ['stated_currency', '`stated_currency` char(3) DEFAULT NULL AFTER `stated_amount`'],
+            ['currency_basis', "`currency_basis` tinyint(1) unsigned NOT NULL DEFAULT '0' AFTER `stated_currency`"],
         ] as [$column, $ddl]) {
             if (array_key_exists($column, $columns)) {
                 continue;
@@ -407,7 +414,8 @@ if (!function_exists('_upgrade_ledger_currency_backfill')) {
             foreach ($accounts as $currency => $users) {
                 // A constant per statement, by primary-key range: a join to
                 // the preferences took three times as long (0.58 s a range).
-                $sql = "UPDATE `202_conversion_logs` SET `currency` = '" . $currency . "' WHERE `currency` = ''"
+                $sql = "UPDATE `202_conversion_logs` SET `currency` = '" . $currency . "', `currency_basis` = "
+                    . \Prosper202\Conversion\Ledger\RowCurrency::BASIS_UPGRADE . " WHERE `currency` = ''"
                     . ' AND `user_id` IN (' . implode(',', $users) . ')' . $where;
                 if (_upgrade_query($sql) === false) {
                     error_log('Prosper202 upgrade: failed to give the ledger rows their currency; the step will retry.');
@@ -1116,7 +1124,6 @@ if (!function_exists('_upgrade_measurement_tables')) {
                 && !_upgrade_hash_api_keys()) {
                 $ok = false;
             }
-
         }
 
         // The sign-ins and new accounts it kept are essential.
@@ -5154,6 +5161,8 @@ class UPGRADE
                 // The alerts each account was raised, shown on Home and the
                 // settings card (MysqlAlertStore).
                 \Prosper202\Database\Tables\UserTables::alertLog(),
+                // Each change of an account's currency from now on (CurrencyChange::record()).
+                \Prosper202\Database\Tables\UserTables::currencyChanges(),
                 // The rates a postback's amount on a campaign paid in another
                 // currency is converted with (Ledger\ExchangeRateCache). Before
                 // the ledger's columns: a writer that finds those reads this.
