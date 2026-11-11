@@ -170,6 +170,7 @@ final class TrafficSourceOwnersSettingsPanelIntegrationTest extends TestCase
 
     private static function cleanUp(): void
     {
+        self::q("DELETE FROM 202_change_log WHERE entity = 'traffic_source_split'");
         $users = implode(',', array_keys(self::ROLES));
         foreach (['202_user_role', '202_users_pref', '202_users', '202_clicks', '202_dirty_hours'] as $table) {
             self::q("DELETE FROM $table WHERE user_id IN ($users)");
@@ -177,6 +178,8 @@ final class TrafficSourceOwnersSettingsPanelIntegrationTest extends TestCase
         // A split's copies are in these users' accounts.
         self::q("DELETE FROM 202_ppc_networks WHERE user_id IN ($users)");
         self::q('DELETE FROM 202_ppc_networks WHERE ppc_network_id IN (' . self::TAKEN . ', ' . self::SHARED . ')');
+        self::q('DELETE FROM 202_ppc_network_variables WHERE ppc_network_id IN (' . self::TAKEN . ', '
+            . self::SHARED . ')');
         self::q('DELETE FROM 202_ppc_accounts WHERE ppc_account_id BETWEEN 880300 AND 880399');
         $roles = self::SETTINGS_ROLE . ', ' . self::BARE_ADMIN_ROLE;
         self::q("DELETE FROM 202_role_permission WHERE role_id IN ($roles)");
@@ -394,6 +397,107 @@ final class TrafficSourceOwnersSettingsPanelIntegrationTest extends TestCase
         $none = self::settings(self::ADMIN)['out'];
         self::assertStringContainsString(self::HEADER, $none);
         self::assertStringNotContainsString('traffic-source-owners-notice', $none, 'nothing listed, nothing said');
+    }
+
+    /**
+     * A listed source with custom variables: the notice, the panel and the
+     * report the API answers say, in one sentence, that clicks on the other
+     * users' accounts are not recording their values. A source with none,
+     * or with only a removed one, says nothing.
+     */
+    public function testEverySurfaceSaysWhenCustomVariablesAreNotRecorded(): void
+    {
+        require_once dirname(__DIR__, 2) . '/202-config/functions-traffic-source-owners-ui.php';
+        $note = \Prosper202\Setup\TrafficSourceOwners::VARIABLES_NOTE;
+        self::assertStringContainsString('Custom variable values are not being recorded', $note);
+        self::assertStringContainsString('moved back or split', $note);
+        $said = htmlspecialchars($note, ENT_QUOTES, 'UTF-8');
+        $pill = 'custom variables not recorded';
+
+        self::row('202_ppc_network_variables', ['ppc_network_id' => self::SHARED, 'name' => 'Old',
+            'parameter' => 'old', 'placeholder' => '{old}', 'deleted' => 1]);
+        $data = \p202_ts_owners_controller(self::$db, self::ADMIN)->report()['data'];
+        self::assertSame(0, $data['variables_unrecorded']);
+        self::assertNull($data['variables_note']);
+        self::assertSame([false, false], array_column($data['sources'], 'variables_unrecorded'));
+        foreach ([[], self::REVIEW] as $get) {
+            $out = self::settings(self::ADMIN, $get)['out'];
+            self::assertStringContainsString('id="traffic-source-owners-notice"', $out);
+            self::assertStringNotContainsString($said, $out, 'no listed source has a custom variable');
+            self::assertStringNotContainsString($pill, $out);
+        }
+
+        self::row('202_ppc_network_variables', ['ppc_network_id' => self::TAKEN, 'name' => 'Placement',
+            'parameter' => 'placement', 'placeholder' => '{placement}']);
+        foreach ([true, false] as $counts) {
+            $data = \p202_ts_owners_controller(self::$db, self::ADMIN)->report($counts)['data'];
+            self::assertSame(1, $data['variables_unrecorded']);
+            self::assertSame($note, $data['variables_note']);
+            self::assertSame(
+                [self::TAKEN => true, self::SHARED => false],
+                array_column($data['sources'], 'variables_unrecorded', 'ppc_network_id')
+            );
+        }
+
+        $notice = self::settings(self::ADMIN)['out'];
+        self::assertSame(1, substr_count($notice, $said), 'the notice says it, with the panel closed');
+        $open = self::settings(self::ADMIN, self::REVIEW)['out'];
+        self::assertSame(2, substr_count($open, $said), 'the notice and the open panel say it');
+        self::assertStringContainsString($pill, self::rowOf($open, self::TAKEN));
+        self::assertStringNotContainsString($pill, self::rowOf($open, self::SHARED));
+    }
+
+    /**
+     * The panel says, for each source, whether the cron job splits it by
+     * itself or why it waits for the operator; and what was split stays on
+     * the page, with the notice, after nothing waits any more.
+     */
+    public function testThePageSaysWhatIsSplitAutomaticallyAndWhatWas(): void
+    {
+        require_once dirname(__DIR__, 2) . '/202-config/functions-traffic-source-owners-ui.php';
+        $open = self::settings(self::ADMIN, self::REVIEW)['out'];
+        foreach ([self::TAKEN, self::SHARED] as $source) {
+            $row = self::rowOf($open, $source);
+            self::assertStringContainsString('Not split automatically:', $row);
+            self::assertStringContainsString('may have been that user&#039;s, and moving it back may be', $row);
+            self::assertStringNotContainsString('split automatically within the hour', $row);
+        }
+        self::assertStringNotContainsString('traffic-source-splits-table', $open, 'nothing was split yet');
+
+        // SHARED's accounts are saved again, after the source: the cron job's to split.
+        self::q('UPDATE 202_ppc_accounts SET ppc_account_time = ' . (self::RENAMED + 5)
+            . ' WHERE ppc_network_id = ' . self::SHARED);
+        $notice = self::settings(self::ADMIN)['out'];
+        self::assertStringContainsString('1 of them is split by the cron job within the hour, with nothing', $notice);
+        $open = self::settings(self::ADMIN, self::REVIEW)['out'];
+        self::assertStringContainsString('split automatically within the hour', self::rowOf($open, self::SHARED));
+        self::assertStringNotContainsString('Not split automatically', self::rowOf($open, self::SHARED));
+        self::assertStringNotContainsString('you choose', self::rowOf($open, self::SHARED));
+        self::assertStringContainsString('Not split automatically', self::rowOf($open, self::TAKEN));
+
+        $done = (new \Prosper202\Setup\TrafficSourceOwners(new \Prosper202\Database\Connection(self::$db)))
+            ->splitAutomatically();
+        self::assertSame([self::SHARED], array_column($done, 'ppc_network_id'));
+        $open = self::settings(self::ADMIN, self::REVIEW)['out'];
+        self::assertStringContainsString('1 to review', $open);
+        self::assertStringContainsString('1 traffic source was split in the last 30 days, automatically.', $open);
+        self::assertStringContainsString('id="traffic-source-splits-table"', $open);
+        self::assertStringContainsString('<tr data-split-of="' . self::SHARED . '">', $open);
+        self::assertStringContainsString('<span class="p202-pill p202-pill--good">automatically</span>', $open);
+        self::assertStringContainsString('Nothing was taken from the other user', $open);
+
+        // TAKEN moved back by the operator: nothing waits, and the split is still said.
+        \p202_ts_owners_controller(self::$db, self::ADMIN)->repair(['ppc_network_id' => self::TAKEN]);
+        $settled = self::settings(self::ADMIN)['out'];
+        self::assertStringContainsString(
+            'class="alert alert-info p202-flash" role="status" id="traffic-source-owners-notice"',
+            $settled
+        );
+        self::assertStringContainsString('1 traffic source was split in the last 30 days, automatically.', $settled);
+        self::assertStringContainsString('See what was split', $settled);
+        $panel = self::settings(self::ADMIN, self::REVIEW)['out'];
+        self::assertStringContainsString('No traffic source is in another user\'s account</strong>', $panel);
+        self::assertStringContainsString('<tr data-split-of="' . self::SHARED . '">', $panel);
     }
 
     /**

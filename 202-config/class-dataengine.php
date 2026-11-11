@@ -774,6 +774,12 @@ ORDER BY lp.landing_page_id ASC";
         // original source's variables, now that account's. Its values stay,
         // since they are this account's clicks, but unnamed: another
         // account's label, or a rename there, never shows here.
+        //
+        // A copy's variables remember the one each was copied from
+        // (copied_from_ppc_variable_id, written by the split), so the values
+        // such a click recorded before the split read under the copy's own
+        // variable, in one group with the values recorded since. A source
+        // holds at most one variable for an original: its own, or one copy.
         $click_sql = " SELECT
             2st.user_id,
     ppc_network_name,
@@ -787,15 +793,16 @@ ORDER BY lp.landing_page_id ASC";
     2st.ppc_network_id,
     2st.variable_set_id,
     variables,
-    202_custom_variables.ppc_variable_id
+    IFNULL(202_ppc_network_variables.ppc_variable_id, 202_custom_variables.ppc_variable_id) AS ppc_variable_id
 " . $variableSource . "
         JOIN
     202_variable_sets2 USING (variable_set_id)
         JOIN
     202_custom_variables ON (202_custom_variables.custom_variable_id = 202_variable_sets2.variables)
         LEFT JOIN
-    202_ppc_network_variables ON (202_custom_variables.ppc_variable_id = 202_ppc_network_variables.ppc_variable_id
-        AND 202_ppc_network_variables.ppc_network_id = 2st.ppc_network_id)
+    202_ppc_network_variables ON (202_ppc_network_variables.ppc_network_id = 2st.ppc_network_id
+        AND (202_custom_variables.ppc_variable_id = 202_ppc_network_variables.ppc_variable_id
+            OR 202_custom_variables.ppc_variable_id = 202_ppc_network_variables.copied_from_ppc_variable_id))
         JOIN
     202_ppc_networks ON (202_ppc_networks.ppc_network_id = 2st.ppc_network_id AND 202_ppc_networks.user_id = 2st.user_id)
 ";
@@ -804,8 +811,10 @@ ORDER BY lp.landing_page_id ASC";
             $click_sql .= $where;
         }
         $click_sql .= "
-group by 2st.ppc_network_id, 202_custom_variables.ppc_variable_id, variable
-ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variable";
+group by 2st.ppc_network_id,
+    IFNULL(202_ppc_network_variables.ppc_variable_id, 202_custom_variables.ppc_variable_id), variable
+ORDER BY 2st.ppc_network_id, name,
+    IFNULL(202_ppc_network_variables.ppc_variable_id, 202_custom_variables.ppc_variable_id), variable";
 
         $click_result = $this->reportQuery($click_sql);
         while ($click_row = $click_result->fetch_assoc()) {
