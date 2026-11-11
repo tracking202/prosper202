@@ -120,7 +120,7 @@ is answered with a 2xx):
 | a tracking code (or `extclid`) that is not a click of the account | nothing; the answer names the field, and the HopLink's `tid=[[subid]]` or `extclid=[[subid]]` that fills it | `404` |
 | a notification no stored key decrypts | nothing | `403` |
 | a key more than one account stores | nothing | `409` |
-| an account that counts in a currency other than USD | nothing: ClickBank's amounts are USD, and Prosper202 does not convert them | `422` |
+| an account that counts in a currency other than USD | the sale as ClickBank states it: its amounts are USD, Prosper202 does not convert them, and the answer says the amount stands unconverted | `200 recorded` |
 | a malformed field (a tracking code such as `42.9`, an amount such as `1,000.00`, a `transactionTime` without its offset) | nothing | `400`, naming the field |
 | a legacy notification (version 4.0 or earlier, signed with `cverify`) | nothing | `415`, saying to choose version 8.0 |
 | a notification that arrives while the database's upgrade has not run | nothing | `503`, naming the upgrade |
@@ -224,6 +224,14 @@ For an **affiliate**:
    The URL 1.9.56 showed, with no `?role=`, is read the same way, so an
    Affiliate IPN set before the upgrade keeps recording.
 
+A **vendor** whose product still posts to the URL 1.9.56 showed: a
+notification there that names no affiliate (no `caffitid` and no
+`ctransaffiliate`) can only be the vendor's, so it is read as one and recorded
+on the `subid` in `cvendthru`, and the answer says so. A sale an affiliate
+referred is read there as the account chose (an affiliate's unless you choose
+vendor). The JVZoo card counts what that URL received in the last 30 days and,
+when it looks like a vendor's, offers one button that reads it as a vendor's.
+
 For a **vendor**:
 
 1. Make the campaign's offer URL your product's JVZoo buy link with
@@ -285,6 +293,31 @@ A few things JVZoo's documentation leaves to the receiver:
 Each notification is logged in the server's error log in one line: the
 outcome, the type, the click, the receipt and the account, never the key or
 the buyer's details.
+
+## A sale in another currency than the account's
+
+PayKickstart, Shopify and Zaxaa state each amount's currency, and Prosper202
+does not convert amounts: a notification in another currency than the
+account's records nothing. It is not lost: Prosper202 holds what it read of
+it (the transaction, the amount and currency, the click and the time; never
+the body, a secret or the buyer), and its answer and its line on Setup ›
+Inbound Log name both currencies and the setting to change, Account ›
+Personal Settings › Account currency.
+
+The integration's card on Account › API integrations shows how many are held
+and in which currency. Once the account counts in that currency, the card
+offers **Record them**: each held notification goes through the same checks
+as one arriving now, for your account only, in the order it arrived, dated
+when it happened. Pressing twice records each once; one the checks refuse
+as they would refuse it arriving now (its click was deleted since, say) is
+held no longer, and the page says why.
+`GET /system/integrations` reports the same counts as `held_notifications`,
+and `POST /system/integrations/record-held` (`p202 system integrations
+record-held shopify`) is the same button.
+A notification is held for 90 days, and only in a currency an account can
+count in; a refund is recorded after the sale it takes back, and waits while
+that sale is still held. ClickBank is different: its amounts are always USD
+and are recorded as stated.
 
 ## Shopify
 

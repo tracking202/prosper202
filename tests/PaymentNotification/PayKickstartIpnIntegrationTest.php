@@ -10,6 +10,9 @@ use Prosper202\Click\MysqlClickRepository;
 use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
+use Prosper202\PaymentNotification\CurrencyMismatch;
+use Prosper202\PaymentNotification\HeldNotifications;
+use Prosper202\PaymentNotification\HeldReplay;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\Notification;
 use Prosper202\PaymentNotification\NotificationKind;
@@ -896,8 +899,266 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         $verified = new Verification([self::ACCOUNT => 0]);
         $eur = $processor->process($sale('EUR'), $verified, new PayKickstartAdapter(), $request);
         self::assertOutcome(OutcomeKind::CURRENCY_MISMATCH, 422, $eur);
+        self::assertSame(
+            'The amount is in EUR and this account counts in USD; Prosper202 does not convert it, so nothing was'
+            . ' recorded. It is held: if this account sells in EUR, set Account > Personal Settings > Account'
+            . ' currency to EUR, then record the held notifications on Account > API integrations > PayKickstart.',
+            $eur->message
+        );
         self::assertSame([], self::conversions());
         $usd = $processor->process($sale('usd'), $verified, new PayKickstartAdapter(), $request);
         self::assertOutcome(OutcomeKind::RECORDED, 200, $usd);
+    }
+
+    /**
+     * A sale refused for its currency is held, once however often it is
+     * sent, and recorded through the processor once the account counts in
+     * that currency: on its click, at its amount, dated when it happened,
+     * once however often Record is pressed. One the processor refuses, as
+     * it would arriving now, is held no longer and the answer says why.
+     */
+    public function testASaleHeldForItsCurrencyIsRecordedOnceTheAccountCountsInIt(): void
+    {
+        $db = self::requireScratch();
+        $heldRows = '202_held_payment_notifications WHERE user_id IN (' . self::ACCOUNT . ', ' . self::OTHER . ')';
+        self::q('DELETE FROM ' . $heldRows);
+        $pk = new PayKickstartAdapter();
+        $processor = new Processor($db);
+        $held = new HeldNotifications($db);
+        $replay = new HeldReplay($db);
+        $request = new InboundRequest('POST', '', ['transaction_id' => 'x'], '203.0.113.9', '203.0.113.9', 'test');
+        $when = self::$now - 300;
+        $sale = static fn (string $id, string $amount, int $click = self::CLICK): Notification
+            => new Notification(NotificationKind::SALE, 'sales', $id, null, $amount, 'EUR', $click, $when);
+        $mine = new Verification([self::ACCOUNT => 0]);
+        try {
+            foreach ([$sale('PK-HELD-1', '10'), $sale('PK-HELD-1', '10'), $sale('PK-HELD-2', '20.50')] as $n) {
+                self::assertOutcome(OutcomeKind::CURRENCY_MISMATCH, 422, $processor->process($n, $mine, $pk, $request));
+            }
+            // The same transaction stating another amount is another notification, and is kept as one.
+            $processor->process($sale('PK-HELD-1', '11'), $mine, $pk, $request);
+            $theirs = new Verification([self::OTHER => 0]);
+            $processor->process($sale('PK-OTHER-1', '5', self::OTHER_CLICK), $theirs, $pk, $request);
+            self::assertSame([], self::conversions());
+            self::assertSame(['paykickstart' => ['EUR' => 3]], array_map(
+                static fn (array $by): array => array_map(static fn (array $c): int => $c['count'], $by),
+                $held->counts(self::ACCOUNT)
+            ));
+            self::assertSame(
+                ['recordable' => 0, 'waiting' => 3, 'waiting_currencies' => ['EUR']],
+                CurrencyMismatch::held($held->counts(self::ACCOUNT), 'paykickstart', 'USD')
+            );
+
+            // Still counting in USD, Record records nothing and keeps them.
+            self::assertSame(0, $replay->replay(self::ACCOUNT, 'paykickstart')['recorded']);
+            self::assertSame(3, $held->counts(self::ACCOUNT)['paykickstart']['EUR']['count']);
+
+            self::q("UPDATE 202_users_pref SET user_account_currency = 'EUR' WHERE user_id = " . self::ACCOUNT);
+            self::assertSame(
+                ['recordable' => 3, 'waiting' => 0, 'waiting_currencies' => []],
+                CurrencyMismatch::held($held->counts(self::ACCOUNT), 'paykickstart', 'eur ')
+            );
+            $done = $replay->replay(self::ACCOUNT, 'paykickstart');
+            self::assertSame([2, 0, 1, 0], [$done['recorded'], $done['on_file'], $done['refused'], $done['left']]);
+            $onFile = 'PK-HELD-1 is already recorded on click ' . self::CLICK . ' at 10';
+            self::assertStringContainsString($onFile, $done['first_refusal']);
+            $rows = self::conversions();
+            self::assertSame(['PK-HELD-1', 'PK-HELD-2'], array_column($rows, 'transaction_id'));
+            self::assertSame([10.0, 20.5], array_map('floatval', array_column($rows, 'click_payout')));
+            self::assertSame([(string) self::ACCOUNT, (string) self::ACCOUNT], array_column($rows, 'user_id'));
+            self::assertSame(['paykickstart', 'paykickstart'], array_column($rows, 'source'));
+            self::assertSame([$when, $when], array_column(self::datedRows(self::CLICK), 0));
+
+            // Pressed again: nothing more is written or held; the other account's is untouched.
+            $again = $replay->replay(self::ACCOUNT, 'paykickstart');
+            unset($again['first_refusal']);
+            self::assertSame(['recorded' => 0, 'on_file' => 0, 'refused' => 0, 'failed' => 0, 'left' => 0], $again);
+            self::assertCount(2, self::conversions());
+            self::assertSame([], $held->counts(self::ACCOUNT));
+            self::assertSame(1, $held->counts(self::OTHER)['paykickstart']['EUR']['count']);
+            // The sale sent again by PayKickstart now is the one on file.
+            $sentAgain = $processor->process($sale('PK-HELD-1', '10'), $mine, $pk, $request);
+            self::assertOutcome(OutcomeKind::DUPLICATE, 200, $sentAgain);
+        } finally {
+            self::q("UPDATE 202_users_pref SET user_account_currency = 'USD' WHERE user_id = " . self::ACCOUNT);
+            self::q('DELETE FROM ' . $heldRows);
+        }
+    }
+
+    /**
+     * A refund held for its currency reverses its sale when it is recorded,
+     * under the key its own request gave it: PayKickstart sending that
+     * refund again afterwards is a duplicate, not a second reversal.
+     */
+    public function testARefundHeldForItsCurrencyReversesItsSaleUnderItsOwnKey(): void
+    {
+        $db = self::requireScratch();
+        self::q('DELETE FROM 202_held_payment_notifications WHERE user_id = ' . self::ACCOUNT);
+        $processor = new Processor($db);
+        $mine = new Verification([self::ACCOUNT => 0]);
+        $fields = ['transaction_id' => 'PK-RF-1', 'transaction_time' => '1700000000'];
+        $request = new InboundRequest('POST', '', $fields, '203.0.113.9', '203.0.113.9', 'test');
+        $sale = new Notification(NotificationKind::SALE, 'sales', 'PK-RF-1', null, '30', 'EUR', self::CLICK);
+        $refund = new Notification(NotificationKind::REFUND, 'refund', null, 'PK-RF-1', '30', 'EUR', self::CLICK);
+        try {
+            $processor->process($sale, $mine, new PayKickstartAdapter(), $request);
+            $processor->process($refund, $mine, new PayKickstartAdapter(), $request);
+            self::assertSame([], self::conversions());
+            self::q("UPDATE 202_users_pref SET user_account_currency = 'EUR' WHERE user_id = " . self::ACCOUNT);
+            $done = (new HeldReplay($db))->replay(self::ACCOUNT, 'paykickstart');
+            self::assertSame(2, $done['recorded'], $done['first_refusal']);
+            self::assertSame([0, 0], [$done['on_file'], $done['refused']]);
+            $rows = self::conversions();
+            self::assertCount(2, $rows);
+            self::assertNull($rows[0]['reverses_conv_id']);
+            self::assertNotNull($rows[1]['reverses_conv_id']);
+            self::assertSame([], (new HeldNotifications($db))->counts(self::ACCOUNT));
+
+            $sentAgain = $processor->process($refund, $mine, new PayKickstartAdapter(), $request);
+            self::assertOutcome(OutcomeKind::DUPLICATE, 200, $sentAgain);
+            self::assertCount(2, self::conversions());
+        } finally {
+            self::q("UPDATE 202_users_pref SET user_account_currency = 'USD' WHERE user_id = " . self::ACCOUNT);
+            self::q('DELETE FROM 202_held_payment_notifications WHERE user_id = ' . self::ACCOUNT);
+        }
+    }
+
+    /**
+     * A refund is recorded after the sale it takes back, and waits while
+     * that sale is still held: a sale that failed once, or that another
+     * request holds, does not let its refund go first and be dropped.
+     */
+    public function testAHeldRefundWaitsForItsHeldSale(): void
+    {
+        $db = self::requireScratch();
+        $heldRows = '202_held_payment_notifications WHERE user_id = ' . self::ACCOUNT;
+        self::q('DELETE FROM ' . $heldRows);
+        $processor = new Processor($db);
+        $held = new HeldNotifications($db);
+        $mine = new Verification([self::ACCOUNT => 0]);
+        $fields = ['transaction_id' => 'PK-WAIT-1', 'transaction_time' => '1700000000'];
+        $request = new InboundRequest('POST', '', $fields, '203.0.113.9', '203.0.113.9', 'test');
+        $sale = new Notification(NotificationKind::SALE, 'sales', 'PK-WAIT-1', null, '30', 'EUR', self::CLICK);
+        $refund = new Notification(NotificationKind::REFUND, 'refund', null, 'PK-WAIT-1', '30', 'EUR', self::CLICK);
+        try {
+            $processor->process($sale, $mine, new PayKickstartAdapter(), $request);
+            $processor->process($refund, $mine, new PayKickstartAdapter(), $request);
+            $ids = array_column(self::heldRows(), 'held_id');
+            self::assertCount(2, $ids);
+            self::q("UPDATE 202_users_pref SET user_account_currency = 'EUR' WHERE user_id = " . self::ACCOUNT);
+
+            // Another request has the sale: the refund is not recorded, and stays held.
+            self::assertTrue($held->claim(self::ACCOUNT, (int) $ids[0], self::$now));
+            $done = (new HeldReplay($db))->replay(self::ACCOUNT, 'paykickstart', self::$now);
+            self::assertSame([0, 0, 1], [$done['recorded'], $done['refused'], $done['failed']], $done['first_refusal']);
+            self::assertSame([], self::conversions());
+            self::assertCount(2, self::heldRows());
+
+            // The sale failed once and was given back: it is still recorded before its refund.
+            $held->release(self::ACCOUNT, (int) $ids[0], 'It could not be recorded just now.', self::$now);
+            $done = (new HeldReplay($db))->replay(self::ACCOUNT, 'paykickstart', self::$now);
+            self::assertSame([2, 0, 0], [$done['recorded'], $done['refused'], $done['failed']], $done['first_refusal']);
+            $rows = self::conversions();
+            self::assertNull($rows[0]['reverses_conv_id']);
+            self::assertNotNull($rows[1]['reverses_conv_id']);
+            self::assertSame([], self::heldRows());
+        } finally {
+            self::q("UPDATE 202_users_pref SET user_account_currency = 'USD' WHERE user_id = " . self::ACCOUNT);
+            self::q('DELETE FROM ' . $heldRows);
+        }
+    }
+
+    /**
+     * Two refunds of one sale that state the same amount are two
+     * notifications (PayKickstart tells them apart by their time), and each
+     * is held; the same one sent again is the row already held.
+     */
+    public function testTwoRefundsOfOneSaleAtOneAmountAreHeldApart(): void
+    {
+        $db = self::requireScratch();
+        $heldRows = '202_held_payment_notifications WHERE user_id = ' . self::ACCOUNT;
+        self::q('DELETE FROM ' . $heldRows);
+        $processor = new Processor($db);
+        $mine = new Verification([self::ACCOUNT => 0]);
+        $at = static fn (string $time): InboundRequest => new InboundRequest(
+            'POST',
+            '',
+            ['transaction_id' => 'PK-TWO-1', 'transaction_time' => $time],
+            '203.0.113.9',
+            '203.0.113.9',
+            'test'
+        );
+        $sale = new Notification(NotificationKind::SALE, 'sales', 'PK-TWO-1', null, '30', 'EUR', self::CLICK);
+        $refund = new Notification(NotificationKind::REFUND, 'refund', null, 'PK-TWO-1', '10', 'EUR', self::CLICK);
+        try {
+            $processor->process($sale, $mine, new PayKickstartAdapter(), $at('1700000000'));
+            $processor->process($refund, $mine, new PayKickstartAdapter(), $at('1700000001'));
+            $processor->process($refund, $mine, new PayKickstartAdapter(), $at('1700000999'));
+            $processor->process($refund, $mine, new PayKickstartAdapter(), $at('1700000999'));
+            $rows = self::heldRows();
+            self::assertSame(['sale', 'refund', 'refund'], array_column($rows, 'kind'));
+            self::assertNotSame($rows[1]['notification_key'], $rows[2]['notification_key']);
+        } finally {
+            self::q('DELETE FROM ' . $heldRows);
+        }
+    }
+
+    /**
+     * A notification is held only in a currency an account can count in,
+     * and for HeldNotifications::KEEP_SECONDS; and one whose currency the
+     * account stopped counting in while it was being recorded stays held.
+     */
+    public function testWhatIsHeldIsBoundedAndARowTheAccountNoLongerCountsInStaysHeld(): void
+    {
+        $db = self::requireScratch();
+        $heldRows = '202_held_payment_notifications WHERE user_id = ' . self::ACCOUNT;
+        self::q('DELETE FROM ' . $heldRows);
+        $processor = new Processor($db);
+        $held = new HeldNotifications($db);
+        $mine = new Verification([self::ACCOUNT => 0]);
+        $request = new InboundRequest('POST', '', ['transaction_id' => 'x'], '203.0.113.9', '203.0.113.9', 'test');
+        $sale = static fn (string $id, string $currency): Notification
+            => new Notification(NotificationKind::SALE, 'sales', $id, null, '10', $currency, self::CLICK);
+        try {
+            $unknown = $processor->process($sale('PK-XXX-1', 'XXX'), $mine, new PayKickstartAdapter(), $request);
+            self::assertOutcome(OutcomeKind::CURRENCY_MISMATCH, 422, $unknown);
+            $notHeld = 'XXX is not a currency an account can count in, so it is not held';
+            self::assertStringContainsString($notHeld, $unknown->message);
+            self::assertStringNotContainsString('Account currency to XXX', $unknown->message);
+            self::assertSame([], self::heldRows());
+
+            $processor->process($sale('PK-OLD-1', 'EUR'), $mine, new PayKickstartAdapter(), $request);
+            $processor->process($sale('PK-NEW-1', 'EUR'), $mine, new PayKickstartAdapter(), $request);
+            $old = self::$now - HeldNotifications::KEEP_SECONDS - 60;
+            self::q("UPDATE 202_held_payment_notifications SET received_at = $old WHERE transaction_id = 'PK-OLD-1'");
+            self::assertSame(1, $held->prune(self::$now));
+            self::assertSame(['PK-NEW-1'], array_column(self::heldRows(), 'transaction_id'));
+
+            // The account's currency changes between the row being taken and its being recorded.
+            self::q("UPDATE 202_users_pref SET user_account_currency = 'EUR' WHERE user_id = " . self::ACCOUNT);
+            $flip = 'CREATE TRIGGER uo_payments_flip BEFORE UPDATE ON 202_held_payment_notifications FOR EACH ROW'
+                . " UPDATE 202_users_pref SET user_account_currency = 'GBP' WHERE user_id = NEW.user_id";
+            if ($db->query($flip) !== true) {
+                self::markTestSkipped('This database user cannot create a trigger: ' . $db->error);
+            }
+            $done = (new HeldReplay($db))->replay(self::ACCOUNT, 'paykickstart', self::$now);
+            self::assertSame([0, 0, 1], [$done['recorded'], $done['refused'], $done['failed']], $done['first_refusal']);
+            self::assertSame(['PK-NEW-1'], array_column(self::heldRows(), 'transaction_id'));
+            self::assertSame([], self::conversions());
+        } finally {
+            $db->query('DROP TRIGGER IF EXISTS uo_payments_flip');
+            self::q("UPDATE 202_users_pref SET user_account_currency = 'USD' WHERE user_id = " . self::ACCOUNT);
+            self::q('DELETE FROM ' . $heldRows);
+        }
+    }
+
+    /** @return list<array<string, string|null>> the account's held rows, in the order they arrived */
+    private static function heldRows(): array
+    {
+        $result = self::requireScratch()->query('SELECT held_id, kind, transaction_id, notification_key'
+            . ' FROM 202_held_payment_notifications WHERE user_id = ' . self::ACCOUNT . ' ORDER BY held_id');
+        self::assertInstanceOf(\mysqli_result::class, $result);
+
+        return $result->fetch_all(MYSQLI_ASSOC);
     }
 }

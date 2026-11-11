@@ -444,6 +444,15 @@ function PruneInboundLog(): void
     } catch (\Throwable $e) {
         error_log('Inbound log prune failed: ' . $e->getMessage());
     }
+    // Payment notifications held for their currency longer than HeldNotifications::KEEP_SECONDS.
+    try {
+        $dropped = (new \Prosper202\PaymentNotification\HeldNotifications(getDatabaseConnection()))->prune(time());
+        if ($dropped > 0) {
+            echo 'Held payment notifications: ' . $dropped . ' older than 90 days dropped<br>';
+        }
+    } catch (\Throwable $e) {
+        error_log('Held payment notifications prune failed: ' . $e->getMessage());
+    }
 }
 
 function PruneEndedApiKeys(): void

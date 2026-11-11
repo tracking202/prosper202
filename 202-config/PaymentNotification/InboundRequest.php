@@ -18,6 +18,8 @@ final class InboundRequest
      * @param string $peerAddress REMOTE_ADDR, which the request cannot choose: the one the log names
      * @param string $body the raw body, for a provider that does not post a form (ClickBank's JSON)
      * @param array<string, string> $headers the request's headers, by lowercase name (x-shopify-topic)
+     * @param array{notification: ?string, body: string}|null $heldKeys for a held notification recorded later
+     *        (HeldReplay): what its own request keyed a refund by, which the rebuilt request cannot repeat
      */
     public function __construct(
         public readonly string $method,
@@ -28,6 +30,7 @@ final class InboundRequest
         public readonly string $userAgent = '',
         public readonly string $body = '',
         public readonly array $headers = [],
+        public readonly ?array $heldKeys = null,
     ) {
     }
 
