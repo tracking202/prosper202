@@ -34,6 +34,10 @@
  *   form[data-p202-ajax-target="#out"]  posts through jQuery (so the session
  *                                       token rides along) and puts the
  *                                       answer in #out
+ *   [data-p202-lp-check-pill="id"]      a landing page's code check; with
+ *     [data-p202-lp-check-due]          it is asked for as the list loads,
+ *     [data-p202-lp-check-now="id"]     and again on this link, from
+ *     [data-p202-lp-check-url]          this address
  */
 (function () {
     'use strict';
@@ -362,6 +366,80 @@
         // browser accepted every required field.
         postInPlace(form);
     });
+
+    // ─── Landing pages: each page's code check ──────────────────────────
+    // One at a time: each check fetches a page and can take ten seconds.
+    var LP_CHECKS_PER_LOAD = 12;
+    var lpCheckQueue = [];
+    var lpCheckBusy = false;
+
+    function lpCheckNext() {
+        var endpoint = document.querySelector('[data-p202-lp-check-url]');
+        if (lpCheckBusy || lpCheckQueue.length === 0 || !endpoint || !window.jQuery) {
+            return;
+        }
+        var id = lpCheckQueue.shift();
+        var pill = document.querySelector('[data-p202-lp-check-pill="' + id + '"]');
+        if (!pill) {
+            lpCheckNext();
+            return;
+        }
+        lpCheckBusy = true;
+        pill.className = 'p202-pill';
+        pill.textContent = 'Checking…';
+        pill.setAttribute('aria-busy', 'true');
+        pill.removeAttribute('data-p202-lp-check-due');
+        window.jQuery.post(endpoint.getAttribute('data-p202-lp-check-url'), { landing_page_id: id, as: 'pill' })
+            .done(function (html) {
+                var holder = document.createElement('span');
+                holder.innerHTML = html;
+                var answer = holder.querySelector('[data-p202-lp-check-pill]');
+                if (answer) {
+                    answer.removeAttribute('data-p202-lp-check-due');
+                    pill.parentNode.replaceChild(answer, pill);
+                } else {
+                    pill.removeAttribute('aria-busy');
+                    pill.textContent = 'Could not be checked';
+                    pill.title = holder.textContent || '';
+                }
+            })
+            .fail(function (xhr) {
+                pill.removeAttribute('aria-busy');
+                pill.textContent = 'Could not be checked';
+                pill.title = 'The check did not run (' + (xhr && xhr.status ? 'HTTP ' + xhr.status : 'network error') + '). Reload the page and try again.';
+            })
+            .always(function () {
+                lpCheckBusy = false;
+                lpCheckNext();
+            });
+    }
+
+    document.addEventListener('click', function (event) {
+        var link = event.target.closest ? event.target.closest('[data-p202-lp-check-now]') : null;
+        if (!link) {
+            return;
+        }
+        event.preventDefault();
+        var id = link.getAttribute('data-p202-lp-check-now');
+        if (lpCheckQueue.indexOf(id) === -1) {
+            lpCheckQueue.push(id);
+        }
+        lpCheckNext();
+    });
+
+    function lpChecksDue() {
+        $$('[data-p202-lp-check-due]').slice(0, LP_CHECKS_PER_LOAD).forEach(function (pill) {
+            var id = pill.getAttribute('data-p202-lp-check-pill');
+            // Taken off the list of the due as it is queued, so a second pass queues nothing twice.
+            pill.removeAttribute('data-p202-lp-check-due');
+            if (lpCheckQueue.indexOf(id) === -1) {
+                lpCheckQueue.push(id);
+            }
+        });
+        lpCheckNext();
+    }
+
+    document.addEventListener('DOMContentLoaded', lpChecksDue);
 
     // ─── Traffic sources: the custom-variables dialog ───────────────────
     function variablesDialog() {
