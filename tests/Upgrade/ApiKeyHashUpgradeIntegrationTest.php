@@ -135,7 +135,18 @@ final class ApiKeyHashUpgradeIntegrationTest extends TestCase
             self::assertPlaceholders($rows);
 
             $after = self::connection();
-            self::assertSame(self::USER, Auth::fromRequest(['Authorization' => 'Bearer ' . self::PLAIN], $after)->userId());
+            // A client's name is any text: the columns the rung adds hold it
+            // in a latin1 table too, under the strict mode the API runs in.
+            $client = "store-sync/2.1 \u{1F6D2} \u{0416}";
+            $auth = Auth::fromRequest(['Authorization' => 'Bearer ' . self::PLAIN, 'User-Agent' => $client], $after);
+            self::assertSame(self::USER, $auth->userId());
+            $after->set_charset('utf8mb4');
+            $used = $after->query('SELECT last_used_at, last_used_api, last_used_client FROM 202_api_keys'
+                . ' WHERE user_id = ' . self::USER);
+            self::assertInstanceOf(\mysqli_result::class, $used);
+            $use = $used->fetch_assoc();
+            self::assertNotNull($use['last_used_at'], 'the use is recorded');
+            self::assertSame(['v3', $client], [$use['last_used_api'], $use['last_used_client']]);
             $this->assertRefused(strtolower(self::PLAIN), $after, 'a key differing in case is another key');
         } finally {
             self::q('DROP TABLE IF EXISTS 202_api_keys');

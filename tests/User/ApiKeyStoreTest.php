@@ -150,6 +150,10 @@ final class ApiKeyStoreTest extends TestCase
         $long = ApiKeyStore::clientName(str_repeat("\u{1F6D2}", 400));
         self::assertSame(ApiKeyStore::CLIENT_LENGTH, mb_strlen((string) $long));
         self::assertTrue(mb_check_encoding((string) ApiKeyStore::clientName("bad\xC3(bytes"), 'UTF-8'));
+        // Nothing that moves a terminal's cursor or reorders the text around it.
+        self::assertSame('a b c d', ApiKeyStore::clientName("a\u{202E}b\u{0085}c\u{2067}\u{009B}d"));
+        self::assertFalse(ApiKeyStore::labelFrom("Store\u{202E}sync"));
+        self::assertFalse(ApiKeyStore::labelFrom("Store\u{0085}sync"));
     }
 
     public function testAUseIsNotWrittenWithoutTheColumnsOrInsideTheInterval(): void

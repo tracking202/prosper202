@@ -42,6 +42,12 @@ final class ApiKeyStore
     /** How long a key that has ended stays listed before it is removed, in seconds. */
     public const ENDED_KEY_KEPT = 604800;
 
+    /**
+     * What a name shown in a list or a terminal does not carry: control
+     * characters (C0, DEL, C1) and the characters that reorder text.
+     */
+    private const UNPRINTED = '[\p{Cc}\x{061C}\x{200E}\x{200F}\x{202A}-\x{202E}\x{2066}-\x{2069}]';
+
     /** label's width, in characters. */
     public const LABEL_LENGTH = 100;
 
@@ -341,7 +347,7 @@ final class ApiKeyStore
         }
         if (
             mb_strlen($label, 'UTF-8') > self::LABEL_LENGTH
-            || preg_match('/[\x00-\x1F\x7F]/', $label) === 1
+            || preg_match('/' . self::UNPRINTED . '/u', $label) === 1
             || stripos($label, rtrim(AiConnect::LABEL_PREFIX)) === 0
         ) {
             return false;
@@ -358,7 +364,7 @@ final class ApiKeyStore
         if (!is_string($userAgent)) {
             return null;
         }
-        $name = preg_replace('/[\x00-\x1F\x7F]+/', ' ', mb_scrub($userAgent, 'UTF-8'));
+        $name = preg_replace('/' . self::UNPRINTED . '+/u', ' ', mb_scrub($userAgent, 'UTF-8'));
         $name = mb_substr(trim((string) $name), 0, self::CLIENT_LENGTH, 'UTF-8');
         return $name === '' ? null : $name;
     }
@@ -382,7 +388,15 @@ final class ApiKeyStore
         if ($last !== null && is_numeric($last) && $now - (int) $last < self::USE_STAMP_INTERVAL) {
             return;
         }
-        try {
+        // One failure is enough for a process: a server that refuses the
+        // write would refuse it for every request this process serves.
+        static $refused = null;
+        $refused ??= new \WeakMap();
+        if (isset($refused[$db])) {
+            return;
+        }
+        $client = self::clientName($userAgent);
+        $write = static function (?string $client) use ($db, $row, $key, $api, $now): void {
             [$keyMatch, $keyTypes, $keyValues] = self::matchKey($db, $key);
             $conn = new Connection($db);
             $stmt = $conn->prepareWrite(
@@ -392,15 +406,33 @@ final class ApiKeyStore
             $conn->bind($stmt, 'issi' . $keyTypes . 'i', [
                 $now,
                 $api,
-                self::clientName($userAgent),
+                $client,
                 (int) ($row['user_id'] ?? 0),
                 ...$keyValues,
                 $now,
             ]);
             $conn->executeUpdate($stmt);
+        };
+        try {
+            $write($client);
+            return;
         } catch (\Throwable $e) {
-            error_log('Prosper202: an API key\'s last use could not be recorded: ' . $e->getMessage());
+            $failed = $e;
         }
+        // The time matters more than the name: a name the column cannot hold
+        // must not leave the key reading as unused, and stamped on every request.
+        if ($client !== null) {
+            try {
+                $write(null);
+                error_log('Prosper202: an API key\'s last use was recorded without its client\'s name: '
+                    . $failed->getMessage());
+                return;
+            } catch (\Throwable $e) {
+                $failed = $e;
+            }
+        }
+        $refused[$db] = true;
+        error_log('Prosper202: an API key\'s last use could not be recorded: ' . $failed->getMessage());
     }
 
     /**

@@ -110,20 +110,56 @@ final class ApiKeyUseIntegrationTest extends TestCase
             . " SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'stamp refused'");
         $log = tempnam(sys_get_temp_dir(), 'uo-api-keys-log');
         $was = ini_set('error_log', (string) $log);
+        // A connection of its own: one refusal ends the stamping for the
+        // connection it happened on.
+        $db = self::connection();
         try {
-            $auth = Auth::fromRequest(['Authorization' => 'Bearer ' . self::KEY], self::$db);
-            self::assertSame(self::USER, $auth->userId());
-            self::assertSame(202, getAuth(self::$db, ['apikey' => self::KEY])['status']);
+            $headers = ['Authorization' => 'Bearer ' . self::KEY, 'User-Agent' => 'store-sync/2.1'];
+            self::assertSame(self::USER, Auth::fromRequest($headers, $db)->userId());
+            self::assertSame(202, getAuth($db, ['apikey' => self::KEY])['status']);
         } finally {
             ini_set('error_log', (string) $was);
             self::q('DROP TRIGGER IF EXISTS p202_dt30_refuse_stamp');
         }
         $logged = (string) file_get_contents((string) $log);
         unlink((string) $log);
-        self::assertSame(2, substr_count($logged, 'last use could not be recorded'), $logged);
+        self::assertSame(1, substr_count($logged, 'last use could not be recorded'), 'said once: ' . $logged);
         self::assertStringContainsString('stamp refused', $logged);
         self::assertStringNotContainsString(self::KEY, $logged);
         self::assertNull($this->useRow(self::KEY)['last_used_at']);
+
+        // Once the server takes the write again, another connection records it.
+        Auth::fromRequest(['Authorization' => 'Bearer ' . self::KEY], self::connection());
+        self::assertNotNull($this->useRow(self::KEY)['last_used_at']);
+    }
+
+    public function testAClientNameTheServerRefusesStillRecordsTheTime(): void
+    {
+        ApiKeyStore::insert(self::$db, self::USER, self::KEY, null, null, 100);
+        self::q("CREATE TRIGGER p202_dt30_refuse_stamp BEFORE UPDATE ON 202_api_keys FOR EACH ROW"
+            . " BEGIN IF NEW.last_used_client IS NOT NULL THEN"
+            . " SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'name refused'; END IF; END");
+        $log = tempnam(sys_get_temp_dir(), 'uo-api-keys-log');
+        $was = ini_set('error_log', (string) $log);
+        $db = self::connection();
+        $before = time();
+        try {
+            Auth::fromRequest(['Authorization' => 'Bearer ' . self::KEY, 'User-Agent' => 'store-sync/2.1'], $db);
+            $row = $this->useRow(self::KEY);
+            self::assertGreaterThanOrEqual($before, (int) $row['last_used_at'], 'the time is recorded');
+            self::assertSame(['v3', null], [$row['last_used_api'], $row['last_used_client']]);
+
+            // Recorded, so the interval holds: the next request writes nothing.
+            Auth::fromRequest(['Authorization' => 'Bearer ' . self::KEY, 'User-Agent' => 'store-sync/2.1'], $db);
+        } finally {
+            ini_set('error_log', (string) $was);
+            self::q('DROP TRIGGER IF EXISTS p202_dt30_refuse_stamp');
+        }
+        $logged = (string) file_get_contents((string) $log);
+        unlink((string) $log);
+        self::assertSame(1, substr_count($logged, "recorded without its client's name"), $logged);
+        self::assertStringContainsString('name refused', $logged);
+        self::assertStringNotContainsString('could not be recorded', $logged);
     }
 
     public function testBeforeTheUpgradeAddsTheColumnsKeysWorkAndNothingIsStamped(): void

@@ -4987,7 +4987,10 @@ class UPGRADE
                 // key with its watcher token (Prosper202\User\ApiKeyStore); the
                 // keys already there are hashed (the last argument, this step only).
                 // Also each key's last use (last_used_at, last_used_api,
-                // last_used_client) and a replaced key's ending (ends_at).
+                // last_used_client) and a replaced key's ending (ends_at). The
+                // two text columns name utf8mb4: a table made before 1.9.55
+                // has the server's default charset, and a client's name is
+                // any text.
                 \Prosper202\Database\Tables\UserTables::apiKeys(),
                 // The money-loss alerts' settings per account (no row is on;
                 // a row with enabled 0 is off), and the incident each was last

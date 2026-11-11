@@ -278,8 +278,8 @@ final class UserTables
                 `key_prefix` varchar(16) DEFAULT NULL,
                 `watcher_token` char(64) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
                 `last_used_at` int(10) unsigned DEFAULT NULL,
-                `last_used_api` varchar(8) DEFAULT NULL,
-                `last_used_client` varchar(190) DEFAULT NULL,
+                `last_used_api` varchar(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+                `last_used_client` varchar(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
                 `ends_at` int(10) unsigned DEFAULT NULL,
                 KEY `202_api_keys_key_hash` (`key_hash`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"

@@ -90,6 +90,13 @@ final readonly class Auth
         }
 
         $scopes = self::parseScopes((string)($row['scope'] ?? ''));
+        $auth = self::loadRoles(
+            (int)$row['user_id'],
+            $db,
+            $scopes,
+            \Prosper202\Conversion\Ledger\SourceRef::apiKey($apiKey)
+        );
+        // A use is a request that got through: recorded last.
         $headers = array_change_key_case($headers, CASE_LOWER);
         \Prosper202\User\ApiKeyStore::stampUse(
             $db,
@@ -100,7 +107,7 @@ final readonly class Auth
             $now
         );
 
-        return self::loadRoles((int)$row['user_id'], $db, $scopes, \Prosper202\Conversion\Ledger\SourceRef::apiKey($apiKey));
+        return $auth;
     }
 
     /**

@@ -157,6 +157,11 @@ final class ApiKeyAuthPathScopeTest extends TestCase
             $this->assertLessThan($stamp, $ended, "$path records a use only of a key it did not refuse");
             $this->assertLessThan($stamp, $active, "$path records a use only of an active user's key");
             $this->assertSame(1, substr_count($source, 'ApiKeyStore::stampUse('), "$path records it in one place");
+            if ($path === 'api/v3/Auth.php') {
+                $roles = strpos($source, '$auth = self::loadRoles(');
+                $this->assertNotFalse($roles);
+                $this->assertLessThan($stamp, $roles, "$path records a use only after its role read");
+            }
         }
     }
 
