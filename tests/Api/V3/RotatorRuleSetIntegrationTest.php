@@ -341,12 +341,8 @@ final class RotatorRuleSetIntegrationTest extends TestCase
             return $r;
         }), 'rules.0.criteria.0.id'];
         yield 'another redirector\'s id' => [$first(static fn (array $r): array => ['rotator_id' => 999999] + $r), 'rules.0.rotator_id'];
-        yield 'a device that is not lower case, which never matches' => [$first(static function (array $r): array {
-            $r['criteria'][0] = ['type' => 'device', 'value' => 'mobile, Tablet'];
-            return $r;
-        }), 'rules.0.criteria.0.value'];
-        yield 'a country as a bare code' => [$first(static function (array $r): array {
-            $r['criteria'][0] = ['type' => 'country', 'value' => 'United States(US), CA'];
+        yield 'a value outside a fixed set, which never matches' => [$first(static function (array $r): array {
+            $r['criteria'][0] = ['type' => 'eu', 'value' => 'true, yes'];
             return $r;
         }), 'rules.0.criteria.0.value'];
         yield 'a value of commas alone' => [$first(static function (array $r): array {
@@ -554,17 +550,17 @@ final class RotatorRuleSetIntegrationTest extends TestCase
         $this->set($id, self::twoRules(self::campaign(self::USER)));
         $office = $this->rotators()->listRules($id)['data'][0];
         $criterion = (int) $office['criteria'][0]['id'];
-        $sql = "UPDATE 202_rotator_rules_criteria SET type = 'device', value = 'Mobile' WHERE id = $criterion";
+        $sql = "UPDATE 202_rotator_rules_criteria SET type = 'eu', value = 'yes' WHERE id = $criterion";
         self::assertTrue(self::$db->query($sql), (string) self::$db->error);
 
         $rule = (int) $office['id'];
         $after = $this->rotators()->updateRule($id, $rule, ['rule_name' => 'renamed'])['data']['rules'][0];
         self::assertSame('renamed', $after['rule_name']);
         $kept = static fn (array $c): array => [(int) $c['id'], $c['type'], $c['value']];
-        self::assertSame([[$criterion, 'device', 'Mobile']], array_map($kept, $after['criteria']));
+        self::assertSame([[$criterion, 'eu', 'yes']], array_map($kept, $after['criteria']));
         try {
-            $this->rotators()->updateRule($id, $rule, ['criteria' => [['type' => 'device', 'value' => 'Mobile']]]);
-            self::fail('a device sent in capitals was written');
+            $this->rotators()->updateRule($id, $rule, ['criteria' => [['type' => 'eu', 'value' => 'yes']]]);
+            self::fail('a value no eu rule matches was written');
         } catch (ValidationException $e) {
             self::assertSame(['criteria.0.value'], array_keys($e->getFieldErrors()));
         }
@@ -581,8 +577,8 @@ final class RotatorRuleSetIntegrationTest extends TestCase
         $rules[0]['status'] = 2;
         $rules[0]['criteria'] = [
             ['type' => 'planet', 'value' => 'Mars'],
-            ['type' => 'device', 'statement' => 'is', 'value' => 'Mobile'],
-            ['type' => 'country', 'statement' => 'isnt', 'value' => 'US'],
+            ['type' => 'eu', 'statement' => 'is', 'value' => 'yes'],
+            ['type' => 'visitor', 'statement' => 'isnt', 'value' => 'human'],
             ['type' => 'ip', 'value' => '203.0.113.7'],
         ];
         $rules[0]['redirects'][0]['weight'] = 'lots';
@@ -617,6 +613,111 @@ final class RotatorRuleSetIntegrationTest extends TestCase
             }
         }
         self::assertSame([], $this->rotators()->listRules($id)['data'], 'nothing was written');
+    }
+
+    /**
+     * A country sent as a code or a name and a device in capitals are
+     * stored in the form the redirects match (Criterion::stored()), by a
+     * set, a dry run and each single-rule write, and the answer says what
+     * was changed. They were refused, which stopped the save of a whole
+     * redirector over a value the server could write itself.
+     */
+    public function testACountryCodeAndACapitalisedDeviceAreStoredAsTheRedirectsMatchThem(): void
+    {
+        $id = $this->rotator();
+        $rules = [[
+            'rule_name' => 'north america, phones',
+            'criteria' => [
+                ['type' => 'country', 'value' => 'us, Canada(CA), mexico'],
+                ['type' => 'device', 'statement' => 'is_not', 'value' => 'Mobile, tablet'],
+            ],
+            'redirects' => [['redirect_url' => 'https://store.example/']],
+        ]];
+        $normalized = [
+            ['field' => 'rules.0.criteria.0.value', 'sent' => 'us', 'stored' => 'United States(US)'],
+            ['field' => 'rules.0.criteria.0.value', 'sent' => 'mexico', 'stored' => 'Mexico(MX)'],
+            ['field' => 'rules.0.criteria.1.value', 'sent' => 'Mobile', 'stored' => 'mobile'],
+        ];
+        $stored = ['United States(US),Canada(CA),Mexico(MX)', 'mobile,tablet'];
+        $mayRemove = static function (): void {
+        };
+
+        $dry = $this->rotators()->setRules($id, ['rules' => $rules], true, $mayRemove);
+        self::assertSame($stored, array_column($dry['data']['rules'][0]['criteria'], 'value'));
+        self::assertSame($normalized, $dry['meta']['normalized']);
+        self::assertSame([], $this->rotators()->listRules($id)['data'], 'a dry run writes nothing');
+
+        $set = $this->rotators()->setRules($id, ['rules' => $rules], false, $mayRemove);
+        self::assertSame($normalized, $set['meta']['normalized']);
+        self::assertSame($stored, array_column($this->rotators()->listRules($id)['data'][0]['criteria'], 'value'));
+
+        // Sent again as stored, nothing is rewritten and nothing is said.
+        $again = $this->rotators()->setRules($id, ['rules' => $this->rotators()->listRules($id)['data']], false, $mayRemove);
+        self::assertArrayNotHasKey('meta', $again);
+        self::assertSame(0, $again['data']['changes']['updated'] ?? 0, json_encode($again['data']['changes']) ?: '');
+
+        $created = $this->rotators()->createRule($id, [
+            'rule_name' => 'britain',
+            'criteria' => [['type' => 'country', 'value' => 'UK']],
+            'redirects' => [['redirect_url' => 'https://store.example/uk']],
+        ]);
+        self::assertSame('United Kingdom(GB)', $created['data']['rules'][1]['criteria'][0]['value']);
+        self::assertSame(
+            [['field' => 'rules.1.criteria.0.value', 'sent' => 'UK', 'stored' => 'United Kingdom(GB)']],
+            $created['meta']['normalized']
+        );
+
+        $rule = (int) $created['data']['rules'][1]['id'];
+        $updated = $this->rotators()->updateRule($id, $rule, ['criteria' => [['type' => 'device', 'value' => 'DESKTOP']]]);
+        self::assertSame('desktop', $updated['data']['rules'][1]['criteria'][0]['value']);
+        self::assertSame(
+            [['field' => 'rules.1.criteria.0.value', 'sent' => 'DESKTOP', 'stored' => 'desktop']],
+            $updated['meta']['normalized']
+        );
+    }
+
+    /**
+     * A rule that sends no visitor anywhere is written, and said: the
+     * answer's meta.warnings names it by its place, on the write and on a
+     * read of the redirector.
+     */
+    public function testARuleThatMatchesNoVisitorIsWrittenAndSaid(): void
+    {
+        $id = $this->rotator();
+        $written = $this->rotators()->setRules($id, ['rules' => [
+            [
+                'rule_name' => 'scored',
+                'criteria' => [['type' => 'fraud', 'value' => 'true'], ['type' => 'country', 'value' => 'Narnia']],
+                'redirects' => [['redirect_url' => 'https://store.example/review']],
+            ],
+            [
+                'rule_name' => 'everyone',
+                'criteria' => [['type' => 'country', 'value' => 'all']],
+                'redirects' => [['redirect_url' => 'https://store.example/']],
+            ],
+            [
+                'rule_name' => 'late',
+                'criteria' => [['type' => 'device', 'value' => 'mobile']],
+                'redirects' => [['redirect_url' => 'https://store.example/m']],
+            ],
+        ]], false, static function (): void {
+        });
+        $fields = array_column($written['meta']['warnings'], 'message', 'field');
+        self::assertSame(['rules.0.criteria.0', 'rules.0.criteria.1', 'rules.2'], array_keys($fields));
+        self::assertStringContainsString('No IPQualityScore key is saved', $fields['rules.0.criteria.0']);
+        self::assertStringContainsString('"Narnia" never matches', $fields['rules.0.criteria.1']);
+        self::assertStringContainsString('Rule 2 ("everyone") is tried first and matches every visitor', $fields['rules.2']);
+        self::assertSame($written['meta']['warnings'], $this->rotators()->read($id)['meta']['warnings']);
+
+        // With a key saved the fraud rule can be decided, and is not warned of.
+        self::assertTrue(self::$db->query('INSERT INTO 202_users_pref SET user_id = ' . self::USER
+            . ", ipqs_api_key = 'k' ON DUPLICATE KEY UPDATE ipqs_api_key = 'k'"), (string) self::$db->error);
+        try {
+            $fields = array_column($this->rotators()->read($id)['meta']['warnings'], 'message', 'field');
+            self::assertSame(['rules.0.criteria.1', 'rules.2'], array_keys($fields));
+        } finally {
+            self::$db->query("UPDATE 202_users_pref SET ipqs_api_key = '' WHERE user_id = " . self::USER);
+        }
     }
 
     public function testAnIdTheRedirectorDoesNotHoldIsRefused(): void
@@ -1204,13 +1305,13 @@ final class RotatorRuleSetIntegrationTest extends TestCase
                 ['type' => 'ip', 'value' => ' all '],
                 ['type' => 'ip', 'statement' => 'is_not', 'value' => 'All'],
                 ['type' => 'ip', 'value' => '203.0.113.7, ALL'],
-                ['type' => 'country', 'value' => 'US, ALL'],
+                ['type' => 'country', 'value' => 'Narnia, ALL'],
                 ['type' => 'device', 'value' => 'Mobile, all'],
             ],
             'redirects' => [['redirect_url' => 'https://s.example/']],
         ]]);
         self::assertSame(
-            ['ALL', 'ALL', '203.0.113.7,ALL', 'US,ALL', 'Mobile,ALL'],
+            ['ALL', 'ALL', '203.0.113.7,ALL', 'Narnia,ALL', 'Mobile,ALL'],
             array_column($this->rotators()->listRules($id)['data'][0]['criteria'], 'value')
         );
         try {

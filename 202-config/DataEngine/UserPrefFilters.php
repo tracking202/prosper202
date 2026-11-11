@@ -90,6 +90,13 @@ final class UserPrefFilters
             $filter .= " AND 2st.landing_page_id=" . (int) $userRow['user_pref_landing_page_id'];
         }
 
+        if (!empty($userRow['user_pref_publisher_id']) && $userRow['user_pref_publisher_id'] != '0') {
+            $filter .= ' AND ' . \Prosper202\Click\PublisherCredit::creditedClicksCondition(
+                '2st.click_id',
+                (int) $userRow['user_pref_publisher_id']
+            );
+        }
+
         if (($userRow['user_pref_method_of_promotion'] ?? '') == 'directlink') {
             $filter .= " AND 2st.landing_page_id = 0";
         } elseif (($userRow['user_pref_method_of_promotion'] ?? '') == 'landingpage') {

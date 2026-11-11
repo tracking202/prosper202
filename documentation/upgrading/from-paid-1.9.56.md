@@ -85,7 +85,9 @@ These differ from 1.9.56 on purpose and stay that way.
 - **A publisher-credited click stays in the account that owns the link.**
   In 1.9.56 the click moved to the publisher's account. Now it stays where it
   is, so the owner's reports keep its campaign and payout. The publisher is
-  stored beside it. There is no report by publisher yet.
+  stored beside it, and Analyze › Publishers shows what each publisher's links
+  did (`p202 report breakdown --breakdown publisher`, or `breakdown=publisher`
+  in the API).
 - **Reset campaign subids now clears conversions.** The Reset campaign
   subids page (Update) removes the conversions of a category, or of one campaign in it,
   through the conversion ledger. Each click's value is then recalculated from

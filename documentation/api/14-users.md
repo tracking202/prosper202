@@ -156,6 +156,12 @@ curl -s "$P202/api/v3/users/1/click-filter/test?ip=198.51.100.7" -H "Authorizati
 | `user_timezone` | string | No | A PHP time zone name such as `America/New_York`, as Personal settings offers them (default: UTC); anything else is `422` |
 | `user_active` | integer | No | `1` can sign in and use its API keys (default), `0` cannot: its keys answer `401`, and a browser it is signed in on is signed out at its next request, also one that makes no request until the user is `1` again. Every remember-me key the user holds is deleted in the same write, so no browser kept signed in signs back in when the user is `1` again; a key that cannot be deleted leaves the user as they were and answers `500`. Any other value is `422` rather than read as `0` |
 
+A user also answers `user_public_publisher_id` (read-only): the id a publisher
+link carries as `t202pubid`. Add `&t202pubid=<id>` to a tracking link to make
+it that user's publisher link; its clicks are credited to the user when they
+hold the Publisher role and the link's account may manage users. Reports
+break down and filter by publisher ([Reports](11-reports.md)).
+
 ## Preference Fields
 
 `PUT /users/{id}/preferences` takes any subset of these. Each value is held to
