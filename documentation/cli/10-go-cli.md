@@ -591,7 +591,8 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   OpenAI; pause and activate change them at once, so call them with
   `dry_run: true` first; with `--staged` they propose). Those six are
   offered by the hosted server too (`hosted_excludes` in `p202 mcp tools
-  --deferred` names the ones that are not).
+  --deferred` names the ones that are not, and `words` the words each is
+  found by).
 - With `--staged`, a write returns a change id and changes nothing; you apply
   it with `p202 change apply <id>`. The assistant is not offered the apply and
   discard tools.

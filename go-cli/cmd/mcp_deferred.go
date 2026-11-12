@@ -19,12 +19,38 @@ import (
 //
 // A deferred tool marked NotHosted is local only. The others the hosted
 // relay may load through its own get_more_tools, from `p202 mcp tools
-// --deferred` (whose hosted_excludes names the local ones), within the areas
+// --deferred` (whose hosted_excludes names the local ones, and whose words
+// are each tool's Words), within the areas
 // an AI connection's key reaches (TestHostedMCPToolsStayInsideTheAIKeyAreas
 // runs them). `p202 mcp call` runs them like any other tool.
 //
 // To add one: append its spec here, with Words a person would use for the
 // task (TestMCPDeferredToolsAreFoundByTheirTask asks each tool's first Word).
+
+// mcpDeferredListing is `p202 mcp tools --deferred`: the deferred tools in
+// the catalogue's tool shape; hosted_excludes and staged_excludes, as the
+// catalogue's: the ones the hosted relay's own get_more_tools never loads,
+// and the ones a connection that only proposes is not given; and words, each
+// tool's Words, so the relay matches a task by the words mcpMatchDeferred does.
+func mcpDeferredListing(root *cobra.Command, readOnly, staged bool) (map[string]interface{}, error) {
+	deferred, err := buildMCPDeferredTools(root, readOnly, staged)
+	if err != nil {
+		return nil, err
+	}
+	excludes, stagedExcludes := []string{}, []string{}
+	words := map[string][]string{}
+	for _, s := range mcpDeferredToolSpecs {
+		if s.NotHosted {
+			excludes = append(excludes, s.Name)
+		}
+		if s.NotStaged {
+			stagedExcludes = append(stagedExcludes, s.Name)
+		}
+		words[s.Name] = s.Words
+	}
+	return map[string]interface{}{"schema": mcpCatalogSchema, "tools": deferred, "hosted_excludes": excludes,
+		"staged_excludes": stagedExcludes, "words": words}, nil
+}
 
 // mcpGetMoreTools is the always-loaded tool that loads deferred ones.
 const mcpGetMoreTools = "get_more_tools"

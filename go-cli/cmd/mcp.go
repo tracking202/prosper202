@@ -55,19 +55,10 @@ var mcpToolsCmd = &cobra.Command{
 		}
 		var listed interface{} = cat
 		if mcpToolsDeferred {
-			// The tools get_more_tools loads on request, in the catalogue's tool shape.
-			deferred, err := buildMCPDeferredTools(rootCmd, mcpReadOnly, api.StagedMode())
+			listed, err = mcpDeferredListing(rootCmd, mcpReadOnly, api.StagedMode())
 			if err != nil {
 				return err
 			}
-			// hosted_excludes, as the catalogue's: the ones the hosted relay's own get_more_tools never loads.
-			excludes := []string{}
-			for _, s := range mcpDeferredToolSpecs {
-				if s.NotHosted {
-					excludes = append(excludes, s.Name)
-				}
-			}
-			listed = map[string]interface{}{"schema": mcpCatalogSchema, "tools": deferred, "hosted_excludes": excludes}
 		}
 		var buf bytes.Buffer
 		enc := json.NewEncoder(&buf)
