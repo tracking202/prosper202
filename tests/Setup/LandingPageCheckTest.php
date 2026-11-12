@@ -158,6 +158,39 @@ final class LandingPageCheckTest extends TestCase
         self::assertSame(['77'], $result->otherIds);
     }
 
+    /**
+     * A check answered from 202_landing_page_checks has its message alone:
+     * the other ids read back from it are the ones the check found, for every
+     * status, an id-less snippet, several ids, and a URL that names an lpip.
+     */
+    public function testTheOtherIdsAreReadBackFromAStoredMessage(): void
+    {
+        $code = static fn (string $id): string => LandingPageCode::loader('//t.example/', $id);
+        $noId = '<script src="//t.example/tracking202/static/landing.js?lpip=" async></script>';
+        $pages = [
+            'mixed' => self::page($code('77') . $code(self::ID) . $code('9001')),
+            'mixed, no id' => self::page($code(self::ID) . $noId),
+            'wrong id' => self::page($code('77') . $code('78')),
+            'wrong id, no id' => $noId,
+            'present' => self::page($code(self::ID)),
+            'absent' => self::page('<p>Sale</p>'),
+        ];
+        $wheres = ['', 'https://shop.example.com/?lpip=5) and also code for lpip=6. Only one of them',
+            'https://shop.example.com/sale'];
+        foreach ($pages as $name => $html) {
+            foreach ($wheres as $where) {
+                $result = LandingPageCheck::inspect($html, self::ID, false, $where);
+                self::assertSame(
+                    $result->otherIds,
+                    LandingPageCheck::otherIdsNamedIn($result->status, $result->message),
+                    "$name at '$where': " . $result->message
+                );
+            }
+        }
+        $found = LandingPageCheck::inspect($pages['mixed'], self::ID)->otherIds;
+        self::assertSame(['77', '9001'], $found, 'sanity: the ids are found');
+    }
+
     public function testCodeOnlyInsideACommentDoesNotCount(): void
     {
         $result = LandingPageCheck::inspect(self::page('<!-- ' . LandingPageCode::loader('//t.example/', self::ID) . ' -->'), self::ID);

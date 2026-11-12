@@ -665,12 +665,14 @@ func replaceEntityRecord(targetData map[string][]map[string]interface{}, entity,
 
 // handleSyncRecordError records a record's failure and says whether to go on.
 // --skip-errors goes past a record's own failure, never past the key's: a 401
-// or 403 fails every later record the same way, so it stops the run.
+// or 403 fails every later record the same way, and so does a 429 until its
+// window passes, so either stops the run.
 func handleSyncRecordError(entity, key string, err error, skipErrors bool, result *syncdata.EntityResult) bool {
 	result.Failed++
 	msg := fmt.Sprintf("%s[%s]: %v", entity, key, err)
 	result.Errors = append(result.Errors, msg)
-	return skipErrors && api.ErrorCategory(err) != "auth"
+	cat := api.ErrorCategory(err)
+	return skipErrors && cat != "auth" && cat != "rate_limited"
 }
 
 // comparableHash fingerprints a record for incremental-sync change detection.

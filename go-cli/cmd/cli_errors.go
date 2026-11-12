@@ -25,13 +25,14 @@ const (
 	ExitServer         = 4 // API returned 5xx
 	ExitPartialFailure = 5 // bulk operation with some successes and some failures
 	ExitLicence        = 6 // the install requires a Pro licence for the CLI (HTTP 402)
+	ExitRateLimited    = 7 // HTTP 429: nothing is wrong with the request; run it again after retry_after_seconds
 )
 
 // CLIError is a structured error for CLI-level failures.
 // It carries a category for the error taxonomy and an optional
 // exit code override for automation.
 type CLIError struct {
-	Category string // "validation", "auth", "network", "server", "partial_failure"
+	Category string // "validation", "auth", "network", "server", "partial_failure", "licence", "rate_limited"
 	Message  string
 	ExitCode int
 	// Hint is the recovery step an operator or agent should take next. It
@@ -120,6 +121,24 @@ func licenceRefusal(errs ...error) error {
 	return refused
 }
 
+// rateLimited returns the first of errs when every non-nil one is a 429
+// (category rate_limited), and nil otherwise, as licenceRefusal does.
+func rateLimited(errs ...error) error {
+	var limited error
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+		if api.ErrorCategory(err) != "rate_limited" {
+			return nil
+		}
+		if limited == nil {
+			limited = err
+		}
+	}
+	return limited
+}
+
 // licenceRefusalError is the refusal as a parent sees it from child
 // processes that all exited ExitLicence: the same category, exit code and
 // hint the children printed.
@@ -168,6 +187,8 @@ func exitCodeForError(err error) int {
 		return ExitPartialFailure
 	case "licence":
 		return ExitLicence
+	case "rate_limited":
+		return ExitRateLimited
 	default:
 		return ExitValidation
 	}
@@ -200,6 +221,9 @@ func errorEnvelope(err error) map[string]interface{} {
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) {
 		env["http_status"] = apiErr.Status
+		if apiErr.RetryAfter > 0 {
+			env["retry_after_seconds"] = apiErr.RetryAfter
+		}
 		if len(apiErr.FieldErrors) > 0 {
 			env["field_errors"] = apiErr.FieldErrors
 		}

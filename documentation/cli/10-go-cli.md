@@ -129,7 +129,7 @@ still needs the browser, see [UI parity](12-ui-parity.md).
 | `p202 tracker list` | List trackers |
 | `p202 tracker get-url <id>` | The tracker's link as Get Links builds it: the tracking domain (or this server's address when none is set) and install directory, the traffic source's custom variables, then the built-in tokens. `--c1`..`--c4`, `--utm-source`, `--utm-medium`, `--utm-campaign`, `--utm-term`, `--utm-content`, `--t202ref`, `--t202b` and `--t202kw` fill a token with the value as given (the traffic source's macro, e.g. `--t202kw '{keyword}'`); `&`, `#`, `?`, whitespace and control characters are refused before any request. `create-with-url` and `bulk-urls` take the same flags; if `create-with-url` creates the tracker and then cannot fetch its link, the hint names the new `tracker_id` so the retry is `get-url`, not a second create |
 | `p202 landing-page list` | List landing pages; `--url-contains <text>` returns every landing page whose `landing_page_url` or `leave_behind_page_url` contains the text |
-| `p202 landing-page check <id>` | Has the server fetch the landing page's saved URL and say whether the page carries its code (`present`, `legacy`, `mixed`, `other_tracker`, `wrong_id`, `commented`, `absent`, or `error` with the reason). The answer is kept and shown beside the page on Setup > Landing Pages. Exits 0 whatever was found; read `data.found` under `--json`. A read-only key may run it |
+| `p202 landing-page check <id>` | Has the server fetch the landing page's saved URL and say whether the page carries its code (`present`, `legacy`, `mixed`, `other_tracker`, `wrong_id`, `commented`, `absent`, or `error` with the reason). The answer is kept and shown beside the page on Setup > Landing Pages. Exits 0 whatever was found; read `data.found` under `--json`. A read-only key may run it. A page checked in the last 30 seconds is answered from that check (`data.fetched` false); each key may have 10 pages fetched a minute, and past that the 429's hint says when to run it again |
 | `p202 landing-page code <id>` | The page's tracking code, as Setup > Get LP Code hands it out: the loader script and the ways out to the offer; an advanced page's offers with `--offer campaign:<id>`/`--offer rotator:<id>`, in order. See [Setup code and traffic-source settings](#setup-code-and-traffic-source-settings) |
 | `p202 ppc-network variable list\|create\|update\|delete` | A traffic source's custom variables, the `parameter=placeholder` pairs its tracking links carry (Setup > Traffic Sources) |
 | `p202 ppc-account pixel list\|create\|update\|delete` | The pixels a traffic source account fires on a conversion, with a Postback's correction URL (Setup > Traffic Sources) |
@@ -317,8 +317,10 @@ p202 import campaigns /tmp/campaigns.json --skip-errors
 
 `import` stops at the first record that fails and exits with that record's
 category. `--skip-errors` skips a record the server rejects and goes on; a
-refused key, no connection or the licence refusal still stop it, since every
-later record would meet the same failure.
+refused key, no connection, the licence refusal or a rate limit (429) still
+stop it, since every later record would meet the same failure. When records
+were imported before the stop, the hint names the records to send next: the
+whole file again would create the first ones twice.
 
 ## Analytics Shorthand
 
@@ -675,13 +677,34 @@ envelope, so an agent reads structured fields instead of parsing prose:
 
 | Field | Always | Meaning |
 | --- | --- | --- |
-| `category` | yes | `validation`, `auth`, `network`, `server`, `partial_failure`, or `licence` |
+| `category` | yes | `validation`, `auth`, `network`, `server`, `partial_failure`, `licence`, or `rate_limited` |
 | `message` | yes | What failed |
 | `exit_code` | yes | The process exit code (table below) |
 | `command` | yes | The command that ran, e.g. `p202 rotator create` |
 | `hint` | when known | The recovery step to take next |
 | `http_status` | API errors | The server's status code |
 | `field_errors` | 422 responses | Per-field messages from the server |
+| `retry_after_seconds` | 429 responses that say | Seconds to wait before running the same command again: the server's `retry_after_seconds`, else its `Retry-After` header |
+
+A 429 (`rate_limited`, exit 7) means nothing in the request is wrong: a
+limit's window is spent (sync and bulk-upsert per minute, Google Ads reads,
+landing page checks per key). Wait `retry_after_seconds` (the `--json`
+envelope, the error text and the hint all give it), then run a single
+request again; do not change its flags. A run that stopped part-way runs
+only what its hint names. `sync --skip-errors`, `conversion import` and `import` stop at a 429
+rather than send every later record into the same refusal. Re-running sync
+or a conversion import is safe (rows already recorded come back as
+duplicates), but `import` creates: its hint names the records still to
+send, and running the whole file again would create the first ones twice.
+A shell batch or `exec` whose every failure was a 429 exits 7 as well, and
+its hint names the commands or profiles to run again, not the whole run; a
+`shell --stop-on-error` batch that a 429 (or any failure) stopped after
+earlier commands ran names the command it stopped at and the ones after it,
+since running the batch again would run the earlier ones twice. An `import`
+that stopped after `--skip-errors` went past refused records names those
+records and their errors too, and a record whose create failed with a 5xx or
+on the connection may exist already: its hint says to check the entity's
+`list` first.
 
 Lists of valid values (supported entities, the metrics a response did
 contain) sit in the message itself, so they are visible even when the hint
@@ -718,7 +741,7 @@ keeps the scope it was made with; and when it names a role permission
 such as `access_to_update_section` or `access_to_setup_section`, granting a
 role with `p202 user role assign`, and when it says `Admin access required.`, that the key's user needs
 the Admin or Super user role, with `p202 whoami` to see its roles; 404 use
-`list` for ids; 429 back off;
+`list` for ids; 429 wait the seconds the server names, then run the same command again (only what the hint names, for a run that stopped part-way);
 5xx retry then `p202 system health`, except a 503 saying the database needs an
 upgrade, which names `202-config/upgrade.php`; a 402 that is not the licence refusal,
 retry then check what serves the URL; network check the URL and `p202 config
@@ -790,6 +813,7 @@ those fields out of the bodies they build from another record.
 | 4 | Server error (5xx response, or a 402 that is not the install's licence refusal: a proxy, WAF or host in front of the install answered it) |
 | 5 | Partial failure (some items in bulk operation failed, or a check such as `system health` or `rotator check` found a problem; its rows stay on stdout) |
 | 6 | Licence: the install's ClickServer API key has no active Pro subscription, so the install refuses the Go CLI (HTTP 402, category `licence`); the hint links the Pro trial or subscription page. The install tells the Go CLI apart by its User-Agent, so this is a licensing prompt for the product, not an access control on the API: the same key keeps answering the PHP CLI, curl and the web app. The install remembers an allow for an hour and a refusal for five minutes (`GET /capabilities` reports the verdict as `cli`). When it cannot get an answer from Tracking202, it allows the CLI only if Tracking202 confirmed the Pro licence within the last 30 days; otherwise the refusal says the licence could not be checked, and its hint asks you to make sure the server can reach my.tracking202.com over HTTPS and names support. A user with no ClickServer API key on the install is refused. A key the install cannot read (its row missing, or the read failing) is the install's own error, not a missing answer from Tracking202, and the CLI is allowed. A run that aggregates several requests (a shell batch, a multi-profile report, `exec`) exits 6 only when every failure in it was the refusal; otherwise it is a generic failure (exit 1) and each item's own error says what it needs |
+| 7 | Rate limited: the server answered 429 (category `rate_limited`). Nothing in the request is wrong; wait `retry_after_seconds` (in the `--json` envelope, the error text and the hint). A single request: run the same command again. A run that stopped part-way (`p202 import`, a shell batch, `exec`): run only what the hint names, since the rest already ran |
 
 ## Telemetry
 

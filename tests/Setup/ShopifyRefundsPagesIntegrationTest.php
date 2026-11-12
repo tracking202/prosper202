@@ -227,24 +227,85 @@ final class ShopifyRefundsPagesIntegrationTest extends TestCase
     public function testARoleWithoutTheUpdateSectionSeesTheListAndSettlesNothing(): void
     {
         self::paidOrderWithAWaitingRefund();
-        $update = 'SELECT permission_id FROM 202_permissions'
-            . " WHERE permission_description = 'access_to_update_section'";
-        self::q('DELETE FROM 202_role_permission WHERE role_id = ' . self::ROLE . " AND permission_id IN ($update)");
+        // Setup alone: API Integrations would settle them too (RefundAccess).
+        self::grant(['access_to_setup_section']);
         try {
             $page = self::decoded(self::page(self::LOG));
             self::assertStringContainsString('id="shopify-refunds"', $page);
-            self::assertStringContainsString('Recording needs access to the Update section.', $page);
+            $refusal = '#Recording needs access to the Update section,\s+or to Account › API Integrations\.#';
+            self::assertMatchesRegularExpression($refusal, $page);
             self::assertStringNotContainsString('name="action" value="record_refund"', $page);
             foreach (['record_refund', 'close_refund'] as $action) {
                 self::page(self::LOG, ['action' => $action, 'refund_id' => '9100001', 'amount' => '10.00',
                     'token' => 'SESSION']);
             }
         } finally {
-            self::q('INSERT INTO 202_role_permission (role_id, permission_id) SELECT ' . self::ROLE
-                . ", permission_id FROM 202_permissions WHERE permission_description = 'access_to_update_section'");
+            self::grant(['access_to_api_integrations', 'access_to_setup_section', 'access_to_update_section']);
         }
         self::assertSame(['59.00000'], self::payouts());
         self::assertStringContainsString('id="shopify-refunds"', self::page(self::LOG));
+    }
+
+    /**
+     * The role that runs the Shopify connection, with neither Setup nor
+     * Update, is shown the refunds on the Inbound Log and nothing else of it,
+     * and records and closes them; a role with neither is sent away and
+     * changes nothing (RefundAccess, as the API asks it).
+     */
+    public function testTheIntegrationsRoleSeesOnlyTheRefundsAndSettlesThem(): void
+    {
+        self::paidOrderWithAWaitingRefund();
+        self::deliver('refunds/create', ShopifyAdapterTest::refund(['id' => 9100002, 'refund_line_items' => [],
+            'transactions' => [
+                ['id' => 71003, 'kind' => 'refund', 'status' => 'pending', 'amount' => '3.00', 'currency' => 'USD'],
+            ]]));
+        try {
+            self::grant(['access_to_campaign_data']);
+            self::assertSame('', self::page(self::LOG), 'a role with neither permission is sent away');
+            $record = ['action' => 'record_refund', 'refund_id' => '9100001', 'amount' => '10.00',
+                'token' => 'SESSION'];
+            self::page(self::LOG, $record);
+            self::assertSame(['59.00000'], self::payouts());
+
+            self::grant(['access_to_api_integrations']);
+            $page = self::decoded(self::page(self::LOG));
+            self::assertStringContainsString('id="shopify-refunds"', $page);
+            self::assertStringContainsString('<h1 class="p202-page-header__title">Shopify refunds</h1>', $page);
+            self::assertStringContainsString('name="action" value="record_refund"', $page);
+            $logOnly = ['id="inbound-log"', 'name="outcome"', 'name="endpoint"', 'id="sub-menu"',
+                'setup/ppc_accounts.php'];
+            foreach ($logOnly as $part) {
+                self::assertStringNotContainsString($part, $page, 'the rest of the log, and Setup, stay Setup\'s');
+            }
+            $card = self::decoded(self::card());
+            self::assertStringContainsString('inbound_log.php#shopify-refunds', $card);
+            $noLog = 'the card links no log this role cannot open';
+            self::assertStringNotContainsString('inbound_log.php?endpoint=shopify', $card, $noLog);
+
+            // Record it now stays the log's: Update beside API Integrations does not open it without Setup.
+            self::grant(['access_to_api_integrations', 'access_to_update_section']);
+            $replay = self::decoded(self::page(self::LOG, ['inbound_id' => '1', 'token' => 'SESSION']));
+            self::assertStringContainsString('Your role may not record conversions, so nothing was recorded.', $replay);
+            self::grant(['access_to_api_integrations']);
+
+            self::page(self::LOG, ['action' => 'close_refund', 'refund_id' => '9100002', 'token' => 'SESSION']);
+            self::page(self::LOG, $record);
+            self::assertSame(['59.00000', '-10.00000'], self::payouts());
+            $after = self::decoded(self::page(self::LOG));
+            self::assertStringContainsString('No Shopify refund is waiting to be recorded', $after);
+        } finally {
+            self::grant(['access_to_api_integrations', 'access_to_setup_section', 'access_to_update_section']);
+        }
+    }
+
+    /** @param list<string> $permissions the role's permissions from now on */
+    private static function grant(array $permissions): void
+    {
+        self::q('DELETE FROM 202_role_permission WHERE role_id = ' . self::ROLE);
+        foreach ($permissions as $name) {
+            self::q('INSERT INTO 202_role_permission (role_id, permission_id) SELECT ' . self::ROLE
+                . ", permission_id FROM 202_permissions WHERE permission_description = '$name'");
+        }
     }
 
     public function testARefundInAnotherCurrencyIsNotPrefilledAndRecordsOnlyTheAmountTyped(): void
