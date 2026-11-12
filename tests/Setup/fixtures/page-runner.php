@@ -20,6 +20,8 @@ declare(strict_types=1);
  *       P202_TEST_SESSION_DIR (where the session file is written),
  *       P202_TEST_GET / P202_TEST_POST (JSON objects; a POST makes the
  *       request a POST), P202_TEST_AJAX=1 (sends X-Requested-With),
+ *       P202_TEST_CONSTANTS (a JSON object of constants defined before the
+ *       page runs, as 202-config.php may define them),
  *       P202_TEST_SERVER (a JSON object of $_SERVER values, laid over the
  *       request's: HTTPS, X-Forwarded-Proto, DOCUMENT_ROOT)
  * Prints the page's output; a page that dies prints what it printed first.
@@ -135,6 +137,10 @@ if ($isFunction) {
     };
     echo json_encode($result, JSON_PARTIAL_OUTPUT_ON_ERROR), "\n";
     exit(0);
+}
+
+foreach (json_decode((string) (getenv('P202_TEST_CONSTANTS') ?: '{}'), true, 8, JSON_THROW_ON_ERROR) as $name => $value) {
+    define((string) $name, $value);
 }
 
 chdir(dirname($root . '/' . $page));
