@@ -145,6 +145,11 @@ jobs:
       - name: CLAUDE.md names what exists and stays within its size
         run: python3 -I scripts/check-claude-md.py
 
+      # Agent Evals runs after a change lands, not on its pull request: every
+      # case's ask must reach a branch of the reference agent of its own.
+      - name: Every eval case has a reference answer
+        run: python3 -I scripts/check-eval-reference-answers.py
+
       # Flags are written in kebab-case everywhere; snake_case is an accepted alias.
       - name: No tracked text spells a flag in snake_case
         run: python3 -I scripts/check-flag-spelling.py
