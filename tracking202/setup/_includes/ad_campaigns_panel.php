@@ -74,7 +74,7 @@ function p202_ad_campaigns_view(array $connection, ?array $campaigns, ?string $e
                 . '<td>' . $e($template === null ? 'not set' : ($template === $default ? 'the Get Links one' : 'its own')) . '</td>'
                 . '<td>' . count($c['conversion_event_setting_ids']) . '</td>'
                 . '<td class="text-nowrap">' . $statusActions('campaigns', $c)
-                . ($template === $default ? '' : ' ' . $form('ad_campaign_template', 'campaigns', $cid, 'push template', 'Set ' . $cid . '\'s tracking template to the Get Links one? OpenAI appends it to every ad\'s URL.'))
+                . ($template === $default ? '' : ' ' . $form('ad_campaign_template', 'campaigns', $cid, 'push template', 'Change ' . $cid . '\'s tracking template to the Get Links one? OpenAI appends it to every ad\'s URL.'))
                 . ' ' . $form('ad_campaign_events', 'campaigns', $cid, 'attach event settings') . '</td></tr>';
         }
         $out .= '</tbody></table></div>'
