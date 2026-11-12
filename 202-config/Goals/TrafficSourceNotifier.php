@@ -91,9 +91,12 @@ final class TrafficSourceNotifier implements OutcomeNotifier
             }
             $amount = self::money((string) ($notice['amount'] ?? '0'));
             $tx = $notice['transaction_id'] ?? null;
+            $eventKey = $tx !== null && $tx !== '' ? (string) $tx : (string) ($notice['dedupe_key'] ?? '');
             $tokens = $click['tokens'] + [
                 'payout' => $amount,
-                'transactionid' => $tx !== null && $tx !== '' ? (string) $tx : (string) ($notice['dedupe_key'] ?? ''),
+                'transactionid' => $eventKey,
+                // A goal outcome is not a destination's conversion: its pixels keep its own key.
+                TrafficSourcePixels::EVENT_ID => $eventKey,
                 'p202_goal' => $names[$goalId],
                 'p202_goal_id' => $goalId,
                 'p202_goal_value' => $amount,

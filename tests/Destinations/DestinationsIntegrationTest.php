@@ -9,6 +9,7 @@ use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookSender;
 use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\MysqlConversionRepository;
+use Prosper202\Conversion\TrafficSourcePixels;
 use Prosper202\Database\Connection;
 use Prosper202\Destinations\DestinationQueue;
 use Prosper202\Destinations\DestinationStore;
@@ -40,7 +41,7 @@ final class DestinationsIntegrationTest extends TestCase
     protected function setUp(): void
     {
         $this->databaseSetUp();
-        foreach (['202_destinations', '202_destination_deliveries', '202_customers', '202_clicks_advance', '202_ips', '202_ips_v6'] as $t) {
+        foreach (['202_destinations', '202_destination_deliveries', '202_customers', '202_clicks_advance', '202_clicks_site', '202_site_urls', '202_ips', '202_ips_v6'] as $t) {
             self::$db->query('TRUNCATE TABLE ' . $t);
         }
         self::fixture('DELETE FROM 202_users WHERE user_id IN (1, 2)');
@@ -319,9 +320,11 @@ final class DestinationsIntegrationTest extends TestCase
         $this->click(103, 32);
         $this->record(103, 'ORD-40');
         $this->worker()->sendDue(10, 5, time() + 1);
-        $this->record(103, 'ORD-41');
+        $second = $this->record(103, 'ORD-41');
         self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 2)['sent']);
         self::assertSame(['ORD-40', 'ORD-40'], array_map(static fn (array $b): string => $b['events'][0]['params']['transaction_id'], $this->bodies), 'GA4 counts the sale once');
+        $pixel = TrafficSourcePixels::withConversionEventId(new Connection(self::$db), [], 1, 103, $second, 'ORD-41');
+        self::assertSame('ORD-40', $pixel[TrafficSourcePixels::EVENT_ID], 'the browser pixel names the sale as the server event does');
 
         // Positive control: a campaign that adds every conversion sends each under its own id.
         $this->click(104);
@@ -329,6 +332,107 @@ final class DestinationsIntegrationTest extends TestCase
         $this->record(104, 'ORD-43');
         $this->worker()->sendDue(10, 5, time() + 3);
         self::assertSame(['ORD-42', 'ORD-43'], array_map(static fn (array $b): string => $b['events'][0]['params']['transaction_id'], array_slice($this->bodies, 2)));
+    }
+
+    public function testTheFactsCarryTheVisitorsAddressOnlyUnmaskedAndWithUserDataAndThePageTheClickCameFrom(): void
+    {
+        self::fixture("INSERT INTO 202_site_urls SET site_url_id=11, site_domain_id=1, site_url_address='https://shop.example.com/spring?utm_source=chatgpt'");
+        self::fixture("INSERT INTO 202_site_urls SET site_url_id=12, site_domain_id=1, site_url_address='https://track.example.com/tracking202/redirect/dl.php?t202id=7'");
+        self::fixture("INSERT INTO 202_ips SET ip_id=5, ip_address='198.51.100.7'");
+        self::fixture("INSERT INTO 202_ips SET ip_id=6, ip_address='198.51.100.0'");
+        $clicks = [
+            // click => [ip_id, landing url id, outbound url id]
+            100 => [5, 11, 12],
+            101 => [6, 0, 12],
+            102 => [5, 0, 0],
+        ];
+        foreach ($clicks as $click => [$ip, $landing, $outbound]) {
+            self::fixture("INSERT INTO 202_clicks_advance SET click_id=$click, ip_id=$ip");
+            self::fixture("INSERT INTO 202_clicks_site SET click_id=$click, click_landing_site_url_id=$landing, click_outbound_site_url_id=$outbound");
+            $this->click($click);
+        }
+        $facts = [];
+        $type = $this->capturing($facts);
+        $store = new DestinationStore(new Connection(self::$db), [Ga4Destination::TYPE => $type]);
+        $create = static fn (array $settings): int => (int) $store->create(1, Ga4Destination::TYPE, 'Store GA4', $settings + ['measurement_id' => 'G-ABC123'], ['api_secret' => self::SECRET], time())['destination_id'];
+        $queue = static fn (): DestinationQueue => new DestinationQueue(new Connection(self::$db), $store, static fn (string $ip): bool => false);
+
+        $on = $create(['send_user_data' => true]);
+        $ids = ['ORD-60' => $this->record(100, 'ORD-60'), '' => $this->record(101, ''), 'ORD-62' => $this->record(102, 'ORD-62')];
+        self::assertSame(3, $queue()->sendDue(10, 5, time() + 1)['sent']);
+        $by = [];
+        foreach ($facts as $f) {
+            $by[$f->clickId] = $f;
+        }
+        self::assertSame('198.51.100.7', $by[100]->ipAddress, 'the positive control: an unmasked address, user data on');
+        self::assertNull($by[101]->ipAddress, 'an address stored masked is not the visitor\'s');
+        self::assertSame('https://shop.example.com/spring?utm_source=chatgpt', $by[100]->pageUrl, 'the landing page');
+        self::assertSame('https://track.example.com/tracking202/redirect/dl.php?t202id=7', $by[101]->pageUrl, 'else the tracking link');
+        self::assertNull($by[102]->pageUrl, 'no page stored, none guessed');
+        self::assertNull($by[100]->userAgent, 'no click stores one');
+        self::assertSame(['ORD-60', 'P202-' . $ids[''], 'ORD-62'], [$by[100]->transactionId, $by[101]->transactionId, $by[102]->transactionId]);
+        self::assertSame('P202-' . $ids[''], TrafficSourcePixels::withConversionEventId(new Connection(self::$db), [], 1, 101, $ids[''], '')[TrafficSourcePixels::EVENT_ID]);
+
+        $this->store()->update(1, $on, ['enabled' => false], time());
+        $facts = [];
+        $off = $create([]);
+        $denied = $create(['send_user_data' => true, 'consent' => ['ad_user_data' => 'denied']]);
+        $this->click(103);
+        self::fixture('INSERT INTO 202_clicks_advance SET click_id=103, ip_id=5');
+        $this->record(103, 'ORD-63');
+        self::assertSame(2, $queue()->sendDue(10, 5, time() + 2)['sent']);
+        self::assertCount(2, $facts);
+        foreach ($facts as $f) {
+            self::assertSame(103, $f->clickId);
+            self::assertNull($f->ipAddress, 'user data off, or ad_user_data denied: no address');
+        }
+        self::assertNotSame($off, $denied);
+    }
+
+    /**
+     * GA4's settings and credentials, with a send that keeps the facts it
+     * was handed and calls nothing.
+     *
+     * @param list<\Prosper202\Destinations\ConversionFacts> $facts
+     */
+    private function capturing(array &$facts): \Prosper202\Destinations\DestinationType
+    {
+        return new class ($facts) implements \Prosper202\Destinations\DestinationType {
+            private Ga4Destination $ga4;
+
+            /** @param list<\Prosper202\Destinations\ConversionFacts> $facts */
+            public function __construct(private array &$facts)
+            {
+                $this->ga4 = new Ga4Destination();
+            }
+
+            public function validate(array $settings, ?array $credentials): array
+            {
+                return $this->ga4->validate($settings, $credentials);
+            }
+
+            public function send(array $settings, array $credentials, \Prosper202\Destinations\ConversionFacts $facts, bool $test, int $now): \Prosper202\Destinations\SendResult
+            {
+                $this->facts[] = $facts;
+
+                return new \Prosper202\Destinations\SendResult(true, false, 204, '');
+            }
+
+            public function settingKeys(): array
+            {
+                return $this->ga4->settingKeys();
+            }
+
+            public function credentialKeys(): array
+            {
+                return $this->ga4->credentialKeys();
+            }
+
+            public function host(array $settings): string
+            {
+                return $this->ga4->host($settings);
+            }
+        };
     }
 
     public function testAHostThatDoesNotResolveIsRetriedNotFailed(): void

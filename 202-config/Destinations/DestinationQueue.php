@@ -13,6 +13,7 @@ use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\Database\Schema\TableRegistry;
 use Prosper202\Http\EuropeanVisitor;
 use Prosper202\Http\PrivacySetting;
+use Prosper202\Http\StoredVisitorIp;
 use Prosper202\Notifications\NotificationOutbox;
 use Prosper202\Report\AccountZone;
 
@@ -417,10 +418,14 @@ final class DestinationQueue
     {
         $userId = $destination['user_id'];
         // The primary, not a replica: a row a lagging replica lacks is not a deleted one.
+        // 202_clicks_advance and 202_clicks_site are one row per click, written by its latest visit.
         $stmt = $this->conn->prepareWrite('SELECT cl.click_id, cl.campaign_id, cl.conv_time, cl.click_payout, cl.transaction_id, cl.deleted, cl.superseded_by, cl.customer_id, cl.match_method, '
-            . IpAddressSql::address('ip', 'ip6') . ' AS ip_address
+            . IpAddressSql::address('ip', 'ip6') . ' AS ip_address, landing.site_url_address AS landing_url, outbound.site_url_address AS outbound_url
             FROM 202_conversion_logs cl LEFT JOIN 202_clicks_advance ca ON ca.click_id = cl.click_id LEFT JOIN 202_ips ip ON ip.ip_id = ca.ip_id'
             . IpAddressSql::join('ip', 'ip6') . '
+            LEFT JOIN 202_clicks_site cs ON cs.click_id = cl.click_id
+            LEFT JOIN 202_site_urls landing ON landing.site_url_id = cs.click_landing_site_url_id AND cs.click_landing_site_url_id > 0
+            LEFT JOIN 202_site_urls outbound ON outbound.site_url_id = cs.click_outbound_site_url_id AND cs.click_outbound_site_url_id > 0
             WHERE cl.conv_id = ? AND cl.user_id = ? LIMIT 1');
         $this->conn->bind($stmt, 'ii', [$convId, $userId]);
         $conv = $this->conn->fetchOne($stmt);
@@ -467,7 +472,7 @@ final class DestinationQueue
         $this->conn->bind($visit, 'ii', [$clickId, $userId]);
         $clickTime = $this->conn->fetchOne($visit)['click_time'] ?? null;
         [$customerId, $emails, $phones] = $this->customer($destination['settings'], (int) ($conv['customer_id'] ?? 0), $userId);
-        $transactionId = $this->replacedTransactionId($clickId, $convId, $userId) ?? trim((string) ($conv['transaction_id'] ?? ''));
+        $eventId = DestinationEventId::of($this->conn, $userId, $clickId, $convId, isset($conv['transaction_id']) ? (string) $conv['transaction_id'] : null);
         $facts = new ConversionFacts(
             $convId,
             $clickId,
@@ -475,13 +480,17 @@ final class DestinationQueue
             (int) $conv['conv_time'],
             (string) $conv['click_payout'],
             $this->currency($userId),
-            $transactionId !== '' ? $transactionId : 'P202-' . $convId,
+            $eventId,
             $tokens,
             $customerId,
             $emails,
             $phones,
             $this->zone($userId),
-            $clickTime === null ? null : (int) $clickTime
+            $clickTime === null ? null : (int) $clickTime,
+            self::sendsUserData($destination['settings']) ? self::visitorAddress($ip) : null,
+            // Not stored for a click yet: nothing is guessed in its place.
+            null,
+            self::pageUrl($conv['landing_url'] ?? null) ?? self::pageUrl($conv['outbound_url'] ?? null)
         );
         $result = $destination['adapter']->send($destination['settings'], $destination['credentials'], $facts, false, $now);
 
@@ -491,27 +500,6 @@ final class DestinationQueue
             $result->retry || $result->waitUntil !== null => 'pending',
             default => 'failed',
         }, $result];
-    }
-
-    /**
-     * The transaction id of the first conversion this one replaced (the
-     * campaign pays the latest conversion, or a newer revenue upload), so
-     * the platform counts the sale once. Null when it replaced none.
-     */
-    private function replacedTransactionId(int $clickId, int $convId, int $userId): ?string
-    {
-        // A recompute points every replaced row at the current winner, so the earliest is the sale's first send.
-        $stmt = $this->conn->prepareWrite("SELECT conv_id, transaction_id FROM 202_conversion_logs
-            WHERE click_id = ? AND user_id = ? AND superseded_by = ? AND superseded_reason IN ('replace', 'batch')
-            ORDER BY conv_id LIMIT 1");
-        $this->conn->bind($stmt, 'iii', [$clickId, $userId, $convId]);
-        $row = $this->conn->fetchOne($stmt);
-        if ($row === null) {
-            return null;
-        }
-        $first = trim((string) ($row['transaction_id'] ?? ''));
-
-        return $first !== '' ? $first : 'P202-' . (int) $row['conv_id'];
     }
 
     /**
@@ -532,15 +520,54 @@ final class DestinationQueue
         if ($row === null) {
             return [null, [], []];
         }
-        // The id goes only where the hashes may. An allowlist: unstated or granted sends, anything else (denied, a corrupt value) does not.
-        $send = ($settings['send_user_data'] ?? false) === true && in_array($settings['consent']['ad_user_data'] ?? null, [null, 'granted'], true);
-        if (!$send) {
+        // The id goes only where the hashes may.
+        if (!self::sendsUserData($settings)) {
             return [null, [], []];
         }
         $email = PiiHash::email($row['email'] ?? null);
         $phone = PiiHash::phone($row['phone'] ?? null);
 
         return [$customerId, $email === null ? [] : [$email], $phone === null ? [] : [$phone]];
+    }
+
+    /**
+     * Whether the destination sends what identifies the visitor (hashes, the
+     * customer's id, the address). An allowlist: unstated or granted
+     * ad_user_data sends, anything else (denied, a corrupt value) does not.
+     *
+     * @param array<string, mixed> $settings
+     */
+    private static function sendsUserData(array $settings): bool
+    {
+        return ($settings['send_user_data'] ?? false) === true && in_array($settings['consent']['ad_user_data'] ?? null, [null, 'granted'], true);
+    }
+
+    /**
+     * The click's stored address as the visitor's, or null: an address
+     * stored masked (StoredVisitorIp::mask(), the privacy setting at the
+     * click) names a /24 or /48, not the visitor (CLAUDE.md #30), and a
+     * private or reserved one names no one a platform could match.
+     */
+    private static function visitorAddress(string $ip): ?string
+    {
+        if ($ip === '' || StoredVisitorIp::mask($ip) === $ip) {
+            return null;
+        }
+        $public = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
+
+        return is_string($public) ? $public : null;
+    }
+
+    /** A stored page address that is an http(s) URL, else null. */
+    private static function pageUrl(mixed $url): ?string
+    {
+        if (!is_string($url)) {
+            return null;
+        }
+        $url = trim($url);
+        $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
+
+        return ($scheme === 'http' || $scheme === 'https') && (string) parse_url($url, PHP_URL_HOST) !== '' ? $url : null;
     }
 
     /** @param array<string, mixed> $settings */

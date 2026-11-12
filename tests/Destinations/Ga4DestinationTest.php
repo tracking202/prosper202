@@ -105,6 +105,28 @@ final class Ga4DestinationTest extends TestCase
         self::assertSame(['currency' => 'USD', 'value' => 19.9, 'transaction_id' => 'ORD-1001', 'campaign' => true], $summary['params'], 'a mapped parameter\'s value is not kept');
     }
 
+    public function testTheVisitorsAddressAgentAndPageChangeNothingGa4IsSent(): void
+    {
+        $plain = self::facts();
+        $visitor = new ConversionFacts(
+            $plain->convId, $plain->clickId, $plain->campaignId, $plain->convTime, $plain->value, $plain->currency, $plain->transactionId,
+            $plain->click, $plain->customerId, $plain->emailHashes, $plain->phoneHashes, $plain->zone, $plain->clickTime,
+            '203.0.113.7', 'Mozilla/5.0 (Macintosh)', 'https://shop.example.com/checkout/done'
+        );
+        $bodies = [];
+        foreach ([$plain, $visitor] as $facts) {
+            $this->sent = [];
+            $this->ga4()->send($this->settings(['user_id_source' => 'customer']), ['api_secret' => self::SECRET], $facts, false, self::NOW);
+            $bodies[] = (string) $this->sent[0][CURLOPT_POSTFIELDS];
+        }
+        self::assertSame(self::GA4_BODY, $bodies[0], 'the body as it was before the facts carried the visitor');
+        self::assertSame($bodies[0], $bodies[1], 'byte for byte');
+    }
+
+    private const GA4_BODY = '{"client_id":"p202.4242","user_id":"p202c.88","timestamp_micros":1779999940000000,"consent":{"ad_user_data":"GRANTED"},'
+        . '"user_data":{"sha256_email_address":["08168cd80dfd534ab0f10af10f1303fe00af2d43ab5c1432360d137f8197e17a"]},'
+        . '"events":[{"name":"purchase","params":{"currency":"USD","value":19.9,"transaction_id":"ORD-1001","campaign":"spring-sale"}}]}';
+
     public function testAUserIdIsSentOnlyForACustomerAndOnlyWhenAsked(): void
     {
         self::assertArrayNotHasKey('user_id', Ga4Destination::body($this->settings(), self::facts()), 'user_id_source none');

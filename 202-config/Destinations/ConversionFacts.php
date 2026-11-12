@@ -17,6 +17,10 @@ final class ConversionFacts
      * @param list<string> $phoneHashes
      * @param string $zone the account's time zone (AccountZone)
      * @param int|null $clickTime when the click was made, null when unknown
+     * @param string $transactionId the conversion's DestinationEventId, the one name every channel sends it under
+     * @param string|null $ipAddress the visitor's address, only when the destination sends user data and it was stored unmasked
+     * @param string|null $userAgent the visitor's user agent; no click stores one yet, so null
+     * @param string|null $pageUrl the click's landing page, else the tracking link it came through
      */
     public function __construct(
         public readonly ?int $convId,
@@ -32,6 +36,9 @@ final class ConversionFacts
         public readonly array $phoneHashes = [],
         public readonly string $zone = 'UTC',
         public readonly ?int $clickTime = null,
+        public readonly ?string $ipAddress = null,
+        public readonly ?string $userAgent = null,
+        public readonly ?string $pageUrl = null,
     ) {
     }
 
@@ -42,6 +49,6 @@ final class ConversionFacts
             'subid' => '0', 'c1' => '', 'c2' => '', 'c3' => '', 'c4' => '', 't202kw' => 'running shoes',
             'utm_source' => 'google', 'utm_medium' => 'cpc', 'utm_campaign' => 'spring-sale', 'utm_term' => '', 'utm_content' => '',
             'gclid' => '', 'gbraid' => '', 'wbraid' => '', 'ttclid' => '', 'msclkid' => '', 'fbclid' => '',
-        ], null, [], [], $zone, null);
+        ], null, [], [], $zone, null, null, null, 'https://shop.example.com/checkout/done');
     }
 }

@@ -277,6 +277,14 @@ if ($newlyRecorded && $conversionResult['reverses_conv_id'] === 0 && $mysql['ppc
 	// This conversion's amount, not the click's cached total, which in an
 	// accumulating campaign is the sum of every conversion so far.
 	$tokens['payout'] = $conversionResult['payout'];
+	$tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId(
+		new \Prosper202\Database\Connection($db),
+		$tokens,
+		(int) ($cvar_sql_row['user_id'] ?? 0),
+		(int) $mysql['click_id'],
+		(int) $conversionId,
+		(string) $conversionResult['transaction_id']
+	);
     // Markup only: the type-4 postbacks were queued.
     $fired = p202FireTrafficSourcePixels(
         $db,
