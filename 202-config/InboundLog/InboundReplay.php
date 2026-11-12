@@ -304,7 +304,7 @@ final class InboundReplay
         $latest = $conn->fetchOne($stmt);
         $tokens = TrafficSourcePixels::clickTokens($conn, $userId, $clickId)['tokens'] ?? [];
         $google = false;
-        foreach (['gclid', 'wbraid', 'gbraid'] as $type) {
+        foreach (GoogleAdsDestination::CLICK_IDS as $type) {
             $google = $google || trim((string) ($tokens[$type] ?? '')) !== '';
         }
 

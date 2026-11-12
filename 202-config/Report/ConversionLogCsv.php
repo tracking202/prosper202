@@ -2,9 +2,10 @@
 
 declare(strict_types=1);
 
-namespace Prosper202\Conversion;
+namespace Prosper202\Report;
 
 use Prosper202\Attribution\ExportCsv;
+use Prosper202\Conversion\ConversionLog;
 
 /**
  * Conversion Logs' Download CSV: the filtered list, newest first, up to

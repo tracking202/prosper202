@@ -76,7 +76,7 @@ if (($_GET['download'] ?? null) === 'csv' && $errors === [] && !$readFailed) {
     // An install may hold a download to fewer rows in 202-config.php.
     $csvMax = defined('P202_CONVERSION_LOGS_CSV_MAX') && is_int(P202_CONVERSION_LOGS_CSV_MAX) && P202_CONVERSION_LOGS_CSV_MAX > 0
         ? min(P202_CONVERSION_LOGS_CSV_MAX, ConversionLog::EXPORT_MAX) : ConversionLog::EXPORT_MAX;
-    \Prosper202\Conversion\ConversionLogCsv::write($out, $log, $userId, $read['filters'], $masked, $csvMax);
+    \Prosper202\Report\ConversionLogCsv::write($out, $log, $userId, $read['filters'], $masked, $csvMax);
     exit;
 }
 
