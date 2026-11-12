@@ -207,7 +207,7 @@ final class LedgerCost
             $adNo = self::adNumbers($sets);
             $rows = [];
             foreach ($sets as $set) {
-                $rows[] = "($k, " . $set['set_no'] . ', ' . $set['network_id'] . ', ' . $adNo[$set['ad_ref']] . ')';
+                $rows[] = "($k, " . $set['set_no'] . ', ' . $set['network_id'] . ', ' . $adNo[self::adKey($set['ad_ref'])] . ')';
             }
             self::insertRows($conn, 'INSERT INTO p202_ledger_sets (k, set_no, network_id, ad_no) VALUES ', $rows);
 
@@ -274,7 +274,7 @@ final class LedgerCost
     }
 
     /**
-     * Each ad of $sets numbered from 1 in the order first seen.
+     * Each ad of $sets numbered from 1 in the order first seen, by adKey().
      *
      * @param list<array{set_no: int, network_id: int, ad_ref: string}> $sets
      * @return array<string, int>
@@ -283,10 +283,22 @@ final class LedgerCost
     {
         $adNo = [];
         foreach ($sets as $set) {
-            $adNo[$set['ad_ref']] ??= count($adNo) + 1;
+            $adNo[self::adKey($set['ad_ref'])] ??= count($adNo) + 1;
         }
 
         return $adNo;
+    }
+
+    /**
+     * An ad id as the ledger's utf8mb4_bin column compares it: PAD SPACE, so
+     * trailing spaces do not count. A click may carry `ad_A ` where another
+     * carries `ad_A`; both are the ledger's one ad (a ledger ad_ref never ends
+     * in a space, SpendRow refuses it), and keyed apart they would collide in
+     * the staged ads table's key or split one hour's spend.
+     */
+    private static function adKey(string $ref): string
+    {
+        return rtrim($ref, ' ');
     }
 
     /**
@@ -427,7 +439,7 @@ final class LedgerCost
         $setRows = [];
         foreach ($sets as $set) {
             $setRows[] = 'SELECT ' . $set['set_no'] . ' AS set_no, ' . $set['network_id'] . ' AS network_id, '
-                . $adNo[$set['ad_ref']] . ' AS ad_no';
+                . $adNo[self::adKey($set['ad_ref'])] . ' AS ad_no';
         }
         $setsSql = implode(' UNION ALL ', $setRows);
         $adRows = [];

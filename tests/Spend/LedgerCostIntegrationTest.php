@@ -103,7 +103,8 @@ final class LedgerCostIntegrationTest extends TestCase
             self::q("DELETE FROM 202_users WHERE user_id = $u");
             self::q("DELETE FROM 202_ppc_networks WHERE user_id = $u");
         }
-        self::q('DELETE FROM 202_ppc_network_variables WHERE ppc_network_id IN (' . self::NETWORK . ', ' . (self::NETWORK + 1) . ')');
+        self::q('DELETE FROM 202_ppc_network_variables WHERE ppc_network_id IN (' . self::NETWORK . ', ' . (self::NETWORK + 1)
+            . ', ' . (self::NETWORK + 2) . ')');
         self::q('DELETE FROM 202_custom_variables WHERE custom_variable_id BETWEEN 630100 AND 630199');
         self::q('DELETE FROM 202_variable_sets2 WHERE variable_set_id BETWEEN 630100 AND 630199');
     }
@@ -296,6 +297,18 @@ final class LedgerCostIntegrationTest extends TestCase
         }
         self::assertSame(self::reports(new ReportsController(self::$db, self::USER), $late), $lateSliced);
 
+        self::withoutTemporaryTables(function (\mysqli $limited) use ($staged, $expected, $window): void {
+            $fallback = LedgerCost::forReport(new Connection($limited), self::USER, self::$hour, self::$hour + 7199, 'USD');
+            self::assertNotNull($fallback);
+            self::assertStringNotContainsString('p202_ledger_', $fallback->join);
+            self::assertSame($staged->meta(self::ZONE), $fallback->meta(self::ZONE));
+            self::assertSame($expected, self::reports(new ReportsController($limited, self::USER), $window));
+        });
+    }
+
+    /** Runs $fn on a connection of a user that may not create temporary tables. */
+    private static function withoutTemporaryTables(\Closure $fn): void
+    {
         $name = (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202');
         $user = 'p202_lc_notemp';
         $pass = bin2hex(random_bytes(8));
@@ -317,15 +330,115 @@ final class LedgerCostIntegrationTest extends TestCase
             }
             self::assertFalse($created, 'The limited user created a temporary table');
             self::assertSame(1044, $errno, 'Refused for want of the privilege');
-            $fallback = LedgerCost::forReport(new Connection($limited), self::USER, self::$hour, self::$hour + 7199, 'USD');
-            self::assertNotNull($fallback);
-            self::assertStringNotContainsString('p202_ledger_', $fallback->join);
-            self::assertSame($staged->meta(self::ZONE), $fallback->meta(self::ZONE));
-            self::assertSame($expected, self::reports(new ReportsController($limited, self::USER), $window));
+            $fn($limited);
             $limited->close();
         } finally {
             self::q("DROP USER IF EXISTS '$user'@'%'");
         }
+    }
+
+    /**
+     * A click whose ad id ends in a space is the ledger's ad (the column
+     * compares PAD SPACE): on a second traffic source of the account it
+     * carries `ad_A `, and on both paths it shares ad A's hour with the
+     * `ad_A` clicks rather than failing the report or keeping its CPC.
+     */
+    public function testAnAdIdWithATrailingSpaceIsTheSameAdOnBothPaths(): void
+    {
+        $network = self::NETWORK + 2;
+        self::q("INSERT INTO 202_ppc_networks SET ppc_network_id = $network, user_id = " . self::USER
+            . ", ppc_network_name = 'ChatGPT Ads 2', ppc_network_time = 0");
+        self::q("INSERT INTO 202_ppc_network_variables SET ppc_variable_id = $network, ppc_network_id = $network,"
+            . " name = 'ad_id', parameter = 'ad_id', placeholder = '{ad_id}'");
+        self::q("INSERT INTO 202_custom_variables SET custom_variable_id = 630106, ppc_variable_id = $network, variable = 'ad_A '");
+        self::q("INSERT INTO 202_variable_sets2 SET variable_set_id = 630106, variables = '630106'");
+        self::q('INSERT INTO 202_dataengine SET user_id = ' . self::USER . ', click_id = 630009, click_time = ' . (self::$hour + 700)
+            . ", ppc_network_id = $network, ppc_account_id = 1, aff_campaign_id = 1, landing_page_id = 0,"
+            . " keyword_id = 0, variable_set_id = '630106', clicks = 1, click_out = 1, leads = 0,"
+            . ' click_lead = 0, click_filtered = 0, click_bot = 0, payout = 0, income = 0, cost = 0.9');
+        self::write(self::USER, [self::ledgerRow('ad_A', self::$hour, '3.00')]);
+        $window = self::window(self::$hour, self::$hour + 7199);
+        // Ad A's 3.00 over its three clicks, then ad B 0.5, no ad 0.2,
+        // ambiguous 0.3, campaign_id 0.4, another account's source 0.6.
+        $total = 3.0 + 0.5 + 0.2 + 0.3 + 0.4 + 0.6;
+
+        $staged = LedgerCost::forReport(new Connection(self::$db), self::USER, self::$hour, self::$hour + 7199, 'USD');
+        self::assertNotNull($staged);
+        self::assertStringContainsString('p202_ledger_sets', $staged->join);
+        unset($staged);
+        $expected = self::reports(new ReportsController(self::$db, self::USER), $window);
+        self::assertEqualsWithDelta($total, json_decode($expected['summary'], true)['data']['total_cost'], 1e-9);
+        // Each report's staged rows go with it (LedgerCost::unstage()).
+        foreach (['p202_ledger_sets', 'p202_ledger_hours', 'p202_ledger_ads'] as $table) {
+            self::assertSame('0', (string) self::$db->query("SELECT COUNT(*) FROM $table")->fetch_row()[0], $table);
+        }
+
+        self::withoutTemporaryTables(function (\mysqli $limited) use ($expected, $window): void {
+            self::assertSame($expected, self::reports(new ReportsController($limited, self::USER), $window));
+        });
+    }
+
+    /**
+     * Two writers adding the same new ad: each one's locking read takes the
+     * gap the other inserts into, and InnoDB rolls one back (the lighter,
+     * here write()'s). write() runs again and both writers' rows land.
+     */
+    public function testTwoWritersAddingOneNewAdBothLand(): void
+    {
+        if (!function_exists('pcntl_fork') || !function_exists('posix_kill')) {
+            self::markTestSkipped('pcntl and posix are needed to run a second writer');
+        }
+        $ready = (string) tempnam(sys_get_temp_dir(), 'p202-lc-ready');
+        $result = (string) tempnam(sys_get_temp_dir(), 'p202-lc-result');
+        unlink($ready);
+        $user = self::USER;
+        $hour = self::$hour;
+        $pid = pcntl_fork();
+        self::assertNotSame(-1, $pid, 'fork failed');
+        if ($pid === 0) {
+            // The child never returns into PHPUnit, nor closes the parent's connection.
+            $answer = 'not run';
+            try {
+                $other = mysqli_connect((string) getenv('P202_TEST_DB_HOST'), (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+                    (string) (getenv('P202_TEST_DB_PASS') ?: ''), (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+                    (int) (getenv('P202_TEST_DB_PORT') ?: 3306));
+                $other->begin_transaction();
+                // Heavier than write()'s transaction, so InnoDB picks write() to roll back.
+                for ($i = 1; $i <= 40; $i++) {
+                    $other->query('INSERT INTO 202_spend_ledger SET user_id = ' . self::OTHER . ", platform = 'openai_ads',"
+                        . " account_ref = 'adacct_demo', ad_ref = 'ad_heavy', hour_start = " . ($hour - $i * 3600)
+                        . ", spend = 1, currency = 'USD', created_at = 0, updated_at = 0");
+                }
+                $other->query("SELECT ad_ref FROM 202_spend_ledger WHERE user_id = $user AND ad_ref IN ('ad_N') FOR UPDATE")->free();
+                touch($ready);
+                usleep(600000);
+                $other->query("INSERT INTO 202_spend_ledger SET user_id = $user, platform = 'openai_ads', account_ref = 'adacct_demo',"
+                    . " ad_ref = 'ad_N', hour_start = " . ($hour + 3600) . ", spend = 2, currency = 'USD', created_at = 0, updated_at = 0");
+                $other->commit();
+                $answer = 'committed';
+            } catch (\Throwable $e) {
+                $answer = 'failed: ' . $e->getMessage();
+            }
+            file_put_contents($result, $answer);
+            posix_kill(getmypid(), SIGKILL);
+        }
+        try {
+            for ($waited = 0; !file_exists($ready) && $waited < 100; $waited++) {
+                usleep(50000);
+            }
+            self::assertFileExists($ready, 'the second writer took its lock');
+            $counts = self::write(self::USER, [self::ledgerRow('ad_N', self::$hour, '1.00')]);
+        } finally {
+            pcntl_waitpid($pid, $status);
+            @unlink($ready);
+        }
+        $answer = (string) file_get_contents($result);
+        unlink($result);
+
+        self::assertSame('committed', $answer, 'the other writer landed');
+        self::assertSame(['inserted' => 1, 'replaced' => 0, 'unchanged' => 0], $counts);
+        self::assertSame('2', (string) self::$db->query('SELECT COUNT(*) FROM 202_spend_ledger WHERE user_id = ' . self::USER
+            . " AND ad_ref = 'ad_N'")->fetch_row()[0], 'both writers\' rows');
     }
 
     public function testARePullReplacesTheHourAndASecondWriteChangesNothing(): void

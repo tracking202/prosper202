@@ -25,6 +25,9 @@ use Prosper202\Report\LocalTime;
  */
 final class SpendLedger
 {
+    /** How many times write() runs a transaction that a deadlock rolled back. */
+    public const DEADLOCK_ATTEMPTS = 4;
+
     /** @var \Closure(): int */
     private \Closure $clock;
 
@@ -153,6 +156,31 @@ final class SpendLedger
         // (CLAUDE.md #34).
         uasort($rows, static fn (SpendRow $a, SpendRow $b): int => strcmp($a->key(), $b->key()));
 
+        // Two writers adding the same new ad still deadlock: each one's
+        // locking read takes the gap the other inserts into. MySQL rolls the
+        // loser back whole, so it runs again from the start, when it reads
+        // the winner's rows (CLAUDE.md #34: a deadlock, never a lock wait
+        // timeout, by its errno).
+        for ($attempt = 1; ; $attempt++) {
+            try {
+                return $this->writeOnce($userId, $rows, $now);
+            } catch (\Throwable $e) {
+                if ($attempt >= self::DEADLOCK_ATTEMPTS || !Connection::isMysqlError($e, 1213, 'Deadlock found')) {
+                    throw $e;
+                }
+                usleep(random_int(5_000, 25_000) * $attempt);
+            }
+        }
+    }
+
+    /**
+     * write()'s one transaction.
+     *
+     * @param array<int, SpendRow> $rows in key order
+     * @return array{inserted: int, replaced: int, unchanged: int}
+     */
+    private function writeOnce(int $userId, array $rows, int $now): array
+    {
         return $this->conn->transaction(function () use ($userId, $rows, $now): array {
             $errors = $this->ownerErrors($userId, $rows, true);
             if ($errors !== []) {
