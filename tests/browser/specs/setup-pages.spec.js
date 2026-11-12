@@ -438,6 +438,51 @@ module.exports = {
     },
 
     {
+      name: 'ChatGPT Ads: one click on Traffic Sources, then Get Links gives the destination URL and tracking template',
+      async run(ctx) {
+        const { app, ui, db, expect, shot } = ctx;
+        const TEMPLATE = 'utm_source=chatgpt&utm_medium=paid&utm_campaign={campaign_id}&utm_content={ad_id}'
+          + '&campaign_id={campaign_id}&ad_id={ad_id}&oppref={oppref}';
+        await app.goto(SETUP + 'ppc_accounts.php');
+        await app.submit('#chatgpt-ads-form button[type="submit"]');
+        expect.match((await app.flashes()).join(' '), /ChatGPT Ads added/, 'the button says what it made');
+        const source = db.value("SELECT ppc_network_id FROM 202_ppc_networks WHERE ppc_network_platform='chatgpt_ads'");
+        expect.ok(Boolean(source), 'one source is marked ChatGPT Ads');
+        const account = String(db.value('SELECT ppc_account_id FROM 202_ppc_accounts WHERE ppc_network_id=' + source));
+        expect.eq(db.value('SELECT GROUP_CONCAT(CONCAT(parameter, \'=\', placeholder) ORDER BY ppc_variable_id) FROM 202_ppc_network_variables WHERE deleted=0 AND ppc_network_id=' + source),
+          'campaign_id={campaign_id},ad_id={ad_id}', 'with its two variables');
+        expect.ok(await ui.visible('#source-list .p202-pill--accent:has-text("ChatGPT Ads")'), 'and a badge in the list');
+
+        await app.submit('#chatgpt-ads-form button[type="submit"]');
+        expect.match((await app.flashes()).join(' '), /already set up, so nothing was added/, 'a second click says it added nothing');
+        expect.eq(db.count('202_ppc_networks', "ppc_network_platform='chatgpt_ads'"), 1, 'and makes no second source');
+        await shot('chatgpt-traffic-source');
+
+        const campaign = String(db.value("SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_name='EVAL Campaign A'"));
+        await app.goto(SETUP + 'get_trackers.php');
+        await ui.select('#aff_campaign_id', campaign);
+        await ui.select('#method_of_promotion', 'landingpage');
+        await ui.select('#landing_page_id', String(db.value("SELECT landing_page_id FROM 202_landing_pages WHERE landing_page_nickname='EVAL LP'")));
+        await ui.select('#ppc_account_id', account);
+        await ui.click('#get-links');
+        await ui.until(() => ui.exists('#tracking-links h3:has-text("ChatGPT Ads")'), { describe: 'the ChatGPT Ads pair to appear' });
+        const values = await ui.texts('#tracking-links > .p202-code .p202-code__value');
+        const tracker = db.value('SELECT tracker_id_public FROM 202_trackers ORDER BY tracker_id DESC LIMIT 1');
+        expect.eq(values[0], db.value("SELECT landing_page_url FROM 202_landing_pages WHERE landing_page_nickname='EVAL LP'"), 'the destination is the landing page as saved');
+        expect.eq(values[1], TEMPLATE + '&t202id=' + tracker + '&t202kw=', 'the template carries the tracker for the page');
+        expect.eq(await app.disclosureOpen('#tracking-links details'), false, 'the full link waits under a closed Advanced');
+        expect.notOk(await ui.exists('#tracking-links h3:has-text("Google Ads")'), 'and the Google pair is not offered');
+        expect.eq(await app.copy('#tracking-links > .p202-code >> nth=1 >> .p202-copy'), values[1], 'Copy copies the template');
+        await shot('chatgpt-get-links');
+
+        await app.goto(SETUP + 'get_trackers.php');
+        const row = '[data-tracker-id="' + db.value('SELECT tracker_id FROM 202_trackers ORDER BY tracker_id DESC LIMIT 1') + '"]';
+        expect.eq(await ui.page.getAttribute(row + ' [data-chatgpt-ads="tracking_template"]', 'data-p202-copy'), values[1], 'the saved link offers the same template');
+        expect.eq(await ui.page.getAttribute(row + ' [data-chatgpt-ads="destination_url"]', 'data-p202-copy'), values[0], 'and the same destination');
+      },
+    },
+
+    {
       name: 'Get LP Code: the simple code, and advanced offers numbered without gaps',
       async run(ctx) {
         const { app, ui, db, expect } = ctx;
