@@ -64,7 +64,11 @@ final class DestinationQueue
     /** The longest page address a destination is given; a longer one is none, never cut into another page. */
     public const PAGE_URL_CHARS = 2048;
     /** Ranges filter_var() passes that hold no visitor a platform could match: shared, IETF-protocol, benchmarking. */
-    private const NOT_A_VISITOR = [['100.64.0.0', 10], ['192.0.0.0', 24], ['198.18.0.0', 15]];
+    private const NOT_A_VISITOR = [
+        ['100.64.0.0', 10], ['192.0.0.0', 24], ['198.18.0.0', 15], ['224.0.0.0', 4],
+        // IPv6 forms that carry an IPv4 address (NAT64, 6to4, Teredo), and multicast.
+        ['64:ff9b::', 96], ['64:ff9b:1::', 48], ['2002::', 16], ['2001::', 32], ['ff00::', 8],
+    ];
 
     private readonly DestinationStore $store;
     /** @var \Closure(string): bool */
@@ -448,7 +452,8 @@ final class DestinationQueue
         // 202_clicks_advance and 202_clicks_site are one row per click, written by its latest visit.
         $stmt = $this->conn->prepareWrite('SELECT cl.click_id, cl.campaign_id, cl.conv_time, cl.click_payout, cl.transaction_id, cl.deleted, cl.superseded_by, cl.customer_id, cl.match_method, cl.currency, '
             . IpAddressSql::address('ip', 'ip6') . ' AS ip_address, landing.site_url_address AS landing_url, outbound.site_url_address AS outbound_url,
-                   EXISTS (SELECT 1 FROM 202_identity_observations o WHERE o.click_id = cl.click_id AND o.signal_type IN (?, ?)) AS browser_signal,
+                   EXISTS (SELECT 1 FROM 202_identity_observations o WHERE o.click_id = cl.click_id AND o.signal_type IN (?, ?)
+                       AND o.observed_at >= (SELECT MAX(lv.click_time) FROM 202_clicks lv WHERE lv.click_id = cl.click_id AND lv.user_id = cl.user_id)) AS browser_signal,
                    ac.aff_campaign_id AS campaign_found, ac.identity_signals
             FROM 202_conversion_logs cl LEFT JOIN 202_clicks_advance ca ON ca.click_id = cl.click_id LEFT JOIN 202_ips ip ON ip.ip_id = ca.ip_id'
             . IpAddressSql::join('ip', 'ip6') . '
@@ -582,16 +587,21 @@ final class DestinationQueue
      * Whether the click's visitor may be identified to a platform, as a Meta
      * Purchase pixel asks it (FacebookPixelAssistantScript::mayTrack()): the
      * campaign's identity capture is on (RequestSignals::campaignAllows()),
-     * and the visitor did not refuse consent (p202_consent). A refusal is
-     * not stored, but its mark is: the click's own browser signals (the
-     * visitor cookie, the landing page id; 202_identity_observations) are
-     * recorded only from a request that did not refuse consent, under a
-     * campaign that allowed capture (ClickIdentity::fromRequest()). A link
-     * a conversion's customer id makes later (trustedCustomer(),
-     * customerOnly()) is no such mark, so it never stands in for the
-     * visitor's consent. A click with no browser signal, or whose campaign
-     * is not the account's or is gone, is not; nor is one whose campaign
-     * has turned capture off since.
+     * and the click's latest visit did not refuse consent (p202_consent). A
+     * refusal is not stored, but its mark is: a browser signal (the visitor
+     * cookie, the landing page id; 202_identity_observations) is recorded
+     * only from a request that did not refuse consent, under a campaign that
+     * allowed capture (ClickIdentity::fromRequest()), with the time of the
+     * visit it came with. So the address, which is the latest visit's, goes
+     * only when a signal came with that visit: a re-click that refused
+     * leaves the earlier visits' marks behind it. A link a conversion's
+     * customer id makes later (trustedCustomer(), customerOnly()) is no such
+     * mark. The latest visit is the account's own (#27). A click with no
+     * such signal, or whose campaign is not the account's or is gone, is
+     * not; nor is one whose campaign has turned capture off since. Like the
+     * Meta Purchase pixel's, the rule is per request: a later request of the
+     * click that did not refuse (a landing page's, absent meaning given)
+     * marks the visit it records.
      *
      * @param array<string, mixed> $conv
      */

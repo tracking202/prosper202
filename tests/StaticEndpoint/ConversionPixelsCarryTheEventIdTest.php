@@ -10,14 +10,21 @@ use PHPUnit\Framework\TestCase;
  * gpb.php and upx.php fire the traffic source's browser pixels for the
  * conversion they just recorded with that conversion's DestinationEventId
  * (TrafficSourcePixels::EVENT_ID), the id the destinations send it under, so
- * a Meta Purchase and a server event name one sale alike. Held here by
- * reading each script's statements in order: the tokens the pixels are fired
- * with are the ones withConversionEventId() returned, for the recorded
- * conversion, with nothing reassigning them in between.
+ * a Meta Purchase and a server event name one sale alike.
+ *
+ * Held by reading each script's tokens: every p202FireTrafficSourcePixels()
+ * is fired with $tokens; the statement before it that sets $tokens is a
+ * whole statement (not under a braceless if or else) assigning
+ * withConversionEventId()'s answer for exactly (int) $conversionId; between
+ * the two nothing names $tokens and no block closes; and nothing in the
+ * script can reach $tokens without naming it (a reference, extract(), a
+ * variable variable). A shape the scan cannot read is refused (CLAUDE.md #20,
+ * #22).
  */
 final class ConversionPixelsCarryTheEventIdTest extends TestCase
 {
     private const SCRIPTS = ['tracking202/static/gpb.php', 'tracking202/static/upx.php'];
+    private const STAMP = 'Prosper202\Conversion\TrafficSourcePixels::withConversionEventId';
 
     public function testEachScriptFiresItsPixelsWithTheConversionsEventId(): void
     {
@@ -28,23 +35,62 @@ final class ConversionPixelsCarryTheEventIdTest extends TestCase
 
     public function testTheScanRefusesEachWayTheWiringCanBreak(): void
     {
-        $good = '<?php $tokens["payout"] = 1;'
-            . ' $tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId($c, $tokens, 1, 2, (int) $conversionId, "t");'
-            . ' $fired = p202FireTrafficSourcePixels($db, 3, $tokens, null);';
-        self::assertSame([], self::problems($good), 'the positive control');
+        $stamp = '$tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId($c, $tokens, 1, 2, (int) $conversionId, "t");';
+        $fire = ' p202FireTrafficSourcePixels($db, 3, $tokens, null);';
+        self::assertSame([], self::problems('<?php $tokens["payout"] = 1; ' . $stamp . $fire), 'the positive control');
+        self::assertSame([], self::problems('<?php if ($ok) { $tokens["payout"] = 1; ' . $stamp . ' // markup only' . "\n" . $fire . ' }'), 'both in one block');
         $planted = [
-            'no event id' => '<?php $fired = p202FireTrafficSourcePixels($db, 3, $tokens, null);',
-            'the result dropped' => '<?php \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId($c, $tokens, 1, 2, (int) $conversionId, "t"); p202FireTrafficSourcePixels($db, 3, $tokens, null);',
-            'after the fire' => '<?php p202FireTrafficSourcePixels($db, 3, $tokens, null); $tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId($c, $tokens, 1, 2, (int) $conversionId, "t");',
-            'reassigned between' => '<?php $tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId($c, $tokens, 1, 2, (int) $conversionId, "t"); $tokens = []; p202FireTrafficSourcePixels($db, 3, $tokens, null);',
-            'another conversion' => '<?php $tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId($c, $tokens, 1, 2, 7, "t"); p202FireTrafficSourcePixels($db, 3, $tokens, null);',
-            'an entry unset between' => '<?php $tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId($c, $tokens, 1, 2, (int) $conversionId, "t"); unset($tokens["p202_event_id"]); p202FireTrafficSourcePixels($db, 3, $tokens, null);',
-            'an entry written between' => '<?php $tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId($c, $tokens, 1, 2, (int) $conversionId, "t"); $tokens["p202_event_id"] = "x"; p202FireTrafficSourcePixels($db, 3, $tokens, null);',
-            'stamped in one branch' => '<?php if ($a) { $tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId($c, $tokens, 1, 2, (int) $conversionId, "t"); } p202FireTrafficSourcePixels($db, 3, $tokens, null);',
-            'other tokens fired' => '<?php $tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId($c, $tokens, 1, 2, (int) $conversionId, "t"); p202FireTrafficSourcePixels($db, 3, $other, null);',
+            'no event id' => '<?php' . $fire,
+            'the result dropped' => '<?php ' . str_replace('$tokens = ', '', $stamp) . $fire,
+            'after the fire' => '<?php' . $fire . ' ' . $stamp,
+            'reassigned between' => '<?php ' . $stamp . ' $tokens = [];' . $fire,
+            'another conversion' => '<?php ' . str_replace('(int) $conversionId', '7', $stamp) . $fire,
+            'the conversion plus one' => '<?php ' . str_replace('(int) $conversionId', '(int) $conversionId + 1', $stamp) . $fire,
+            'another variable' => '<?php ' . str_replace('$conversionId', '$conversionIdOld', $stamp) . $fire,
+            'other tokens fired' => '<?php ' . $stamp . str_replace('3, $tokens', '3, $other', $fire),
+            'an entry unset between' => '<?php ' . $stamp . ' unset($tokens["p202_event_id"]);' . $fire,
+            'an entry written between' => '<?php ' . $stamp . ' $tokens["p202_event_id"] = "x";' . $fire,
+            'array_pop between' => '<?php ' . $stamp . ' array_pop($tokens);' . $fire,
+            'array_splice between' => '<?php ' . $stamp . ' array_splice($tokens, 0, 1);' . $fire,
+            'destructured between' => '<?php ' . $stamp . ' [$tokens] = [[]];' . $fire,
+            'null-coalescing assignment between' => '<?php ' . $stamp . ' $tokens ??= [];' . $fire,
+            'a reference taken before' => '<?php $t = &$tokens; ' . $stamp . ' $t["p202_event_id"] = "x";' . $fire,
+            'foreach by reference between' => '<?php ' . $stamp . ' foreach ($tokens as &$v) { $v = ""; }' . $fire,
+            'foreach into a reference elsewhere' => '<?php ' . $stamp . ' foreach ($a as &$v) {}' . $fire,
+            'extract()' => '<?php ' . $stamp . ' extract($a);' . $fire,
+            'a variable variable' => '<?php ' . $stamp . ' $$name = [];' . $fire,
+            'stamped in one branch' => '<?php if ($a) { ' . $stamp . ' }' . $fire,
+            'stamped under a braceless if' => '<?php if ($a) ' . $stamp . $fire,
+            'stamped under a braceless else' => '<?php if ($a) {} else ' . $stamp . $fire,
+        ];
+        $expected = [
+            'no event id' => 'not the ones withConversionEventId',
+            'the result dropped' => 'not the ones withConversionEventId',
+            'after the fire' => 'not the ones withConversionEventId',
+            'reassigned between' => 'not the ones withConversionEventId',
+            'another conversion' => '(int) $conversionId',
+            'the conversion plus one' => '(int) $conversionId',
+            'another variable' => '(int) $conversionId',
+            'other tokens fired' => 'not fired with $tokens',
+            'an entry unset between' => 'not the ones withConversionEventId',
+            'an entry written between' => 'not the ones withConversionEventId',
+            'array_pop between' => 'not the ones withConversionEventId',
+            'array_splice between' => 'not the ones withConversionEventId',
+            'destructured between' => 'not the ones withConversionEventId',
+            'null-coalescing assignment between' => 'not the ones withConversionEventId',
+            'a reference taken before' => 'a reference',
+            'foreach by reference between' => 'a reference',
+            'foreach into a reference elsewhere' => 'a reference',
+            'extract()' => 'extract()',
+            'a variable variable' => 'a variable variable',
+            'stamped in one branch' => 'block that ends',
+            'stamped under a braceless if' => 'not the ones withConversionEventId',
+            'stamped under a braceless else' => 'not the ones withConversionEventId',
         ];
         foreach ($planted as $why => $code) {
-            self::assertNotSame([], self::problems($code), $why);
+            $found = self::problems($code);
+            self::assertNotSame([], $found, $why);
+            self::assertStringContainsString($expected[$why], implode(' | ', $found), $why . ' is refused by the check that names it');
         }
     }
 
@@ -53,61 +99,75 @@ final class ConversionPixelsCarryTheEventIdTest extends TestCase
     {
         $tokens = array_values(array_filter(
             token_get_all($code),
-            static fn ($t): bool => !is_array($t) || !in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)
+            static fn ($t): bool => !is_array($t) || !in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT, T_OPEN_TAG], true)
         ));
-        $text = static fn ($t): string => is_array($t) ? $t[1] : $t;
+        $text = static fn (int $i): string => isset($tokens[$i]) ? (is_array($tokens[$i]) ? $tokens[$i][1] : $tokens[$i]) : '';
+        $out = [];
+        // What can reach $tokens without naming it: refused anywhere in the script.
+        foreach ($tokens as $i => $t) {
+            $word = strtolower($text($i));
+            if ($word === '&' && str_starts_with($text($i + 1), '$')) {
+                $out[] = 'a reference (&' . $text($i + 1) . ') can change $tokens without naming it';
+            } elseif ($word === 'extract' && $text($i + 1) === '(') {
+                $out[] = 'extract() can change $tokens without naming it';
+            } elseif ($word === '$' && ($text($i + 1) === '$' || str_starts_with($text($i + 1), '$') || $text($i + 1) === '{')) {
+                $out[] = 'a variable variable can change $tokens without naming it';
+            }
+        }
         $fires = [];
         foreach ($tokens as $i => $t) {
-            $word = ltrim($text($t), '\\');
-            if ($word === 'p202FireTrafficSourcePixels' && $text($tokens[$i + 1] ?? '') === '(') {
+            if (ltrim($text($i), '\\') === 'p202FireTrafficSourcePixels' && $text($i + 1) === '(') {
                 $fires[] = $i;
             }
         }
         if ($fires === []) {
-            return ['no p202FireTrafficSourcePixels() call'];
+            $out[] = 'no p202FireTrafficSourcePixels() call';
         }
-        $out = [];
         foreach ($fires as $fire) {
-            // The third argument is $tokens, read as the tokens between the second and third top-level comma.
             if (self::argument($tokens, $fire + 1, 2, $text) !== '$tokens') {
                 $out[] = 'the pixels are not fired with $tokens';
                 continue;
             }
-            $stamped = null;
+            // The last statement before the fire that names $tokens must be the stamp, whole: a
+            // statement that starts after ; { or }, so not the body of a braceless if or else.
+            $last = null;
             for ($i = $fire - 1; $i >= 0; $i--) {
-                if ($text($tokens[$i]) === '$tokens' && $text($tokens[$i + 1] ?? '') === '=') {
-                    $call = '';
-                    for ($j = $i + 2; $j < count($tokens) && $text($tokens[$j]) !== '('; $j++) {
-                        $call .= $text($tokens[$j]);
-                    }
-                    $stamped = ltrim($call, '\\') === 'Prosper202\Conversion\TrafficSourcePixels::withConversionEventId' ? $j : false;
+                if ($text($i) === '$tokens') {
+                    $last = $i;
                     break;
                 }
             }
-            if ($stamped === null || $stamped === false) {
-                $out[] = 'the tokens fired are not the ones withConversionEventId() returned';
+            $start = $last;
+            while ($start !== null && $start > 0 && !in_array($text($start - 1), [';', '{', '}'], true)) {
+                $start--;
+            }
+            $call = $start === null ? '' : self::statementPrefix($tokens, $start, $text);
+            if ($start === null || !str_starts_with($call, '$tokens=' . self::STAMP . '(') && !str_starts_with($call, '$tokens=\\' . self::STAMP . '(')) {
+                $out[] = 'the tokens fired are not the ones withConversionEventId() returned, assigned in a statement of its own';
                 continue;
             }
-            if (!str_contains(self::argument($tokens, $stamped, 4, $text), '$conversionId')) {
-                $out[] = 'withConversionEventId() is not asked for the recorded conversion ($conversionId)';
+            $open = $start;
+            while ($text($open) !== '(') {
+                $open++;
             }
-            // Between the stamp and the fire: nothing writes into $tokens, and no block the stamp is in closes.
-            $depth = 0;
-            for ($i = $stamped; $i < $fire; $i++) {
-                $t = $text($tokens[$i]);
-                if ($t === '{') {
-                    $depth++;
-                } elseif ($t === '}' && --$depth < 0) {
-                    $out[] = 'the stamp is inside a block that ends before the pixels are fired';
+            if (self::argument($tokens, $open, 4, $text) !== '(int)$conversionId') {
+                $out[] = 'withConversionEventId() is not asked for the recorded conversion, (int) $conversionId';
+            }
+            // Between the stamp's end and the fire no block closes (nothing names $tokens there: the stamp is the last that does).
+            $end = $open;
+            for ($depth = 0; $end < $fire; $end++) {
+                $t = $text($end);
+                $depth += $t === '(' ? 1 : ($t === ')' ? -1 : 0);
+                if ($depth === 0 && $t === ';') {
                     break;
                 }
-                if ($t === '$tokens' && $i > $stamped) {
-                    $before = $text($tokens[$i - 1] ?? '');
-                    $after = $text($tokens[$i + 1] ?? '');
-                    if (($before === '(' && strtolower($text($tokens[$i - 2] ?? '')) === 'unset') || $after === '[' || in_array($after, ['=', '+=', '.='], true)) {
-                        $out[] = 'something writes into $tokens between the stamp and the fire';
-                        break;
-                    }
+            }
+            for ($i = $end + 1, $depth = 0; $i < $fire; $i++) {
+                $t = $text($i);
+                $depth += $t === '{' ? 1 : ($t === '}' ? -1 : 0);
+                if ($depth < 0) {
+                    $out[] = 'the stamp is inside a block that ends before the pixels are fired';
+                    break;
                 }
             }
         }
@@ -115,8 +175,20 @@ final class ConversionPixelsCarryTheEventIdTest extends TestCase
         return $out;
     }
 
+    /** The statement from $start, its tokens joined, up to the stamp's open paren and a little past. */
+    private static function statementPrefix(array $tokens, int $start, \Closure $text): string
+    {
+        $s = '';
+        for ($i = $start; $i < $start + 12 && isset($tokens[$i]); $i++) {
+            $s .= $text($i);
+        }
+
+        return $s;
+    }
+
     /**
-     * The text of argument $n (0-based) of the call whose `(` is $open.
+     * The text of argument $n (0-based) of the call whose `(` is $open,
+     * whitespace dropped.
      *
      * @param list<mixed> $tokens
      */
@@ -126,7 +198,7 @@ final class ConversionPixelsCarryTheEventIdTest extends TestCase
         $arg = 0;
         $out = '';
         for ($i = $open; $i < count($tokens); $i++) {
-            $t = $text($tokens[$i]);
+            $t = $text($i);
             if (in_array($t, ['(', '[', '{'], true)) {
                 $depth++;
                 if ($depth === 1) {
