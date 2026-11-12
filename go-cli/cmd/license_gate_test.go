@@ -170,6 +170,29 @@ func TestExecFailureIsTheLicenceRefusalWhenEveryChildWasRefused(t *testing.T) {
 	}
 }
 
+// Every failed child rate limited: exit 7 and the profiles to run again, since
+// running exec again repeats what the others did; one other failure, generic.
+func TestExecFailureKeepsARateLimitWhenEveryChildWasLimited(t *testing.T) {
+	err := execFailure(map[string]execResult{
+		"prod":    {Profile: "prod", ExitCode: ExitRateLimited},
+		"staging": {Profile: "staging", ExitCode: ExitRateLimited},
+		"dev":     {Profile: "dev", ExitCode: 0},
+	})
+	if api.ErrorCategory(err) != "rate_limited" || exitCodeForError(err) != ExitRateLimited {
+		t.Fatalf("err = %v (category %q, exit %d)", err, api.ErrorCategory(err), exitCodeForError(err))
+	}
+	if hint := hintFor(err); !strings.Contains(hint, "--profiles prod,staging") {
+		t.Errorf("hint %q should name the limited profiles only", hint)
+	}
+	mixed := execFailure(map[string]execResult{
+		"prod":    {Profile: "prod", ExitCode: ExitRateLimited},
+		"staging": {Profile: "staging", ExitCode: 1},
+	})
+	if exitCodeForError(mixed) == ExitRateLimited {
+		t.Error("a child that failed for another reason must not be reported as rate limited")
+	}
+}
+
 // A 402 is the licence refusal only with the install's own envelope: a bare
 // 402 from a proxy is a server error (exit 4, retry), not a trip to the trial.
 func TestABare402IsNotALicenceRefusal(t *testing.T) {

@@ -41,6 +41,7 @@ function p202_payment_card_state(\mysqli $db, int $userId, ?int $now = null): ar
  * setting for the ones it does not ('' for none).
  *
  * @param array<string, array<string, array{count: int, latest: int}>> $counts HeldNotifications::counts()
+ * @param bool $linksLog whether the role opens Setup › Inbound Log, which the warning then links
  */
 function p202_currency_mismatch_notice(
     array $counts,
@@ -49,7 +50,8 @@ function p202_currency_mismatch_notice(
     string $accountCurrency,
     string $base,
     string $action,
-    string $tokenField
+    string $tokenField,
+    bool $linksLog
 ): string {
     $held = CurrencyMismatch::held($counts, $source, $accountCurrency);
     $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
@@ -80,8 +82,8 @@ function p202_currency_mismatch_notice(
             . ' account counts in ' . $e($accountCurrency) . ', and Prosper202 does not convert amounts. They are'
             . ' held. If you sell in ' . $e($one ?? 'one of them') . ', <a href="'
             . $e($base . '202-account/account.php#currency') . '">change the account currency to '
-            . $e($one ?? 'it') . '</a>, then record them here. <a href="' . $e($log)
-            . '">See them in the Inbound Log</a>.</div></div>';
+            . $e($one ?? 'it') . '</a>, then record them here.'
+            . ($linksLog ? ' <a href="' . $e($log) . '">See them in the Inbound Log</a>.' : '') . '</div></div>';
     }
 
     return $html;

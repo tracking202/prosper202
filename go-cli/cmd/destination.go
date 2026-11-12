@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"regexp"
 	"strconv"
@@ -522,11 +524,22 @@ var destinationAccountsCmd = &cobra.Command{
 		}
 		data, err := c.Get("destinations/"+args[0]+"/google-ads/accounts", nil)
 		if err != nil {
-			return withHint(err, "The destination must be a connected Google Ads one: `p202 destination get %s` shows its status, `p202 destination connect %s` connects it.", args[0], args[0])
+			return googleAdsReadError(err, fmt.Sprintf("The destination must be a connected Google Ads one: `p202 destination get %s` shows its status, `p202 destination connect %s` connects it.", args[0], args[0]))
 		}
 		render(data)
 		return nil
 	},
+}
+
+// googleAdsReadError attaches hint to a failed Google Ads read, except to a
+// 429: the server's per-key limit on these reads, whose only next step is the
+// class-wide one, to wait the seconds it names (api.HintFor).
+func googleAdsReadError(err error, hint string) error {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) && apiErr.Status == http.StatusTooManyRequests {
+		return err
+	}
+	return withHint(err, "%s", hint)
 }
 
 var destinationConversionActionsCmd = &cobra.Command{
@@ -560,7 +573,7 @@ var destinationConversionActionsCmd = &cobra.Command{
 		}
 		data, err := c.Get("destinations/"+args[0]+"/google-ads/conversion-actions", params)
 		if err != nil {
-			return withHint(err, "%s", destinationPickHint)
+			return googleAdsReadError(err, destinationPickHint)
 		}
 		render(data)
 		return nil
@@ -599,7 +612,7 @@ var destinationPickCmd = &cobra.Command{
 		}
 		data, err := c.Post("destinations/"+args[0]+"/google-ads/pick", body)
 		if err != nil {
-			return withHint(err, "%s", destinationPickHint)
+			return googleAdsReadError(err, destinationPickHint)
 		}
 		render(data)
 		return nil

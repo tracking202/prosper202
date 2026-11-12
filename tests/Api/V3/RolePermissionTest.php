@@ -30,7 +30,8 @@ final class RolePermissionTest extends TestCase
     use ReadsRouteRegistrations;
 
     /** Middleware that asks for a role permission (or Admin). */
-    private const ROLE_MIDDLEWARE = '/requirePermission|requireAdmin|\$setupSection|\$setupRemove|\$updateSection|\$settingsPage|\$integrationsPage/';
+    private const ROLE_MIDDLEWARE = '/requirePermission|requireAdmin|\$setupSection|\$setupRemove|\$updateSection'
+        . '|\$settingsPage|\$integrationsPage|\$shopifyRefundsSeen|\$shopifyRefundsSettled/';
 
     /** A handler whose first statement asks for one. */
     private const ROLE_FIRST_STATEMENT = '/^\$(manage|view|setup)\(\);|^\$auth->require(Permission|Admin|MayManageUser|MayChangeRoles|MayDeleteUser|SelfOrMayManageUser|SelfOrAdmin|PersonalSettingsOf)\(/';
@@ -99,6 +100,37 @@ final class RolePermissionTest extends TestCase
     {
         return preg_match(self::ROLE_MIDDLEWARE, implode(' ', $route['middleware'])) === 1
             || preg_match(self::ROLE_FIRST_STATEMENT, ltrim($first)) === 1;
+    }
+
+    /**
+     * The Shopify refunds' two middlewares are RefundAccess, the rule the
+     * Inbound Log page asks, refusing with a 403 when it says no, and
+     * nothing else: ROLE_MIDDLEWARE trusts their names.
+     */
+    public function testTheShopifyRefundMiddlewaresAskRefundAccess(): void
+    {
+        $src = self::indexSource();
+        $access = preg_quote('\\Prosper202\\PaymentNotification\\Shopify\\RefundAccess::', '/');
+        $middlewares = [
+            '$shopifyRefundsSeen' => ['maySee', 'SEE_REFUSED'],
+            '$shopifyRefundsSettled' => ['maySettle', 'SETTLE_REFUSED'],
+        ];
+        foreach ($middlewares as $var => [$rule, $refusal]) {
+            self::assertSame(1, preg_match_all('/' . preg_quote($var, '/') . '\s*=/', $src), "$var is assigned once");
+            self::assertMatchesRegularExpression(
+                '/' . preg_quote($var, '/') . ' = static function \(\) use \(\$refundAccess\): void \{\s*'
+                    . 'if \(!' . $access . $rule . '\(\$refundAccess\)\) \{\s*'
+                    . 'throw new AuthException\(' . $access . $refusal . ', 403\);\s*\}\s*\};/',
+                $src,
+                "$var refuses with 403 when RefundAccess::$rule() says no, and does nothing else"
+            );
+        }
+        self::assertMatchesRegularExpression(
+            '/\$refundAccess = static fn \(string \$permission\): bool'
+                . ' => \$auth->hasPermission\(\$db, \$permission\);/',
+            $src,
+            'RefundAccess is asked about the key\'s own role'
+        );
     }
 
     public function testEveryRouteHasARoleDecision(): void
