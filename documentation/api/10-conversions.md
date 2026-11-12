@@ -163,14 +163,17 @@ refund in another currency than the account's (`other_currency` is true;
 `amount` is not what to record. Send what the refund returned in the
 account's currency, with `"currency"` naming that currency; without it, or
 with any other currency, the answer is a `422` on `currency` and nothing is
-recorded. The refund is recorded once under its id, so
-Shopify settling it later records nothing more. `POST
-/conversions/shopify-refunds/{id}/close` removes a refund from the list with
-nothing recorded, for one that returned no money. Both need the role's
-access to the Setup and Update sections, answer `404` for a refund that is
-not listed for the account, and write a line to the inbound log. Recording
-answers `409` with the reason when the sale is gone or the refund is on
-file at another amount.
+recorded. `amount` has at most 5 decimals: a sixth is refused (`422`), never
+rounded. The refund is recorded once under its id, so Shopify settling it
+later records nothing more. `POST /conversions/shopify-refunds/{id}/close`
+removes a refund from the list with nothing recorded, for one that returned
+no money or whose sale is gone. Both need the role's access to the Setup
+and Update sections, answer `404` for a refund that is not listed for the
+account, and write a line to the inbound log. Recording answers `409` with
+the reason when the sale is gone or the refund is on file at another
+amount; both answer `409` for a refund still waiting for its order's sale,
+which is recorded when the sale arrives. Recording or closing a refund also
+drops a copy of it held for its currency, so it is never recorded later.
 
 ## Inbound log
 

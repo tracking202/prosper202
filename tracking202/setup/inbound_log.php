@@ -67,7 +67,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } elseif ($refundId !== null && $action === 'close_refund') {
                 $flash = $desk->close($userId, (string) $refundId)
                     ? ['ok', 'Refund ' . $refundId . ' was closed with nothing recorded.']
-                    : ['bad', 'Refund ' . $refundId . ' was recorded or closed already; nothing was changed.'];
+                    : ['bad', $desk->closeRefusal($userId, (string) $refundId)
+                        ?? 'Refund ' . $refundId . ' was recorded or closed already; nothing was changed.'];
             }
         } catch (\Throwable $e) {
             error_log(p202UncaughtLogLine('Setup › Inbound Log: a Shopify refund could not be settled', $e));

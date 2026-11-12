@@ -77,7 +77,7 @@ final class ShopifyRefundsController
         $amount = $payload['amount'] ?? null;
         // A decimal string or a JSON number with at most the five decimals a
         // payout holds: a sixth is refused, never rounded away (#4).
-        if (is_int($amount) || (is_float($amount) && is_finite($amount) && round($amount, 5) == $amount)) {
+        if (is_int($amount) || (is_float($amount) && round($amount, 5) == $amount)) {
             $amount = rtrim(rtrim(number_format((float) $amount, 5, '.', ''), '0'), '.');
         }
         if (!is_string($amount) || preg_match('/^\d{1,6}(?:\.\d{1,5})?$/D', $amount) !== 1 || (float) $amount <= 0) {
@@ -140,6 +140,10 @@ final class ShopifyRefundsController
         PayloadKeys::refuseUnknown($payload, [], 'closing a Shopify refund');
         $this->mustBeListed($refundId);
         if (!$this->refunds->close($this->userId, (string) $refundId, RefundsToSettle::THE_API)) {
+            $refusal = $this->refunds->closeRefusal($this->userId, (string) $refundId);
+            if ($refusal !== null) {
+                throw new ConflictException($refusal, ['outcome' => 'waiting_for_order']);
+            }
             throw new NotFoundException('Shopify refund ' . $refundId . ' was recorded or closed already.');
         }
 

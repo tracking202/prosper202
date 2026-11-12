@@ -156,6 +156,12 @@ final class SettlementCoordinator
                 $refund['occurred_at'] ?: null);
             $outcome = (new Processor($this->db))->process($notification, new Verification([$account => 0]),
                 $this->provider, $request);
+            // Refused because this refund is on file already, at another
+            // amount: it is recorded, and closed so, never listed as refused.
+            if ($outcome->kind === OutcomeKind::CONFLICT && $this->isLiveReversal($account, $outcome->conversionId, (string) $refund['refund_id'])) {
+                $this->store->complete($account, $refund['refund_id'], time());
+                continue;
+            }
             // A failure a retry can mend leaves the refund open for the retry.
             if (self::rank($outcome->kind) !== 2) {
                 $refusal = self::rank($outcome->kind) === 1 ? $outcome->message : null;
@@ -183,7 +189,7 @@ final class SettlementCoordinator
         $account = $outcome->accountId;
         // Refused because it is on file already, at another amount: it is
         // recorded, and listing it as not recorded would say otherwise.
-        if ($outcome->kind === OutcomeKind::CONFLICT && $this->isLiveReversal($account, $outcome->conversionId)) {
+        if ($outcome->kind === OutcomeKind::CONFLICT && $this->isLiveReversal($account, $outcome->conversionId, $refund['id'])) {
             return;
         }
         $onFile = $this->clicksOf($account, $refund['order_id']) !== [];
@@ -205,17 +211,18 @@ final class SettlementCoordinator
         }
     }
 
-    /** Whether $conversionId is a reversal of the account's still on file. */
-    private function isLiveReversal(int $account, ?int $conversionId): bool
+    /** Whether $conversionId is this refund's reversal, of the account's, still on file. */
+    private function isLiveReversal(int $account, ?int $conversionId, string $refundId): bool
     {
         if ($conversionId === null || $conversionId <= 0) {
             return false;
         }
         $stmt = $this->conn->prepareWrite(
+            // Keyed by the refund's own id (DedupeKey::reversal(): rev:<sale>:<refund id>).
             'SELECT 1 FROM 202_conversion_logs WHERE conv_id = ? AND user_id = ? AND reverses_conv_id IS NOT NULL'
-            . ' AND deleted = 0 LIMIT 1'
+            . " AND dedupe_key = CONCAT('rev:', reverses_conv_id, ':', ?) AND deleted = 0 LIMIT 1"
         );
-        $this->conn->bind($stmt, 'ii', [$conversionId, $account]);
+        $this->conn->bind($stmt, 'iis', [$conversionId, $account, $refundId]);
 
         return $this->conn->fetchOne($stmt) !== null;
     }

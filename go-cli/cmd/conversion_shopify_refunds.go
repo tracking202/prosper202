@@ -176,7 +176,7 @@ func shopifyRefundError(err error) error {
 		}
 		return err
 	case 409:
-		return withHint(err, "Nothing was recorded. If the order's sale is gone or the refund is already on file at another amount, close it: `p202 conversion shopify-refunds close <refund-id>`.")
+		return withHint(err, "Nothing was changed. A refund waiting for its order's sale is recorded when the sale arrives: wait for it. One whose sale is gone, or already on file at another amount, can be closed: `p202 conversion shopify-refunds close <refund-id>`.")
 	}
 	return err
 }

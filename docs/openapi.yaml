@@ -3049,8 +3049,10 @@ paths:
       summary: Close a listed Shopify refund with nothing recorded
       description: |
         Removes the refund from the list without a reversal, for one that
-        returned no money. Its amount stays counted in the sale. Asks for
-        the role's access to the Setup and Update sections.
+        returned no money. Its amount stays counted in the sale. A refund
+        still waiting for its order's sale is not closed: it is recorded
+        when the sale arrives (409). Asks for the role's access to the
+        Setup and Update sections.
       operationId: closeShopifyRefund
       parameters:
         - name: id
@@ -3078,6 +3080,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: The refund waits for its order's sale and is recorded when it arrives; nothing was changed
         "422":
           $ref: "#/components/responses/ValidationError"
 
