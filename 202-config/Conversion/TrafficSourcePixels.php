@@ -349,7 +349,8 @@ final class TrafficSourcePixels
         try {
             $tokens[self::EVENT_ID] = DestinationEventId::of($conn, $userId, $clickId, $convId, $transactionId);
         } catch (\Throwable $e) {
-            if (Connection::isRetryableLockError($e)) {
+            // Inside a transaction a lock error ended it, and its owner must hear (CLAUDE.md #34); after one, the visitor goes on.
+            if ($conn->inTransaction() && Connection::isRetryableLockError($e)) {
                 throw $e;
             }
             unset($tokens[self::EVENT_ID]);
