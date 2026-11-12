@@ -5463,9 +5463,26 @@ paths:
         the made-up click id it carries is expected to be refused, so
         `valid` is true when nothing else is. For ChatGPT Ads it is an event
         with `validate_only`, which OpenAI checks and does not save.
+
+        With `{"real": true}` (ChatGPT Ads only, and only when an ad
+        connection reaches the pixel's ad account) a real event is sent
+        instead, which OpenAI saves and counts as a conversion of the pixel;
+        then the account's recent events (`GET /conversions/events?pid=`)
+        are read through the connection, and `arrived` says whether it is
+        among them as a server event (`server_to_server`). The answer is
+        `sent`, `arrived`, `event_type`, `pixel_id`, `connection_id`,
+        `status_code` and `message`. Without a connection it is a 422 naming
+        `real`. Not logged as a delivery.
       operationId: testDestination
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                real: {type: boolean, description: ChatGPT Ads with a connection - send a real event and read it back}
       responses:
         "200":
           description: The platform's verdict

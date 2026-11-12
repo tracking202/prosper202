@@ -92,3 +92,27 @@ function p202_ad_connections_panel(array $connections, array $ppcAccounts, ?arra
 
     return $out;
 }
+
+/**
+ * Whether a ChatGPT Ads connection reaches this destination's pixel (it made the destination, or setup found or was
+ * given the pixel): then its real test event can be read back.
+ *
+ * @param list<array<string, mixed>> $connections
+ * @param array<string, mixed> $destination as DestinationStore::list() shapes it
+ */
+function p202_ad_connection_reaches(array $connections, array $destination): bool
+{
+    if (($destination['type'] ?? '') !== 'openai_ads') {
+        return false;
+    }
+    $pixel = ((array) $destination['settings'])['pixel_id'] ?? null;
+    foreach ($connections as $c) {
+        $setup = (array) $c['setup'];
+        if (($setup['destination_id'] ?? null) === (int) $destination['destination_id']
+            || (is_array($setup['pixel'] ?? null) && ($setup['pixel']['pixel_id'] ?? null) === $pixel)) {
+            return true;
+        }
+    }
+
+    return false;
+}

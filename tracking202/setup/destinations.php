@@ -20,6 +20,7 @@ use Prosper202\AdPlatforms\AdConnectionInputException;
 use Prosper202\AdPlatforms\AdConnectionStore;
 use Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi;
 use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsConnections;
+use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsTestEvent;
 use Prosper202\Destinations\DestinationForm;
 use Prosper202\Destinations\DestinationInputException;
 use Prosper202\Destinations\DestinationQueue;
@@ -199,6 +200,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     die();
                 }
                 $errors['destination'] = 'That destination is not one of yours, or was deleted.';
+            } elseif ($action === 'test_real') {
+                $real = (new OpenAiAdsTestEvent($conn, $adStore, $store, AdvertiserApi::fromEnvironment(), new OpenAiAdsDestination(AdvertiserApi::eventsSender())))->send($userId, $id, time());
+                if ($real === null) {
+                    $errors['destination'] = 'That destination is not one of yours, or was deleted.';
+                } else {
+                    $_SESSION['p202_destination_real_test'] = ['id' => $id] + $real;
+                    header('location: ' . $self . '?done=tested#d' . $id);
+                    die();
+                }
             } elseif ($action === 'test') {
                 $result = (new DestinationQueue($conn, $store))->testFire($userId, $id, time());
                 if ($result === null) {
@@ -265,6 +275,11 @@ if (isset($_SESSION['p202_destination_oauth']) && is_array($_SESSION['p202_desti
     unset($_SESSION['p202_destination_oauth']);
 }
 $test = null;
+$realTest = null;
+if (isset($_SESSION['p202_destination_real_test']) && is_array($_SESSION['p202_destination_real_test'])) {
+    $realTest = $_SESSION['p202_destination_real_test'];
+    unset($_SESSION['p202_destination_real_test']);
+}
 if (isset($_SESSION['p202_destination_test']) && is_array($_SESSION['p202_destination_test'])) {
     $test = $_SESSION['p202_destination_test'];
     unset($_SESSION['p202_destination_test']);
@@ -444,9 +459,12 @@ if ($logDestination !== null) {
                         <span class="p202-pill"><?php echo ['needs_authorisation' => 'not connected', 'needs_account' => 'pick its account'][$d['status']] ?? 'credentials unreadable'; ?></span>
                         <?php } ?>
                         <span class="p202-list__actions">
-                            <?php $acts = ($isAds ? ['connect' => ($d['status'] ?? '') === 'ready' ? 'reconnect Google' : 'Connect Google Ads'] : []) + ['test' => 'send test', $d['enabled'] ? 'disable' : 'enable' => $d['enabled'] ? 'turn off' : 'turn on', 'delete' => 'delete']; ?>
-                            <?php foreach ($acts as $act => $label) { ?>
-                            <form method="post" action="<?php echo p202_setup_e($self); ?>" class="d-inline"<?php echo $act === 'delete' ? ' data-p202-confirm="Delete this destination? What it has not sent is cancelled."' : ''; ?>>
+                            <?php $acts = ($isAds ? ['connect' => ($d['status'] ?? '') === 'ready' ? 'reconnect Google' : 'Connect Google Ads'] : []) + ['test' => 'send test']
+                                + (p202_ad_connection_reaches($adConnectionList, $d) ? ['test_real' => 'send a real test event'] : [])
+                                + [$d['enabled'] ? 'disable' : 'enable' => $d['enabled'] ? 'turn off' : 'turn on', 'delete' => 'delete']; ?>
+                            <?php foreach ($acts as $act => $label) {
+                                $confirm = ['delete' => 'Delete this destination? What it has not sent is cancelled.', 'test_real' => 'Send a real test event to ChatGPT Ads? OpenAI saves it and counts it as a conversion of the pixel; then its recent events are read back.'][$act] ?? ''; ?>
+                            <form method="post" action="<?php echo p202_setup_e($self); ?>" class="d-inline"<?php echo $confirm !== '' ? ' data-p202-confirm="' . p202_setup_e($confirm) . '"' : ''; ?>>
                                 <?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>
                                 <input type="hidden" name="action" value="<?php echo $act; ?>"><input type="hidden" name="destination_id" value="<?php echo $id; ?>">
                                 <button type="submit" class="p202-list__action<?php echo $act === 'delete' ? ' p202-list__action--danger' : ''; ?>"><?php echo $label; ?></button>
@@ -475,6 +493,9 @@ if ($logDestination !== null) {
                             . '. They are tried again at ' . $when((int) $d['waiting']['until']) . ', or at once when you connect it again or save its settings or credentials (Edit, below).');
                     } ?>
                     <?php echo p202_destination_privacy_note($privacy, $settings, $base, $adapter?->takesConsent() ?? true); ?>
+                    <?php if ($realTest !== null && (int) $realTest['id'] === $id) {
+                        echo p202_flash(($realTest['arrived'] ?? false) === true ? 'ok' : 'bad', (string) $realTest['message']);
+                    } ?>
                     <?php if ($test !== null && (int) $test['id'] === $id) {
                         echo p202_flash($test['valid'] ? 'ok' : 'bad', $test['valid']
                             ? ($d['type'] === OpenAiAdsDestination::TYPE
