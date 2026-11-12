@@ -1008,6 +1008,7 @@ currency than the Prosper202 account; spend is not converted. `--staged` is refu
 
 ```
 p202 ad-spend [--period P | --time-from T --time-to T] [--interval day|hour] [--platform openai_ads] [--limit N] [--json]
+p202 ad-spend conversions [--period P] [--platform openai_ads] [--json]   # OpenAI's conversions per ad per day beside prosper202_conversions
 p202 ad-spend sync list [--json]              # each ChatGPT Ads connection: enabled, backfilled_at, last run, last_error / last_note
 p202 ad-spend sync enable <connection-id>     # off until enabled; first run reads 30 days, later runs the trailing 72 hours
 p202 ad-spend sync disable <connection-id>    # what the ledger holds stays

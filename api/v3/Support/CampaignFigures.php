@@ -37,6 +37,12 @@ final class CampaignFigures
     public const array SPEND = ['impressions', 'platform_clicks', 'spend', 'matched_clicks', 'unallocated_spend'];
 
     /**
+     * GET /spend-ledger/conversions' figures: the platform's and Prosper202's
+     * conversions of each ad and what the platform valued them at.
+     */
+    public const array PLATFORM_CONVERSIONS = ['platform_conversions', 'click_through', 'view_through', 'sales', 'prosper202_conversions'];
+
+    /**
      * GET /conversions/match-methods' figures: how many conversions each
      * campaign has by match method, how many count, and what they earned —
      * the counts as a report's leads are, the money as its income.

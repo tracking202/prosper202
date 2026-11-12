@@ -20,6 +20,14 @@ function p202_spend_sync_card(mysqli $db, int $userId, string $base, string $tok
         $states = $sync->status($userId);
         $reaches = (new \Prosper202\Spend\SpendLedger($conn))->reaches($userId);
         $zone = new DateTimeZone(\Prosper202\Report\AccountZone::read($conn, $userId));
+        // The last 7 days' conversions, OpenAI's beside Prosper202's.
+        $week = (new \Prosper202\Spend\PlatformConversions($conn))->read(
+            $userId,
+            (new DateTimeImmutable('-6 days', $zone))->format('Y-m-d'),
+            (new DateTimeImmutable('now', $zone))->format('Y-m-d'),
+            \Prosper202\Spend\OpenAi\SpendSync::PLATFORM,
+            5000
+        );
     } catch (\Throwable $e) {
         error_log('Traffic Sources: the ChatGPT Ads spend card could not be read: ' . $e->getMessage());
 
@@ -59,6 +67,9 @@ function p202_spend_sync_card(mysqli $db, int $userId, string $base, string $tok
         . '<p class="p202-panel__sub">What OpenAI billed per ad per hour, pulled every hour into the spend ledger. Reports cost the clicks carrying each ad at its share of the hour\'s spend.</p></div>'
         . '<div class="p202-panel__body">'
         . '<p class="mb-2">' . ($reaches === null ? 'No spend data yet.' : 'Spend data reaches ' . p202_setup_e($at($reaches)) . '.') . '</p>'
+        . ($week['rows'] === [] ? '' : '<p class="mb-2">Last 7 days\' conversions: ' . array_sum(array_column($week['rows'], 'platform_conversions'))
+            . ' reported by ChatGPT Ads, ' . array_sum(array_column($week['rows'], 'prosper202_conversions'))
+            . ' recorded here for clicks carrying the same ads (<code>p202 ad-spend conversions</code>).</p>')
         . '<ul class="p202-list">' . $rows . '</ul>'
         . '</div></section>';
 }

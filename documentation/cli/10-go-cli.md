@@ -536,6 +536,7 @@ p202 ad-spend --period yesterday
 p202 ad-spend sync list
 p202 ad-spend sync enable 1
 p202 ad-spend sync run 1
+p202 ad-spend conversions --period last7   # OpenAI's conversions beside yours
 ```
 
 ## Config Defaults

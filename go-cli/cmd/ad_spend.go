@@ -152,7 +152,44 @@ var adSpendSyncRunCmd = &cobra.Command{
 	},
 }
 
+var adSpendConversionsCmd = &cobra.Command{
+	Use:   "conversions",
+	Short: "ChatGPT Ads' reported conversions per ad per day, beside Prosper202's for the same ads",
+	Long: "Per day (in the ad account's time zone, as OpenAI reports it) and ad: OpenAI's goal conversions,\n" +
+		"click-through and view-through, and the purchase value it attributed, beside prosper202_conversions,\n" +
+		"the conversions of your clicks that carried the ad that day. Filled by `p202 ad-spend sync`.",
+	Example: "  p202 ad-spend conversions --period last7",
+	Args:    cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		params := map[string]string{}
+		if cmd.Flags().Changed("period") {
+			params["period"] = enumValue(cmd, "period")
+		}
+		for _, name := range []string{"time_from", "time_to", "platform"} {
+			if v, _ := cmd.Flags().GetString(name); v != "" {
+				params[name] = v
+			}
+		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		data, err := c.Get("spend-ledger/conversions", params)
+		if err != nil {
+			return withHint(err, "%s", "`p202 ad-spend sync list` shows whether ChatGPT Ads spend and conversions are pulled.")
+		}
+		render(data)
+		return nil
+	},
+}
+
 func init() {
+	adSpendConversionsCmd.Flags().String("period", "", "Named window ({values})")
+	enumFlag(adSpendConversionsCmd, "period", newEnum(reportPeriods))
+	adSpendConversionsCmd.Flags().String("time_from", "", "First day (YYYY-MM-DD in your time zone) or second")
+	adSpendConversionsCmd.Flags().String("time_to", "", "Last day or second, inclusive")
+	adSpendConversionsCmd.Flags().String("platform", "", "Only this platform's rows (e.g. openai_ads)")
+	adSpendCmd.AddCommand(adSpendConversionsCmd)
 	adSpendCmd.Flags().String("period", "", "Named window ({values})")
 	enumFlag(adSpendCmd, "period", newEnum(reportPeriods))
 	adSpendCmd.Flags().String("time_from", "", "First day or second (YYYY-MM-DD in your time zone, unix seconds, or a time with its offset)")

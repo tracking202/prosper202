@@ -3534,6 +3534,91 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /spend-ledger/conversions:
+    get:
+      tags: [Spend Ledger]
+      summary: The conversions an ad platform reports per ad per day, beside Prosper202's
+      description: >-
+        Per day (in the ad account's zone, as the platform reports it) and ad:
+        the platform's goal conversions (`platform_conversions`, with
+        `click_through` and `view_through` when reported) and the purchase
+        value it attributed (`sales`, null when it could not value it), beside
+        `prosper202_conversions`, the conversions of this account's clicks that
+        carried the ad on that day in that zone. Filled by the ChatGPT Ads
+        spend sync. The window's days are read in the account's zone. Masked
+        for a role without `access_to_campaign_data`.
+      operationId: listPlatformConversions
+      parameters:
+        - $ref: "#/components/parameters/period"
+        - $ref: "#/components/parameters/windowFrom"
+        - $ref: "#/components/parameters/windowTo"
+        - name: platform
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5000
+            default: 500
+      responses:
+        "200":
+          description: One row per ad and day
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        day:
+                          type: string
+                        timezone:
+                          type: string
+                        platform:
+                          type: string
+                        account_ref:
+                          type: string
+                        ad_ref:
+                          type: string
+                        platform_conversions:
+                          type: integer
+                          nullable: true
+                        click_through:
+                          type: integer
+                          nullable: true
+                        view_through:
+                          type: integer
+                          nullable: true
+                        sales:
+                          type: number
+                          nullable: true
+                        sales_currency:
+                          type: string
+                          nullable: true
+                        prosper202_conversions:
+                          type: integer
+                          nullable: true
+                        updated_at:
+                          type: integer
+                  from_day:
+                    type: string
+                  to_day:
+                    type: string
+                  truncated:
+                    type: boolean
+                  limit:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /spend-ledger/sync:
     get:
       tags: [Spend Ledger]

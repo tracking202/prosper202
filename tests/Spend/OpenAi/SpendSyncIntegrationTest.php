@@ -41,6 +41,12 @@ final class SpendSyncIntegrationTest extends TestCase
     /** @var list<string> */
     private array $urls = [];
 
+    /** @var list<string> the conversion insights requests' bodies */
+    private array $bodies = [];
+
+    /** @var list<array<string, mixed>> */
+    private array $conversionAnswers = [];
+
     /** @var list<array<string, mixed>> */
     private array $answers = [];
 
@@ -102,6 +108,8 @@ final class SpendSyncIntegrationTest extends TestCase
         $this->live = [self::CONNECTION => new SpendConnection(self::CONNECTION, self::USER, 'adacct_demo', 'USD', self::KEY)];
         $this->urls = [];
         $this->answers = [];
+        $this->bodies = [];
+        $this->conversionAnswers = [];
     }
 
     private static function q(string $sql): void
@@ -114,9 +122,12 @@ final class SpendSyncIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         foreach ([self::USER, self::OTHER] as $u) {
-            foreach (['202_spend_ledger', '202_ad_spend_sync', '202_users_pref', '202_users'] as $table) {
+            foreach (['202_spend_ledger', '202_ad_spend_sync', '202_ad_platform_conversions', '202_dataengine', '202_ppc_networks', '202_users_pref', '202_users'] as $table) {
                 self::q("DELETE FROM $table WHERE user_id = $u");
             }
+            self::q('DELETE FROM 202_ppc_network_variables WHERE ppc_variable_id = 64401');
+            self::q('DELETE FROM 202_custom_variables WHERE custom_variable_id = 644001');
+            self::q('DELETE FROM 202_variable_sets2 WHERE variable_set_id = 644001');
         }
     }
 
@@ -125,6 +136,12 @@ final class SpendSyncIntegrationTest extends TestCase
         $guard = new WebhookGuard(static fn (string $host): array => ['203.0.113.20'], '203.0.113.0/24');
         $transport = function (array $options): array {
             $this->urls[] = (string) $options[CURLOPT_URL];
+            if (str_contains((string) $options[CURLOPT_URL], '/conversions/insights')) {
+                $this->bodies[] = (string) ($options[CURLOPT_POSTFIELDS] ?? '');
+
+                return (array_shift($this->conversionAnswers) ?? ['body' => '{"object":"list","data":[],"count":0}'])
+                    + ['status' => 200, 'error' => null, 'primary_ip' => '203.0.113.20', 'location' => null, 'body' => ''];
+            }
 
             return (array_shift($this->answers) ?? ['body' => '{"object":"list","data":[],"count":0,"first_id":null,"last_id":null,"has_more":false}'])
                 + ['status' => 200, 'error' => null, 'primary_ip' => '203.0.113.20', 'location' => null, 'body' => ''];
@@ -207,7 +224,9 @@ final class SpendSyncIntegrationTest extends TestCase
         $done = $this->sync()->runDue(self::NOW + 60);
 
         self::assertSame(1, $done['synced'], (string) json_encode($this->sync()->status(self::USER)));
-        self::assertCount(2, $this->urls, 'both pages read');
+        $pages = array_values(array_filter($this->urls, static fn (string $u): bool => str_contains($u, '/ad_account/insights')));
+        self::assertCount(2, $pages, 'both pages read');
+        $this->urls = $pages;
         self::assertSame(['start' => self::NOW - self::NOW % 3600 - 30 * 86400, 'end' => self::NOW], self::window($this->urls[0]));
         self::assertStringContainsString('after=' . rawurlencode("start=$hour:end=" . ($hour + 3600) . ':entity_id=ad_502'), $this->urls[1]);
 
@@ -245,7 +264,7 @@ final class SpendSyncIntegrationTest extends TestCase
         $done = $this->sync()->runDue(self::NOW + 60);
 
         self::assertSame(1, $done['failed']);
-        self::assertSame([], $this->urls);
+        self::assertSame([], $this->urls, 'nothing asked of OpenAI');
         self::assertSame([], self::ledger());
         $state = $this->sync()->status(self::USER)[0];
         self::assertStringContainsString('billed in EUR and this Prosper202 account records money in USD', (string) $state['last_error']);
@@ -287,5 +306,43 @@ final class SpendSyncIntegrationTest extends TestCase
         self::assertSame('0', $row['enabled']);
         self::assertStringContainsString('was removed', (string) $row['last_error']);
         self::assertFalse($this->sync()->setEnabled(self::USER, self::CONNECTION, true), 'not this account\'s to turn on');
+    }
+
+    public function testPlatformConversionsAreReadPerAdAndDayBesideProsper202s(): void
+    {
+        $hour = self::NOW - self::NOW % 3600 - 7200;
+        $day = gmdate('Y-m-d', $hour);
+        $this->live = [self::CONNECTION => new SpendConnection(self::CONNECTION, self::USER, 'adacct_demo', 'USD', self::KEY, 'UTC')];
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $this->pages($hour);
+        $this->conversionAnswers[] = ['status' => 413, 'body' => '{}'];
+        $this->conversionAnswers[] = ['body' => str_replace('@D0@', $day, (string) file_get_contents(dirname(__DIR__, 2) . '/fixtures/openai-ads/conversions-daily.json'))];
+        $this->sync()->runDue(self::NOW + 60);
+
+        // Asked daily, per ad, over whole UTC days; a 413 asks again for fewer ads.
+        self::assertCount(3, $this->bodies);
+        $first = json_decode($this->bodies[0], true);
+        self::assertSame(['ad', 'daily', true], [$first['aggregation_level'], $first['time_granularity'], $first['group_by_entity']]);
+        self::assertSame(['ad_501', 'ad_502'], $first['entity_ids']);
+        $range = json_decode($first['time_ranges'][0], true);
+        self::assertSame(0, $range['start'] % 86400);
+        self::assertSame(['ad_501'], json_decode($this->bodies[1], true)['entity_ids'], 'halved after the 413');
+
+        // One of this account's clicks carried ad_501 that day, and converted.
+        self::q('INSERT INTO 202_ppc_networks SET ppc_network_id = 64401, user_id = ' . self::USER . ", ppc_network_name = 'ChatGPT Ads', ppc_network_time = 0");
+        self::q("INSERT INTO 202_ppc_network_variables SET ppc_variable_id = 64401, ppc_network_id = 64401, name = 'ad_id', parameter = 'ad_id', placeholder = '{ad_id}'");
+        self::q("INSERT INTO 202_custom_variables SET custom_variable_id = 644001, ppc_variable_id = 64401, variable = 'ad_501'");
+        self::q("INSERT INTO 202_variable_sets2 SET variable_set_id = 644001, variables = '644001'");
+        self::q('INSERT INTO 202_dataengine SET user_id = ' . self::USER . ', click_id = 6440001, click_time = ' . ($hour + 60)
+            . ", ppc_network_id = 64401, ppc_account_id = 1, aff_campaign_id = 1, landing_page_id = 0, keyword_id = 0,"
+            . " variable_set_id = '644001', clicks = 1, click_out = 1, leads = 1, click_lead = 1, click_filtered = 0,"
+            . ' click_bot = 0, payout = 10, income = 10, cost = 0.1');
+        $read = (new \Prosper202\Spend\PlatformConversions(new Connection(self::$db)))->read(self::USER, $day, $day, null, 50);
+        $byAd = array_column($read['rows'], null, 'ad_ref');
+        self::assertSame([3, 2, 1, 129.5, 'USD'], [$byAd['ad_501']['platform_conversions'], $byAd['ad_501']['click_through'],
+            $byAd['ad_501']['view_through'], $byAd['ad_501']['sales'], $byAd['ad_501']['sales_currency']]);
+        self::assertNull($byAd['ad_502']['sales']);
+        self::assertSame([1, 0], [$byAd['ad_501']['prosper202_conversions'], $byAd['ad_502']['prosper202_conversions']]);
+        self::assertStringContainsString("conversion row(s) OpenAI sent were left out: row 2: ad ad_501: date is not a day", (string) $this->sync()->status(self::USER)[0]['last_note']);
     }
 }

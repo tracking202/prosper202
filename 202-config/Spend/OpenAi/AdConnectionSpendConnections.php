@@ -37,7 +37,8 @@ final class AdConnectionSpendConnections implements SpendConnections
             $userId,
             $calling['account_ref'],
             (string) ($shown['account']['currency'] ?? ''),
-            $key
+            $key,
+            \Prosper202\Report\AccountZone::normalize((string) ($shown['account']['timezone'] ?? ''))
         );
     }
 
