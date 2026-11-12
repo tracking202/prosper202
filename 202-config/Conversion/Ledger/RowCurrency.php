@@ -140,6 +140,19 @@ final class RowCurrency
         if ($since !== null && $since >= $before) {
             throw new \InvalidArgumentException('the range is empty: it starts at or after its end');
         }
+        // The owner speaks for the time the history does not know: up to its
+        // first recorded entry (a change, or where it begins at the upgrade),
+        // never over a known currency. A range wholly past that says nothing.
+        $first = $conn->prepareWrite(
+            "SELECT MIN(changed_at) AS at FROM 202_currency_changes WHERE user_id = ? AND kind IN ('change', 'upgrade')"
+        );
+        $conn->bind($first, 'i', [$userId]);
+        $known = $conn->fetchOne($first)['at'] ?? null;
+        $until = $known !== null ? min($before, (int) $known) : $before;
+        if ($since !== null && $since >= $until) {
+            return ['stamped' => 0, 'left' => 0];
+        }
+
         // A reversal is never chosen by its own time: it follows its sale, below.
         // Chosen by the time its amount is from: a row's own, or for an
         // amount the click carried (BASIS_BY_CLICK) the click's, which stays
@@ -150,42 +163,33 @@ final class RowCurrency
             . " AND (((currency = '' OR currency_basis IN (" . self::BASIS_UPGRADE . ', ' . self::BASIS_OWNER . '))'
             . ' AND ' . $range('conv_time') . ')'
             . ' OR (currency_basis = ' . self::BASIS_BY_CLICK . ' AND ' . $range('click_time') . '))';
-        $bounds = [$before, ...($since !== null ? [$since] : [])];
+        $bounds = [$until, ...($since !== null ? [$since] : [])];
         $types = 'is' . str_repeat('i', 2 * count($bounds));
         $values = [$userId, $currency, ...$bounds, ...$bounds];
 
-        // The statement joins the account's currency history, so a
-        // conversion recorded later on a click from before the date takes
-        // it too (inForceAt()).
-        // The owner speaks for the time the history does not know: up to its
-        // first recorded entry (a change, or where it begins at the upgrade),
-        // never over a known currency. With a start date, what was in force
-        // before it stays so: a second entry at $since keeps the history's
-        // answer for earlier times. One owner entry a date: said again, the
-        // latest word replaces it.
-        $conn->transaction(static function () use ($conn, $userId, $currency, $before, $since): void {
-            $first = $conn->prepareWrite(
-                "SELECT MIN(changed_at) AS at FROM 202_currency_changes WHERE user_id = ? AND kind IN ('change', 'upgrade')"
+        // The statement joins the account's currency history as the range
+        // [$since, $until) it covers, so a conversion recorded later on a
+        // click from then takes it too (inForceAt()): every owner entry from
+        // $since to its end goes (a later word replaces an earlier one, a
+        // wider range a narrower one), its end says $currency, and an entry
+        // at $since keeps what was in force just before it.
+        $conn->transaction(static function () use ($conn, $userId, $currency, $until, $since): void {
+            $earlier = $since !== null ? self::inForceAt($conn, $userId, $since - 1, true)[0] : null;
+            $clear = $conn->prepareWrite(
+                "DELETE FROM 202_currency_changes WHERE user_id = ? AND kind = 'owner' AND changed_at <= ?"
+                . ($since !== null ? ' AND changed_at >= ?' : '')
             );
-            $conn->bind($first, 'i', [$userId]);
-            $known = $conn->fetchOne($first)['at'] ?? null;
-            $until = $known !== null ? min($before, (int) $known) : $before;
-            $entries = [[$until, $currency, self::inForceAt($conn, $userId, $until, true)[0]]];
-            if ($since !== null && $since < $until) {
-                $entries[] = [$since, self::inForceAt($conn, $userId, $since, true)[0], $currency];
+            $conn->bind($clear, $since !== null ? 'iii' : 'ii', [$userId, $until, ...($since !== null ? [$since] : [])]);
+            $conn->executeUpdate($clear);
+            $entries = [[$until, $currency]];
+            if ($since !== null && $earlier !== null) {
+                $entries[] = [$since, $earlier];
             }
-            foreach ($entries as [$at, $from, $to]) {
-                $update = $conn->prepareWrite(
-                    "UPDATE 202_currency_changes SET from_currency = ?, to_currency = ? WHERE user_id = ? AND changed_at = ? AND kind = 'owner'"
-                );
-                $conn->bind($update, 'ssii', [$from, $to, $userId, $at]);
-                if ($conn->executeUpdate($update) > 0) {
-                    continue;
-                }
+            foreach ($entries as [$at, $from]) {
                 $stmt = $conn->prepareWrite(
                     'INSERT INTO 202_currency_changes (user_id, changed_at, from_currency, to_currency, kind) VALUES (?, ?, ?, ?, ?)'
                 );
-                $conn->bind($stmt, 'iisss', [$userId, $at, $from, $to, 'owner']);
+                $conn->bind($stmt, 'iisss', [$userId, $at, $from, $currency, 'owner']);
                 $conn->executeInsert($stmt);
             }
         });

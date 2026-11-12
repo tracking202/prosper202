@@ -483,6 +483,59 @@ final class LedgerCurrencyIntegrationTest extends TestCase
         self::assertSame(['EUR', '0'], $this->currencyOf((int) $after['convId']), 'after the known change: EUR, known');
         $before = $this->record(100, ['transaction_id' => 'C']);
         self::assertSame(['USD', '0'], $this->currencyOf((int) $before['convId']), 'before it: what the change recorded');
+
+        // A range wholly inside the known history says nothing, before it either.
+        self::$db->query('TRUNCATE TABLE 202_currency_changes');
+        $this->history(1700000500, 'EUR', 'EUR', 'upgrade');
+        self::assertSame(['stamped' => 0, 'left' => 0], RowCurrency::recordBefore($this->conn, self::USER, 'USD', 1700003000, 1700002000));
+        self::assertSame('EUR', RowCurrency::inForceAt($this->conn, self::USER, 1700000000, true)[0]);
+        // A wider statement replaces a narrower one inside it.
+        RowCurrency::recordBefore($this->conn, self::USER, 'USD', 1700000400, 1700000100);
+        RowCurrency::recordBefore($this->conn, self::USER, 'GBP', 1700000400);
+        self::assertSame(['GBP', 'GBP'], [
+            RowCurrency::inForceAt($this->conn, self::USER, 1700000000, true)[0],
+            RowCurrency::inForceAt($this->conn, self::USER, 1700000200, true)[0],
+        ]);
+    }
+
+    /**
+     * Any run of statements, against a reference that paints each statement's
+     * range [since, before) onto the time before the history's start: every
+     * time reads the latest statement covering it, the start's currency where
+     * none does, and the account's own from the start on. Overlapping, equal,
+     * nested, touching and past-the-start ranges are all drawn.
+     */
+    public function testEveryRunOfStatementsReadsAsTheLatestWordForEachTime(): void
+    {
+        $start = 900;
+        $grid = range(0, 1000, 50);
+        mt_srand(20261112);
+        for ($run = 0; $run < 300; $run++) {
+            self::$db->query('TRUNCATE TABLE 202_currency_changes');
+            $this->history($start, 'EUR', 'EUR', 'upgrade');
+            $this->account('EUR');
+            $expected = array_fill_keys($grid, 'EUR');
+            $said = [];
+            for ($n = mt_rand(1, 4); $n > 0; $n--) {
+                $currency = ['USD', 'GBP', 'CAD'][mt_rand(0, 2)];
+                $before = $grid[mt_rand(1, count($grid) - 1)];
+                $since = mt_rand(0, 2) === 0 ? null : $grid[mt_rand(0, array_search($before, $grid, true) - 1)];
+                RowCurrency::recordBefore($this->conn, self::USER, $currency, $before, $since);
+                $said[] = ($since ?? '-') . '..' . $before . ' ' . $currency;
+                foreach ($grid as $t) {
+                    if (($since === null || $t >= $since) && $t < min($before, $start)) {
+                        $expected[$t] = $currency;
+                    }
+                }
+            }
+            $read = [];
+            foreach ($grid as $t) {
+                $read[$t] = RowCurrency::inForceAt($this->conn, self::USER, $t, true)[0];
+            }
+            self::assertSame($expected, $read, 'run ' . $run . ': ' . implode('; ', $said));
+            self::assertSame('0', (string) self::$db->query("SELECT COUNT(*) - COUNT(DISTINCT changed_at) FROM 202_currency_changes WHERE kind = 'owner'")
+                ->fetch_row()[0], 'run ' . $run . ': one owner entry a time, however often it is said');
+        }
     }
 
     public function testBeforeTheUpgradeMakesTheHistoryAConversionIsStillRecorded(): void
