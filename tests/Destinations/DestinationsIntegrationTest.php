@@ -337,20 +337,31 @@ final class DestinationsIntegrationTest extends TestCase
 
     public function testTheFactsCarryTheVisitorsAddressOnlyUnmaskedAndWithUserDataAndThePageTheClickCameFrom(): void
     {
-        self::fixture("INSERT INTO 202_site_urls SET site_url_id=11, site_domain_id=1, site_url_address='https://shop.example.com/spring?utm_source=chatgpt'");
+        self::fixture('DELETE FROM 202_clicks_visitor WHERE click_id BETWEEN 100 AND 110');
+        self::fixture("INSERT INTO 202_site_urls SET site_url_id=11, site_domain_id=1, site_url_address='https://shop.example.com/spring?utm_source=chatgpt&email=jane%40example.com#top'");
         self::fixture("INSERT INTO 202_site_urls SET site_url_id=12, site_domain_id=1, site_url_address='https://track.example.com/tracking202/redirect/dl.php?t202id=7'");
+        self::fixture("INSERT INTO 202_site_urls SET site_url_id=13, site_domain_id=1, site_url_address='ftp://files.example.com/receipt'");
         self::fixture("INSERT INTO 202_ips SET ip_id=5, ip_address='198.51.100.7'");
         self::fixture("INSERT INTO 202_ips SET ip_id=6, ip_address='198.51.100.0'");
+        self::fixture("INSERT INTO 202_ips SET ip_id=7, ip_address='10.0.0.9'");
+        $this->campaign(33, null);
+        self::fixture('UPDATE 202_aff_campaigns SET identity_signals=0 WHERE aff_campaign_id=33');
         $clicks = [
-            // click => [ip_id, landing url id, outbound url id]
-            100 => [5, 11, 12],
-            101 => [6, 0, 12],
-            102 => [5, 0, 0],
+            // click => [ip_id, landing url id, outbound url id, campaign, linked to its visitor]
+            100 => [5, 11, 12, 30, true],
+            101 => [6, 0, 12, 30, true],
+            102 => [5, 0, 0, 30, true],
+            103 => [7, 13, 0, 30, true],
+            104 => [5, 11, 0, 30, false],
+            105 => [5, 11, 0, 33, true],
         ];
-        foreach ($clicks as $click => [$ip, $landing, $outbound]) {
+        foreach ($clicks as $click => [$ip, $landing, $outbound, $campaign, $linked]) {
             self::fixture("INSERT INTO 202_clicks_advance SET click_id=$click, ip_id=$ip");
             self::fixture("INSERT INTO 202_clicks_site SET click_id=$click, click_landing_site_url_id=$landing, click_outbound_site_url_id=$outbound");
-            $this->click($click);
+            $this->click($click, $campaign);
+            if ($linked) {
+                self::fixture("INSERT INTO 202_clicks_visitor SET click_id=$click, user_id=1, visitor_key=$click, click_time=1");
+            }
         }
         $facts = [];
         $type = $this->capturing($facts);
@@ -360,16 +371,24 @@ final class DestinationsIntegrationTest extends TestCase
 
         $on = $create(['send_user_data' => true]);
         $ids = ['ORD-60' => $this->record(100, 'ORD-60'), '' => $this->record(101, ''), 'ORD-62' => $this->record(102, 'ORD-62')];
-        self::assertSame(3, $queue()->sendDue(10, 5, time() + 1)['sent']);
+        foreach ([103, 104, 105] as $click) {
+            $this->record($click, 'ORD-' . $click);
+        }
+        self::assertSame(6, $queue()->sendDue(10, 5, time() + 1)['sent']);
         $by = [];
         foreach ($facts as $f) {
             $by[$f->clickId] = $f;
         }
         self::assertSame('198.51.100.7', $by[100]->ipAddress, 'the positive control: an unmasked address, user data on');
         self::assertNull($by[101]->ipAddress, 'an address stored masked is not the visitor\'s');
-        self::assertSame('https://shop.example.com/spring?utm_source=chatgpt', $by[100]->pageUrl, 'the landing page');
-        self::assertSame('https://track.example.com/tracking202/redirect/dl.php?t202id=7', $by[101]->pageUrl, 'else the tracking link');
+        self::assertNull($by[103]->ipAddress, 'a private address names no one a platform could match');
+        self::assertNull($by[104]->ipAddress, 'a click never linked to its visitor (consent refused, or capture off) sends no address');
+        self::assertNull($by[105]->ipAddress, 'nor one whose campaign has identity capture off');
+        self::assertSame('198.51.100.7', $by[102]->ipAddress, 'the positive control for the link and the campaign');
+        self::assertSame('https://shop.example.com/spring', $by[100]->pageUrl, 'the landing page, without what its query and fragment carry');
+        self::assertSame('https://track.example.com/tracking202/redirect/dl.php', $by[101]->pageUrl, 'else the tracking link, without its subids');
         self::assertNull($by[102]->pageUrl, 'no page stored, none guessed');
+        self::assertNull($by[103]->pageUrl, 'a stored address that is not an http(s) URL is no page');
         self::assertNull($by[100]->userAgent, 'no click stores one');
         self::assertSame(['ORD-60', 'P202-' . $ids[''], 'ORD-62'], [$by[100]->transactionId, $by[101]->transactionId, $by[102]->transactionId]);
         self::assertSame('P202-' . $ids[''], TrafficSourcePixels::withConversionEventId(new Connection(self::$db), [], 1, 101, $ids[''], '')[TrafficSourcePixels::EVENT_ID]);
@@ -378,13 +397,14 @@ final class DestinationsIntegrationTest extends TestCase
         $facts = [];
         $off = $create([]);
         $denied = $create(['send_user_data' => true, 'consent' => ['ad_user_data' => 'denied']]);
-        $this->click(103);
-        self::fixture('INSERT INTO 202_clicks_advance SET click_id=103, ip_id=5');
-        $this->record(103, 'ORD-63');
+        $this->click(106);
+        self::fixture('INSERT INTO 202_clicks_advance SET click_id=106, ip_id=5');
+        self::fixture('INSERT INTO 202_clicks_visitor SET click_id=106, user_id=1, visitor_key=106, click_time=1');
+        $this->record(106, 'ORD-63');
         self::assertSame(2, $queue()->sendDue(10, 5, time() + 2)['sent']);
         self::assertCount(2, $facts);
         foreach ($facts as $f) {
-            self::assertSame(103, $f->clickId);
+            self::assertSame(106, $f->clickId);
             self::assertNull($f->ipAddress, 'user data off, or ad_user_data denied: no address');
         }
         self::assertNotSame($off, $denied);

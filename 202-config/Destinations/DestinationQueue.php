@@ -11,6 +11,7 @@ use Prosper202\DataEngine\IpAddressSql;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\Database\Schema\TableRegistry;
+use Prosper202\Identity\RequestSignals;
 use Prosper202\Http\EuropeanVisitor;
 use Prosper202\Http\PrivacySetting;
 use Prosper202\Http\StoredVisitorIp;
@@ -55,6 +56,8 @@ final class DestinationQueue
     public const SENT_A_MINUTE = 200;
     /** The minutely cron's budget. */
     public const RUN_SECONDS = 15;
+    /** The longest page address a destination is given; a longer one is none, never cut into another page. */
+    public const PAGE_URL_CHARS = 2048;
 
     private readonly DestinationStore $store;
     /** @var \Closure(string): bool */
@@ -414,9 +417,12 @@ final class DestinationQueue
         // The primary, not a replica: a row a lagging replica lacks is not a deleted one.
         // 202_clicks_advance and 202_clicks_site are one row per click, written by its latest visit.
         $stmt = $this->conn->prepareWrite('SELECT cl.click_id, cl.campaign_id, cl.conv_time, cl.click_payout, cl.transaction_id, cl.deleted, cl.superseded_by, cl.customer_id, cl.match_method, '
-            . IpAddressSql::address('ip', 'ip6') . ' AS ip_address, landing.site_url_address AS landing_url, outbound.site_url_address AS outbound_url
+            . IpAddressSql::address('ip', 'ip6') . ' AS ip_address, landing.site_url_address AS landing_url, outbound.site_url_address AS outbound_url,
+                   cv.click_id AS visitor_tracked, ac.aff_campaign_id AS campaign_found, ac.identity_signals
             FROM 202_conversion_logs cl LEFT JOIN 202_clicks_advance ca ON ca.click_id = cl.click_id LEFT JOIN 202_ips ip ON ip.ip_id = ca.ip_id'
             . IpAddressSql::join('ip', 'ip6') . '
+            LEFT JOIN 202_clicks_visitor cv ON cv.click_id = cl.click_id AND cv.user_id = cl.user_id
+            LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cl.campaign_id AND ac.user_id = cl.user_id
             LEFT JOIN 202_clicks_site cs ON cs.click_id = cl.click_id
             LEFT JOIN 202_site_urls landing ON landing.site_url_id = cs.click_landing_site_url_id AND cs.click_landing_site_url_id > 0
             LEFT JOIN 202_site_urls outbound ON outbound.site_url_id = cs.click_outbound_site_url_id AND cs.click_outbound_site_url_id > 0
@@ -485,7 +491,7 @@ final class DestinationQueue
             $phones,
             $this->zone($userId),
             $clickTime === null ? null : (int) $clickTime,
-            self::sendsUserData($destination['settings']) ? self::visitorAddress($ip) : null,
+            self::sendsUserData($destination['settings']) && self::visitorMayBeIdentified($conv) ? self::visitorAddress($ip) : null,
             // Not stored for a click yet: nothing is guessed in its place.
             null,
             self::pageUrl($conv['landing_url'] ?? null) ?? self::pageUrl($conv['outbound_url'] ?? null),
@@ -544,6 +550,25 @@ final class DestinationQueue
     }
 
     /**
+     * Whether the click's visitor may be identified to a platform, as a Meta
+     * Purchase pixel asks it (FacebookPixelAssistantScript::mayTrack()): the
+     * campaign's identity capture is on (RequestSignals::campaignAllows()),
+     * and the visitor did not refuse consent (p202_consent). A refusal is
+     * not stored, but its mark is: a click is linked to its visitor
+     * (202_clicks_visitor) only when consent was not refused and the
+     * campaign allowed it (ClickIdentity::fromRequest()). A click with no
+     * such link, or whose campaign is not found, is not; nor is one whose
+     * campaign has turned capture off since.
+     *
+     * @param array<string, mixed> $conv
+     */
+    private static function visitorMayBeIdentified(array $conv): bool
+    {
+        return ($conv['visitor_tracked'] ?? null) !== null && ($conv['campaign_found'] ?? null) !== null
+            && RequestSignals::campaignAllows($conv['identity_signals'] ?? null);
+    }
+
+    /**
      * The click's stored address as the visitor's, or null: an address
      * stored masked (StoredVisitorIp::mask(), the privacy setting at the
      * click) names a /24 or /48, not the visitor (CLAUDE.md #30), and a
@@ -559,7 +584,12 @@ final class DestinationQueue
         return is_string($public) ? $public : null;
     }
 
-    /** A stored page address that is an http(s) URL, else null. */
+    /**
+     * A stored page address as the page, or null when it is not an http(s)
+     * URL. Its query and fragment are cut off: they carry what the link put
+     * there (subids, click ids, a landing page's ?email=), and the page is
+     * sent whatever the user-data setting says. At most PAGE_URL_CHARS.
+     */
     private static function pageUrl(mixed $url): ?string
     {
         if (!is_string($url)) {
@@ -567,8 +597,12 @@ final class DestinationQueue
         }
         $url = trim($url);
         $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
+        if (($scheme !== 'http' && $scheme !== 'https') || (string) parse_url($url, PHP_URL_HOST) === '') {
+            return null;
+        }
+        $page = (string) preg_replace('/[?#].*\z/s', '', $url);
 
-        return ($scheme === 'http' || $scheme === 'https') && (string) parse_url($url, PHP_URL_HOST) !== '' ? $url : null;
+        return mb_strlen($page) <= self::PAGE_URL_CHARS ? $page : null;
     }
 
     /** @param array<string, mixed> $settings */
