@@ -702,10 +702,13 @@ var readOnlyPost = map[string]bool{
 // it found: it changes no setup, and the server asks only a read scope.
 var landingPageCheckPath = regexp.MustCompile(`^landing-pages/[0-9]+/check$`)
 
+// adConnectionCheckPath reads a ChatGPT Ads ad account again and keeps what it said: a read, as the server counts it.
+var adConnectionCheckPath = regexp.MustCompile(`^ad-connections/[0-9]+/check$`)
+
 // isReadOnlyPost reports whether a POST to path is a read (readOnlyPost).
 func isReadOnlyPost(path string) bool {
 	path = strings.TrimLeft(path, "/")
-	return readOnlyPost[path] || landingPageCheckPath.MatchString(path)
+	return readOnlyPost[path] || landingPageCheckPath.MatchString(path) || adConnectionCheckPath.MatchString(path)
 }
 
 func (c *Client) do(method, path string, params map[string]string, body interface{}) ([]byte, error) {

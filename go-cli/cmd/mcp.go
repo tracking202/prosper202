@@ -60,7 +60,14 @@ var mcpToolsCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			listed = map[string]interface{}{"schema": mcpCatalogSchema, "tools": deferred}
+			// hosted_excludes, as the catalogue's: the ones the hosted relay's own get_more_tools never loads.
+			excludes := []string{}
+			for _, s := range mcpDeferredToolSpecs {
+				if s.NotHosted {
+					excludes = append(excludes, s.Name)
+				}
+			}
+			listed = map[string]interface{}{"schema": mcpCatalogSchema, "tools": deferred, "hosted_excludes": excludes}
 		}
 		var buf bytes.Buffer
 		enc := json.NewEncoder(&buf)

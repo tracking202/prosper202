@@ -830,16 +830,27 @@ try {
         // ── Ad connections: ad platform accounts reached through their API ─
         // Setup's, like the destinations they set up. Not stageable: a body
         // carries a key, and a check or setup is a call to the platform.
-        $router->group('/ad-connections', function (Router $r) use ($crud, $payload) {
+        // Reading them, and a check (a read of the ad account), need only the
+        // area's scope, which an AI connection's key can hold. What handles
+        // the key itself -- connecting, replacing it, deleting the
+        // connection, and setup, which makes resources with it -- needs a
+        // key with full access or global write (AdConnectionKeyAccess): an
+        // area scope, all an AI connection's key ever has, is not enough.
+        $router->group('/ad-connections', function (Router $r) use ($crud) {
             $cls = \Api\V3\Controllers\AdConnectionsController::class;
             $r->get('', fn() => $crud($cls)->list());
             $r->get('/{id}', fn($ctx) => $crud($cls)->get(PathId::of($ctx)));
+            $r->post('/{id}/check', fn($ctx) => $crud($cls)->check(PathId::of($ctx)));
+        }, [$setupSection]);
+        $router->group('/ad-connections', function (Router $r) use ($crud, $payload) {
+            $cls = \Api\V3\Controllers\AdConnectionsController::class;
             $r->post('', fn() => ['_status' => 201] + $crud($cls)->create($payload));
             $r->patch('/{id}', fn($ctx) => $crud($cls)->update(PathId::of($ctx), $payload));
             $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->delete(PathId::of($ctx))));
-            $r->post('/{id}/check', fn($ctx) => $crud($cls)->check(PathId::of($ctx)));
             $r->post('/{id}/setup', fn($ctx) => $crud($cls)->setup(PathId::of($ctx), $payload));
-        }, [$setupSection]);
+        }, [$setupSection, static function () use ($auth): void {
+            \Api\V3\Support\AdConnectionKeyAccess::require($auth);
+        }]);
 
         // A ChatGPT Ads connection's campaigns, ad groups and ads, read from
         // and changed at OpenAI (AdCampaignsController). {objectId} is
@@ -1707,6 +1718,21 @@ try {
     // An event is a write like a conversion: stageable, and applied through
     // the real route (received at apply time).
     $stageableRouter->post('/events', $stageable);
+    // The ChatGPT Ads campaign writes: a proposal is applied through the
+    // same route, so a propose-only key (an AI connection's) proposes a
+    // pause and a person applies it, as every other hosted write.
+    $stageableRouter->group('/ad-connections/{id}', function (Router $r) use ($stageable) {
+        $r->post('/campaigns/{objectId}/pause', $stageable);
+        $r->post('/campaigns/{objectId}/activate', $stageable);
+        $r->post('/campaigns/{objectId}/template', $stageable);
+        $r->post('/ad-groups/{objectId}/pause', $stageable);
+        $r->post('/ad-groups/{objectId}/activate', $stageable);
+        $r->post('/ad-groups/{objectId}/template', $stageable);
+        $r->post('/ads/{objectId}/pause', $stageable);
+        $r->post('/ads/{objectId}/activate', $stageable);
+        $r->post('/ads/{objectId}/template', $stageable);
+        $r->post('/campaigns/{objectId}/event-settings', $stageable);
+    });
     $stageableRouter->group('/users', function (Router $r) use ($stageable) {
         $r->post('', $stageable);
         $r->put('/{id}', $stageable);
@@ -1838,6 +1864,12 @@ try {
             // keeps what it found beside the page: no setup changes, so a
             // key that may read landing pages may ask. After the staged
             // override, as /apps/verify is.
+            $scopeAction = 'read';
+        }
+        if ($method === 'POST' && preg_match('#^/ad-connections/[^/]+/check$#', $path) === 1) {
+            // A check reads the ad account from OpenAI again and keeps what
+            // it said (name, currency, zone, status): no setup changes, so a
+            // key that may read connections may ask, as Check my page.
             $scopeAction = 'read';
         }
         if ($method === 'POST' && preg_match('#^/staged-changes/[^/]+/discard$#', $path) === 1) {

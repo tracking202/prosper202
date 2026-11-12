@@ -33,6 +33,8 @@ var mcpWriteToolInput = map[string]map[string]interface{}{
 	"ppc_network_create":      {"ppc_network_name": "N"},
 	"ppc_account_create":      {"ppc_account_name": "A", "ppc_network_id": "1"},
 	"aff_network_create":      {"aff_network_name": "C"},
+	"ad_campaign_pause":       {"id": "cmpn_1"},
+	"ad_campaign_activate":    {"id": "cmpn_1"},
 	"text_ad_create":          {"text_ad_name": "T", "text_ad_headline": "H", "text_ad_description": "D", "text_ad_display_url": "example.com", "aff_campaign_id": "1"},
 	"text_ad_update":          {"text_ad_headline": "I"},
 	"rotator_create":          {"name": "R", "default_url": "https://example.com/d"},
@@ -100,7 +102,8 @@ func TestHostedMCPToolsStayInsideTheAIKeyAreas(t *testing.T) {
 	}
 	readAreas, writeAreas := phpAreaList(t, src, "READ_AREAS"), phpAreaList(t, src, "WRITE_AREAS")
 	usedRead, usedWrite := map[string]bool{}, map[string]bool{}
-	for _, s := range mcpToolSpecs {
+	// The deferred tools the hosted relay may load are held to the same areas.
+	for _, s := range mcpAllToolSpecs() {
 		for _, staged := range []bool{false, true} {
 			if staged && (s.readOnly() || s.NotStaged) {
 				continue

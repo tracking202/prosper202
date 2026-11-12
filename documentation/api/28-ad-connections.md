@@ -19,6 +19,11 @@ same in the web UI, and `p202 ad-connection` from the command line.
 
 Every route asks for the role permission `access_to_setup_section` and the
 scope area `ad-connections` (`ad-connections:read`, `ad-connections:write`).
+A check is a read (`ad-connections:read`). Connecting, `PATCH`, `DELETE` and
+`/setup` handle the key itself, so they also need a key with full access or
+global `write`: an area scope is not enough, and an AI connection's key
+(which holds area scopes only) can read connections and change campaigns but
+never touch the key.
 None can be staged: a body carries a key, and a check or setup is a call to
 OpenAI. `dry_run` previews only the delete; anywhere else it is a `422`.
 
@@ -96,7 +101,8 @@ pause and activate buttons behind a confirm.
 | `POST` | `/ad-connections/{id}/campaigns/{objectId}/event-settings` | Add `event_setting_ids` (or the ones setup made) to the campaign's own |
 | `GET` | `/ad-connections/{id}/spend` | Spend, impressions and clicks by campaign: `since`, `until` (whole days in the ad account's time zone, at most 365); yesterday there without them |
 
-Every write previews with `?dry_run=1`: the object is read and the answer
+Every write can be proposed with `?staged=1` (a person applies it, as any
+other proposal) and previews with `?dry_run=1`: the object is read and the answer
 says what would change (`change`, from and to), and nothing is sent. OpenAI's
 `conversion_event_setting_ids` replaces the list, so attaching reads the
 campaign, adds the ids and writes the list back; `unchanged: true` means
@@ -111,7 +117,10 @@ The same from the command line: `p202 ad-campaign list|get|pause|activate|set-te
 and, for an AI assistant on this computer (`p202 mcp`), the tools
 `ad_campaign_list`, `ad_campaign_pause`, `ad_campaign_activate` and
 `ad_campaign_spend`, with `ad_connection_list`, `ad_connection_check` and
-`destination_list`: they load on request through `get_more_tools`.
+`destination_list`: they load on request through `get_more_tools`. The
+ad connection and campaign tools are also offered to an AI app connected
+through Tracking202's MCP server (its key reaches the `ad-connections` area);
+a proposal-only connection proposes a pause for you to apply.
 
 A money-loss alert for spend without conversions names the ChatGPT Ads
 campaigns its clicks came from (the `campaign_id` the tracking template puts

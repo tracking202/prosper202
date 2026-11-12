@@ -47,9 +47,9 @@ func TestMCPDeferredToolsStayInBudget(t *testing.T) {
 	}
 }
 
-// Each deferred tool is registered once, is local only (the hosted relay
-// lists the always-loaded catalogue and loads its own), and says what task
-// it is for.
+// Each deferred tool is registered once and says what task it is for. One
+// the hosted relay may load is held to the AI key's areas by
+// TestHostedMCPToolsStayInsideTheAIKeyAreas.
 func TestMCPDeferredToolsAreRegisteredOnce(t *testing.T) {
 	seen := map[string]bool{mcpGetMoreTools: true}
 	for _, s := range mcpAllToolSpecs() {
@@ -59,9 +59,6 @@ func TestMCPDeferredToolsAreRegisteredOnce(t *testing.T) {
 		seen[s.Name] = true
 	}
 	for _, s := range mcpDeferredToolSpecs {
-		if !s.NotHosted {
-			t.Errorf("%s is deferred and not NotHosted: the hosted relay cannot load it", s.Name)
-		}
 		if len(s.Words) == 0 {
 			t.Errorf("%s has no Words for get_more_tools to find it by", s.Name)
 		}

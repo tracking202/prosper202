@@ -55,10 +55,6 @@ func adCampaignLevel(cmd *cobra.Command) string {
 
 // adCampaignWrite posts one write, with ?dry_run=1 when asked.
 func adCampaignWrite(cmd *cobra.Command, name, path string, body map[string]interface{}) error {
-	if api.StagedMode() {
-		return validationError("--staged cannot apply to `ad-campaign %s`: the change is made at OpenAI, not in Prosper202", name).
-			WithHint("Use --dry-run to see what would change, then run it without either.")
-	}
 	c, err := api.NewFromConfig()
 	if err != nil {
 		return err

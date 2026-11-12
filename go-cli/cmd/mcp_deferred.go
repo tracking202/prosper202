@@ -17,9 +17,11 @@ import (
 // a deferred tool that was never loaded is loaded and run, so a client that
 // ignores list_changed is not stuck.
 //
-// Deferred tools are local only (NotHosted): the hosted relay lists the
-// always-loaded catalogue and has its own get_more_tools. `p202 mcp call`
-// runs them like any other tool, and `p202 mcp tools --deferred` lists them.
+// A deferred tool marked NotHosted is local only. The others the hosted
+// relay may load through its own get_more_tools, from `p202 mcp tools
+// --deferred` (whose hosted_excludes names the local ones), within the areas
+// an AI connection's key reaches (TestHostedMCPToolsStayInsideTheAIKeyAreas
+// runs them). `p202 mcp call` runs them like any other tool.
 //
 // To add one: append its spec here, with Words a person would use for the
 // task (TestMCPDeferredToolsAreFoundByTheirTask asks each tool's first Word).
@@ -41,25 +43,25 @@ var mcpDeferredToolSpecs = []mcpToolSpec{
 		Args:  []mcpArg{idArg("id", "Destination id (from destination_list).", true)},
 		Words: []string{"test destination", "test fire", "validate destination", "destinations"}},
 	// ChatGPT Ads connections (Setup › Destinations › ChatGPT Ads): an ad account reached with its Advertiser API key.
-	{Name: "ad_connection_list", Command: []string{"ad-connection", "list"}, Title: "ChatGPT Ads connections", Kind: mcpRead, NotHosted: true,
+	{Name: "ad_connection_list", Command: []string{"ad-connection", "list"}, Title: "ChatGPT Ads connections", Kind: mcpRead,
 		Note:  "Each ad account's id, name, currency, time zone, status and what setup made; keys are never shown.",
 		Words: []string{"chatgpt ads connection", "openai ads account", "advertiser api key", "chatgpt ads"}},
-	{Name: "ad_connection_check", Command: []string{"ad-connection", "check"}, Title: "Check a ChatGPT Ads connection", Kind: mcpUpdate, NotHosted: true, NotStaged: true,
+	{Name: "ad_connection_check", Command: []string{"ad-connection", "check"}, Title: "Check a ChatGPT Ads connection", Kind: mcpRead,
 		Args:  []mcpArg{idArg("id", "Ad connection id (from ad_connection_list).", true)},
 		Note:  "Reads the ad account from OpenAI again: name, currency, time zone, and whether the key still works.",
 		Words: []string{"is my chatgpt ads key working", "check chatgpt ads connection", "chatgpt ads"}},
 	// ChatGPT Ads campaigns, live at OpenAI through an ad connection.
-	{Name: "ad_campaign_list", Command: []string{"ad-campaign", "list"}, Title: "ChatGPT Ads campaigns", Kind: mcpRead, NotHosted: true,
+	{Name: "ad_campaign_list", Command: []string{"ad-campaign", "list"}, Title: "ChatGPT Ads campaigns", Kind: mcpRead,
 		Args: []mcpArg{idArg("connection_id", "Ad connection id (from ad_connection_list).", true)}, Omit: []string{"after"},
 		Note:  "Status, budget, serving issues and tracking template; level ad-groups or ads for the rest.",
 		Words: []string{"chatgpt ads campaigns", "openai ads campaign status", "why is my chatgpt ad not serving", "chatgpt ads"}},
-	{Name: "ad_campaign_pause", Command: []string{"ad-campaign", "pause"}, Title: "Pause a ChatGPT Ads campaign", Kind: mcpUpdate, NotHosted: true, NotStaged: true,
+	{Name: "ad_campaign_pause", Command: []string{"ad-campaign", "pause"}, Title: "Pause a ChatGPT Ads campaign", Kind: mcpUpdate,
 		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true), adObjectArg()}, Note: adWriteNote,
 		Words: []string{"pause chatgpt ads campaign", "stop a losing chatgpt campaign", "chatgpt ads"}},
-	{Name: "ad_campaign_activate", Command: []string{"ad-campaign", "activate"}, Title: "Activate a ChatGPT Ads campaign", Kind: mcpUpdate, NotHosted: true, NotStaged: true,
+	{Name: "ad_campaign_activate", Command: []string{"ad-campaign", "activate"}, Title: "Activate a ChatGPT Ads campaign", Kind: mcpUpdate,
 		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true), adObjectArg()}, Note: adWriteNote,
 		Words: []string{"activate chatgpt ads campaign", "resume a chatgpt campaign", "chatgpt ads"}},
-	{Name: "ad_campaign_spend", Command: []string{"ad-campaign", "spend"}, Title: "ChatGPT Ads spend by campaign", Kind: mcpRead, NotHosted: true,
+	{Name: "ad_campaign_spend", Command: []string{"ad-campaign", "spend"}, Title: "ChatGPT Ads spend by campaign", Kind: mcpRead,
 		Args:  []mcpArg{idArg("connection_id", "Ad connection id.", true)},
 		Words: []string{"chatgpt ads spend", "what did chatgpt ads cost", "openai ads spend", "chatgpt ads"}},
 }

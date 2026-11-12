@@ -281,6 +281,8 @@ var mcpReadToolRequired = map[string]map[string]string{
 
 // A read tool's POST that changes no setup (api.isReadOnlyPost), with why.
 var mcpReadToolPosts = map[string]string{
+	// A check reads the ChatGPT Ads account again and keeps what it said; a read scope.
+	"POST /api/v3/ad-connections/1/check": "ad_connection_check",
 	// The server fetches the page's own saved URL and keeps what it found
 	// beside the page; it asks a read scope.
 	"POST /api/v3/landing-pages/1/check": "landing_page_check",
