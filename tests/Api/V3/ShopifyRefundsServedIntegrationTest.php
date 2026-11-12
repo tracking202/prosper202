@@ -304,6 +304,8 @@ final class ShopifyRefundsServedIntegrationTest extends TestCase
 
         foreach (
             [[[], 'amount'], [['amount' => '12abc'], 'amount'], [['amount' => 0], 'amount'],
+            // A sixth decimal is refused, never rounded away.
+            [['amount' => 12.123456], 'amount'],
             [['amount' => '10', 'click_id' => '12abc'], 'click_id'], [['amount' => '10', 'amuont' => '1'], 'amuont'],
             ] as [$payload, $field]
         ) {
@@ -412,6 +414,17 @@ final class ShopifyRefundsServedIntegrationTest extends TestCase
         [, $body, $raw] = self::request('GET', '/conversions/shopify-refunds', self::$keys['mine']);
         self::assertSame([], $body['data'] ?? null, $raw);
         self::assertSame(['59.00000'], self::payouts());
+    }
+
+    public function testARefundWaitingForItsOrderIsAConflictToCloseNotGone(): void
+    {
+        self::waitingRefund();
+
+        [$status, $body, $raw] = self::request('POST', '/conversions/shopify-refunds/9100001/close', self::$keys['mine'], []);
+
+        self::assertSame(409, $status, $this->context($raw));
+        self::assertSame('waiting_for_order', $body['details']['outcome'] ?? null, $raw);
+        self::assertStringContainsString('recorded when the sale arrives', $raw);
     }
 
     public function testTheInboundLogShowsAnAccountWithASecretTheUnverifiedShopifyWebhooks(): void
