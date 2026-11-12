@@ -574,6 +574,20 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   secret only as whether one is stored). The hosted server below does not
   offer these: its connections do not reach account settings. `click_get`
   says why a click was filtered (`filter_reason`) on both.
+- Not every tool is listed when the server starts: past the list's size
+  budget, tools load on request. The server lists `get_more_tools`, which
+  takes the task in words (`{"task": "why did a conversion not reach Google
+  Ads"}`), adds the matching tools to the list (the app hears
+  `notifications/tools/list_changed`) and answers their names and what each
+  does. A deferred tool called by name before that is loaded and run, so an
+  app that ignores the notification still works; the answer also gives each
+  tool's input schema. `p202 mcp tools --deferred` lists them; `p202 mcp
+  call` runs them as any other tool, with the same `--read-only` and
+  `--staged` refusals. They are local only. Today they are
+  `destination_list`, `destination_deliveries` and `destination_test` (Setup
+  › Destinations: each destination's status, its delivery log with why a
+  conversion failed or was withheld, and a test fire; the test fire cannot be
+  proposed, so it is not offered with `--staged`, nor with `--read-only`).
 - With `--staged`, a write returns a change id and changes nothing; you apply
   it with `p202 change apply <id>`. The assistant is not offered the apply and
   discard tools.

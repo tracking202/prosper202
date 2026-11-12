@@ -13,6 +13,7 @@ import (
 	osexec "os/exec"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -110,38 +111,176 @@ func newMCPServer(policy mcpServerPolicy) (*mcp.Server, error) {
 	if version == "" {
 		version = "dev"
 	}
+	deferred, err := buildMCPDeferredTools(rootCmd, policy.readOnly, policy.staged)
+	if err != nil {
+		return nil, err
+	}
+	instructions := cat.Instructions
+	if len(deferred) > 0 {
+		instructions += mcpMoreToolsInstructions
+	}
+	// The tool list changes when get_more_tools loads one: say so
+	// (notifications/tools/list_changed). With nothing to load it never changes.
 	server := mcp.NewServer(&mcp.Implementation{Name: "prosper202", Title: "Prosper202", Version: version},
-		&mcp.ServerOptions{Instructions: cat.Instructions, Capabilities: &mcp.ServerCapabilities{}})
+		&mcp.ServerOptions{Instructions: instructions, Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{ListChanged: len(deferred) > 0}}})
 	for _, t := range cat.Tools {
-		name, readOnly := t.Name, t.Annotations.ReadOnlyHint
-		destructive, openWorld := t.Annotations.DestructiveHint, t.Annotations.OpenWorldHint
-		server.AddTool(&mcp.Tool{
-			Name:        t.Name,
-			Title:       t.Title,
-			Description: t.Description,
-			InputSchema: t.InputSchema,
-			Annotations: &mcp.ToolAnnotations{
-				Title:           t.Annotations.Title,
-				ReadOnlyHint:    t.Annotations.ReadOnlyHint,
-				DestructiveHint: &destructive,
-				IdempotentHint:  t.Annotations.IdempotentHint,
-				OpenWorldHint:   &openWorld,
-			},
-		}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			input := []byte(req.Params.Arguments)
-			if len(bytes.TrimSpace(input)) == 0 {
-				input = []byte("{}")
+		server.AddTool(mcpSDKTool(t), mcpToolHandler(policy, t))
+	}
+	if len(deferred) > 0 {
+		loader := &mcpDeferredLoader{server: server, policy: policy, tools: deferred, loaded: map[string]bool{}}
+		server.AddTool(mcpGetMoreToolsTool(), loader.getMoreTools)
+		// A call to a deferred tool never loaded is loaded first and then run.
+		server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+			return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+				if call, ok := req.(*mcp.CallToolRequest); ok && method == "tools/call" && call.Params != nil {
+					loader.load(call.Params.Name)
+				}
+				return next(ctx, method, req)
 			}
-			ctx, cancel := context.WithTimeout(ctx, mcpCallTimeout)
-			defer cancel()
-			res, err := mcpToolRunner(ctx, policy.childArgs(name), input)
-			if err != nil {
-				return mcpRunFailure(name, readOnly, err), nil
-			}
-			return mcpShapeResult(res, readOnly, policy.staged), nil
 		})
 	}
 	return server, nil
+}
+
+// mcpMoreToolsInstructions tells the model the list is not every tool.
+const mcpMoreToolsInstructions = " Not every tool is listed: when none fits what the user asked, call get_more_tools with the task."
+
+func mcpSDKTool(t mcpTool) *mcp.Tool {
+	destructive, openWorld := t.Annotations.DestructiveHint, t.Annotations.OpenWorldHint
+	return &mcp.Tool{
+		Name:        t.Name,
+		Title:       t.Title,
+		Description: t.Description,
+		InputSchema: t.InputSchema,
+		Annotations: &mcp.ToolAnnotations{
+			Title:           t.Annotations.Title,
+			ReadOnlyHint:    t.Annotations.ReadOnlyHint,
+			DestructiveHint: &destructive,
+			IdempotentHint:  t.Annotations.IdempotentHint,
+			OpenWorldHint:   &openWorld,
+		},
+	}
+}
+
+// mcpToolHandler runs one call of the tool as a child process.
+func mcpToolHandler(policy mcpServerPolicy, t mcpTool) mcp.ToolHandler {
+	name, readOnly := t.Name, t.Annotations.ReadOnlyHint
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		input := []byte(req.Params.Arguments)
+		if len(bytes.TrimSpace(input)) == 0 {
+			input = []byte("{}")
+		}
+		ctx, cancel := context.WithTimeout(ctx, mcpCallTimeout)
+		defer cancel()
+		res, err := mcpToolRunner(ctx, policy.childArgs(name), input)
+		if err != nil {
+			return mcpRunFailure(name, readOnly, err), nil
+		}
+		return mcpShapeResult(res, readOnly, policy.staged), nil
+	}
+}
+
+// mcpGetMoreToolsTool is marked a read: it changes no data, only which tools
+// this session lists, and a tool it loads keeps its own annotations (a
+// write is still approved as a write when it is called).
+func mcpGetMoreToolsTool() *mcp.Tool {
+	no := false
+	return &mcp.Tool{
+		Name:  mcpGetMoreTools,
+		Title: "More tools for a task",
+		Description: "When no listed tool fits what the user asked, send the task in a few words: the matching tools join the list, " +
+			"named here with what each does and takes, to call as any other tool.",
+		InputSchema: mcpSchema{Type: "object", Required: []string{"task"}, Properties: map[string]mcpProperty{
+			"task": {Type: "string", Description: "What the user asked, e.g. \"why did a conversion not reach Google Ads\"."},
+		}},
+		Annotations: &mcp.ToolAnnotations{Title: "More tools for a task", ReadOnlyHint: true, DestructiveHint: &no, IdempotentHint: true, OpenWorldHint: &no},
+	}
+}
+
+// mcpDeferredLoader adds deferred tools to the server as they are asked for.
+type mcpDeferredLoader struct {
+	server *mcp.Server
+	policy mcpServerPolicy
+	tools  []mcpTool
+	mu     sync.Mutex
+	loaded map[string]bool
+}
+
+// load adds the named deferred tool once; a name that is no deferred tool
+// is left to the server, which answers it as unknown.
+func (l *mcpDeferredLoader) load(name string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.loaded[name] {
+		return true
+	}
+	for _, t := range l.tools {
+		if t.Name == name {
+			l.server.AddTool(mcpSDKTool(t), mcpToolHandler(l.policy, t))
+			l.loaded[name] = true
+			return true
+		}
+	}
+	return false
+}
+
+func (l *mcpDeferredLoader) getMoreTools(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var args struct {
+		Task *string `json:"task"`
+	}
+	raw := bytes.TrimSpace([]byte(req.Params.Arguments))
+	if len(raw) == 0 {
+		raw = []byte("{}")
+	}
+	fields, err := mcpDecodeObject(raw)
+	if err == nil {
+		for k := range fields {
+			if k != "task" {
+				err = fmt.Errorf("%s is not an argument of %s", k, mcpGetMoreTools)
+			}
+		}
+	}
+	if err == nil {
+		err = json.Unmarshal(raw, &args)
+	}
+	if err != nil || args.Task == nil || strings.TrimSpace(*args.Task) == "" {
+		message := "get_more_tools needs task: what the user asked, as text"
+		if err != nil {
+			message = "get_more_tools could not read its arguments: " + err.Error()
+		}
+		return mcpErrorResult(message, "validation", `Send {"task": "<what the user asked>"}.`), nil
+	}
+	matched := mcpMatchDeferred(*args.Task, mcpDeferredToolSpecs, l.tools)
+	// The arguments too: a client that ignores list_changed never sees the
+	// tool's listing, and would learn what it needs only from a refusal.
+	type found struct {
+		Name        string    `json:"name"`
+		Description string    `json:"description"`
+		InputSchema mcpSchema `json:"input_schema"`
+	}
+	out := struct {
+		Tools []found `json:"tools"`
+		Note  string  `json:"note"`
+	}{Tools: []found{}}
+	for _, t := range matched {
+		l.load(t.Name)
+		out.Tools = append(out.Tools, found{t.Name, mcpOneLine(t), t.InputSchema})
+	}
+	if len(matched) == 0 {
+		names := make([]string, 0, len(l.tools))
+		for _, t := range l.tools {
+			names = append(names, t.Name+" ("+t.Title+")")
+		}
+		out.Note = "No more tools match that task. The ones that can be added are: " + strings.Join(names, "; ") +
+			". Ask again with words of one of them, or use the listed tools."
+	} else {
+		out.Note = "These tools are now in the list; call them by name."
+	}
+	body, err := json.Marshal(out)
+	if err != nil {
+		return nil, fmt.Errorf("encoding the matching tools: %w", err)
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(body)}}}, nil
 }
 
 var (
