@@ -47,7 +47,7 @@ final class LedgerCost
     /**
      * @param list<int|string> $binds the join's, which come before the report's own
      * @param array<string, int> $reachesByPlatform
-     * @param list<string> $tables the temporary tables $join reads, on $staging's connection (stage())
+     * @param int $staged the number of this report's rows in stage()'s tables on $staging's connection, 0 for none
      */
     private function __construct(
         public readonly string $join,
@@ -59,7 +59,7 @@ final class LedgerCost
         public readonly int $otherCurrencyRows,
         private readonly string $row = 'de',
         private readonly ?Connection $staging = null,
-        private readonly array $tables = [],
+        private readonly int $staged = 0,
     ) {
     }
 
@@ -113,11 +113,11 @@ final class LedgerCost
 
         $staged = self::stage($conn, $userId, $currency, $lo, $hi, $sets);
         if ($staged !== null) {
-            [$setsTable, $statsTable] = $staged;
-            $join = "LEFT JOIN `$setsTable` {$alias}m ON {$alias}m.set_no = CAST($row.variable_set_id AS UNSIGNED)"
-                . " AND {$alias}m.network_id = $row.ppc_network_id"
-                . " LEFT JOIN `$statsTable` $alias ON $alias.ad_no = {$alias}m.ad_no AND $alias.h = $row.click_time DIV 3600";
-            $statsSql = "SELECT spend FROM `$statsTable`";
+            $join = "LEFT JOIN p202_ledger_sets {$alias}m ON {$alias}m.k = $staged"
+                . " AND {$alias}m.set_no = CAST($row.variable_set_id AS UNSIGNED) AND {$alias}m.network_id = $row.ppc_network_id"
+                . " LEFT JOIN p202_ledger_hours $alias ON $alias.k = $staged AND $alias.ad_no = {$alias}m.ad_no"
+                . " AND $alias.h = $row.click_time DIV 3600";
+            $statsSql = "SELECT spend FROM p202_ledger_hours WHERE k = $staged";
             $statsBinds = [];
             $statsTypes = '';
         } else {
@@ -144,12 +144,12 @@ final class LedgerCost
             }
         } catch (\Throwable $e) {
             if ($staged !== null) {
-                self::dropStaged($conn, $staged);
+                self::unstage($conn, $staged);
             }
             throw $e;
         }
 
-        return new self($join, $statsBinds, $statsTypes, min($byPlatform), $byPlatform, (string) $left['spend'], $other, $row, $staged === null ? null : $conn, $staged ?? []);
+        return new self($join, $statsBinds, $statsTypes, min($byPlatform), $byPlatform, (string) $left['spend'], $other, $row, $staged === null ? null : $conn, $staged ?? 0);
     }
 
     /**
@@ -158,82 +158,79 @@ final class LedgerCost
      * the variable sets carrying a ledger ad (set_no, network_id -> ad_no),
      * the ledger's ads (ad_ref -> ad_no) and, per ad and UTC hour that both
      * the ledger and a click have, the hour's spend and the account's clicks
-     * carrying the ad (ad_no, h).
-     * A join of the report's clicks with derived tables of the same was read
-     * row by row, and each report computed it twice.
+     * carrying the ad (ad_no, h). A join of the report's clicks with derived
+     * tables of the same was read row by row, and each report computed it
+     * twice.
      *
      * The rows are read with plain reads and written by this process: an
      * INSERT ... SELECT from 202_dataengine share-locks every click it reads
      * (CLAUDE.md #36). They are read in slices of hours so no slice holds
-     * more than $slicePairs ad-hours in memory. The tables' names are
-     * random, they live as long as this object (or the connection), and
-     * they hold exactly what plan()'s `stats` answers, rows with no click or
-     * no ledger row left out.
+     * more than $slicePairs ad-hours in memory. Each report's rows carry a
+     * random number of its own (`k`, the answer), are deleted with this
+     * object (or go with the connection), and are exactly what plan()'s
+     * `stats` answers, rows with no click or no ledger row left out.
      *
      * Null when this connection cannot create a temporary table (the
      * privilege is missing, a read-only server): forReport() then joins
      * plan()'s derived tables, which answer the same, slower.
      *
      * @param list<array{set_no: int, network_id: int, ad_ref: string}> $sets
-     * @return array{0: string, 1: string, 2: string}|null the sets table, the stats table and the ads table
      */
-    private static function stage(Connection $conn, int $userId, string $currency, int $lo, int $hi, array $sets): ?array
+    private static function stage(Connection $conn, int $userId, string $currency, int $lo, int $hi, array $sets): ?int
     {
-        $name = 'p202_ledger_' . bin2hex(random_bytes(8));
-        $tables = [$name . '_sets', $name . '_hours', $name . '_ads'];
-        $created = [];
         try {
             foreach (
                 [
-                    "CREATE TEMPORARY TABLE `{$tables[0]}` (set_no BIGINT UNSIGNED NOT NULL,"
-                    . ' network_id BIGINT UNSIGNED NOT NULL, ad_no INT UNSIGNED NOT NULL,'
-                    . ' PRIMARY KEY (set_no, network_id)) ENGINE=InnoDB',
-                    "CREATE TEMPORARY TABLE `{$tables[1]}` (ad_no INT UNSIGNED NOT NULL, h INT UNSIGNED NOT NULL,"
-                    . ' spend DECIMAL(40,24) NOT NULL, clicks BIGINT NOT NULL, ledger_rows BIGINT NOT NULL,'
-                    . ' PRIMARY KEY (ad_no, h)) ENGINE=InnoDB',
-                    "CREATE TEMPORARY TABLE `{$tables[2]}` (ad_ref VARCHAR(350) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,"
-                    . ' ad_no INT UNSIGNED NOT NULL, PRIMARY KEY (ad_ref)) ENGINE=InnoDB',
-                ] as $i => $ddl
+                    'CREATE TEMPORARY TABLE IF NOT EXISTS p202_ledger_sets (k BIGINT UNSIGNED NOT NULL,'
+                    . ' set_no BIGINT UNSIGNED NOT NULL, network_id BIGINT UNSIGNED NOT NULL, ad_no INT UNSIGNED NOT NULL,'
+                    . ' PRIMARY KEY (k, set_no, network_id)) ENGINE=InnoDB',
+                    'CREATE TEMPORARY TABLE IF NOT EXISTS p202_ledger_hours (k BIGINT UNSIGNED NOT NULL,'
+                    . ' ad_no INT UNSIGNED NOT NULL, h INT UNSIGNED NOT NULL, spend DECIMAL(40,24) NOT NULL,'
+                    . ' clicks BIGINT NOT NULL, ledger_rows BIGINT NOT NULL, PRIMARY KEY (k, ad_no, h)) ENGINE=InnoDB',
+                    'CREATE TEMPORARY TABLE IF NOT EXISTS p202_ledger_ads (k BIGINT UNSIGNED NOT NULL,'
+                    . ' ad_ref VARCHAR(350) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,'
+                    . ' ad_no INT UNSIGNED NOT NULL, PRIMARY KEY (k, ad_ref)) ENGINE=InnoDB',
+                ] as $ddl
             ) {
                 $stmt = $conn->prepareRead($ddl);
                 $conn->execute($stmt);
                 $stmt->close();
-                $created[] = $tables[$i];
             }
         } catch (\Throwable $e) {
             error_log('Spend ledger temporary tables unavailable, the report joins derived tables: ' . $e->getMessage());
-            self::dropStaged($conn, $created);
 
             return null;
         }
 
+        $k = random_int(1, PHP_INT_MAX);
         try {
             $adNo = self::adNumbers($sets);
             $rows = [];
             foreach ($sets as $set) {
-                $rows[] = '(' . $set['set_no'] . ', ' . $set['network_id'] . ', ' . $adNo[$set['ad_ref']] . ')';
+                $rows[] = "($k, " . $set['set_no'] . ', ' . $set['network_id'] . ', ' . $adNo[$set['ad_ref']] . ')';
             }
-            self::insertRows($conn, $tables[0], $rows);
+            self::insertRows($conn, 'INSERT INTO p202_ledger_sets (k, set_no, network_id, ad_no) VALUES ', $rows);
 
             // The ads by bound value: an ad id is the platform's text.
-            foreach (array_chunk($adNo, 500, true) as $chunk) {
-                $stmt = $conn->prepareRead("INSERT INTO `{$tables[2]}` VALUES " . implode(', ', array_fill(0, count($chunk), '(?, ?)')));
-                $binds = [];
-                foreach ($chunk as $ref => $no) {
-                    $binds[] = (string) $ref;
-                    $binds[] = $no;
-                }
-                $conn->bind($stmt, str_repeat('si', count($chunk)), $binds);
-                $conn->execute($stmt);
-                $stmt->close();
+            $binds = [];
+            foreach ($adNo as $ref => $no) {
+                $binds[] = [(string) $ref, $no];
             }
+            self::insertRows(
+                $conn,
+                'INSERT INTO p202_ledger_ads (k, ad_ref, ad_no) VALUES ',
+                array_fill(0, count($binds), "($k, ?, ?)"),
+                $binds,
+                'si'
+            );
             $ledgerSql = 'SELECT a.ad_no, l.hour_start DIV 3600 AS h,'
                 . ' CAST(SUM(l.spend) AS DECIMAL(40,24)) AS spend, COUNT(*) AS ledger_rows FROM 202_spend_ledger l'
-                . " JOIN `{$tables[2]}` a ON a.ad_ref = l.ad_ref"
+                . " JOIN p202_ledger_ads a ON a.k = $k AND a.ad_ref = l.ad_ref"
                 . ' WHERE l.user_id = ? AND l.currency = ? AND l.hour_start >= ? AND l.hour_start <= ?'
                 . ' GROUP BY a.ad_no, h';
-            $clickSql = "SELECT m.ad_no, d.click_time DIV 3600 AS h, COUNT(*) AS clicks FROM 202_dataengine d"
-                . " JOIN `{$tables[0]}` m ON m.set_no = CAST(d.variable_set_id AS UNSIGNED) AND m.network_id = d.ppc_network_id"
+            $clickSql = 'SELECT m.ad_no, d.click_time DIV 3600 AS h, COUNT(*) AS clicks FROM 202_dataengine d'
+                . " JOIN p202_ledger_sets m ON m.k = $k"
+                . ' AND m.set_no = CAST(d.variable_set_id AS UNSIGNED) AND m.network_id = d.ppc_network_id'
                 . ' WHERE d.user_id = ? AND d.click_time >= ? AND d.click_time <= ?'
                 . ' GROUP BY m.ad_no, h';
 
@@ -263,17 +260,17 @@ final class LedgerCost
                     if (preg_match('/^-?\d+(\.\d+)?$/D', $spend) !== 1) {
                         throw new \RuntimeException('The spend ledger summed an hour to a value that is not a number');
                     }
-                    $rows[] = '(' . (int) $c['ad_no'] . ', ' . (int) $c['h'] . ', ' . $spend . ', '
+                    $rows[] = "($k, " . (int) $c['ad_no'] . ', ' . (int) $c['h'] . ', ' . $spend . ', '
                         . (int) $c['clicks'] . ', ' . (int) $l['ledger_rows'] . ')';
                 }
-                self::insertRows($conn, $tables[1], $rows);
+                self::insertRows($conn, 'INSERT INTO p202_ledger_hours (k, ad_no, h, spend, clicks, ledger_rows) VALUES ', $rows);
             }
         } catch (\Throwable $e) {
-            self::dropStaged($conn, $tables);
+            self::unstage($conn, $k);
             throw $e;
         }
 
-        return $tables;
+        return $k;
     }
 
     /**
@@ -292,36 +289,56 @@ final class LedgerCost
         return $adNo;
     }
 
-    /** @param list<string> $rows each a VALUES tuple of numbers */
-    private static function insertRows(Connection $conn, string $table, array $rows): void
+    /**
+     * Rows after $insert (`INSERT INTO <one of stage()'s tables> (...) VALUES `),
+     * a thousand a statement.
+     *
+     * @param list<string> $rows each a VALUES tuple of numbers, or of numbers and placeholders
+     * @param list<list<int|string>> $binds each row's values for its placeholders, typed $types
+     */
+    private static function insertRows(Connection $conn, string $insert, array $rows, array $binds = [], string $types = ''): void
     {
-        foreach (array_chunk($rows, 1000) as $chunk) {
-            $stmt = $conn->prepareRead("INSERT INTO `$table` VALUES " . implode(', ', $chunk));
+        foreach (array_chunk($rows, 1000, true) as $chunk) {
+            $stmt = $conn->prepareRead($insert . implode(', ', $chunk));
+            if ($binds !== []) {
+                $values = [];
+                foreach (array_keys($chunk) as $i) {
+                    array_push($values, ...$binds[$i]);
+                }
+                $conn->bind($stmt, str_repeat($types, count($chunk)), $values);
+            }
             $conn->execute($stmt);
             $stmt->close();
         }
     }
 
-    /** @param list<string> $tables */
-    private static function dropStaged(Connection $conn, array $tables): void
+    /** Removes report $k's rows from stage()'s tables. */
+    private static function unstage(Connection $conn, int $k): void
     {
-        foreach ($tables as $table) {
+        foreach (
+            [
+                'DELETE FROM p202_ledger_sets WHERE k = ?',
+                'DELETE FROM p202_ledger_hours WHERE k = ?',
+                'DELETE FROM p202_ledger_ads WHERE k = ?',
+            ] as $delete
+        ) {
             try {
-                $stmt = $conn->prepareRead("DROP TEMPORARY TABLE IF EXISTS `$table`");
+                $stmt = $conn->prepareRead($delete);
+                $conn->bind($stmt, 'i', [$k]);
                 $conn->execute($stmt);
                 $stmt->close();
             } catch (\Throwable $e) {
-                // The connection's end drops it.
-                error_log('Dropping a spend ledger temporary table failed: ' . $e->getMessage());
+                // The connection's end drops the table.
+                error_log('Clearing a spend ledger temporary table failed: ' . $e->getMessage());
             }
         }
     }
 
-    /** The temporary tables go with the report that joined them. */
+    /** A report's staged rows go with the report that joined them. */
     public function __destruct()
     {
-        if ($this->staging !== null && $this->tables !== []) {
-            self::dropStaged($this->staging, $this->tables);
+        if ($this->staging !== null && $this->staged !== 0) {
+            self::unstage($this->staging, $this->staged);
         }
     }
 

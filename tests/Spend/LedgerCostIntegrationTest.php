@@ -279,7 +279,7 @@ final class LedgerCostIntegrationTest extends TestCase
         $window = self::window(self::$hour, self::$hour + 7199);
         $staged = LedgerCost::forReport(new Connection(self::$db), self::USER, self::$hour, self::$hour + 7199, 'USD');
         self::assertNotNull($staged);
-        self::assertStringContainsString('`p202_ledger_', $staged->join);
+        self::assertStringContainsString('p202_ledger_sets', $staged->join);
         $expected = self::reports(new ReportsController(self::$db, self::USER), $window);
         self::assertEqualsWithDelta(1.5 + 1.5 + 1.1 + 0.2 + 0.3 + 0.4 + 0.6, json_decode($expected['summary'], true)['data']['total_cost'], 1e-9);
         // Read one hour at a time, the staged figures are the same.
