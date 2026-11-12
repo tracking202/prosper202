@@ -246,7 +246,7 @@ function p202_setup_link_scheme_note(
 function p202_setup_placeholders(string $targetId, string $remember): string
 {
     $tokens = ['[[subid]]', '[[c1]]', '[[c2]]', '[[c3]]', '[[c4]]', '[[random]]', '[[referer]]', '[[gclid]]',
-        '[[gbraid]]', '[[wbraid]]', '[[ttclid]]', '[[msclkid]]', '[[fbclid]]',
+        '[[gbraid]]', '[[wbraid]]', '[[ttclid]]', '[[msclkid]]', '[[fbclid]]', '[[oppref]]',
         '[[utm_source]]', '[[utm_medium]]', '[[utm_campaign]]', '[[utm_term]]', '[[utm_content]]',
         '[[payout]]', '[[cpc]]', '[[cpc2]]', '[[timestamp]]'];
     $buttons = '';

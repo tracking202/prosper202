@@ -5493,6 +5493,9 @@ class UPGRADE
                 // filled for the clicks of the last 30 days
                 // (_upgrade_fill_click_ad_ids()).
                 \Prosper202\Database\Tables\ClickTables::clicksAdIds(),
+                // 202_google gains oppref, OpenAI's click id (ClickRecord), filled
+                // into the lookup above with the other ids.
+                \Prosper202\Database\Tables\TrackingTables::google(),
                 // 202_ppc_network_variables gains copied_from_ppc_variable_id:
                 // the variable a traffic source's copy took each of its own
                 // from (TrafficSourceOwners::split()), which names the values

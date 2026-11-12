@@ -53,8 +53,8 @@ final class AdClickIdsTravelTogetherTest extends TestCase
             . ' 1.9.79 added apart (AdClickIdColumns::of())'],
         '202-config/Conversion/TrafficSourcePixels.php' => [1, 'clickTokens() reads the ids 1.9.79 added apart'
             . ' (AdClickIdColumns::of())'],
-        '202-config/Click/MysqlClickRepository.php' => [1, "writeGoogleRow(): the row a database the 1.9.79"
-            . " upgrade has not reached takes"],
+        '202-config/Click/MysqlClickRepository.php' => [2, "writeGoogleRow(): the rows a database the 1.9.79"
+            . " or 1.9.80 upgrade has not reached takes"],
         'tracking202/static/gpb.php' => [1, "the gclid's token value, read with the click; the others are read"
             . ' apart (AdClickIdColumns::of())'],
         'tracking202/static/upx.php' => [1, 'as gpb.php'],
@@ -178,16 +178,19 @@ final class AdClickIdsTravelTogetherTest extends TestCase
     public static function plantedSites(): iterable
     {
         yield 'a list of every id' => [
-            "<?php \$ids = ['gclid', 'gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid'];",
+            "<?php \$ids = ['gclid', 'gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid', 'oppref'];",
             true,
         ];
-        yield 'a list that lacks one' => ["<?php \$ids = ['gclid', 'gbraid', 'wbraid', 'ttclid', 'msclkid'];", false];
+        yield 'a list that lacks one' => [
+            "<?php \$ids = ['gclid', 'gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid'];",
+            false,
+        ];
         yield 'a list that lacks the first of the others' => [
-            "<?php \$ids = ['gclid', 'wbraid', 'ttclid', 'msclkid', 'fbclid'];",
+            "<?php \$ids = ['gclid', 'wbraid', 'ttclid', 'msclkid', 'fbclid', 'oppref'];",
             false,
         ];
         yield 'a statement across lines' => [
-            "<?php f('gclid',\n 'gbraid',\n 'wbraid',\n 'ttclid',\n 'msclkid',\n 'fbclid');",
+            "<?php f('gclid',\n 'gbraid',\n 'wbraid',\n 'ttclid',\n 'msclkid',\n 'fbclid',\n 'oppref');",
             true,
         ];
         yield 'SQL that lacks them' => ['<?php $sql = "SELECT g.gclid FROM 202_google AS g";', false];
@@ -197,20 +200,23 @@ final class AdClickIdsTravelTogetherTest extends TestCase
         ];
         yield 'markup that has them' => [
             "<?php ?>\n\"gclid=\" + a, \"gbraid=\" + b, \"wbraid=\" + c, \"ttclid=\" + d, \"msclkid=\" + e,"
-                . " \"fbclid=\" + f\n",
+                . " \"fbclid=\" + f, \"oppref=\" + g\n",
             true,
         ];
-        yield 'a comment does not count' => ["<?php // gbraid wbraid ttclid msclkid fbclid\n\$a = 'gclid';", false];
+        yield 'a comment does not count' => [
+            "<?php // gbraid wbraid ttclid msclkid fbclid oppref\n\$a = 'gclid';",
+            false,
+        ];
         yield 'another statement does not count' => [
-            "<?php \$a = 'gclid'; \$b = ['gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid'];",
+            "<?php \$a = 'gclid'; \$b = ['gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid', 'oppref'];",
             false,
         ];
         yield 'an interpolation does not end the statement' => [
-            "<?php \$a = \"gclid {\$x['y']} gbraid\" . 'wbraid ttclid msclkid fbclid';",
+            "<?php \$a = \"gclid {\$x['y']} gbraid\" . 'wbraid ttclid msclkid fbclid oppref';",
             true,
         ];
         yield 'a longer name is not the id' => [
-            "<?php \$ids = ['gclid', 'gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid_x'];",
+            "<?php \$ids = ['gclid', 'gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid', 'oppref_x'];",
             false,
         ];
     }

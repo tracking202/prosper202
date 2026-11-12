@@ -312,7 +312,7 @@ $sameIpHelp = 'When a pixel names no click, credit your latest click from the vi
 $clickIdParamsHelp = 'For a network that cannot send the SubID back. Pass it the ad click id instead (the gclid, say)'
     . ' and name here the postback parameter it returns it in, such as aff_sub3. When a postback\'s SubID is empty,'
     . ' the conversion goes to your click carrying that id. A postback sending gclid, gbraid, wbraid, msclkid,'
-    . ' fbclid or ttclid under its own name needs nothing here. Conversions it finds read Ad click id.';
+    . ' fbclid, ttclid or oppref under its own name needs nothing here. Conversions it finds read Ad click id.';
 $cloakChoices = ['origin' => 'Show Prosper202 Domain', 'never' => 'Show Blank Referer'];
 $adChoices = ['show_all' => 'Show All Ads', 'hide_login' => 'Hide Ads On Login Screen', 'hide_all' => 'Hide All Ads'];
 

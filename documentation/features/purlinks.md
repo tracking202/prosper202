@@ -61,7 +61,7 @@ fields:
 | `[[subid]]` | The SubID for this visitor and offer (below) |
 | `[[t202kw]]`, `[[c1]]`–`[[c4]]` | The values the visitor arrived with |
 | `[[utm_source]]`, `[[utm_medium]]`, `[[utm_campaign]]`, `[[utm_term]]`, `[[utm_content]]` | The same |
-| `[[gclid]]`, `[[gbraid]]`, `[[wbraid]]`, `[[ttclid]]`, `[[msclkid]]`, `[[fbclid]]`, `[[t202pubid]]` | From the landing page's URL |
+| `[[gclid]]`, `[[gbraid]]`, `[[wbraid]]`, `[[ttclid]]`, `[[msclkid]]`, `[[fbclid]]`, `[[oppref]]`, `[[t202pubid]]` | From the landing page's URL |
 | `[[referer]]` / `[[referrer]]` | The page's referrer |
 | `[[random]]` | A random number, one per pageview |
 
