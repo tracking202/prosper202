@@ -315,8 +315,22 @@ Google Ads) and batching.
 
 ## ChatGPT Ads
 
-You need the **pixel id** of your web pixel and a **Conversions API key**,
-both in ChatGPT Ads Manager › Conversions (Conversions API keys › Create).
+**The quick way: connect the ad account.** Under Setup › Destinations ›
+ChatGPT Ads, paste the **Advertiser API key** from ChatGPT Ads Manager ›
+Settings and press Connect. Prosper202 checks it with OpenAI and shows the
+account's name, currency and time zone. Then **Run setup**: it finds or
+makes your web pixel, makes a Conversions API key, adds this destination
+with both, and makes an event setting for each event type (30-day click
+window) in your ad account. Each step says what it did, and any can be
+unticked. Where OpenAI has pixel or key creation switched off for your
+account, setup says so; make them in Ads Manager and give them under
+Advanced. The keys are stored encrypted and never shown again. The same
+from a script: `p202 ad-connection` or `/api/v3/ad-connections`
+([Ad connections API](../api/28-ad-connections.md)).
+
+**By hand**, you need the **pixel id** of your web pixel and a **Conversions
+API key**, both in ChatGPT Ads Manager › Conversions (Conversions API keys ›
+Create).
 
 Each conversion is sent as one web event, `order_created` unless you pick
 another type (or `custom` with a name of your own), to
@@ -377,7 +391,12 @@ p202 destination connect 2          # open the authorisation_url it prints
 p202 destination update 2 --campaign-conversion-action 12=987655   # sets campaign 12's, keeps the others; 12= removes it
 p202 destination test 2
 
-# ChatGPT Ads: key.txt holds the Conversions API key
+# ChatGPT Ads, connected: ads-key.txt holds the Advertiser API key
+p202 ad-connection create --api-key-file ads-key.txt --ppc-account-id 4
+p202 ad-connection setup 1 --event-type order_created --event-type lead_created
+p202 ad-connection check 1
+
+# ChatGPT Ads by hand: key.txt holds the Conversions API key
 p202 destination create --type openai_ads --name "ChatGPT Ads" --pixel-id px_4821 \
     --conversions-api-key-file key.txt
 p202 destination update 3 --scope all          # every conversion, for view-through
