@@ -14,6 +14,7 @@ use Prosper202\Database\Connection;
 use Prosper202\Destinations\DestinationQueue;
 use Prosper202\Destinations\DestinationStore;
 use Prosper202\Destinations\Ga4Destination;
+use Prosper202\Destinations\OpenAiAdsDestination;
 use Tests\Apps\Android\AndroidDatabase;
 
 /**
@@ -432,7 +433,115 @@ final class DestinationsIntegrationTest extends TestCase
             {
                 return $this->ga4->host($settings);
             }
+
+            public function backfillDays(): int
+            {
+                return $this->ga4->backfillDays();
+            }
+
+            public function takesConsent(): bool
+            {
+                return true;
+            }
+
+            public function configured(array $settings): bool
+            {
+                return true;
+            }
+
+            public function hashEmail(?string $email): ?string
+            {
+                return $this->ga4->hashEmail($email);
+            }
+
+            public function hashPhone(?string $phone): ?string
+            {
+                return $this->ga4->hashPhone($phone);
+            }
+
+            public function formSettings(array $post, array $settings): array
+            {
+                return $this->ga4->formSettings($post, $settings);
+            }
+
+            public function label(array $settings): string
+            {
+                return $this->ga4->label($settings);
+            }
         };
+    }
+
+    private function openAiStore(): DestinationStore
+    {
+        $guard = new WebhookGuard(static fn (string $host): array => ['203.0.113.10'], '203.0.113.0/24');
+        $transport = function (array $options): array {
+            $this->bodies[] = json_decode((string) $options[CURLOPT_POSTFIELDS], true) + ['_url' => $options[CURLOPT_URL]];
+
+            return (array_shift($this->answers) ?? []) + ['status' => 200, 'error' => null, 'primary_ip' => '203.0.113.10', 'location' => null, 'body' => '{}'];
+        };
+
+        return new DestinationStore(new Connection(self::$db), [OpenAiAdsDestination::TYPE => new OpenAiAdsDestination(new WebhookSender($guard, $transport))]);
+    }
+
+    public function testAChatGptAdsConversionIsQueuedWithTheSaleAndSentAsOneWebEvent(): void
+    {
+        self::fixture('DELETE FROM 202_ppc_accounts WHERE ppc_account_id IN (70, 71)');
+        self::fixture("INSERT INTO 202_ppc_accounts SET ppc_account_id=70, user_id=1, ppc_network_id=1, ppc_account_name='ChatGPT', ppc_account_deleted=0");
+        self::fixture("INSERT INTO 202_ppc_accounts SET ppc_account_id=71, user_id=2, ppc_network_id=1, ppc_account_name='Theirs', ppc_account_deleted=0");
+        self::fixture("INSERT INTO 202_site_urls SET site_url_id=11, site_domain_id=1, site_url_address='https://shop.example.com/spring'");
+        self::fixture("INSERT INTO 202_customers SET customer_id=9, user_id=1, primary_ref='c-9', email=' Jane.Doe+promo@Gmail.com', phone='+1 555 123 4567',
+            first_seen_time=1, last_activity_time=1, created_at=1, updated_at=1");
+        $store = $this->openAiStore();
+        $create = static fn (array $settings): int => (int) $store->create(1, OpenAiAdsDestination::TYPE, 'ChatGPT Ads', $settings + ['pixel_id' => 'px_4821'], ['conversions_api_key' => 'oai-capi-Key_0123456789abcdef'], time())['destination_id'];
+
+        foreach ([
+            'settings.consent' => ['consent' => ['ad_user_data' => 'granted']],
+            'settings.ppc_account_id' => ['scope' => 'source', 'ppc_account_id' => 71],
+        ] as $field => $settings) {
+            try {
+                $create($settings);
+                self::fail('refused: ' . $field);
+            } catch (\Prosper202\Destinations\DestinationInputException $e) {
+                self::assertSame($field, $e->field);
+            }
+        }
+
+        $all = $create(['scope' => 'all', 'send_user_data' => true]);
+        $oppref = $create([]);
+        $this->click(100);
+        self::fixture('INSERT INTO 202_clicks_site SET click_id=100, click_landing_site_url_id=11');
+        $convId = $this->record(100, 'ORD-70');
+        self::fixture("UPDATE 202_conversion_logs SET customer_id=9 WHERE conv_id=$convId");
+        self::assertSame([[(string) $convId, 'pending']], array_map(static fn (array $r): array => [$r['conv_id'], $r['status']], self::deliveries($all)), 'queued in the conversion\'s transaction');
+
+        $queue = new DestinationQueue(new Connection(self::$db), $store, static fn (string $ip): bool => false);
+        $out = $queue->sendDue(10, 5, time() + 1);
+        self::assertSame([1, 1], [$out['sent'], $out['withheld']]);
+        self::assertStringContainsString('oppref', (string) self::deliveries($oppref)[0]['last_error'], 'scope oppref holds back a click without one');
+        self::assertCount(1, $this->bodies);
+        $body = $this->bodies[0];
+        self::assertSame('https://bzr.openai.com/v1/events?pid=px_4821', $body['_url']);
+        $event = $body['events'][0];
+        self::assertSame(['ORD-70', 'order_created', 'web', 'https://shop.example.com/spring'], [$event['id'], $event['type'], $event['action_source'], $event['source_url']]);
+        self::assertSame(['type' => 'contents', 'amount' => 1990, 'currency' => 'USD'], $event['data']);
+        self::assertSame([hash('sha256', 'jane.doe+promo@gmail.com')], $event['user']['emails_sha256'], 'OpenAI\'s normalisation, not Google\'s');
+        self::assertSame([hash('sha256', '15551234567')], $event['user']['phone_numbers_sha256']);
+
+        // A visitor who may be in Europe is withheld even with privacy Disabled: OpenAI takes no consent signal.
+        $this->click(101);
+        $this->record(101, 'ORD-71');
+        $eu = new DestinationQueue(new Connection(self::$db), $store, static fn (string $ip): bool => true);
+        self::assertSame(2, $eu->sendDue(10, 5, time() + 2)['withheld']);
+        self::assertStringContainsString('takes no consent signal', (string) self::deliveries($all)[1]['last_error']);
+        self::assertCount(1, $this->bodies);
+
+        try {
+            $queue->backfill(1, $all, 8, time());
+            self::fail('a backfill past 7 days is refused');
+        } catch (\Prosper202\Destinations\DestinationInputException $e) {
+            self::assertStringContainsString('1 to 7', $e->getMessage());
+        }
+        self::assertSame('ready', $store->get(1, $all)['status']);
     }
 
     public function testAHostThatDoesNotResolveIsRetriedNotFailed(): void

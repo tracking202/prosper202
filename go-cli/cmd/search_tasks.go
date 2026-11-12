@@ -96,7 +96,7 @@ var searchTasks = []searchTask{
 			"bing offline conversions", "scheduled conversion upload"}},
 	{Run: "p202 destination create", Pages: []string{"Setup › Destinations"},
 		Phrases: []string{"send conversions to google analytics", "ga4 measurement protocol", "server side conversions",
-			"conversions api", "send conversions to ad platforms"}},
+			"conversions api", "send conversions to ad platforms", "send conversions to chatgpt ads", "openai conversions api"}},
 	{Run: "p202 destination resend --status failed",
 		Phrases: []string{"send failed conversions again", "retry failed deliveries", "resend conversions to google ads",
 			"conversions missing in the ad platform after fixing the token"}},
