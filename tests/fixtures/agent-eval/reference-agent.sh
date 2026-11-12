@@ -89,6 +89,20 @@ case "$ask" in
                 "$click" "$(printf '%s' "$err" | jq -r '.error.field_errors.items // .error.message' 2>/dev/null | cut -c1-160)"
         fi
         ;;
+    # ChatGPT Ads (destinations.json): one destination with the pixel id and
+    # the key read from its file; the default scope sends only conversions
+    # whose click came from a ChatGPT ad, which the reply says.
+    *"purchases to ChatGPT Ads"*)
+        out=$(p202 destination create --type openai_ads --name "EVAL ChatGPT Ads" --pixel-id px_eval_4821 \
+            --conversions-api-key-file /tmp/p202-eval-oai-key.txt --json)
+        id=$(printf '%s' "$out" | jq -r '.data.destination_id')
+        printf 'Added destination %s, "EVAL ChatGPT Ads", sending purchases to OpenAI'"'"'s Conversions API as order_created events. It sends only conversions whose click carries ChatGPT'"'"'s click id (oppref, scope oppref); `p202 destination update %s --scope all` sends every conversion. Run `p202 destination test %s` to have OpenAI check it without saving anything.\n' "$id" "$id" "$id"
+        ;;
+    *"EVAL ChatGPT Ads only gets conversions"*)
+        id=$(p202 destination list --json | jq -r '[.data[] | select(.name=="EVAL ChatGPT Ads")][0].destination_id')
+        p202 destination update "$id" --scope all --json >/dev/null
+        printf 'Destination %s (EVAL ChatGPT Ads) now sends every conversion (scope all), so OpenAI can match people who saw an ad without clicking it. Each conversion still goes once: OpenAI keeps the first event it gets.\n' "$id"
+        ;;
     # Text ads (setup-text-ads.json): an ad is a campaign's or an advanced
     # landing page's, and a tracker carries the one its link shows.
     *"EVAL Spring Ad"*)
