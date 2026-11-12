@@ -16,6 +16,8 @@ afterwards and a pause changes the campaign's status.
   GET  /v1/<level>/<id>                 POST /v1/<level>/<id> (an update)
   POST /v1/<level>/<id>/pause | activate
   GET  /v1/ad_account/insights          (aggregation_level=campaign, time_granularity=none)
+  GET  /v1/conversions/events?pid=      the events a pixel received (server events as server_to_server)
+  POST /v1/events?pid=                  the Conversions API host's events (Bearer a capi- key; validate_only saves nothing)
 
 A request without `Authorization: Bearer <--api-key>` is 401. A create with
 an Idempotency-Key it has seen answers what that key made.
@@ -23,13 +25,13 @@ an Idempotency-Key it has seen answers what that key made.
 Control (for whoever drives it):
 
   POST /control/reset                   back to the seeded account
-  POST /control/disable                 {"pixels": true, "api_keys": true}: those creates (and the
+  POST /control/disable                 {"pixels": true, "api_keys": true, "events": true}: those creates (and the
                                         pixel list) answer 404 "Not found", as for an account
                                         without the feature
   GET  /control/requests                every request seen, in order (keys masked)
 
 Usage: fake_openai_ads.py --port 8242 --tls-dir DIR [--api-key KEY]
-It writes DIR/cert.pem (self-signed for 127.0.0.1 and localhost: the CA the
+It writes DIR/cert.pem (self-signed for 127.0.0.1, localhost and bzr.openai.com: the CA the
 install is given) and DIR/key.pem if missing, then prints "READY <port>".
 """
 import argparse
@@ -87,7 +89,7 @@ class State:
     def reset(self):
         self.data = copy.deepcopy(SEED)
         self.pixels, self.event_settings, self.api_keys = [], [], []
-        self.idempotent, self.requests, self.disabled = {}, [], set()
+        self.idempotent, self.requests, self.disabled, self.events = {}, [], set(), []
         self.counter = 900
 
 
@@ -142,6 +144,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.control(method, path)
             body = self.body() if method == 'POST' else {}
             auth = self.headers.get('Authorization', '')
+            if path == '/v1/events' and method == 'POST':
+                return self.events(query, body, auth)
             STATE.requests.append({'method': method, 'path': path, 'query': url.query, 'body': body,
                                    'idempotency_key': self.headers.get('Idempotency-Key'),
                                    'authorized': auth == 'Bearer ' + self.api_key})
@@ -195,6 +199,12 @@ class Handler(BaseHTTPRequestHandler):
                        'sources': [{'id': sources[0], 'name': None}], 'campaigns': [], 'archived': False, 'version': 1}
             STATE.event_settings.append(setting)
             return 200, setting
+        if path == '/v1/conversions/events' and method == 'GET':
+            if 'events' in STATE.disabled:
+                return not_found
+            pid = (query.get('pid') or [''])[0]
+            rows = [e for e in STATE.events if e['pixel_id'] == pid][-50:]
+            return 200, {'object': 'list', 'data': [{k: v for k, v in e.items() if k != 'pixel_id'} for e in reversed(rows)]}
         if path == '/v1/ad_account/insights' and method == 'GET':
             rows = [{'id': 'entity_id=' + cid, 'start_time': 0, 'end_time': 0, 'campaign_id': cid,
                      'campaign_name': next(c['name'] for c in d['campaigns'] if c['id'] == cid),
@@ -230,6 +240,26 @@ class Handler(BaseHTTPRequestHandler):
                 row[field] = body[field]
         return 200, row
 
+    def events(self, query, body, auth):
+        """POST /v1/events?pid= on the Conversions API host: Bearer a Conversions API key this stand-in
+        issued (or one starting capi-, as a key from Ads Manager); validate_only saves nothing."""
+        key = auth[len('Bearer '):] if auth.startswith('Bearer ') else ''
+        STATE.requests.append({'method': 'POST', 'path': '/v1/events', 'query': urlsplit(self.path).query, 'body': body,
+                               'idempotency_key': None, 'authorized': key.startswith('capi-')})
+        if not key.startswith('capi-'):
+            return self.answer(401, {'error': {'message': 'Invalid Conversions API key'}})
+        pid = (query.get('pid') or [''])[0]
+        events = (body or {}).get('events')
+        if not pid or not isinstance(events, list) or not events:
+            return self.answer(400, {'error': {'message': 'pid and events are required'}})
+        if not body.get('validate_only'):
+            for event in events:
+                STATE.events.append({'pixel_id': pid, 'action_source': event.get('action_source'), 'api_channel': 'server_to_server',
+                                     'custom_event_name': event.get('custom_event_name'), 'data_source_id': 'cds_1',
+                                     'event_data_json': json.dumps(event.get('data', {})), 'event_timestamp_ms': event.get('timestamp_ms'),
+                                     'event_type': event.get('type'), 'received_at_ms': event.get('timestamp_ms')})
+        return self.answer(200, {'object': 'list', 'data': []})
+
     def control(self, method, path):
         if path == '/control/reset' and method == 'POST':
             STATE.reset()
@@ -249,7 +279,7 @@ def ensure_cert(tls_dir):
         os.makedirs(tls_dir, exist_ok=True)
         subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert,
                         '-days', '2', '-subj', '/CN=127.0.0.1',
-                        '-addext', 'subjectAltName=IP:127.0.0.1,DNS:localhost',
+                        '-addext', 'subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:bzr.openai.com',
                         '-addext', 'basicConstraints=critical,CA:TRUE'],
                        check=True, capture_output=True)
     return cert, key

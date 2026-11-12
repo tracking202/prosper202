@@ -369,7 +369,11 @@ What OpenAI does not take, and what that means here:
   backoff.
 
 **Test it**: *send test* (or `p202 destination test <id>`) sends a made-up
-event with `validate_only`, which OpenAI checks and does not save. After a
+event with `validate_only`, which OpenAI checks and does not save. With a
+ChatGPT Ads connection to the pixel's ad account, *send a real test event*
+(or `p202 destination test <id> --real`) sends one real event instead, which
+OpenAI saves and counts as a conversion of the pixel, then reads the
+account's recent events and says whether it arrived from this server. After a
 test, confirm the first real conversions in Ads Manager › Conversions.
 
 ## CLI

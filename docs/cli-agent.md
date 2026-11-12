@@ -966,6 +966,7 @@ p202 destination conversion-actions <id> [--customer-id N [--login-customer-id N
 p202 destination pick <id> [--account NAME|ID] [--action NAME|ID] [--json]   # sets both from Google's lists; several to choose from is a 422 listing them
 p202 destination update <id> [--enable|--disable] [--name S] [any create flag]   # only the flags given change
 p202 destination test <id> [--json]                     # made-up conversion to GA4's /debug/mp/collect: valid + messages
+p202 destination test <id> --real [--json]              # ChatGPT Ads with an ad connection: a real event (saved, counted), then arrived: true|false
 p202 destination deliveries <id> [--status pending|sent|failed|withheld|cancelled] [--kind conversion|test]
                        [--conv-id N] [--limit 50] [--offset 0] [--json]    # the log; meta.summary counts by status
 p202 destination resend <id> (--delivery-id N | --status failed|withheld) [--json]   # sent again with all their tries; `more` true: run again

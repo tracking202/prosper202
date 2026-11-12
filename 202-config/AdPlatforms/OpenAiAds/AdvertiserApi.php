@@ -88,6 +88,33 @@ final class AdvertiserApi
         return $api;
     }
 
+    /**
+     * The sender for OpenAI's Conversions API host (bzr.openai.com): the plain WebhookSender, or, when
+     * P202_OPENAI_ADS_ENDPOINT names the loopback stand-in, one that checks and pins the host as usual (to
+     * the loopback address, which is allowed) and connects to the stand-in's port, TLS verified as
+     * bzr.openai.com against P202_OPENAI_ADS_CA_FILE. Never reaches OpenAI when the endpoint is set.
+     */
+    public static function eventsSender(): WebhookSender
+    {
+        $endpoint = getenv(self::ENV_ENDPOINT);
+        if ($endpoint === false || $endpoint === '') {
+            return new WebhookSender();
+        }
+        $port = self::fromEnvironment()->ports[0];
+        $ca = getenv(self::ENV_CA_FILE);
+        $transport = static function (array $options) use ($port, $ca): array {
+            // Every option the sender set stays; the connection goes to the stand-in's port, verified as bzr.openai.com.
+            $options[CURLOPT_CONNECT_TO] = [\Prosper202\Destinations\OpenAiAdsDestination::HOST . ':443:127.0.0.1:' . $port];
+            if (is_string($ca) && $ca !== '') {
+                $options[CURLOPT_CAINFO] = $ca;
+            }
+
+            return WebhookSender::curlTransport($options);
+        };
+
+        return new WebhookSender(new WebhookGuard(static fn (string $host): array => ['127.0.0.1'], '127.0.0.0/8'), $transport);
+    }
+
     /** @param array<string, scalar|list<scalar>> $query a list is sent as name[]=a&name[]=b, as OpenAI reads it */
     public function get(#[\SensitiveParameter] string $key, string $path, array $query = []): AdvertiserAnswer
     {

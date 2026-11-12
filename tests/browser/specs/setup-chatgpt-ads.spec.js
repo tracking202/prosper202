@@ -100,6 +100,21 @@ module.exports = {
     },
 
     {
+      name: 'A real test event is read back from OpenAI',
+      async run(ctx) {
+        const { app, ui, db, expect } = ctx;
+        await app.goto(PAGE);
+        const destination = db.value("SELECT destination_id FROM 202_destinations WHERE type = 'openai_ads' AND deleted_at IS NULL LIMIT 1");
+        const button = '#d' + destination + ' button:has-text("send a real test event")';
+        expect.ok(await ui.exists(button), 'a destination the connection reaches offers the real test');
+        await app.confirmAnd('dismiss', button);
+        await app.confirmAnd('accept', button);
+        expect.match(await app.messages(), /OpenAI received the test event from this server \(server_to_server/, 'the event is read back as a server event');
+        await keyIsNowhere(ctx, 'after the real test');
+      },
+    },
+
+    {
       name: 'Deleting the connection asks first',
       async run(ctx) {
         const { app, db, expect, state } = ctx;

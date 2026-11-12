@@ -114,3 +114,33 @@ func TestAdConnectionRefusesBadInputBeforeTheServer(t *testing.T) {
 		t.Errorf("bad input reached the server: %v", calls)
 	}
 }
+
+// `destination test --real` asks for the real event and its read-back; without it the body is empty.
+func TestDestinationTestRealAsksForTheReadBack(t *testing.T) {
+	var bodies []map[string]interface{}
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		body := map[string]interface{}{}
+		_ = json.Unmarshal(raw, &body)
+		bodies = append(bodies, body)
+		w.Write([]byte(`{"data":{"sent":true,"arrived":true,"event_type":"order_created","pixel_id":"134500901","connection_id":1,"status_code":200,"message":"OpenAI received the test event"}}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	out, _, err := executeCommand("destination", "test", "3", "--real", "--json")
+	if err != nil {
+		t.Fatalf("test --real: %v", err)
+	}
+	if _, _, err := executeCommand("destination", "test", "3", "--json"); err != nil {
+		t.Fatalf("test: %v", err)
+	}
+	if !reflect.DeepEqual(bodies, []map[string]interface{}{{"real": true}, {}}) {
+		t.Errorf("bodies = %v", bodies)
+	}
+	if !strings.Contains(out, `"arrived": true`) {
+		t.Errorf("the read-back is printed: %s", out)
+	}
+}

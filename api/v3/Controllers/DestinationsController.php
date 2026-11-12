@@ -7,6 +7,10 @@ namespace Api\V3\Controllers;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\PayloadKeys;
+use Prosper202\AdPlatforms\AdConnectionInputException;
+use Prosper202\AdPlatforms\AdConnectionStore;
+use Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi;
+use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsTestEvent;
 use Prosper202\Database\Connection;
 use Prosper202\Destinations\DestinationInputException;
 use Prosper202\Destinations\DestinationQueue;
@@ -14,6 +18,7 @@ use Prosper202\Destinations\DestinationStore;
 use Prosper202\Destinations\GoogleAdsAccounts;
 use Prosper202\Destinations\GoogleAdsPicker;
 use Prosper202\Destinations\GoogleAdsOAuth;
+use Prosper202\Destinations\OpenAiAdsDestination;
 
 /**
  * /destinations: the ad platforms the account sends conversions to
@@ -103,8 +108,35 @@ final class DestinationsController
         ]];
     }
 
-    public function test(int $id): array
+    /**
+     * A test fire the platform checks without saving; with `real` (ChatGPT Ads, reached by an ad connection) a
+     * real event, then OpenAI's recent events read back to say whether it arrived.
+     *
+     * @param array<string, mixed> $payload
+     */
+    public function test(int $id, array $payload = []): array
     {
+        PayloadKeys::refuseUnknown($payload, ['real'], 'a test');
+        $real = $payload['real'] ?? false;
+        if (!is_bool($real)) {
+            throw new ValidationException('Validation failed', ['real' => 'true sends a real ChatGPT Ads event and reads it back; leave it out for a check that saves nothing.']);
+        }
+        if ($real) {
+            try {
+                $answer = (new OpenAiAdsTestEvent(
+                    $this->conn,
+                    new AdConnectionStore($this->conn),
+                    $this->store,
+                    AdvertiserApi::fromEnvironment(),
+                    new OpenAiAdsDestination(AdvertiserApi::eventsSender())
+                ))->send($this->userId, $id, time());
+            } catch (AdConnectionInputException $e) {
+                throw new ValidationException($e->getMessage(), ['real' => $e->getMessage()], $e);
+            }
+
+            return ['data' => $answer ?? throw self::notFound($id)];
+        }
+
         return ['data' => $this->refusing(fn (): ?array => (new DestinationQueue($this->conn, $this->store))->testFire($this->userId, $id, time())) ?? throw self::notFound($id)];
     }
 

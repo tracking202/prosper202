@@ -820,7 +820,7 @@ try {
             $r->post('',            fn() => ['_status' => 201] + $crud($cls)->create($payload));
             $r->patch('/{id}',      fn($ctx) => $crud($cls)->update(PathId::of($ctx), $payload));
             $r->delete('/{id}',     fn($ctx) => tap($crud($cls), fn($c) => $c->delete(PathId::of($ctx))));
-            $r->post('/{id}/test',  fn($ctx) => $crud($cls)->test(PathId::of($ctx)));
+            $r->post('/{id}/test',  fn($ctx) => $crud($cls)->test(PathId::of($ctx), $payload));
             $r->post('/{id}/oauth/start', fn($ctx) => $crud($cls)->oauthStart(PathId::of($ctx), $_SERVER));
             $r->post('/{id}/google-ads/pick', fn($ctx) => $crud($cls)->googleAdsPick(PathId::of($ctx), $payload));
             $r->post('/{id}/deliveries/resend', fn($ctx) => $crud($cls)->resend(PathId::of($ctx), $payload));
