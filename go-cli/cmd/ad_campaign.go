@@ -32,7 +32,7 @@ var adCampaignCmd = &cobra.Command{
 		"  p202 ad-campaign list 1 --level ads --ad-group-id adgrp_12\n" +
 		"  p202 ad-campaign pause 1 cmpn_101 --dry-run\n" +
 		"  p202 ad-campaign set-template 1 cmpn_101          (the template Get Links gives)\n" +
-		"  p202 ad-campaign attach-events 1 cmpn_101         (the event settings setup made)\n" +
+		"  p202 ad-campaign attach-events 1 cmpn_101         (the ones made when it was connected)\n" +
 		"  p202 ad-campaign spend 1 --since 2026-11-01 --until 2026-11-10",
 }
 
@@ -102,7 +102,7 @@ var adCampaignListCmd = &cobra.Command{
 		if cmd.Flags().Changed("limit") {
 			n, _ := cmd.Flags().GetInt("limit")
 			if n < 1 || n > 500 {
-				return validationError("--limit must be 1 to 500").WithHint("The next page is --after with the meta.after the answer gives.")
+				return validationError("--limit must be 1 to 500").WithHint("For more rows, pass --after with the meta.after the answer gives.")
 			}
 			params["limit"] = strconv.Itoa(n)
 		}
@@ -156,15 +156,15 @@ func adCampaignStatusCmd(action, short string) *cobra.Command {
 
 var (
 	adCampaignPauseCmd    = adCampaignStatusCmd("pause", "Pause a ChatGPT Ads campaign, ad group or ad at OpenAI")
-	adCampaignActivateCmd = adCampaignStatusCmd("activate", "Activate a ChatGPT Ads campaign, ad group or ad at OpenAI")
+	adCampaignActivateCmd = adCampaignStatusCmd("activate", "Activate (resume, turn back on) a ChatGPT Ads campaign, ad group or ad at OpenAI")
 )
 
 var adCampaignSetTemplateCmd = &cobra.Command{
 	Use:   "set-template <connection-id> <id>",
 	Short: "Set the tracking template OpenAI appends to the ad's URL (default: the ChatGPT Ads template Get Links gives)",
-	Long: "Sets landing_page_configuration.query_string_template on a campaign (or --level ad-groups, ads; the\n" +
+	Long: "Sets the query string OpenAI appends to the ad's URL on a campaign (or --level ad-groups, ads; the\n" +
 		"lowest level set wins). Without --template it is the template Get Links shows for the ChatGPT Ads source;\n" +
-		"for a tracker on a landing page, pass the one `p202 tracker get-url <id>` gives, which adds t202id.",
+		"for a tracker that sends visitors straight to your site, pass the one `p202 tracker get-url <id>` gives (with t202id).",
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := adCampaignArgs(args); err != nil {
@@ -188,7 +188,7 @@ var adCampaignAttachEventsCmd = &cobra.Command{
 	Use:   "attach-events <connection-id> <campaign-id>",
 	Short: "Add conversion event settings to a ChatGPT Ads campaign, keeping the ones it has",
 	Long: "OpenAI replaces a campaign's list of event settings whole, so this reads the campaign, adds the ones\n" +
-		"named (or, without --event-setting-id, the ones `p202 ad-connection setup` made) and writes the list back.",
+		"named (or, without --event-setting-id, the ones made when the connection was set up) and writes the list back.",
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := adCampaignArgs(args); err != nil {
@@ -198,7 +198,7 @@ var adCampaignAttachEventsCmd = &cobra.Command{
 		for _, id := range ids {
 			if !adObjectIDPattern.MatchString(id) {
 				return validationError("--event-setting-id %q is not an event setting id (ces_…)", id).
-					WithHint("`p202 ad-connection get %s` shows the ones setup made.", args[0])
+					WithHint("`p202 ad-connection get %s` shows the ones made for it.", args[0])
 			}
 		}
 		body := map[string]interface{}{}
@@ -253,10 +253,10 @@ func init() {
 	}
 	adCampaignListCmd.Flags().String("campaign-id", "", "With --level ad-groups: only this campaign's")
 	adCampaignListCmd.Flags().String("ad-group-id", "", "With --level ads: only this ad group's")
-	adCampaignListCmd.Flags().Int("limit", 100, "Rows per page (1-500)")
-	adCampaignListCmd.Flags().String("after", "", "The next page: meta.after of the previous answer")
+	adCampaignListCmd.Flags().Int("limit", 100, "Rows to return (1-500)")
+	adCampaignListCmd.Flags().String("after", "", "Continue after this row: meta.after of the previous answer")
 	adCampaignSetTemplateCmd.Flags().String("template", "", "The query string to append (at most 2048 characters); default the Get Links template")
-	adCampaignAttachEventsCmd.Flags().StringArray("event-setting-id", nil, "An event setting to add (ces_…, repeatable); default the ones setup made")
+	adCampaignAttachEventsCmd.Flags().StringArray("event-setting-id", nil, "An event setting to add (ces_…, repeatable); default the ones made for the connection")
 	adCampaignSpendCmd.Flags().String("since", "", "First day, YYYY-MM-DD (the ad account's zone)")
 	adCampaignSpendCmd.Flags().String("until", "", "Last day, included")
 	adCampaignCmd.AddCommand(adCampaignListCmd, adCampaignGetCmd, adCampaignPauseCmd, adCampaignActivateCmd,

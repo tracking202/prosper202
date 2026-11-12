@@ -108,8 +108,6 @@ var searchTasks = []searchTask{
 			"openai ads campaign budget"}},
 	{Run: "p202 ad-campaign pause --dry-run",
 		Phrases: []string{"pause a chatgpt ads campaign", "stop a losing chatgpt campaign", "turn off chatgpt ad", "pause openai ad"}},
-	{Run: "p202 ad-campaign activate --dry-run",
-		Phrases: []string{"activate a chatgpt ads campaign", "turn a chatgpt campaign back on", "resume chatgpt ad"}},
 	{Run: "p202 ad-campaign set-template",
 		Phrases: []string{"push the tracking template to chatgpt ads", "set the chatgpt campaign query string", "chatgpt ads url parameters"}},
 	{Run: "p202 ad-campaign attach-events",
