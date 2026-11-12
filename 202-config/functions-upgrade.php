@@ -350,6 +350,42 @@ if (!function_exists('_upgrade_conversion_ledger_columns')) {
     }
 }
 
+if (!function_exists('_upgrade_campaign_currency_notice')) {
+    /**
+     * Mark, for the 1.9.80 rung, every campaign paid in another currency
+     * than its account's (aff_campaign_foreign_payout <> 0), most of them
+     * left so by a change of the account's currency. Before 1.9.80 a
+     * postback's amount on such a campaign was recorded as sent; from 1.9.80
+     * it is converted from the campaign's currency, as paid 1.9.56 did.
+     * Personal settings lists the marked campaigns
+     * (User\CampaignCurrencyNotice) so the owner can switch them to the
+     * account's currency when their networks now report in it, or keep them.
+     * The column is added as CampaignTables declares it. A re-run marks the
+     * same campaigns: the rung runs only until the version is recorded,
+     * before anyone can answer the notice.
+     */
+    function _upgrade_campaign_currency_notice(): bool
+    {
+        $columns = _upgrade_conversion_ledger_probe('SHOW COLUMNS FROM `202_aff_campaigns`', 'Field', 'Null');
+        if ($columns === null) {
+            _upgrade_note('could not read the columns of 202_aff_campaigns; the campaign currency step will retry.');
+            return false;
+        }
+        if (!array_key_exists('aff_campaign_currency_notice', $columns)
+            && _upgrade_query("ALTER TABLE `202_aff_campaigns` ADD COLUMN `aff_campaign_currency_notice` tinyint(1) NOT NULL DEFAULT '0' AFTER `app_registration_id`") === false) {
+            _upgrade_note('failed to add 202_aff_campaigns.aff_campaign_currency_notice; the campaign currency step will retry.');
+            return false;
+        }
+        if (_upgrade_query('UPDATE `202_aff_campaigns` SET `aff_campaign_currency_notice` = 1'
+            . ' WHERE `aff_campaign_deleted` = 0 AND `aff_campaign_foreign_payout` <> 0') === false) {
+            _upgrade_note('failed to mark the campaigns paid in another currency; the campaign currency step will retry.');
+            return false;
+        }
+
+        return true;
+    }
+}
+
 if (!function_exists('_upgrade_ledger_currency_backfill')) {
     /**
      * Add 202_conversion_logs' currency columns where they are missing, and
@@ -5307,12 +5343,16 @@ class UPGRADE
             // A paid 1.9.56 install that already reached 1.9.79 passed the
             // 1.9.56 step before it carried the paid baseline, so the baseline
             // runs here too (a no-op on a free install or one already fixed).
-            // Both run, so one failure does not skip the other, and the
-            // version moves only when both succeeded.
+            // Each runs, so one failure does not skip another, and the
+            // version moves only when all succeeded.
             $baseline_ok = _upgrade_1956_baseline();
             // Paid 1.9.56's pending PurLink clicks, carried into 202_purlink_exit_order (which it makes first).
             $carried_ok = _upgrade_purlink_carryover();
-            $paid_ok = $baseline_ok && $carried_ok;
+            // The campaigns whose postback amounts are converted from now on,
+            // for Personal settings to list; in this step alone, so a later
+            // one never lists again what the owner has answered.
+            $campaigns_ok = _upgrade_campaign_currency_notice();
+            $before_ok = $baseline_ok && $carried_ok && $campaigns_ok;
             $step_ok = _upgrade_measurement_tables([
                 // 202_users_pref gains shopify_webhook_secret, which Shopify's
                 // order webhooks are verified with (ShopifyWebhookSecret),
@@ -5400,7 +5440,7 @@ class UPGRADE
                 // from (TrafficSourceOwners::split()), which names the values
                 // recorded before the copy. Null on every variable already there.
                 \Prosper202\Database\Tables\TrackingTables::ppcNetworkVariables(),
-            ], [], [], true) && $paid_ok;
+            ], [], [], true) && $before_ok;
             if ($step_ok) {
                 _upgrade_seed_bot202_facebook_pixel_lookups();
                 _upgrade_complete_landing_page_urls();
@@ -5413,7 +5453,8 @@ class UPGRADE
                 }
             } else {
                 _upgrade_note('a table of the 1.9.80 step or the paid 1.9.56 baseline could not be reconciled (the list above),'
-                    . ' an API key hashed, or the paid PurLink clicks carried over; leaving version at 1.9.79 so the next run retries.');
+                    . ' an API key hashed, the paid PurLink clicks carried over, or the campaigns paid in another currency marked;'
+                    . ' leaving version at 1.9.79 so the next run retries.');
             }
         }
 

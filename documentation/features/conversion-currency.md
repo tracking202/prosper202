@@ -93,6 +93,22 @@ currency and converted into your new one, as for any campaign paid in
 another currency. If a network now reports amounts in your new currency,
 set the campaign's currency to it under Setup › Campaigns.
 
+### After the upgrade to 1.9.80
+
+Versions 1.9.57 to 1.9.79 recorded a postback's amount as sent on every
+campaign; 1.9.80 converts it on a campaign paid in another currency, as paid
+1.9.56 did. So that no one is surprised, the upgrade lists those campaigns
+on **Account › Personal settings › Account currency**, most of them left so
+by an earlier change of your account's currency:
+
+- **Their networks report in … : switch them** makes each one paid in your
+  account's currency, keeping the payout it shows; their postback amounts are
+  then recorded as sent, as before the upgrade.
+- **Keep converting** leaves them as they are.
+
+Either answer clears the notice. You can change any campaign's currency
+under Setup › Campaigns at any time.
+
 ## Conversions from before 1.9.80
 
 Before 1.9.80 no conversion kept its currency, and every page showed it in

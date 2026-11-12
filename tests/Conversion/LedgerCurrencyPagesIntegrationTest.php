@@ -291,4 +291,40 @@ final class LedgerCurrencyPagesIntegrationTest extends TestCase
             self::q('DELETE FROM 202_currency_changes WHERE user_id = ' . self::USER);
         }
     }
+
+    public function testCampaignsPaidInAnotherCurrencyAreListedUntilTheOwnerSwitchesOrKeepsThem(): void
+    {
+        $campaign = static fn (int $id, string $name): string => 'INSERT INTO 202_aff_campaigns SET aff_campaign_id = ' . $id . ', user_id = ' . self::USER
+            . ", aff_network_id = 1, aff_campaign_name = '$name', aff_campaign_url = 'https://shop.example', aff_campaign_payout = '9.20',"
+            . " aff_campaign_currency = 'USD', aff_campaign_foreign_payout = '10.00', aff_campaign_time = 0, aff_campaign_currency_notice = 1";
+        self::q($campaign(990901, 'Coffee <b>store</b>'));
+        try {
+            $page = self::request('202-account/account.php');
+            self::assertNull($page['result']['error'] ?? null, $page['output']);
+            self::assertStringContainsString('1 campaign is paid in another currency than your account\'s.', self::text($page['output']));
+            self::assertStringContainsString('Coffee &lt;b&gt;store&lt;/b&gt; (USD)', $page['output'], 'the name is escaped');
+
+            // No session token: nothing changes.
+            self::request('202-account/account.php', ['P202_SU_POST' => '{"campaign_currency_notice":"switch"}']);
+            $kept = self::$db->query('SELECT aff_campaign_currency, aff_campaign_foreign_payout, aff_campaign_currency_notice FROM 202_aff_campaigns WHERE aff_campaign_id = 990901');
+            self::assertInstanceOf(\mysqli_result::class, $kept);
+            self::assertSame([['USD', '10.00', '1']], $kept->fetch_all());
+
+            $switched = self::request('202-account/account.php', ['P202_SU_POST' => '{"campaign_currency_notice":"switch","token":"SESSION"}']);
+            self::assertNull($switched['result']['error'] ?? null, $switched['output']);
+            $now = self::$db->query('SELECT aff_campaign_currency, aff_campaign_payout, aff_campaign_foreign_payout, aff_campaign_currency_notice FROM 202_aff_campaigns WHERE aff_campaign_id = 990901');
+            self::assertInstanceOf(\mysqli_result::class, $now);
+            self::assertSame([['EUR', '9.20', '0.00', '0']], $now->fetch_all(), 'paid in the account\'s currency, its payout as shown');
+            self::assertStringNotContainsString('paid in another currency than your account', self::text(self::request('202-account/account.php')['output']));
+
+            // Kept instead: the campaign stays as it is, and the notice goes.
+            self::q($campaign(990902, 'Tea store'));
+            self::request('202-account/account.php', ['P202_SU_POST' => '{"campaign_currency_notice":"keep","token":"SESSION"}']);
+            $tea = self::$db->query('SELECT aff_campaign_currency, aff_campaign_foreign_payout, aff_campaign_currency_notice FROM 202_aff_campaigns WHERE aff_campaign_id = 990902');
+            self::assertInstanceOf(\mysqli_result::class, $tea);
+            self::assertSame([['USD', '10.00', '0']], $tea->fetch_all());
+        } finally {
+            self::q('DELETE FROM 202_aff_campaigns WHERE aff_campaign_id IN (990901, 990902)');
+        }
+    }
 }

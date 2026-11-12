@@ -55,7 +55,7 @@ $slack = Slack::forAccount($db, (int) ($_SESSION['user_id'] ?? 0)) ?? false;
 // Account/key settings require the same permission that gates their UI; reject
 // forged requests from users who lack it (the password-change flow is excluded
 // because every user may change their own password).
-$personalSettingsPost = ['add_rest_api_key', 'remove_rest_api_key', 'replace_rest_api_key', 'stop_ai_watcher', 'update_account_currency', 'record_earlier_currency', 'update_clickserver_api_key', 'change_user_api_key', 'change_user_stats202_app_key', 'update_p202_customer_api_key', 'update_click_filter', 'add_click_filter_entry', 'remove_click_filter_entry', 'update_money_loss_alerts', 'send_test_money_loss_alert'];
+$personalSettingsPost = ['add_rest_api_key', 'remove_rest_api_key', 'replace_rest_api_key', 'stop_ai_watcher', 'update_account_currency', 'record_earlier_currency', 'campaign_currency_notice', 'update_clickserver_api_key', 'change_user_api_key', 'change_user_stats202_app_key', 'update_p202_customer_api_key', 'update_click_filter', 'add_click_filter_entry', 'remove_click_filter_entry', 'update_money_loss_alerts', 'send_test_money_loss_alert'];
 $personalSettingsGet = ['customers_api_key', 'remove_user_stats202_app_key', 'remove_user_api_key', 'test_click_filter'];
 $wantsPersonalSettingsAction = false;
 foreach ($personalSettingsPost as $personalSettingsAction) {
@@ -701,6 +701,38 @@ if (!empty($_POST['record_earlier_currency']) && $_POST['record_earlier_currency
 	}
 }
 
+// The campaigns the 1.9.80 upgrade found paid in another currency, whose
+// postback amounts are converted from it since (User\CampaignCurrencyNotice):
+// switched to the account's currency, or kept, on the owner's word.
+if (isset($_POST['campaign_currency_notice'])) {
+	if (!AUTH::check_csrf_token()) {
+		p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
+		p202_account_redirect('202-account/account.php#currency');
+	}
+	$noticeAnswer = (string) $_POST['campaign_currency_notice'];
+	if ($noticeAnswer !== 'switch' && $noticeAnswer !== 'keep') {
+		$pageFlashes[] = ['kind' => 'bad', 'text' => 'Choose whether to switch those campaigns to your account\'s currency or keep them as they are.'];
+	} else {
+		try {
+			$noticeConn = new \Prosper202\Database\Connection($db);
+			$noticeAccount = \Api\V3\Controllers\UsersController::normalizeCurrency($user_row['user_account_currency'] ?? null);
+			if ($noticeAnswer === 'switch') {
+				$switched = \Prosper202\User\CampaignCurrencyNotice::switchToAccount($noticeConn, (int) $_SESSION['user_id'], $noticeAccount);
+				p202_account_flash('ok', number_format($switched) . ' campaign' . ($switched === 1 ? ' is' : 's are') . ' now paid in '
+					. $noticeAccount . ': their postback amounts are recorded as sent, and their payouts stay as shown.');
+			} else {
+				\Prosper202\User\CampaignCurrencyNotice::keep($noticeConn, (int) $_SESSION['user_id']);
+				p202_account_flash('ok', 'Those campaigns keep their currency: their postback amounts are converted into '
+					. $noticeAccount . '. Change one under Setup › Campaigns at any time.');
+			}
+			p202_account_redirect('202-account/account.php#currency');
+		} catch (Throwable $failed) {
+			error_log('account.php: the campaign currency notice was not answered: ' . $failed->getMessage());
+			$pageFlashes[] = ['kind' => 'bad', 'text' => 'Those campaigns could not be updated; nothing was changed. Try again.'];
+		}
+	}
+}
+
 // ─── Click filtering ─────────────────────────────────────────────────
 // The card's forms (functions-click-filter-ui.php): saved and redirected, or refused in place.
 $clickFilterPost = $canPersonal ? p202_click_filter_post($db, (int) $_SESSION['user_id'], $_POST) : ['errors' => [], 'form' => [], 'flashes' => []];
@@ -1051,6 +1083,13 @@ $unrecordedConversions = $canPersonal
 $currencyChanges = $canPersonal
 	? \Prosper202\User\CurrencyChange::history(new \Prosper202\Database\Connection($db), (int) $_SESSION['user_id'])
 	: [];
+$campaignCurrencyNotice = $canPersonal
+	? \Prosper202\User\CampaignCurrencyNotice::listed(
+		new \Prosper202\Database\Connection($db),
+		(int) $_SESSION['user_id'],
+		(string) ($user_row['user_account_currency'] ?? '')
+	)
+	: ['campaigns' => [], 'more' => 0];
 $currencyChangeZone = new DateTimeZone(\Prosper202\Report\AccountZone::normalize((string) ($user_row['user_timezone'] ?? '')));
 $currentTimezone = $profileValue('user_timezone', 'user_timezone');
 // The select offers PHP's list, which leaves out the backward-compatible
@@ -1336,6 +1375,28 @@ echo p202_account_render_flashes($extraFlashes);
 						<div class="form-text">Changing it converts your campaign payouts to the new currency (a paid feature). Conversions already recorded are not converted: each keeps the currency it was recorded in, new ones are recorded in the new currency, and reports say how much of a period is in each.</div>
 						<?php echo p202_account_field_error($keyErrors, 'account_currency'); ?>
 					</form>
+					<?php if ($campaignCurrencyNotice['campaigns'] !== []) {
+						$noticeShown = $campaignCurrencyNotice['campaigns'];
+						$noticeCount = count($noticeShown) + $campaignCurrencyNotice['more'];
+						$noticeAccount = \Api\V3\Controllers\UsersController::normalizeCurrency($user_row['user_account_currency'] ?? null); ?>
+					<div class="alert alert-warning p202-flash mt-3" role="status" id="campaign-currency-notice"><i class="bi bi-exclamation-triangle"></i><div class="p202-flash__body">
+						<p class="mb-2"><strong><?php echo $e(number_format($noticeCount)); ?> campaign<?php echo $noticeCount === 1 ? ' is' : 's are'; ?> paid in another currency than your account's.</strong>
+							A postback amount on <?php echo $noticeCount === 1 ? 'it' : 'them'; ?> is converted from that currency into <?php echo $e($noticeAccount); ?>, as paid 1.9.56 did (1.9.57 to 1.9.79 recorded it as sent).
+							If a change of your account's currency left <?php echo $noticeCount === 1 ? 'it' : 'them'; ?> so and the network<?php echo $noticeCount === 1 ? ' reports' : 's report'; ?> in <?php echo $e($noticeAccount); ?> now, switch <?php echo $noticeCount === 1 ? 'it' : 'them'; ?>.</p>
+						<p class="mb-2"><?php echo $e(implode(', ', array_map(static fn (array $c): string => $c['name'] . ' (' . $c['currency'] . ')', $noticeShown))
+							. ($campaignCurrencyNotice['more'] > 0 ? ', and ' . number_format($campaignCurrencyNotice['more']) . ' more' : '') . '.'); ?></p>
+						<form method="post" class="d-inline" action="<?php echo $e(get_absolute_url() . '202-account/account.php#currency'); ?>">
+							<?php echo p202_account_token_field(); ?>
+							<input type="hidden" name="campaign_currency_notice" value="switch">
+							<button class="btn btn-primary btn-sm" type="submit">Their networks report in <?php echo $e($noticeAccount); ?>: switch <?php echo $noticeCount === 1 ? 'it' : 'them'; ?></button>
+						</form>
+						<form method="post" class="d-inline ms-2" action="<?php echo $e(get_absolute_url() . '202-account/account.php#currency'); ?>">
+							<?php echo p202_account_token_field(); ?>
+							<input type="hidden" name="campaign_currency_notice" value="keep">
+							<button class="btn btn-outline-secondary btn-sm" type="submit">Keep converting</button>
+						</form>
+					</div></div>
+					<?php } ?>
 					<?php if ($currencyChanges !== []) { ?>
 					<div class="form-text mt-3">Changes of currency:
 						<?php echo implode('; ', array_map(

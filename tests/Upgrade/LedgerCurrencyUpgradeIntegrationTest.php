@@ -27,7 +27,7 @@ final class LedgerCurrencyUpgradeIntegrationTest extends TestCase
 {
     use \Tests\Report\ScratchReportDatabase;
 
-    private const TABLES = ['202_conversion_logs', '202_exchange_rates', '202_currency_changes'];
+    private const TABLES = ['202_conversion_logs', '202_exchange_rates', '202_currency_changes', '202_aff_campaigns'];
     private const STEADY = 7871;
     private const CHANGED = 7872;
     private const NO_PREFS = 7873;
@@ -82,6 +82,7 @@ final class LedgerCurrencyUpgradeIntegrationTest extends TestCase
             . ' DROP COLUMN stated_amount, DROP COLUMN stated_currency, DROP COLUMN currency_basis');
         self::q('DROP TABLE 202_exchange_rates');
         self::q('DROP TABLE 202_currency_changes');
+        self::q('ALTER TABLE 202_aff_campaigns DROP COLUMN aff_campaign_currency_notice');
         self::q('DELETE FROM 202_version');
         self::row('202_version', ['version' => '1.9.79']);
     }
@@ -150,6 +151,14 @@ final class LedgerCurrencyUpgradeIntegrationTest extends TestCase
             [978710001 => '1', 978710002 => '1', 978720001 => '0', 978730001 => '0', 978740001 => '1', 978750001 => '0'],
             array_map('strval', array_column($basis->fetch_all(MYSQLI_ASSOC), 'currency_basis', 'click_id')),
             'each row the upgrade labelled says so, for the owner to correct; an unrecorded one is known by its currency'
+        );
+        // The campaigns paid in another currency are listed on Personal settings; a deleted one is not.
+        $marked = self::$db->query('SELECT user_id, aff_campaign_deleted, aff_campaign_currency_notice FROM 202_aff_campaigns WHERE user_id IN ('
+            . self::STEADY . ', ' . self::CHANGED . ', ' . self::DELETED_CAMPAIGN . ') ORDER BY user_id');
+        self::assertInstanceOf(\mysqli_result::class, $marked);
+        self::assertSame(
+            [[(string) self::STEADY, '0', '0'], [(string) self::CHANGED, '0', '1'], [(string) self::DELETED_CAMPAIGN, '1', '0']],
+            $marked->fetch_all()
         );
         $version = self::$db->query('SELECT version FROM 202_version');
         self::assertInstanceOf(\mysqli_result::class, $version);
