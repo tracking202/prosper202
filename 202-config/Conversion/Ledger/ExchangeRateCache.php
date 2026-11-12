@@ -1,0 +1,229 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Prosper202\Conversion\Ledger;
+
+use Api\V3\Controllers\UsersController;
+use Prosper202\Database\Connection;
+
+/**
+ * The exchange rates a postback's or pixel's amount is converted with
+ * (202_exchange_rates).
+ *
+ * A campaign in another currency than its account's is paid in that
+ * currency, so an amount its network sends is in it too. The conversion
+ * path converts it with the rate kept here and never asks the rate service:
+ * a postback must not wait on, or fail with, another host. The cron job
+ * refreshes the pairs the campaigns need once a day (refresh()).
+ *
+ * A rate older than MAX_AGE is no rate: the amount is then recorded as
+ * sent, in its own currency (MysqlConversionRepository says so on the row).
+ */
+final class ExchangeRateCache
+{
+    /** A rate is asked for again once it is this old. */
+    public const REFRESH_AFTER = 86400;
+
+    /** A rate older than this is not used: a week of failed refreshes. */
+    public const MAX_AGE = 7 * 86400;
+
+    /**
+     * The amount the service is asked to convert. It answers to two
+     * decimals, so the rate is read from a large amount: at 100,000 the
+     * weakest pair of the supported currencies still gives five digits.
+     */
+    public const REFERENCE = '100000.00';
+
+    /** The bounds an answer is believed within; the column holds either. */
+    public const LEAST_RATE = 0.000001;
+    public const GREATEST_RATE = 1000000.0;
+
+    private function __construct()
+    {
+    }
+
+    /**
+     * One $from in $to, or null when no usable rate is kept. Read on the
+     * write connection: the caller is inside a conversion's transaction.
+     *
+     * @return numeric-string|null
+     */
+    public static function rate(Connection $conn, string $from, string $to, int $now): ?string
+    {
+        try {
+            $stmt = $conn->prepareWrite(
+                'SELECT rate, fetched_at FROM 202_exchange_rates WHERE from_currency = ? AND to_currency = ? LIMIT 1'
+            );
+        } catch (\RuntimeException $e) {
+            // The upgrade adds the ledger's columns a step before it makes
+            // this table, and a postback does not wait for it: no table is
+            // no kept rate, and the amount is recorded as sent.
+            if (!self::tableMissing($e)) {
+                throw $e;
+            }
+            error_log('p202 exchange rates: the 1.9.80 upgrade has not made 202_exchange_rates yet, so no rate is kept. Run the upgrade.');
+
+            return null;
+        }
+        $conn->bind($stmt, 'ss', [$from, $to]);
+        $row = $conn->fetchOne($stmt);
+        if ($row === null) {
+            return null;
+        }
+        $rate = (string) $row['rate'];
+        if (!is_numeric($rate) || (float) $rate <= 0) {
+            throw new LedgerIntegrityException('the exchange rate kept for ' . $from . ' to ' . $to . ' reads as "' . $rate . '"');
+        }
+
+        return (int) $row['fetched_at'] >= $now - self::MAX_AGE ? $rate : null;
+    }
+
+    /** Whether $e, or one it wraps, is the server's 1146 for the rates table. */
+    private static function tableMissing(\Throwable $e): bool
+    {
+        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+            if (Connection::isMysqlError($current, 1146, '') && str_contains($current->getMessage(), '202_exchange_rates')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * $units of $from in $to at $rate, in units, rounded half away from zero.
+     *
+     * @param numeric-string $rate
+     */
+    public static function convert(int $units, string $rate): int
+    {
+        return (int) round($units * (float) $rate);
+    }
+
+    /**
+     * The rate that turned $statedUnits into $recordedUnits, applied to
+     * $units: a refund of a converted sale is converted as its sale was, so
+     * taking back all that was stated takes back all that was recorded.
+     */
+    public static function convertAs(int $units, int $statedUnits, int $recordedUnits): int
+    {
+        if ($statedUnits === 0) {
+            throw new LedgerIntegrityException('a converted amount states 0, which gives no rate');
+        }
+
+        return (int) round($units * (abs($recordedUnits) / abs($statedUnits)));
+    }
+
+    /**
+     * Ask the rate service for every pair a campaign needs whose kept rate
+     * is missing or a day old, at most $limit a run. A pair the service does
+     * not answer keeps the rate it has, and is asked again next run. Each
+     * hour's run starts at a different due pair, so pairs that never answer
+     * cannot keep the others from being asked, whether the run stops at
+     * $limit or at its caller's time budget (ExchangeRates::refreshKept()).
+     *
+     * @param callable(string $from, string $to, string $amount): ?string $convert
+     *        $amount in $from, in $to; null when no rate could be had
+     * @return array{fetched: int, failed: list<string>}
+     */
+    public static function refresh(Connection $conn, callable $convert, int $now, int $limit = 10, ?int $userId = null): array
+    {
+        $fetched = 0;
+        $failed = [];
+        $due = self::duePairs($conn, $now, $userId);
+        if (count($due) > 1) {
+            usort($due, static fn (array $a, array $b): int => strcmp($a[0] . '>' . $a[1], $b[0] . '>' . $b[1]));
+            $start = intdiv($now, 3600) % count($due);
+            $due = array_merge(array_slice($due, $start), array_slice($due, 0, $start));
+        }
+        foreach ($due as [$from, $to]) {
+            if ($fetched + count($failed) >= $limit) {
+                break;
+            }
+            $answer = $convert($from, $to, self::REFERENCE);
+            $rate = is_string($answer) && is_numeric($answer) ? (float) $answer / (float) self::REFERENCE : 0.0;
+            // No rate between two currencies is a millionth or a million: such an answer is not one.
+            if (!is_finite($rate) || $rate < self::LEAST_RATE || $rate > self::GREATEST_RATE) {
+                $failed[] = $from . '>' . $to;
+                continue;
+            }
+            $stmt = $conn->prepareWrite(
+                'INSERT INTO 202_exchange_rates (from_currency, to_currency, rate, fetched_at) VALUES (?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE rate = VALUES(rate), fetched_at = VALUES(fetched_at)'
+            );
+            $conn->bind($stmt, 'sssi', [$from, $to, number_format($rate, 10, '.', ''), $now]);
+            $conn->executeUpdate($stmt);
+            $fetched++;
+        }
+
+        return ['fetched' => $fetched, 'failed' => $failed];
+    }
+
+    /**
+     * refresh() for a caller that has just changed which pairs are needed
+     * (a campaign saved in another currency, the account's currency changed)
+     * and whose own work is done: a failure is logged, and the cron job
+     * fetches the pair within the hour.
+     *
+     * @param callable(string $from, string $to, string $amount): ?string $convert
+     */
+    public static function refreshQuietly(Connection $conn, callable $convert, int $userId, int $limit = 5, int $budgetSeconds = 12): void
+    {
+        // The account's own pairs only, and a whole-run budget: a page that
+        // saved waits for this, so a silent rate service costs it seconds,
+        // not a minute. What is not reached the cron job asks for.
+        $stopAt = microtime(true) + $budgetSeconds;
+        $bounded = static fn (string $from, string $to, string $amount): ?string
+            => microtime(true) >= $stopAt ? null : $convert($from, $to, $amount);
+        try {
+            $result = self::refresh($conn, $bounded, time(), $limit, $userId);
+            if ($result['failed'] !== []) {
+                error_log('p202 exchange rates: no rate could be had for ' . implode(', ', $result['failed'])
+                    . '; the cron job asks again within the hour.');
+            }
+        } catch (\Throwable $e) {
+            error_log('p202 exchange rates: the kept rates were not refreshed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * The (campaign currency, account currency) pairs of campaigns paid in
+     * another currency than their account's, less those with a rate fetched
+     * within REFRESH_AFTER.
+     *
+     * @return list<array{0: string, 1: string}>
+     */
+    public static function duePairs(Connection $conn, int $now, ?int $userId = null): array
+    {
+        $stmt = $conn->prepareWrite(
+            // Deleted campaigns too: their postbacks are converted as well (campaignTerms()).
+            'SELECT DISTINCT c.aff_campaign_currency, c.aff_campaign_payout, c.aff_campaign_foreign_payout,'
+            . ' p.user_account_currency AS to_currency'
+            . ' FROM 202_aff_campaigns AS c JOIN 202_users_pref AS p ON p.user_id = c.user_id'
+            . ' WHERE c.aff_campaign_currency <> p.user_account_currency' . ($userId !== null ? ' AND c.user_id = ?' : '')
+        );
+        if ($userId !== null) {
+            $conn->bind($stmt, 'i', [$userId]);
+        }
+        $pairs = [];
+        foreach ($conn->fetchAll($stmt) as $row) {
+            $to = UsersController::normalizeCurrency($row['to_currency'] ?? null);
+            $from = \Prosper202\Setup\CampaignCurrency::paidIn($row, $to) ?? RowCurrency::UNKNOWN;
+            if ($from !== RowCurrency::UNKNOWN) {
+                $pairs[$from . '>' . $to] = [$from, $to];
+            }
+        }
+        if ($pairs === []) {
+            return [];
+        }
+
+        $fresh = $conn->prepareWrite('SELECT from_currency, to_currency FROM 202_exchange_rates WHERE fetched_at > ?');
+        $conn->bind($fresh, 'i', [$now - self::REFRESH_AFTER]);
+        foreach ($conn->fetchAll($fresh) as $row) {
+            unset($pairs[(string) $row['from_currency'] . '>' . (string) $row['to_currency']]);
+        }
+
+        return array_values($pairs);
+    }
+}

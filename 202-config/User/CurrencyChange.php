@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\User;
 
+use Api\V3\Controllers\UsersController;
 use Prosper202\Database\Connection;
 
 /**
@@ -60,16 +61,16 @@ final class CurrencyChange
             $payout = (string) $row['aff_campaign_payout'];
             $foreign = (string) $row['aff_campaign_foreign_payout'];
             $campaignCurrency = (string) $row['aff_campaign_currency'];
-            if ((float) $foreign == 0.0) {
+            if (\Prosper202\Setup\CampaignCurrency::paidIn($row, $storedCurrency) === null) {
                 // In the account currency (CampaignCurrency::store() keeps no
                 // foreign payout for it; a row saved before carries the column
                 // default, not its currency): keep the original in the old
                 // account currency, which becomes the campaign's, and show
                 // the converted.
                 $updates[] = ['UPDATE `202_aff_campaigns` SET `aff_campaign_currency` = ?, `aff_campaign_foreign_payout` = ?, `aff_campaign_payout` = ? WHERE `aff_campaign_id` = ? AND `user_id` = ?', 'sssii', [$storedCurrency, $payout, $converted($storedCurrency, $payout), $id, $userId]];
-            } elseif ($currency === $campaignCurrency) {
-                // Back to its own currency: the original returns.
-                $updates[] = ['UPDATE `202_aff_campaigns` SET `aff_campaign_payout` = ?, `aff_campaign_foreign_payout` = \'0.00\' WHERE `aff_campaign_id` = ? AND `user_id` = ?', 'sii', [$foreign, $id, $userId]];
+            } elseif ($currency === strtoupper(trim($campaignCurrency))) {
+                // Back to its own currency: the original returns (0 for one paid by its postbacks' amounts).
+                $updates[] = ['UPDATE `202_aff_campaigns` SET `aff_campaign_payout` = ?, `aff_campaign_foreign_payout` = \'0.00\' WHERE `aff_campaign_id` = ? AND `user_id` = ?', 'sii', [(float) $foreign != 0.0 ? $foreign : $payout, $id, $userId]];
             } else {
                 $updates[] = ['UPDATE `202_aff_campaigns` SET `aff_campaign_payout` = ? WHERE `aff_campaign_id` = ? AND `user_id` = ?', 'sii', [$converted($campaignCurrency, $foreign), $id, $userId]];
             }
@@ -94,5 +95,51 @@ final class CurrencyChange
                 $conn->executeUpdate($stmt);
             }
         });
+    }
+
+    /**
+     * Record a change of the account's currency (202_currency_changes):
+     * when, from and to. Inside the transaction that changes it, refused
+     * outside one, so the record and the change land together. Nothing when
+     * the currency is not changing. Both are read as every page reads them
+     * (UsersController::normalizeCurrency()).
+     */
+    public static function record(Connection $conn, int $userId, string $from, string $to, int $now): void
+    {
+        $from = UsersController::normalizeCurrency($from);
+        $to = UsersController::normalizeCurrency($to);
+        if ($from === $to) {
+            return;
+        }
+        $conn->joinTransaction(static function () use ($conn, $userId, $from, $to, $now): void {
+            $stmt = $conn->prepareWrite(
+                'INSERT INTO 202_currency_changes (user_id, changed_at, from_currency, to_currency) VALUES (?, ?, ?, ?)'
+            );
+            $conn->bind($stmt, 'iiss', [$userId, $now, $from, $to]);
+            $conn->executeInsert($stmt);
+        });
+    }
+
+    /**
+     * The account's recorded changes of currency, newest first.
+     *
+     * @return list<array{changed_at: int, from: string, to: string}>
+     */
+    public static function history(Connection $conn, int $userId, int $limit = 20): array
+    {
+        $stmt = $conn->prepareRead(
+            'SELECT changed_at, from_currency, to_currency FROM 202_currency_changes'
+            . " WHERE user_id = ? AND kind = 'change' ORDER BY changed_at DESC, change_id DESC LIMIT ?"
+        );
+        $conn->bind($stmt, 'ii', [$userId, $limit]);
+
+        return array_map(
+            static fn (array $row): array => [
+                'changed_at' => (int) $row['changed_at'],
+                'from' => (string) $row['from_currency'],
+                'to' => (string) $row['to_currency'],
+            ],
+            $conn->fetchAll($stmt)
+        );
     }
 }

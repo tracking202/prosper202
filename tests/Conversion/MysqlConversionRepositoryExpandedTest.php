@@ -132,17 +132,18 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         // The NOT-NULL legacy columns (time_difference, ip, pixel_type, user_agent)
         // are always bound — even when the caller (e.g. the V3 API) omits them —
         // so the INSERT can't fail under STRICT sql_mode with "Field doesn't have a
-        // default value"; then the six ledger columns and how the click was
-        // found. The amount is bound as the exact decimal string (Amount),
-        // never a float.
-        self::assertSame('isisiii' . 'ssis' . 'sssiis' . 's', $insertStmts[0]->boundTypes);
+        // default value"; then the six ledger columns, the row's currency
+        // with what was stated and how it is known, and how the click was
+        // found. The amount is bound as the exact decimal string (Amount), never a float.
+        self::assertSame('isisiii' . 'ssis' . 'sssiis' . 'sssi' . 's', $insertStmts[0]->boundTypes);
         $bound = $insertStmts[0]->boundValues;
         self::assertSame('2.75000', $bound[3], 'the click payout, exactly, when no amount is given (replace mode)');
         self::assertSame('', $bound[8], 'ip defaults to empty string');
         self::assertSame(0, $bound[9], 'pixel_type defaults to 0');
         self::assertSame('', $bound[10], 'user_agent defaults to empty string');
-        self::assertSame(['api', null, null, 1, null, 'tx:TX-1', 'click_id'], array_slice($bound, 11),
-            'source, source_ref, event_name, payable, reverses_conv_id, dedupe_key, match_method');
+        // This fake holds no preferences row for the account, so no currency is known: none is recorded.
+        self::assertSame(['api', null, null, 1, null, 'tx:TX-1', '', null, null, 0, 'click_id'], array_slice($bound, 11),
+            'source, source_ref, event_name, payable, reverses_conv_id, dedupe_key, currency, stated_amount, stated_currency, currency_basis, match_method');
     }
 
     /**
@@ -331,13 +332,16 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         $insert = $write->statementsContaining('INSERT INTO 202_conversion_logs');
         self::assertCount(1, $insert);
         // Base 7 columns + the 4 legacy columns (time_difference, ip,
-        // pixel_type, user_agent) + the 6 ledger columns + match_method = 18
-        // bound params, the method last, as the caller named it.
-        self::assertSame(18, strlen($insert[0]->boundTypes));
+        // pixel_type, user_agent) + the 6 ledger columns + the 4 currency
+        // columns + match_method = 22 bound params, the method last, as the
+        // caller named it.
+        self::assertSame(22, strlen($insert[0]->boundTypes));
         self::assertStringStartsWith('isisiii', $insert[0]->boundTypes);
         self::assertStringContainsString('pixel_type', $insert[0]->sql);
         self::assertStringContainsString('match_method', $insert[0]->sql);
-        self::assertSame('click_id', $insert[0]->boundValues[17]);
+        self::assertSame('click_id', $insert[0]->boundValues[21]);
+        self::assertSame(['', null, null, 0], array_slice($insert[0]->boundValues, 17, 4),
+            'no preferences row: no currency is known, so none is recorded (as the upgrade leaves such an account\'s rows); nothing was converted');
         // No transaction id, replace mode: the row's key is its own id,
         // written right after the insert.
         $keyed = $write->statementsContaining('UPDATE 202_conversion_logs SET dedupe_key = ?');

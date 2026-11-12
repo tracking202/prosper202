@@ -284,6 +284,7 @@ if ($newlyRecorded && $conversionResult['reverses_conv_id'] === 0 && $mysql['ppc
 	// This conversion's amount, not the click's cached total, which in an
 	// accumulating campaign is the sum of every conversion so far.
 	$tokens['payout'] = $conversionResult['payout'];
+	$tokens['row_currency'] = $conversionResult['currency'];
 	$tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId(
 		new \Prosper202\Database\Connection($db),
 		$tokens,

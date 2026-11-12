@@ -14,6 +14,36 @@ namespace Prosper202\Setup;
  */
 final class CampaignCurrency
 {
+    /**
+     * Whether a campaign row is paid in another currency than the account's,
+     * as every reader asks it: its currency differs, and it keeps the payout
+     * typed in that currency or has none (a campaign paid by its postbacks'
+     * amounts). A row saved before the field returned carries the column
+     * default (USD) with a payout in the account's currency and no foreign
+     * payout: not foreign. Answers the currency, or null.
+     *
+     * @param array<string, mixed> $row aff_campaign_currency, aff_campaign_payout, aff_campaign_foreign_payout
+     */
+    public static function paidIn(array $row, string $accountCurrency): ?string
+    {
+        $currency = strtoupper(trim((string) ($row['aff_campaign_currency'] ?? '')));
+        if (preg_match('/\A[A-Z]{3}\z/', $currency) !== 1 || $currency === $accountCurrency) {
+            return null;
+        }
+        $foreign = $row['aff_campaign_foreign_payout'] ?? null;
+        $payout = $row['aff_campaign_payout'] ?? null;
+
+        return (is_numeric($foreign) && (float) $foreign != 0.0) || (is_numeric($payout) && (float) $payout == 0.0)
+            ? $currency
+            : null;
+    }
+
+    /** The same rule in SQL, over `$alias`'s columns, for a currency bound as one ?. */
+    public static function paidInSql(string $alias): string
+    {
+        return "($alias.aff_campaign_currency <> ? AND ($alias.aff_campaign_foreign_payout <> 0 OR $alias.aff_campaign_payout = 0))";
+    }
+
     /** aff_campaign_payout and aff_campaign_foreign_payout are decimal(8,2). */
     private const PAYOUT_LIMIT = 1000000.0;
 
@@ -35,9 +65,13 @@ final class CampaignCurrency
      */
     public static function store(string $accountCurrency, string $campaignCurrency, string $payout, callable $convert, ?array $stored = null): array
     {
-        // 0 is 0 in any currency, so it needs no rate and is kept as the account's.
-        if ($campaignCurrency === $accountCurrency || (float) $payout == 0.0) {
+        if ($campaignCurrency === $accountCurrency) {
             return ['currency' => $accountCurrency, 'payout' => $payout, 'foreign_payout' => '0'];
+        }
+        // 0 is 0 in any currency and needs no rate; the campaign stays paid
+        // in its own, so its postbacks' amounts are converted (paidIn()).
+        if ((float) $payout == 0.0) {
+            return ['currency' => $campaignCurrency, 'payout' => '0', 'foreign_payout' => '0'];
         }
         if ((float) $payout < 0 || (float) $payout >= self::PAYOUT_LIMIT) {
             throw new \RuntimeException('A payout in another currency must be more than 0 and less than 1,000,000.');
@@ -67,10 +101,10 @@ final class CampaignCurrency
      */
     public static function shown(array $row, string $accountCurrency): array
     {
-        $currency = strtoupper(trim((string) ($row['aff_campaign_currency'] ?? '')));
-        $foreign = (string) ($row['aff_campaign_foreign_payout'] ?? '0');
-        if ($currency !== '' && $currency !== $accountCurrency && is_numeric($foreign) && (float) $foreign != 0.0) {
-            return ['currency' => $currency, 'payout' => $foreign];
+        $currency = self::paidIn($row, $accountCurrency);
+        if ($currency !== null) {
+            $foreign = (string) ($row['aff_campaign_foreign_payout'] ?? '0');
+            return ['currency' => $currency, 'payout' => is_numeric($foreign) && (float) $foreign != 0.0 ? $foreign : '0'];
         }
 
         return ['currency' => $accountCurrency, 'payout' => (string) ($row['aff_campaign_payout'] ?? '')];

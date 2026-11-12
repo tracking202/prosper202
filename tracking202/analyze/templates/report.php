@@ -213,6 +213,8 @@ template_top((string) $info['title']);
     echo p202_flash($flash['kind'], $flash['text']);
 } ?>
 
+<?php echo $analyze['currencyNotice']; ?>
+
 <?php echo p202_report_filter_bar([
     'action' => $self,
     'id' => 'report-filters',

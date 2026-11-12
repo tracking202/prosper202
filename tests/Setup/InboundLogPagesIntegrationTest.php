@@ -295,6 +295,11 @@ final class InboundLogPagesIntegrationTest extends TestCase
             $row = array_combine($lines[0], $lines[1]);
             self::assertSame(["'" . self::FORMULA, "'" . self::FORMULA, "'" . self::FORMULA, (string) self::CLICK],
                 [$row['campaign'], $row['transaction_id'], $row['user_agent'], $row['subid']]);
+            // Each payout says the currency its row recorded; nothing was converted, so nothing was sent apart.
+            $recorded = self::requireScratch()->query('SELECT currency FROM 202_conversion_logs WHERE click_id = ' . self::CLICK
+                . ' ORDER BY conv_id DESC LIMIT 1')->fetch_row()[0];
+            self::assertMatchesRegularExpression('/\A[A-Z]{3}\z/', (string) $recorded);
+            self::assertSame([$recorded, '', ''], [$row['currency'], $row['sent_payout'], $row['sent_currency']]);
         } finally {
             self::q("UPDATE 202_aff_campaigns SET aff_campaign_name = 'Demo coffee store' WHERE aff_campaign_id = " . self::CAMPAIGN);
         }
