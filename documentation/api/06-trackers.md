@@ -52,10 +52,37 @@ the way **Setup → Get Links** builds it:
     "tracker_id": 42,
     "tracker_id_public": 8837291,
     "direct_url": "https://track.example.com/tracking202/redirect/dl.php?t202id=8837291&adid={ad_id}&c1={placement}&t202kw={keyword}",
-    "tracking_params": "?t202id=8837291&adid={ad_id}&c1={placement}&t202kw={keyword}"
+    "tracking_params": "?t202id=8837291&adid={ad_id}&c1={placement}&t202kw={keyword}",
+    "chatgpt_ads": null
   }
 }
 ```
+
+**ChatGPT Ads.** For a tracker whose traffic source account is on the ChatGPT
+Ads source ([Add ChatGPT Ads](04-ppc-networks.md#add-chatgpt-ads)),
+`chatgpt_ads` is what to paste into Ads Manager, as Get Links shows it; for any
+other tracker it is `null`:
+
+```json
+"chatgpt_ads": {
+  "destination": "landing_page",
+  "destination_url": "https://shop.example.com/sale",
+  "tracking_template": "utm_source=chatgpt&utm_medium=paid&utm_campaign={campaign_id}&utm_content={ad_id}&campaign_id={campaign_id}&ad_id={ad_id}&oppref={oppref}&t202id=8837291&t202kw="
+}
+```
+
+`destination_url` goes in the ad and `tracking_template` in its tracking
+settings; ChatGPT appends the template to the URL and fills in `{campaign_id}`,
+`{ad_id}` and `{oppref}`, its click id. A tracker with a landing page sends the
+visitor straight to the page (`destination` `landing_page`), and the template
+carries `t202id` and `t202kw` for the page's landing page code. Any other
+tracker's destination is its `dl.php` or `rtr.php` link with only `t202id`
+(`destination` `tracking_link`), since ChatGPT fills its macros in the template
+only. The link's other variables and tokens (`c1`, a custom variable) follow
+in the template; what the template already sets (`utm_source`, `oppref`, ...)
+is not written twice. The source's own `campaign_id` and `ad_id` variables give
+those two parameters, so a placeholder you change on Traffic Sources reaches
+the template; `utm_campaign` and `utm_content` keep `{campaign_id}` and `{ad_id}`.
 
 **Which link.** A tracker with a landing page links to the landing page's own
 URL with `t202id` added to its query (the parameters go before any `#fragment`,

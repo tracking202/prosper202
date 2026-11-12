@@ -186,7 +186,9 @@ Aggregate green suites are not coverage of the path you just wrote. Before
 reporting a user-facing capability complete, run it end to end the way a
 user will (live-instance recipe under Development environment notes), and
 add a case under `tests/fixtures/agent-eval/cases/` when it is agent-facing.
-Report which paths were exercised, not suite totals.
+Report which paths were exercised, not suite totals. A case lands with its
+answer in `reference-agent.sh`: Agent Evals runs only after landing
+(`scripts/check-eval-reference-answers.py`).
 
 ### 11. Fail-open defaults on a security value
 - A value that cannot be parsed never resolves to the most permissive

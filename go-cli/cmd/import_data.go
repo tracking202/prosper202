@@ -205,6 +205,14 @@ func stripImmutableFields(entity string, rec map[string]interface{}) map[string]
 		}
 		out[k] = v
 	}
+	// A traffic source on no ad platform is every source a server before
+	// 1.9.80 has, and such a server refuses the field it does not know; ''
+	// is the field's default, so leaving it out loses nothing.
+	if entity == "ppc-networks" {
+		if platform, ok := out["ppc_network_platform"].(string); ok && platform == "" {
+			delete(out, "ppc_network_platform")
+		}
+	}
 	return out
 }
 
