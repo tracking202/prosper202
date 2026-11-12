@@ -984,6 +984,26 @@ something only a person can fix (a developer token Google has not approved, lost
 conversion action), `destination get` shows `waiting` (`reason`, `status_code`, `until`); report the `reason`,
 and after the fix `destination update` (same settings or credentials) makes them due at once.
 
+### Ad connections (ChatGPT Ads through its Advertiser API)
+
+```
+p202 ad-connection list [--json]                        # keys never shown (credentials_set)
+p202 ad-connection get <id> [--json]                    # account id, name, currency, timezone; status; what setup made
+p202 ad-connection create --api-key-file FILE|- [--ppc-account-id N]   # checked with OpenAI first; refused or unchecked = nothing stored
+p202 ad-connection update <id> [--api-key-file FILE|-] [--ppc-account-id N | --no-ppc-account]   # a new key must reach the same ad account
+p202 ad-connection check <id> [--json]                  # read the account again; 401/403 = status key_refused, an outage keeps status
+p202 ad-connection setup <id> [--skip STEP]... [--event-type T]... [--pixel SOURCE_ID]
+                    [--pixel-id ID --source-id SOURCE_ID] [--conversions-key-file FILE|-] [--json]
+p202 ad-connection delete <id> [--force] [--dry-run] [--json]   # keys erased here; nothing removed at OpenAI
+```
+
+`setup` runs `pixel`, `conversions_key`, `destination`, `event_settings` and answers each step's `outcome`
+(`created`, `found`, `given`, `kept`, `skipped`, `needs_input`, `unavailable`, `failed`) with a `detail`. Run it
+again freely: what a step made is kept. `needs_input` on `pixel` or `conversions_key` means OpenAI has that
+feature off for the account; report the `detail` and ask the person for the pixel id and source id or a
+Conversions API key from Ads Manager. `currency_matches_account` false means the ad account bills in another
+currency than the Prosper202 account; spend is not converted. `--staged` is refused.
+
 ### Reports
 
 ```

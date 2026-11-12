@@ -1,0 +1,176 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Prosper202\AdPlatforms\OpenAiAds;
+
+use Prosper202\Attribution\WebhookSender;
+use Prosper202\Destinations\GoogleAdsOAuth;
+
+/**
+ * OpenAI's Advertiser API (https://api.ads.openai.com/v1), one ad account
+ * per key, reached only through WebhookSender::read(), so every request is
+ * resolved, pinned and bounded as every other outbound call.
+ *
+ * Limits: OpenAI allows 600 requests a minute per endpoint and 1,200 in all,
+ * per ad account and per address. This object holds its own requests under
+ * both (a request past them is not sent and answers RATE_LIMITED), and a 429
+ * is never retried here: the caller says "try again in a minute".
+ *
+ * Creates carry an Idempotency-Key the caller derives from what is being
+ * created, so a retry after a lost answer returns the same resource instead
+ * of a second one.
+ *
+ * The key is write-only everywhere: it is sent in the Authorization header
+ * and taken out of every text this returns.
+ */
+final class AdvertiserApi
+{
+    public const HOST = 'api.ads.openai.com';
+    public const BASE = 'https://' . self::HOST . '/v1/';
+    public const PER_ENDPOINT_PER_MINUTE = 600;
+    public const OVERALL_PER_MINUTE = 1200;
+    private const MESSAGE_CHARS = 300;
+
+    /** @var array<string, list<float>> request times in the last minute, by key and endpoint ('' is overall) */
+    private array $sent = [];
+    /** @var (callable(): float) */
+    private $clock;
+
+    /** @param (callable(): float)|null $clock seconds */
+    public function __construct(private ?WebhookSender $sender = null, ?callable $clock = null)
+    {
+        $this->clock = $clock ?? static fn (): float => microtime(true);
+    }
+
+    /** @param array<string, scalar> $query */
+    public function get(#[\SensitiveParameter] string $key, string $path, array $query = []): AdvertiserAnswer
+    {
+        $url = self::BASE . ltrim($path, '/') . ($query === [] ? '' : '?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986));
+
+        return $this->call($key, 'GET', $path, $url, null, null);
+    }
+
+    /**
+     * An update or an action (OpenAI's updates are POSTs), or a create with $idempotencyKey.
+     *
+     * @param array<string, mixed> $body
+     */
+    public function post(#[\SensitiveParameter] string $key, string $path, array $body, ?string $idempotencyKey = null): AdvertiserAnswer
+    {
+        try {
+            $json = json_encode($body === [] ? new \stdClass() : $body, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        } catch (\JsonException $e) {
+            return AdvertiserAnswer::failed(AdvertiserAnswer::REFUSED, 0, 'not sent: the request could not be written as JSON (' . $e->getMessage() . ')');
+        }
+
+        return $this->call($key, 'POST', $path, self::BASE . ltrim($path, '/'), $json, $idempotencyKey);
+    }
+
+    /** The endpoint a path is counted under: its ids (cmpn_101, adgrp_…: a prefix, _, and a value with a digit) read as one. */
+    public static function endpoint(string $method, string $path): string
+    {
+        return $method . ' ' . (string) preg_replace('#/[a-z]+_(?=[A-Za-z0-9-]*[0-9])[A-Za-z0-9-]+(?=/|$)#', '/{id}', '/' . trim($path, '/'));
+    }
+
+    /** OpenAI's own words from an error body, cut short; '' when it has none. */
+    public static function failureText(string $body): string
+    {
+        try {
+            $json = json_decode($body, true, 16, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return '';
+        }
+        if (!is_array($json)) {
+            return '';
+        }
+        $error = $json['error'] ?? null;
+        $text = match (true) {
+            is_array($error) && is_string($error['message'] ?? null) => $error['message'],
+            is_string($error) => $error,
+            is_string($json['message'] ?? null) => $json['message'],
+            is_string($json['detail'] ?? null) => $json['detail'],
+            default => '',
+        };
+        $text = trim((string) preg_replace('/\s+/', ' ', $text));
+
+        return mb_strlen($text) > self::MESSAGE_CHARS ? mb_substr($text, 0, self::MESSAGE_CHARS) . '…' : $text;
+    }
+
+    private function call(#[\SensitiveParameter] string $key, string $method, string $path, string $url, ?string $body, ?string $idempotencyKey): AdvertiserAnswer
+    {
+        $failed = static fn (string $kind, int $status, string $why): AdvertiserAnswer => AdvertiserAnswer::failed($kind, $status, GoogleAdsOAuth::redact($why, [$key]));
+        if ($key === '' || preg_match('/[\x00-\x20\x7f]/', $key) === 1) {
+            return $failed(AdvertiserAnswer::KEY_REFUSED, 0, 'not sent: the Advertiser API key is empty or holds spaces or control characters');
+        }
+        $held = $this->hold($key, self::endpoint($method, $path));
+        if ($held !== null) {
+            return $failed(AdvertiserAnswer::RATE_LIMITED, 0, $held);
+        }
+        $headers = ['Authorization: Bearer ' . $key, 'Accept: application/json', 'User-Agent: Prosper202-AdConnections/1'];
+        if ($body !== null) {
+            $headers[] = 'Content-Type: application/json';
+        }
+        if ($idempotencyKey !== null) {
+            $headers[] = 'Idempotency-Key: ' . $idempotencyKey;
+        }
+        $this->sender ??= new WebhookSender();
+        $sent = $this->sender->read($url, $body, $headers, [443]);
+        if ($sent['refused'] !== null) {
+            return $failed(AdvertiserAnswer::UNAVAILABLE, 0, 'not sent: ' . $sent['refused']);
+        }
+        if ($sent['strayed'] !== null) {
+            return $failed(AdvertiserAnswer::UNAVAILABLE, 0, 'not sent: the connection went to ' . $sent['strayed'] . ' instead of the checked address ' . $sent['pinned']);
+        }
+        $status = $sent['status'];
+        if ($status === 0) {
+            return $failed(AdvertiserAnswer::UNAVAILABLE, 0, 'no answer from OpenAI: ' . ($sent['error'] ?? 'the request failed') . '. Try again in a minute');
+        }
+        if ($status < 200 || $status >= 300) {
+            $text = self::failureText($sent['body']);
+            $said = 'OpenAI answered ' . $status . ($text !== '' ? ': ' . $text : '');
+            $kind = match (true) {
+                $status === 401 || $status === 403 => AdvertiserAnswer::KEY_REFUSED,
+                $status === 404 => AdvertiserAnswer::NOT_FOUND,
+                $status === 429 => AdvertiserAnswer::RATE_LIMITED,
+                $status >= 500 => AdvertiserAnswer::UNAVAILABLE,
+                default => AdvertiserAnswer::REFUSED,
+            };
+
+            return $failed($kind, $status, $said . ($kind === AdvertiserAnswer::RATE_LIMITED || $kind === AdvertiserAnswer::UNAVAILABLE ? '. Try again in a minute' : ''));
+        }
+        if ($sent['error'] !== null) {
+            return $failed(AdvertiserAnswer::UNAVAILABLE, $status, 'OpenAI\'s answer was cut off (' . $sent['error'] . ')');
+        }
+        try {
+            $json = json_decode($sent['body'], true, 64, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            $json = null;
+        }
+        // Nothing is read from an answer that is not OpenAI's JSON object (CLAUDE.md #4).
+        if (!is_array($json) || ($json !== [] && array_is_list($json))) {
+            return $failed(AdvertiserAnswer::UNAVAILABLE, $status, 'OpenAI answered ' . $status . ' with something that is not its JSON');
+        }
+
+        return AdvertiserAnswer::ok($status, $json);
+    }
+
+    /** Why this request is held back, or null when it may go: OpenAI's two per-minute limits, counted here. */
+    private function hold(#[\SensitiveParameter] string $key, string $endpoint): ?string
+    {
+        $now = ($this->clock)();
+        $account = hash('sha256', $key);
+        foreach (['' => self::OVERALL_PER_MINUTE, $endpoint => self::PER_ENDPOINT_PER_MINUTE] as $what => $limit) {
+            $slot = $account . '|' . $what;
+            $this->sent[$slot] = array_values(array_filter($this->sent[$slot] ?? [], static fn (float $t): bool => $t > $now - 60.0));
+            if (count($this->sent[$slot]) >= $limit) {
+                return 'not sent: OpenAI allows ' . $limit . ' requests a minute ' . ($what === '' ? 'in all' : 'to ' . $endpoint) . ', and that many were made. Try again in a minute';
+            }
+        }
+        foreach (['', $endpoint] as $what) {
+            $this->sent[$account . '|' . $what][] = $now;
+        }
+
+        return null;
+    }
+}

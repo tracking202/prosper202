@@ -7,13 +7,15 @@ namespace Prosper202\Destinations;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Schema\TableRegistry;
 use Prosper202\OfflineConversion\Consent;
+use Prosper202\Security\MalformedSecretKey;
+use Prosper202\Security\SealedSecret;
 
 /**
  * An account's destinations (202_destinations): the one place they are
  * read and written, for the API, the Setup page and the worker.
  *
- * Credentials are sealed as IntegrityCredentialStore seals a service
- * account: AES-256-GCM under a key minted once in 202_deployment_secrets,
+ * Credentials are sealed by SealedSecret (AES-256-GCM under a key minted
+ * once in 202_deployment_secrets),
  * bound to the destination and its owner, and never served back; reads say
  * which credential fields are set.
  */
@@ -24,7 +26,6 @@ final class DestinationStore
     /** The settings every type takes. */
     public const COMMON_SETTINGS = ['campaign_ids', 'send_user_data', 'consent'];
     private const AAD = 'p202-destination-credential-v1|';
-    private const CIPHER = 'aes-256-gcm';
     private const COLUMNS = 'destination_id, user_id, type, name, enabled, settings, credentials, created_at, updated_at';
 
     private ?string $key = null;
@@ -497,29 +498,19 @@ final class DestinationStore
 
     public static function seal(#[\SensitiveParameter] string $plaintext, #[\SensitiveParameter] string $key, int $destinationId, int $userId): string
     {
-        $nonce = random_bytes(12);
-        $tag = '';
-        $ciphertext = openssl_encrypt($plaintext, self::CIPHER, $key, OPENSSL_RAW_DATA, $nonce, $tag, self::AAD . $destinationId . '|' . $userId, 16);
-        if ($ciphertext === false || strlen($tag) !== 16) {
-            throw new \RuntimeException('Encrypting the destination\'s credentials failed');
-        }
-
-        return 'v1.' . base64_encode($nonce . $tag . $ciphertext);
+        return SealedSecret::seal($plaintext, $key, self::AAD . $destinationId . '|' . $userId, 'Encrypting the destination\'s credentials failed');
     }
 
     /** @throws \RuntimeException for a value that is not v1, or whose tag does not verify for this destination */
     public static function open(string $sealed, #[\SensitiveParameter] string $key, int $destinationId, int $userId): string
     {
-        $raw = str_starts_with($sealed, 'v1.') ? base64_decode(substr($sealed, 3), true) : false;
-        if ($raw === false || strlen($raw) < 29) {
-            throw new \RuntimeException('The stored credentials of destination ' . $destinationId . ' are not a v1 ciphertext');
-        }
-        $plaintext = openssl_decrypt(substr($raw, 28), self::CIPHER, $key, OPENSSL_RAW_DATA, substr($raw, 0, 12), substr($raw, 12, 16), self::AAD . $destinationId . '|' . $userId);
-        if ($plaintext === false) {
-            throw new \RuntimeException('The stored credentials of destination ' . $destinationId . ' do not decrypt (wrong key, altered, or copied from another destination); set them again');
-        }
-
-        return $plaintext;
+        return SealedSecret::open(
+            $sealed,
+            $key,
+            self::AAD . $destinationId . '|' . $userId,
+            'The stored credentials of destination ' . $destinationId . ' are not a v1 ciphertext',
+            'The stored credentials of destination ' . $destinationId . ' do not decrypt (wrong key, altered, or copied from another destination); set them again'
+        );
     }
 
     /**
@@ -533,19 +524,16 @@ final class DestinationStore
             return $this->key;
         }
         if ($mint) {
-            $insert = $this->conn->prepareWrite('INSERT INTO `' . TableRegistry::DEPLOYMENT_SECRETS . '` (secret_name, secret_value, created_at) VALUES (?, ?, ?)
-                 ON DUPLICATE KEY UPDATE secret_name = secret_name');
-            $this->conn->bind($insert, 'ssi', [self::SECRET_NAME, bin2hex(random_bytes(32)), time()]);
-            $this->conn->executeUpdate($insert);
+            SealedSecret::mintKey($this->conn, self::SECRET_NAME);
         }
-        $read = $this->conn->prepareWrite('SELECT secret_value FROM `' . TableRegistry::DEPLOYMENT_SECRETS . '` WHERE secret_name = ? LIMIT 1');
-        $this->conn->bind($read, 's', [self::SECRET_NAME]);
-        $hex = $this->conn->fetchOne($read)['secret_value'] ?? null;
-        if (!is_string($hex) || preg_match('/^[0-9a-f]{64}$/D', $hex) !== 1) {
+        try {
+            $key = SealedSecret::readKey($this->conn, self::SECRET_NAME);
+        } catch (MalformedSecretKey) {
+            $key = null;
+        }
+        if ($key === null) {
             throw new DestinationKeyMissing('The destinations\' credential key is missing from 202_deployment_secrets or is not 64 lower-case hex characters; set the credentials again');
         }
-
-        $key = (string) hex2bin($hex);
 
         // Only a plain read is kept. A minting call may have read its own uncommitted INSERT, or a key a second
         // call in the same transaction read back after the first minted it; either may be rolled back (CLAUDE.md #11).
