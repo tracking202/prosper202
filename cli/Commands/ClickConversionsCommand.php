@@ -69,6 +69,8 @@ class ClickConversionsCommand extends BaseCommand
             $out[] = [
                 'conv_id' => $r['conv_id'] ?? '',
                 'amount' => $r['amount'] ?? '',
+                // The row's own currency; blank when none was recorded.
+                'currency' => $r['currency'] ?? '',
                 'counts' => $counts,
                 'source' => $r['source'] ?? '',
                 'matched_by' => $r['match_method'] ?? '',

@@ -197,7 +197,7 @@ final class ShopifyRefundsToSettleIntegrationTest extends TestCase
         self::assertSame([
             'refund_id' => '9100001', 'order_id' => self::ORDER, 'occurred_at' => $at, 'waiting' => true,
             'stale' => false, 'reason' => '', 'clicks' => [self::CLICK], 'amount' => '10', 'currency' => 'USD',
-            'other_currency' => false,
+            'amount_currency' => 'USD', 'other_currency' => false,
         ], $fresh['refunds'][0]);
         self::assertFalse($fresh['transaction_webhook_seen']);
 
@@ -373,6 +373,58 @@ final class ShopifyRefundsToSettleIntegrationTest extends TestCase
         );
         self::assertSame(OutcomeKind::REVERSED, $outcome->kind, $outcome->message);
         self::assertSame(['59.00000', '-11.60000'], self::payouts());
+    }
+
+    public function testARefundOfASaleRecordedBeforeTheAccountsCurrencyChangedIsInTheSalesCurrency(): void
+    {
+        $this->deliver('orders/paid', self::order());
+        $this->pending(9100001, 71001, '10.00');
+        $db = self::requireScratch();
+        $db->query("UPDATE 202_users_pref SET user_account_currency = 'EUR' WHERE user_id = " . self::ACCOUNT);
+        try {
+            $listed = self::desk()->list(self::ACCOUNT);
+            self::assertSame('EUR', $listed['account_currency']);
+            self::assertSame(['USD', false], [$listed['refunds'][0]['amount_currency'], $listed['refunds'][0]['other_currency']],
+                'its sale was recorded in USD, as Shopify states the refund: the figure is what to record');
+
+            $refused = self::desk()->takeBack(self::ACCOUNT, '9100001', '9.20', null, self::byHand(), RefundsToSettle::THE_PAGE, 'EUR');
+            self::assertSame(OutcomeKind::CURRENCY_MISMATCH, $refused->kind, $refused->message);
+            self::assertStringContainsString('USD, the currency of its sale', $refused->message);
+
+            $outcome = self::desk()->takeBack(self::ACCOUNT, '9100001', '10.00', null, self::byHand());
+            self::assertSame(OutcomeKind::REVERSED, $outcome->kind, $outcome->message);
+            $rows = $db->query('SELECT click_payout, currency FROM 202_conversion_logs WHERE click_id = ' . self::CLICK . ' AND deleted = 0 ORDER BY conv_id');
+            self::assertInstanceOf(\mysqli_result::class, $rows);
+            self::assertSame([['59.00000', 'USD'], ['-10.00000', 'USD']], $rows->fetch_all(), 'and nets with its sale');
+        } finally {
+            $db->query("UPDATE 202_users_pref SET user_account_currency = 'USD' WHERE user_id = " . self::ACCOUNT);
+        }
+    }
+
+    public function testARefundOfASaleWithNoCurrencyRecordedIsRecordedBesideItAndFollowsItsCurrency(): void
+    {
+        $db = self::requireScratch();
+        $this->deliver('orders/paid', self::order());
+        // As the upgrade leaves a sale it could not label, on an account that counts in EUR now.
+        $db->query("UPDATE 202_conversion_logs SET currency = '' WHERE click_id = " . self::CLICK);
+        $db->query("UPDATE 202_users_pref SET user_account_currency = 'EUR' WHERE user_id = " . self::ACCOUNT);
+        $rows = static fn (): array => $db->query('SELECT click_payout, currency FROM 202_conversion_logs WHERE click_id = '
+            . self::CLICK . ' AND deleted = 0 ORDER BY conv_id')->fetch_all();
+        try {
+            $refund = $this->deliver('refunds/create', self::refundIn('USD'));
+
+            self::assertSame(OutcomeKind::REVERSED, $refund->kind, $refund->message);
+            self::assertStringContainsString('no currency recorded', $refund->message);
+            self::assertSame([['59.00000', ''], ['-10.00000', '']], $rows(), 'recorded, and nets with its sale');
+            self::assertSame('0', (string) $db->query('SELECT COUNT(*) FROM 202_held_payment_notifications WHERE user_id = '
+                . self::ACCOUNT)->fetch_row()[0], 'nothing held for a currency change');
+
+            \Prosper202\Conversion\Ledger\RowCurrency::recordBefore(new \Prosper202\Database\Connection($db), self::ACCOUNT, 'USD', time() + 60);
+            self::assertSame([['59.00000', 'USD'], ['-10.00000', 'USD']], $rows(), 'the owner records the sale\'s currency, and its refund follows');
+        } finally {
+            $db->query("UPDATE 202_users_pref SET user_account_currency = 'USD' WHERE user_id = " . self::ACCOUNT);
+            $db->query('DELETE FROM 202_currency_changes WHERE user_id = ' . self::ACCOUNT);
+        }
     }
 
     public function testAWaitingRefundRefusedOutrightLaterIsListedAsRefusedWithItsReason(): void

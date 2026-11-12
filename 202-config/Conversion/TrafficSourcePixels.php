@@ -250,7 +250,10 @@ final class TrafficSourcePixels
                 if (!$mayTrack) {
                     continue;
                 }
-                $currency ??= self::accountCurrency($conn, $ppcAccountId);
+                // The currency the conversion's row recorded, when the caller
+                // has it; else the account's, which a row just written is in.
+                $rowCurrency = is_string($tokens['row_currency'] ?? null) ? $tokens['row_currency'] : '';
+                $currency ??= preg_match('/^[A-Z]{3}$/D', $rowCurrency) === 1 ? $rowCurrency : self::accountCurrency($conn, $ppcAccountId);
                 $markup = self::facebookPurchase($code, $tokens, $currency);
                 if ($markup === null) {
                     error_log('traffic source pixel ' . (int) ($pixel['pixel_id'] ?? 0) . ' of ppc account ' . $ppcAccountId

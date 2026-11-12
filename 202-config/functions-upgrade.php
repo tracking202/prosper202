@@ -350,6 +350,243 @@ if (!function_exists('_upgrade_conversion_ledger_columns')) {
     }
 }
 
+if (!function_exists('_upgrade_currency_history_start')) {
+    /**
+     * Where each account's currency history begins, for the 1.9.80 rung:
+     * one 'upgrade' row (202_currency_changes) holding the account's
+     * currency now, since nothing recorded what it was before. A conversion
+     * recorded later on a click from before it then takes that currency as
+     * a guess the owner can correct (RowCurrency::inForceAt()), never as a
+     * fact. Makes the table as UserTables declares it, so the reconcile
+     * finds it done; an account that already has its row is left alone, so
+     * a re-run adds nothing.
+     */
+    function _upgrade_currency_history_start(): bool
+    {
+        if (_upgrade_query(\Prosper202\Database\Tables\UserTables::currencyChanges()->createStatement) === false) {
+            _upgrade_note('could not make 202_currency_changes; the currency history step will retry.');
+            return false;
+        }
+        $prefs = _upgrade_query('SELECT p.`user_id`, p.`user_account_currency` FROM `202_users_pref` p'
+            . " WHERE NOT EXISTS (SELECT 1 FROM `202_currency_changes` c WHERE c.`user_id` = p.`user_id` AND c.`kind` = 'upgrade')");
+        if (!$prefs instanceof \mysqli_result) {
+            _upgrade_note('could not read the accounts\' currencies; the currency history step will retry.');
+            return false;
+        }
+        $rows = [];
+        $now = time();
+        while (($row = $prefs->fetch_row()) !== null && $row !== false) {
+            $currency = \Api\V3\Controllers\UsersController::normalizeCurrency($row[1]);
+            $rows[] = '(' . (int) $row[0] . ', ' . $now . ", '" . $currency . "', '" . $currency . "', 'upgrade')";
+        }
+        $prefs->free();
+        foreach (array_chunk($rows, 1000) as $chunk) {
+            if (_upgrade_query('INSERT INTO `202_currency_changes` (`user_id`, `changed_at`, `from_currency`, `to_currency`, `kind`)'
+                . ' VALUES ' . implode(', ', $chunk)) === false) {
+                _upgrade_note('failed to record where the accounts\' currency history begins; the step will retry.');
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('_upgrade_campaign_currency_notice')) {
+    /**
+     * Mark, for the 1.9.80 rung, every campaign paid in another currency
+     * than its account's (aff_campaign_foreign_payout <> 0), most of them
+     * left so by a change of the account's currency. Before 1.9.80 a
+     * postback's amount on such a campaign was recorded as sent; from 1.9.80
+     * it is converted from the campaign's currency, as paid 1.9.56 did.
+     * Personal settings lists the marked campaigns
+     * (User\CampaignCurrencyNotice) so the owner can switch them to the
+     * account's currency when their networks now report in it, or keep them.
+     * The column is added as CampaignTables declares it. A re-run marks the
+     * same campaigns: the rung runs only until the version is recorded,
+     * before anyone can answer the notice.
+     */
+    function _upgrade_campaign_currency_notice(): bool
+    {
+        $columns = _upgrade_conversion_ledger_probe('SHOW COLUMNS FROM `202_aff_campaigns`', 'Field', 'Null');
+        if ($columns === null) {
+            _upgrade_note('could not read the columns of 202_aff_campaigns; the campaign currency step will retry.');
+            return false;
+        }
+        if (!array_key_exists('aff_campaign_currency_notice', $columns)
+            && _upgrade_query("ALTER TABLE `202_aff_campaigns` ADD COLUMN `aff_campaign_currency_notice` tinyint(1) NOT NULL DEFAULT '0' AFTER `app_registration_id`") === false) {
+            _upgrade_note('failed to add 202_aff_campaigns.aff_campaign_currency_notice; the campaign currency step will retry.');
+            return false;
+        }
+        // A campaign saved before the field returned carries the column
+        // default (USD) with no foreign payout. With a payout it is in the
+        // account's currency, so it says so, as every save since writes it.
+        // One paid by its postbacks' amounts (payout 0) cannot be told from
+        // one an earlier change of currency left in the old one: on an
+        // account that shows such a change (a campaign keeping a payout in
+        // another currency, the backfill's sign) it keeps its currency and
+        // is listed with the others, to be switched or kept; elsewhere it is
+        // in the account's, as its amounts were recorded before.
+        $supported = "'" . implode("', '", \Api\V3\Controllers\UsersController::SUPPORTED_CURRENCIES) . "'";
+        $accountSql = "CASE WHEN UPPER(TRIM(p.`user_account_currency`)) IN ($supported) THEN UPPER(TRIM(p.`user_account_currency`)) ELSE 'USD' END";
+        $changed = _upgrade_query('SELECT DISTINCT `user_id` FROM `202_aff_campaigns` WHERE `aff_campaign_foreign_payout` <> 0');
+        if (!$changed instanceof \mysqli_result) {
+            _upgrade_note('could not read which accounts changed their currency; the campaign currency step will retry.');
+            return false;
+        }
+        $shows = [];
+        while (($row = $changed->fetch_row()) !== null && $row !== false) {
+            $shows[] = (int) $row[0];
+        }
+        $changed->free();
+        // Every such campaign, but one paid by its postbacks' amounts on an account that shows a change.
+        $kept = $shows === [] ? '' : ' AND (c.`aff_campaign_payout` <> 0 OR c.`user_id` NOT IN (' . implode(', ', $shows) . '))';
+        if (_upgrade_query('UPDATE `202_aff_campaigns` c JOIN `202_users_pref` p ON p.`user_id` = c.`user_id`'
+            . " SET c.`aff_campaign_currency` = $accountSql WHERE c.`aff_campaign_foreign_payout` = 0" . $kept) === false) {
+            _upgrade_note('failed to give the campaigns in the account\'s currency that currency; the campaign currency step will retry.');
+            return false;
+        }
+        if (_upgrade_query('UPDATE `202_aff_campaigns` c JOIN `202_users_pref` p ON p.`user_id` = c.`user_id`'
+            . ' SET c.`aff_campaign_currency_notice` = 1 WHERE c.`aff_campaign_deleted` = 0'
+            . " AND c.`aff_campaign_currency` <> $accountSql"
+            . ' AND (c.`aff_campaign_foreign_payout` <> 0 OR c.`aff_campaign_payout` = 0)') === false) {
+            _upgrade_note('failed to mark the campaigns paid in another currency; the campaign currency step will retry.');
+            return false;
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('_upgrade_ledger_currency_backfill')) {
+    /**
+     * Add 202_conversion_logs' currency columns where they are missing, and
+     * give the ledger rows that have no currency their account's, for the
+     * 1.9.80 rung. It runs before the reconcile, which then adds the key
+     * over the column: with the key there first, every row the backfill
+     * writes moves an index entry too, and a range of 50,000 rows took 1.2 s
+     * rather than 0.17 (measured on MySQL 8.0, where a million rows are then
+     * about 4 s and the key 2). The columns are added as
+     * ConversionTables declares them, after match_method, so the reconcile
+     * finds nothing to add but the key.
+     *
+     * Nothing recorded which currency an amount was written in; every reader
+     * labelled it with the account's at the time of reading. For an account
+     * whose currency shows no sign of having changed, that is the currency
+     * its rows were written in, and they take it. A change of currency
+     * usually left a sign: it kept each campaign's payout as it was in
+     * aff_campaign_foreign_payout (CurrencyChange). An account with such a
+     * campaign, a deleted one too, may have counted in more than one
+     * currency over its history, and which rows were written under which
+     * cannot be known, so its rows keep '' (not recorded, RowCurrency): they
+     * are shown without a currency, and Personal settings lets the owner say
+     * which one they were. So does a row whose account has no preferences
+     * row. The sign is not reliable either way, and nothing else recorded a
+     * change: a change that cleared it is not seen (every campaign already
+     * in the new currency, campaigns paid only by postback amounts with a
+     * payout of 0, or none left), and those rows take the current currency;
+     * one foreign-paid campaign with no change at all leaves the rows
+     * unrecorded. So every row this labels is marked as labelled
+     * (currency_basis, RowCurrency::BASIS_UPGRADE), and Personal settings
+     * lets the owner say which currency the conversions before a date were
+     * in, for those rows and the unrecorded ones (RowCurrency::recordBefore()).
+     * From 1.9.80 a change of currency is recorded when it is made
+     * (CurrencyChange::record()).
+     *
+     * Only rows with no currency are touched, so a re-run changes nothing
+     * (0.05 s a range), and rows the new code wrote are left alone. In
+     * primary-key ranges, as the ledger's own backfill is, so no write to an
+     * old conversion waits for the whole table.
+     */
+    function _upgrade_ledger_currency_backfill(): bool
+    {
+        $columns = _upgrade_conversion_ledger_probe('SHOW COLUMNS FROM `202_conversion_logs`', 'Field', 'Null');
+        if ($columns === null) {
+            _upgrade_note('could not read the columns of 202_conversion_logs; the ledger currency step will retry.');
+            return false;
+        }
+        foreach ([
+            ['currency', "`currency` char(3) NOT NULL DEFAULT '' AFTER `match_method`"],
+            ['stated_amount', '`stated_amount` decimal(11,5) DEFAULT NULL AFTER `currency`'],
+            ['stated_currency', '`stated_currency` char(3) DEFAULT NULL AFTER `stated_amount`'],
+            ['currency_basis', "`currency_basis` tinyint(1) unsigned NOT NULL DEFAULT '0' AFTER `stated_currency`"],
+        ] as [$column, $ddl]) {
+            if (array_key_exists($column, $columns)) {
+                continue;
+            }
+            if (_upgrade_query('ALTER TABLE `202_conversion_logs` ADD COLUMN ' . $ddl) === false) {
+                _upgrade_note('failed to add 202_conversion_logs.' . $column . '; the ledger currency step will retry.');
+                return false;
+            }
+        }
+
+        $changed = _upgrade_query('SELECT DISTINCT `user_id` FROM `202_aff_campaigns` WHERE `aff_campaign_foreign_payout` <> 0');
+        if (!$changed instanceof \mysqli_result) {
+            _upgrade_note('could not read which accounts changed their currency;'
+                . ' the ledger currency step will retry.');
+            return false;
+        }
+        $skip = [];
+        while (($row = $changed->fetch_row()) !== null && $row !== false) {
+            $skip[(int) $row[0]] = true;
+        }
+        $changed->free();
+
+        // Each account's currency as every page read it
+        // (UsersController::normalizeCurrency()), and the accounts of each.
+        $prefs = _upgrade_query('SELECT `user_id`, `user_account_currency` FROM `202_users_pref`');
+        if (!$prefs instanceof \mysqli_result) {
+            _upgrade_note('could not read the accounts\' currencies; the ledger currency step will retry.');
+            return false;
+        }
+        $accounts = [];
+        while (($row = $prefs->fetch_row()) !== null && $row !== false) {
+            if (!isset($skip[(int) $row[0]])) {
+                $accounts[\Api\V3\Controllers\UsersController::normalizeCurrency($row[1])][] = (int) $row[0];
+            }
+        }
+        $prefs->free();
+        if ($accounts === []) {
+            return true;
+        }
+
+        $bounds = _upgrade_query('SELECT MIN(`conv_id`) AS lo, MAX(`conv_id`) AS hi FROM `202_conversion_logs`');
+        $range = $bounds instanceof \mysqli_result ? $bounds->fetch_assoc() : null;
+        if (!is_array($range)) {
+            _upgrade_note('could not read the conv_id range of 202_conversion_logs;'
+                . ' the ledger currency step will retry.');
+            return false;
+        }
+        $bounds->free();
+        if ($range['lo'] === null) {
+            return true;
+        }
+        $hi = (int) $range['hi'];
+        $chunk = 50000;
+        $ranges = [];
+        for ($from = (int) $range['lo']; $from <= $hi; $from += $chunk) {
+            $ranges[] = ' AND `conv_id` BETWEEN ' . $from . ' AND ' . min($hi, $from + $chunk - 1);
+        }
+        // Rows written past the range read, by code that did not stamp them.
+        $ranges[] = ' AND `conv_id` > ' . $hi;
+        foreach ($ranges as $where) {
+            foreach ($accounts as $currency => $users) {
+                // A constant per statement, by primary-key range: a join to
+                // the preferences took three times as long (0.58 s a range).
+                $sql = "UPDATE `202_conversion_logs` SET `currency` = '" . $currency . "', `currency_basis` = "
+                    . \Prosper202\Conversion\Ledger\RowCurrency::BASIS_UPGRADE . " WHERE `currency` = ''"
+                    . ' AND `user_id` IN (' . implode(',', $users) . ')' . $where;
+                if (_upgrade_query($sql) === false) {
+                    _upgrade_note('failed to give the ledger rows their currency; the step will retry.');
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+}
+
 if (!function_exists('_upgrade_conversion_ledger_backfill_sql')) {
     /**
      * The one statement that gives every pre-ledger conversion row its
@@ -1045,6 +1282,12 @@ if (!function_exists('_upgrade_measurement_tables')) {
         foreach ($definitions as $definition) {
             if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::CONVERSION_LOGS) {
                 if (!_upgrade_conversion_ledger()) {
+                    return false;
+                }
+                // Each row's currency: the columns, then the rows already
+                // there, before the reconcile adds the key over them
+                // (_upgrade_ledger_currency_backfill() says why in that order).
+                if (!_upgrade_ledger_currency_backfill()) {
                     return false;
                 }
                 break;
@@ -5172,12 +5415,18 @@ class UPGRADE
             // A paid 1.9.56 install that already reached 1.9.79 passed the
             // 1.9.56 step before it carried the paid baseline, so the baseline
             // runs here too (a no-op on a free install or one already fixed).
-            // Both run, so one failure does not skip the other, and the
-            // version moves only when both succeeded.
+            // Each runs, so one failure does not skip another, and the
+            // version moves only when all succeeded.
             $baseline_ok = _upgrade_1956_baseline();
             // Paid 1.9.56's pending PurLink clicks, carried into 202_purlink_exit_order (which it makes first).
             $carried_ok = _upgrade_purlink_carryover();
-            $paid_ok = $baseline_ok && $carried_ok;
+            // The campaigns whose postback amounts are converted from now on,
+            // for Personal settings to list; in this step alone, so a later
+            // one never lists again what the owner has answered.
+            $campaigns_ok = _upgrade_campaign_currency_notice();
+            // Where each account's currency history begins (202_currency_changes).
+            $history_ok = _upgrade_currency_history_start();
+            $before_ok = $baseline_ok && $carried_ok && $campaigns_ok && $history_ok;
             $step_ok = _upgrade_measurement_tables([
                 // 202_users_pref gains shopify_webhook_secret, which Shopify's
                 // order webhooks are verified with (ShopifyWebhookSecret),
@@ -5226,8 +5475,17 @@ class UPGRADE
                 // The alerts each account was raised, shown on Home and the
                 // settings card (MysqlAlertStore).
                 \Prosper202\Database\Tables\UserTables::alertLog(),
+                // Each change of an account's currency from now on (CurrencyChange::record()).
+                \Prosper202\Database\Tables\UserTables::currencyChanges(),
+                // The rates a postback's amount on a campaign paid in another
+                // currency is converted with (Ledger\ExchangeRateCache). Before
+                // the ledger's columns: a writer that finds those reads this.
+                \Prosper202\Database\Tables\ConversionTables::exchangeRates(),
                 // 202_conversion_logs gains user_conv_time, the alerts' read of
-                // an account's last week of conversions.
+                // an account's last week of conversions, and the currency each
+                // row's amount is in with what a postback stated (RowCurrency);
+                // the rows already there take the currency that can be known
+                // (_upgrade_ledger_currency_backfill(), run by the reconcile).
                 \Prosper202\Database\Tables\ConversionTables::conversionLogs(),
                 // PurLinks: click-out ordering, deferred pixels fired, per-offer goal subjects.
                 \Prosper202\Database\Tables\ClickTables::purLinkExitOrder(),
@@ -5262,7 +5520,7 @@ class UPGRADE
                 // from (TrafficSourceOwners::split()), which names the values
                 // recorded before the copy. Null on every variable already there.
                 \Prosper202\Database\Tables\TrackingTables::ppcNetworkVariables(),
-            ], [], [], true) && $paid_ok;
+            ], [], [], true) && $before_ok;
             if ($step_ok) {
                 _upgrade_seed_bot202_facebook_pixel_lookups();
                 _upgrade_complete_landing_page_urls();
@@ -5275,7 +5533,8 @@ class UPGRADE
                 }
             } else {
                 _upgrade_note('a table of the 1.9.80 step or the paid 1.9.56 baseline could not be reconciled (the list above),'
-                    . ' an API key hashed, or the paid PurLink clicks carried over; leaving version at 1.9.79 so the next run retries.');
+                    . ' an API key hashed, the paid PurLink clicks carried over, or the campaigns paid in another currency marked;'
+                    . ' leaving version at 1.9.79 so the next run retries.');
             }
         }
 

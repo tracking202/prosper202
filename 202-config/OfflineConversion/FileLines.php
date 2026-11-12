@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\OfflineConversion;
 
 use Prosper202\Conversion\Ledger\Amount;
+use Prosper202\Conversion\Ledger\RowCurrency;
 
 /**
  * One file's lines, written a conversion at a time as OfflineExport::query()
@@ -65,7 +66,7 @@ final class FileLines
                 $name,
                 $format->time($time, $this->zone),
                 $format->value(Amount::toUnits(StoredRow::text($row, 'counted_amount'))),
-                $this->currency,
+                RowCurrency::read(StoredRow::text($row, 'currency')),
                 $convId,
                 $this->options->adUserData,
                 $this->options->adPersonalization
