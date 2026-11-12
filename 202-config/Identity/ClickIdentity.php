@@ -40,6 +40,8 @@ final class ClickIdentity
         public readonly array $signals,
         public readonly array $customerParams,
         public readonly ?string $cookieValue,
+        /** The request refused consent (p202_consent=0) or its campaign's capture is off. */
+        public readonly bool $withheld = false,
     ) {
     }
 
@@ -61,7 +63,7 @@ final class ClickIdentity
     public static function fromRequest(array $get, array $cookies, bool $campaignAllows, bool $mayMint = true): self
     {
         if (!RequestSignals::consentGiven($get, $campaignAllows)) {
-            return self::none();
+            return new self([], [], null, true);
         }
         $vid = RequestSignals::visitorCookie($cookies) ?? ($mayMint ? RequestSignals::mintVisitorId() : null);
         $signals = $vid !== null ? [new IdentitySignal(SignalType::VISITOR_COOKIE, $vid)] : [];
@@ -100,6 +102,38 @@ final class ClickIdentity
         }
 
         return new self([new IdentitySignal(SignalType::CUSTOMER, $canonical)], [], null);
+    }
+
+    /** Whether the request brought a browser signal: the visitor cookie or the landing page id. */
+    public function bringsBrowserSignal(): bool
+    {
+        foreach ($this->signals as $signal) {
+            if ($signal->type === SignalType::VISITOR_COOKIE || $signal->type === SignalType::LANDING_PAGE) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * A later request of a click that is already stored (a landing page's,
+     * for the click its tracking template made) and that withheld consent
+     * takes back the browser marks the click's earlier requests left
+     * (IdentityGraph::withdrawBrowserSignals()). The caller has shown the
+     * click is the account's. A failure is logged, as attach()'s is.
+     */
+    public function withdrawIfWithheld(Connection $conn, int $clickId): void
+    {
+        if (!$this->withheld || $clickId <= 0) {
+            return;
+        }
+        try {
+            IdentityGraph::withdrawBrowserSignals($conn, $clickId);
+        } catch (\Throwable $e) {
+            error_log('identity: click ' . $clickId . ' withheld consent but its browser marks were not withdrawn: '
+                . $e->getMessage());
+        }
     }
 
     public function isEmpty(): bool
