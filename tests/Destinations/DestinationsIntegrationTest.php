@@ -9,10 +9,12 @@ use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookSender;
 use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\MysqlConversionRepository;
+use Prosper202\Conversion\TrafficSourcePixels;
 use Prosper202\Database\Connection;
 use Prosper202\Destinations\DestinationQueue;
 use Prosper202\Destinations\DestinationStore;
 use Prosper202\Destinations\Ga4Destination;
+use Prosper202\Destinations\OpenAiAdsDestination;
 use Tests\Apps\Android\AndroidDatabase;
 
 /**
@@ -40,7 +42,7 @@ final class DestinationsIntegrationTest extends TestCase
     protected function setUp(): void
     {
         $this->databaseSetUp();
-        foreach (['202_destinations', '202_destination_deliveries', '202_customers', '202_clicks_advance', '202_ips', '202_ips_v6'] as $t) {
+        foreach (['202_destinations', '202_destination_deliveries', '202_customers', '202_clicks_advance', '202_clicks_site', '202_site_urls', '202_ips', '202_ips_v6'] as $t) {
             self::$db->query('TRUNCATE TABLE ' . $t);
         }
         self::fixture('DELETE FROM 202_users WHERE user_id IN (1, 2)');
@@ -319,9 +321,11 @@ final class DestinationsIntegrationTest extends TestCase
         $this->click(103, 32);
         $this->record(103, 'ORD-40');
         $this->worker()->sendDue(10, 5, time() + 1);
-        $this->record(103, 'ORD-41');
+        $second = $this->record(103, 'ORD-41');
         self::assertSame(1, $this->worker()->sendDue(10, 5, time() + 2)['sent']);
         self::assertSame(['ORD-40', 'ORD-40'], array_map(static fn (array $b): string => $b['events'][0]['params']['transaction_id'], $this->bodies), 'GA4 counts the sale once');
+        $pixel = TrafficSourcePixels::withConversionEventId(new Connection(self::$db), [], 1, 103, $second, 'ORD-41');
+        self::assertSame('ORD-40', $pixel[TrafficSourcePixels::EVENT_ID], 'the browser pixel names the sale as the server event does');
 
         // Positive control: a campaign that adds every conversion sends each under its own id.
         $this->click(104);
@@ -329,6 +333,246 @@ final class DestinationsIntegrationTest extends TestCase
         $this->record(104, 'ORD-43');
         $this->worker()->sendDue(10, 5, time() + 3);
         self::assertSame(['ORD-42', 'ORD-43'], array_map(static fn (array $b): string => $b['events'][0]['params']['transaction_id'], array_slice($this->bodies, 2)));
+    }
+
+    public function testTheFactsCarryTheVisitorsAddressOnlyUnmaskedAndWithUserDataAndThePageTheClickCameFrom(): void
+    {
+        self::fixture('DELETE FROM 202_clicks_visitor WHERE click_id BETWEEN 100 AND 110');
+        self::fixture("INSERT INTO 202_site_urls SET site_url_id=11, site_domain_id=1, site_url_address='https://shop.example.com/spring?utm_source=chatgpt&email=jane%40example.com#top'");
+        self::fixture("INSERT INTO 202_site_urls SET site_url_id=12, site_domain_id=1, site_url_address='https://track.example.com/tracking202/redirect/dl.php?t202id=7'");
+        self::fixture("INSERT INTO 202_site_urls SET site_url_id=13, site_domain_id=1, site_url_address='ftp://files.example.com/receipt'");
+        self::fixture("INSERT INTO 202_ips SET ip_id=5, ip_address='198.51.100.7'");
+        self::fixture("INSERT INTO 202_ips SET ip_id=6, ip_address='198.51.100.0'");
+        self::fixture("INSERT INTO 202_ips SET ip_id=7, ip_address='10.0.0.9'");
+        $this->campaign(33, null);
+        self::fixture('UPDATE 202_aff_campaigns SET identity_signals=0 WHERE aff_campaign_id=33');
+        $clicks = [
+            // click => [ip_id, landing url id, outbound url id, campaign, linked to its visitor]
+            100 => [5, 11, 12, 30, true],
+            101 => [6, 0, 12, 30, true],
+            102 => [5, 0, 0, 30, true],
+            103 => [7, 13, 0, 30, true],
+            104 => [5, 11, 0, 30, false],
+            105 => [5, 11, 0, 33, true],
+        ];
+        foreach ($clicks as $click => [$ip, $landing, $outbound, $campaign, $linked]) {
+            self::fixture("INSERT INTO 202_clicks_advance SET click_id=$click, ip_id=$ip");
+            self::fixture("INSERT INTO 202_clicks_site SET click_id=$click, click_landing_site_url_id=$landing, click_outbound_site_url_id=$outbound");
+            $this->click($click, $campaign);
+            if ($linked) {
+                self::fixture("INSERT INTO 202_clicks_visitor SET click_id=$click, user_id=1, visitor_key=$click, click_time=1");
+            }
+        }
+        $facts = [];
+        $type = $this->capturing($facts);
+        $store = new DestinationStore(new Connection(self::$db), [Ga4Destination::TYPE => $type]);
+        $create = static fn (array $settings): int => (int) $store->create(1, Ga4Destination::TYPE, 'Store GA4', $settings + ['measurement_id' => 'G-ABC123'], ['api_secret' => self::SECRET], time())['destination_id'];
+        $queue = static fn (): DestinationQueue => new DestinationQueue(new Connection(self::$db), $store, static fn (string $ip): bool => false);
+
+        $on = $create(['send_user_data' => true]);
+        $ids = ['ORD-60' => $this->record(100, 'ORD-60'), '' => $this->record(101, ''), 'ORD-62' => $this->record(102, 'ORD-62')];
+        foreach ([103, 104, 105] as $click) {
+            $this->record($click, 'ORD-' . $click);
+        }
+        self::assertSame(6, $queue()->sendDue(10, 5, time() + 1)['sent']);
+        $by = [];
+        foreach ($facts as $f) {
+            $by[$f->clickId] = $f;
+        }
+        self::assertSame('198.51.100.7', $by[100]->ipAddress, 'the positive control: an unmasked address, user data on');
+        self::assertNull($by[101]->ipAddress, 'an address stored masked is not the visitor\'s');
+        self::assertNull($by[103]->ipAddress, 'a private address names no one a platform could match');
+        self::assertNull($by[104]->ipAddress, 'a click never linked to its visitor (consent refused, or capture off) sends no address');
+        self::assertNull($by[105]->ipAddress, 'nor one whose campaign has identity capture off');
+        self::assertSame('198.51.100.7', $by[102]->ipAddress, 'the positive control for the link and the campaign');
+        self::assertSame('https://shop.example.com/spring', $by[100]->pageUrl, 'the landing page, without what its query and fragment carry');
+        self::assertSame('https://track.example.com/tracking202/redirect/dl.php', $by[101]->pageUrl, 'else the tracking link, without its subids');
+        self::assertNull($by[102]->pageUrl, 'no page stored, none guessed');
+        self::assertNull($by[103]->pageUrl, 'a stored address that is not an http(s) URL is no page');
+        self::assertNull($by[100]->userAgent, 'no click stores one');
+        self::assertSame(['ORD-60', 'P202-' . $ids[''], 'ORD-62'], [$by[100]->transactionId, $by[101]->transactionId, $by[102]->transactionId]);
+        self::assertSame('P202-' . $ids[''], TrafficSourcePixels::withConversionEventId(new Connection(self::$db), [], 1, 101, $ids[''], '')[TrafficSourcePixels::EVENT_ID]);
+
+        $this->store()->update(1, $on, ['enabled' => false], time());
+        $facts = [];
+        $off = $create([]);
+        $denied = $create(['send_user_data' => true, 'consent' => ['ad_user_data' => 'denied']]);
+        $this->click(106);
+        self::fixture('INSERT INTO 202_clicks_advance SET click_id=106, ip_id=5');
+        self::fixture('INSERT INTO 202_clicks_visitor SET click_id=106, user_id=1, visitor_key=106, click_time=1');
+        $this->record(106, 'ORD-63');
+        self::assertSame(2, $queue()->sendDue(10, 5, time() + 2)['sent']);
+        self::assertCount(2, $facts);
+        foreach ($facts as $f) {
+            self::assertSame(106, $f->clickId);
+            self::assertNull($f->ipAddress, 'user data off, or ad_user_data denied: no address');
+        }
+        self::assertNotSame($off, $denied);
+    }
+
+    /**
+     * GA4's settings and credentials, with a send that keeps the facts it
+     * was handed and calls nothing.
+     *
+     * @param list<\Prosper202\Destinations\ConversionFacts> $facts
+     */
+    private function capturing(array &$facts): \Prosper202\Destinations\DestinationType
+    {
+        return new class ($facts) implements \Prosper202\Destinations\DestinationType {
+            private Ga4Destination $ga4;
+
+            /** @param list<\Prosper202\Destinations\ConversionFacts> $facts */
+            public function __construct(private array &$facts)
+            {
+                $this->ga4 = new Ga4Destination();
+            }
+
+            public function validate(array $settings, ?array $credentials): array
+            {
+                return $this->ga4->validate($settings, $credentials);
+            }
+
+            public function send(array $settings, array $credentials, \Prosper202\Destinations\ConversionFacts $facts, bool $test, int $now): \Prosper202\Destinations\SendResult
+            {
+                $this->facts[] = $facts;
+
+                return new \Prosper202\Destinations\SendResult(true, false, 204, '');
+            }
+
+            public function settingKeys(): array
+            {
+                return $this->ga4->settingKeys();
+            }
+
+            public function credentialKeys(): array
+            {
+                return $this->ga4->credentialKeys();
+            }
+
+            public function host(array $settings): string
+            {
+                return $this->ga4->host($settings);
+            }
+
+            public function backfillDays(): int
+            {
+                return $this->ga4->backfillDays();
+            }
+
+            public function takesConsent(): bool
+            {
+                return true;
+            }
+
+            public function configured(array $settings): bool
+            {
+                return true;
+            }
+
+            public function hashEmail(?string $email): ?string
+            {
+                return $this->ga4->hashEmail($email);
+            }
+
+            public function hashPhone(?string $phone): ?string
+            {
+                return $this->ga4->hashPhone($phone);
+            }
+
+            public function formSettings(array $post, array $settings): array
+            {
+                return $this->ga4->formSettings($post, $settings);
+            }
+
+            public function label(array $settings): string
+            {
+                return $this->ga4->label($settings);
+            }
+        };
+    }
+
+    private function openAiStore(): DestinationStore
+    {
+        $guard = new WebhookGuard(static fn (string $host): array => ['203.0.113.10'], '203.0.113.0/24');
+        $transport = function (array $options): array {
+            $this->bodies[] = json_decode((string) $options[CURLOPT_POSTFIELDS], true) + ['_url' => $options[CURLOPT_URL]];
+
+            return (array_shift($this->answers) ?? []) + ['status' => 200, 'error' => null, 'primary_ip' => '203.0.113.10', 'location' => null, 'body' => '{}'];
+        };
+
+        return new DestinationStore(new Connection(self::$db), [OpenAiAdsDestination::TYPE => new OpenAiAdsDestination(new WebhookSender($guard, $transport))]);
+    }
+
+    public function testAChatGptAdsConversionIsQueuedWithTheSaleAndSentAsOneWebEvent(): void
+    {
+        self::fixture('DELETE FROM 202_ppc_accounts WHERE ppc_account_id IN (70, 71)');
+        self::fixture("INSERT INTO 202_ppc_accounts SET ppc_account_id=70, user_id=1, ppc_network_id=1, ppc_account_name='ChatGPT', ppc_account_deleted=0");
+        self::fixture("INSERT INTO 202_ppc_accounts SET ppc_account_id=71, user_id=2, ppc_network_id=1, ppc_account_name='Theirs', ppc_account_deleted=0");
+        self::fixture("INSERT INTO 202_site_urls SET site_url_id=11, site_domain_id=1, site_url_address='https://shop.example.com/spring'");
+        self::fixture("INSERT INTO 202_customers SET customer_id=9, user_id=1, primary_ref='c-9', email=' Jane.Doe+promo@Gmail.com', phone='+1 555 123 4567',
+            first_seen_time=1, last_activity_time=1, created_at=1, updated_at=1");
+        $store = $this->openAiStore();
+        $create = static fn (array $settings): int => (int) $store->create(1, OpenAiAdsDestination::TYPE, 'ChatGPT Ads', $settings + ['pixel_id' => 'px_4821'], ['conversions_api_key' => 'oai-capi-Key_0123456789abcdef'], time())['destination_id'];
+
+        foreach ([
+            'settings.consent' => ['consent' => ['ad_user_data' => 'granted']],
+            'settings.ppc_account_id' => ['scope' => 'source', 'ppc_account_id' => 71],
+        ] as $field => $settings) {
+            try {
+                $create($settings);
+                self::fail('refused: ' . $field);
+            } catch (\Prosper202\Destinations\DestinationInputException $e) {
+                self::assertSame($field, $e->field);
+            }
+        }
+
+        $all = $create(['scope' => 'all', 'send_user_data' => true]);
+        $oppref = $create([]);
+        $this->click(100);
+        self::fixture('INSERT INTO 202_clicks_site SET click_id=100, click_landing_site_url_id=11');
+        $convId = $this->record(100, 'ORD-70');
+        self::fixture("UPDATE 202_conversion_logs SET customer_id=9 WHERE conv_id=$convId");
+        self::assertSame([[(string) $convId, 'pending']], array_map(static fn (array $r): array => [$r['conv_id'], $r['status']], self::deliveries($all)), 'queued in the conversion\'s transaction');
+
+        $queue = new DestinationQueue(new Connection(self::$db), $store, static fn (string $ip): bool => false);
+        $out = $queue->sendDue(10, 5, time() + 1);
+        self::assertSame([1, 1], [$out['sent'], $out['withheld']]);
+        self::assertStringContainsString('oppref', (string) self::deliveries($oppref)[0]['last_error'], 'scope oppref holds back a click without one');
+        self::assertCount(1, $this->bodies);
+        $body = $this->bodies[0];
+        self::assertSame('https://bzr.openai.com/v1/events?pid=px_4821', $body['_url']);
+        $event = $body['events'][0];
+        self::assertSame(['ORD-70', 'order_created', 'web', 'https://shop.example.com/spring'], [$event['id'], $event['type'], $event['action_source'], $event['source_url']]);
+        self::assertSame(['type' => 'contents', 'amount' => 1990, 'currency' => 'USD'], $event['data']);
+        self::assertSame([hash('sha256', 'jane.doe+promo@gmail.com')], $event['user']['emails_sha256'], 'OpenAI\'s normalisation, not Google\'s');
+        self::assertSame([hash('sha256', '15551234567')], $event['user']['phone_numbers_sha256']);
+
+        // The positive control for scope oppref: a click that carries one is sent, its id unmodified.
+        $this->click(102);
+        self::fixture('DELETE FROM 202_google WHERE click_id=102');
+        self::fixture("INSERT INTO 202_google SET click_id=102, gclid='', oppref='opp_7Hq2-Xk9_aZ'");
+        self::fixture('INSERT INTO 202_clicks_site SET click_id=102, click_landing_site_url_id=11');
+        $this->record(102, 'ORD-72');
+        self::assertSame(2, $queue->sendDue(10, 5, time() + 1)['sent']);
+        self::assertSame(['opp_7Hq2-Xk9_aZ', 'opp_7Hq2-Xk9_aZ'], array_map(static fn (array $b): ?string => $b['events'][0]['oppref'] ?? null, array_slice($this->bodies, 1)));
+        self::assertSame('sent', self::deliveries($oppref)[1]['status']);
+        $this->bodies = [];
+
+        // A visitor who may be in Europe is withheld even with privacy Disabled: OpenAI takes no consent signal.
+        $this->click(101);
+        $this->record(101, 'ORD-71');
+        $eu = new DestinationQueue(new Connection(self::$db), $store, static fn (string $ip): bool => true);
+        self::assertSame(2, $eu->sendDue(10, 5, time() + 2)['withheld']);
+        self::assertStringContainsString('takes no consent signal', (string) self::deliveries($all)[2]['last_error']);
+        self::assertSame([], $this->bodies);
+
+        try {
+            $queue->backfill(1, $all, 8, time());
+            self::fail('a backfill past 7 days is refused');
+        } catch (\Prosper202\Destinations\DestinationInputException $e) {
+            self::assertStringContainsString('1 to 7', $e->getMessage());
+        }
+        self::assertSame('ready', $store->get(1, $all)['status']);
     }
 
     public function testAHostThatDoesNotResolveIsRetriedNotFailed(): void

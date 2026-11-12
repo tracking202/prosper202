@@ -287,7 +287,7 @@ global postback (`gpb.php`) arrives with its SubID empty or unfilled, it finds
 the click by an ad click id the postback sends back
 ([Setup](27-setup.md#when-the-network-does-not-send-the-subid-back)). A
 postback that sends the id as `gclid`, `gbraid`, `wbraid`, `msclkid`,
-`fbclid` or `ttclid` needs nothing here. This setting is for a network that
+`fbclid`, `ttclid` or `oppref` needs nothing here. This setting is for a network that
 returns it under its own parameter name: list the names, separated by commas
 (`aff_sub3` or `aff_sub3,sub5`), at most 5, each letters, digits, `_` and `-`
 as it appears in the postback URL. The value of a listed parameter is tried

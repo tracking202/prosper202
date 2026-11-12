@@ -30,6 +30,7 @@ use Prosper202\Destinations\Ga4Destination;
 use Prosper202\Destinations\GoogleAdsAccounts;
 use Prosper202\Destinations\GoogleAdsDestination;
 use Prosper202\Destinations\GoogleAdsOAuth;
+use Prosper202\Destinations\OpenAiAdsDestination;
 
 /*
  * Setup › Destinations: the ad platforms this account's conversions are sent
@@ -170,6 +171,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     error_log(p202UncaughtLogLine('Setup › Destinations: the new destination was not sent on to Google', $e));
                 }
                 header('location: ' . $next);
+                die();
+            } elseif ($action === 'create_openai_ads') {
+                $str = static fn (string $k): string => is_string($_POST[$k] ?? null) ? trim($_POST[$k]) : '';
+                $settings = array_filter([
+                    'pixel_id' => $str('oai_pixel_id'),
+                    'event_type' => $str('oai_event_type'),
+                    'custom_event_name' => $str('oai_custom_event_name'),
+                    'scope' => $str('oai_scope'),
+                ], static fn (string $v): bool => $v !== '') + ['send_user_data' => ($_POST['oai_send_user_data'] ?? '') === '1'];
+                if ($str('oai_ppc_account_id') !== '') {
+                    $settings['ppc_account_id'] = \Prosper202\Http\PostedId::read($_POST['oai_ppc_account_id'])
+                        ?? throw new DestinationInputException('settings.ppc_account_id', 'Pick the traffic source account from the list.');
+                }
+                $created = $store->create($userId, OpenAiAdsDestination::TYPE, $str('oai_name'), $settings, ['conversions_api_key' => $str('oai_conversions_api_key')], time());
+                header('location: ' . $self . '?done=created&id=' . (int) $created['destination_id'] . '#d' . (int) $created['destination_id']);
                 die();
             } elseif ($action === 'pick_google_ads') {
                 try {
@@ -336,6 +352,17 @@ $formErrors = static fn (string $form): array => $postedAction === $form ? $erro
 $editedId = $postedAction === 'update' && $errors !== [] && in_array($id ?? 0, array_map(static fn (array $d): int => (int) $d['destination_id'], $destinations), true) ? $id : null;
 $ga4Errors = $formErrors('create_ga4');
 $gadsErrors = $formErrors('create_google_ads');
+$oaiErrors = $formErrors('create_openai_ads');
+$oaiFields = [
+    ['oai_name', 'name', 'Name', 'text', 'ChatGPT Ads', ''],
+    ['oai_pixel_id', 'settings.pixel_id', 'Pixel ID', 'text', '', 'Ads Manager › Conversions › your web pixel.'],
+    ['oai_conversions_api_key', 'credentials.conversions_api_key', 'Conversions API key', 'password', '', 'Ads Manager › Conversions › Conversions API keys › Create. Stored encrypted, never shown again.'],
+];
+$oaiEventTypes = array_combine(array_keys(OpenAiAdsDestination::EVENT_TYPES), array_keys(OpenAiAdsDestination::EVENT_TYPES));
+$trafficSources = [];
+foreach (p202_destination_traffic_sources($conn, $userId) as $accountId => $accountLabel) {
+    $trafficSources[$accountId] = $accountLabel;
+}
 $when = static fn (int $ts): string => date('Y-m-d H:i', $ts);
 $consentChoices = ['' => 'Not stated', 'granted' => 'Granted', 'denied' => 'Denied'];
 $gaFields = [
@@ -356,7 +383,7 @@ $gadsIdFields = [
     ['gads_login_customer_id', 'settings.login_customer_id', 'Manager account ID', '', 'Only when your access to that account is through a manager account.'],
     ['gads_conversion_action', 'settings.conversion_action', 'Conversion action ID', '', 'Goals › Conversions › your action (source Import, clicks): the number after ctId= in its address.'],
 ];
-$formFields = ['api_key', 'ppc_account_id', 'name', 'settings.measurement_id', 'settings.event_name', 'settings.client_id_source', 'credentials.api_secret', 'settings.consent.ad_user_data', 'settings.consent.ad_personalization',
+$formFields = ['api_key', 'ppc_account_id', 'settings.pixel_id', 'settings.event_type', 'settings.custom_event_name', 'settings.scope', 'settings.ppc_account_id', 'credentials.conversions_api_key', 'name', 'settings.measurement_id', 'settings.event_name', 'settings.client_id_source', 'credentials.api_secret', 'settings.consent.ad_user_data', 'settings.consent.ad_personalization',
     'settings.customer_id', 'settings.login_customer_id', 'settings.conversion_action', 'credentials.developer_token', 'credentials.oauth_client_id', 'credentials.oauth_client_secret'];
 
 AUTH::set_timezone($_SESSION['user_timezone'] ?? date_default_timezone_get());
@@ -475,8 +502,9 @@ if ($logDestination !== null) {
                 <div class="mb-4" id="d<?php echo $id; ?>">
                     <div class="p202-list__item">
                         <span class="p202-list__name"><?php echo p202_setup_e($d['name']); ?></span>
-                        <?php $isAds = $d['type'] === GoogleAdsDestination::TYPE; ?>
-                        <span class="p202-pill"><?php echo $isAds ? 'Google Ads ' . p202_setup_e(p202_gads_named($settings, 'customer', 'customer_id')) : p202_setup_e(strtoupper($d['type'])) . ' ' . p202_setup_e((string) ($settings['measurement_id'] ?? '')); ?></span>
+                        <?php $isAds = $d['type'] === GoogleAdsDestination::TYPE;
+                        $adapter = $store->types()[$d['type']] ?? null; ?>
+                        <span class="p202-pill"><?php echo p202_setup_e($adapter !== null ? $adapter->label($settings) : strtoupper($d['type'])); ?></span>
                         <span class="p202-pill<?php echo $d['enabled'] ? ' p202-pill--accent' : ''; ?>"><?php echo $d['enabled'] ? 'on' : 'off'; ?></span>
                         <?php if (($d['status'] ?? 'ready') !== 'ready') { ?>
                         <span class="p202-pill"><?php echo ['needs_authorisation' => 'not connected', 'needs_account' => 'pick its account'][$d['status']] ?? 'credentials unreadable'; ?></span>
@@ -494,10 +522,14 @@ if ($logDestination !== null) {
                             <a class="p202-list__action" href="<?php echo p202_setup_e($self . '?choose=' . $id . '#d' . $id); ?>">change account or action</a>
                             <?php } ?>
                         </span>
-                        <?php $typeMeta = $isAds
+                        <?php $typeMeta = $d['type'] === OpenAiAdsDestination::TYPE
+                            ? 'event ' . p202_setup_e((string) (($settings['event_type'] ?? '') === 'custom' ? ($settings['custom_event_name'] ?? '') : ($settings['event_type'] ?? '')))
+                                . (empty($settings['event_types']) ? '' : ' (+' . count((array) $settings['event_types']) . ' per campaign)')
+                                . ' · ' . p202_setup_e(p202_destination_openai_scope((string) ($settings['scope'] ?? 'oppref')))
+                            : ($isAds
                             ? 'conversion action ' . p202_setup_e(isset($settings['conversion_action']) ? p202_gads_named($settings, 'conversion_action', 'conversion_action') : 'not picked yet')
                                 . (empty($settings['campaign_conversion_actions']) ? '' : ' (+' . count((array) $settings['campaign_conversion_actions']) . ' per campaign)')
-                            : 'event ' . p202_setup_e((string) ($settings['event_name'] ?? '')) . ' · client id from ' . p202_setup_e((string) ($settings['client_id_source'] ?? '')); ?>
+                            : 'event ' . p202_setup_e((string) ($settings['event_name'] ?? '')) . ' · client id from ' . p202_setup_e((string) ($settings['client_id_source'] ?? ''))); ?>
                         <span class="p202-list__meta"><?php echo $typeMeta; ?> · <?php echo empty($settings['campaign_ids']) ? 'every campaign' : count($settings['campaign_ids']) . ' campaign(s)'; ?> · hashed user data <?php echo !empty($settings['send_user_data']) ? 'on' : 'off'; ?></span>
                     </div>
                     <?php if ($isAds && !isset($settings['settings_invalid']) && (($d['status'] ?? '') === 'needs_account' || ($choose === $id && ($d['status'] ?? '') === 'ready'))) {
@@ -508,16 +540,18 @@ if ($logDestination !== null) {
                         echo p202_flash('bad', 'Conversions are waiting for you, using none of their tries: ' . rtrim((string) $d['waiting']['reason'], '. ')
                             . '. They are tried again at ' . $when((int) $d['waiting']['until']) . ', or at once when you connect it again or save its settings or credentials (Edit, below).');
                     } ?>
-                    <?php echo p202_destination_privacy_note($privacy, $settings, $base); ?>
+                    <?php echo p202_destination_privacy_note($privacy, $settings, $base, $adapter?->takesConsent() ?? true); ?>
                     <?php if ($test !== null && (int) $test['id'] === $id) {
                         echo p202_flash($test['valid'] ? 'ok' : 'bad', $test['valid']
-                            ? ($isAds
+                            ? ($d['type'] === OpenAiAdsDestination::TYPE
+                                ? 'OpenAI checked the test event (validate only, nothing saved): the pixel id and Conversions API key are accepted. Confirm the first real conversions in Ads Manager › Conversions.'
+                                : ($isAds
                                 ? 'Google Ads checked the test upload (validate only, nothing recorded): the authorisation, developer token, account and conversion action are accepted. Only its made-up click id was refused, as expected.'
-                                : 'GA4\'s validation endpoint accepted the test event. Nothing was recorded in your property. It does not check the API secret: confirm the first real conversions in GA4\'s Realtime report.')
+                                : 'GA4\'s validation endpoint accepted the test event. Nothing was recorded in your property. It does not check the API secret: confirm the first real conversions in GA4\'s Realtime report.'))
                             : 'The test was refused: ' . ($test['messages'] !== [] ? implode(' ', $test['messages']) : (string) ($test['reason'] ?? 'no reason given')));
                     } ?>
                     <?php echo p202_destination_health($d, $health[$id], $self, (string) ($_SESSION['token'] ?? ''), $canSeeLog); ?>
-                    <?php echo p202_destination_edit($d, $campaignLabels, $editedId === $id ? $posted : null, $editedId === $id ? $errors : [], $self, (string) ($_SESSION['token'] ?? ''), p202_destination_privacy_sentence($privacy), $base); ?>
+                    <?php echo p202_destination_edit($d, $campaignLabels, $editedId === $id ? $posted : null, $editedId === $id ? $errors : [], $self, (string) ($_SESSION['token'] ?? ''), p202_destination_privacy_sentence($privacy), $base, $trafficSources); ?>
                     <?php if ($canSeeLog && isset($recent[$id])) { ?>
                     <div class="p202-table-wrap">
                         <table class="table p202-table">
@@ -638,6 +672,68 @@ if ($logDestination !== null) {
                 </details>
                 <div class="p202-form-actions">
                     <button type="submit" class="btn btn-primary">Add and connect Google Ads</button>
+                </div>
+            </div>
+        </form>
+
+        <form class="p202-panel mt-4" id="add-openai-ads" method="post" action="<?php echo p202_setup_e($self); ?>#add-openai-ads" autocomplete="off">
+            <?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>
+            <input type="hidden" name="action" value="create_openai_ads">
+            <div class="p202-panel__head">
+                <h2 class="p202-panel__title">Add ChatGPT Ads</h2>
+                <span class="p202-panel__sub">OpenAI Conversions API</span>
+            </div>
+            <div class="p202-panel__body">
+                <?php foreach ($oaiFields as [$field, $key, $label, $type, $placeholder, $help]) { ?>
+                <div class="mb-3">
+                    <label class="form-label" for="<?php echo $field; ?>"><?php echo p202_setup_e($label); ?></label>
+                    <input type="<?php echo $type; ?>" class="form-control<?php echo p202_setup_invalid($oaiErrors, $key); ?>" id="<?php echo $field; ?>" name="<?php echo $field; ?>" placeholder="<?php echo p202_setup_e($placeholder); ?>" value="<?php echo $type === 'password' || $postedAction !== 'create_openai_ads' ? '' : p202_setup_e($value($field)); ?>">
+                    <?php echo p202_setup_feedback($oaiErrors, $key); ?>
+                    <?php if ($help !== '') {
+                        ?><div class="form-text"><?php echo p202_setup_e($help); ?></div><?php
+                    } ?>
+                </div>
+                <?php } ?>
+                <div class="form-text mb-3">Sends conversions whose click came from a ChatGPT ad (it carries OpenAI's click id, oppref) as <code>order_created</code> events. Each is sent once: OpenAI keeps the first event it gets for a conversion and takes no refund or change afterwards. Conversions older than 7 days are not taken. <?php echo p202_setup_e(p202_destination_openai_privacy_sentence($privacy)); ?></div>
+                <details class="p202-disclosure mb-3" data-p202-remember="setup-destinations-openai"<?php echo array_intersect_key($oaiErrors, array_flip(['settings.event_type', 'settings.custom_event_name', 'settings.scope', 'settings.ppc_account_id'])) !== [] ? ' open' : ''; ?>>
+                    <summary>Advanced <span class="p202-disclosure__hint">event type, which conversions, hashed user data</span></summary>
+                    <div class="p202-disclosure__body">
+                        <div class="mb-3">
+                            <label class="form-label" for="oai_event_type">Event type</label>
+                            <select class="form-select<?php echo p202_setup_invalid($oaiErrors, 'settings.event_type'); ?>" id="oai_event_type" name="oai_event_type">
+                                <?php echo p202_setup_options($oaiEventTypes, $postedAction === 'create_openai_ads' ? $value('oai_event_type', 'order_created') : 'order_created'); ?>
+                            </select>
+                            <?php echo p202_setup_feedback($oaiErrors, 'settings.event_type'); ?>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="oai_custom_event_name">Custom event name</label>
+                            <input type="text" class="form-control<?php echo p202_setup_invalid($oaiErrors, 'settings.custom_event_name'); ?>" id="oai_custom_event_name" name="oai_custom_event_name" value="<?php echo $postedAction !== 'create_openai_ads' ? '' : p202_setup_e($value('oai_custom_event_name')); ?>">
+                            <?php echo p202_setup_feedback($oaiErrors, 'settings.custom_event_name'); ?>
+                            <div class="form-text">Only with the event type custom: lowercase letters, digits, - and _.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="oai_scope">Which conversions</label>
+                            <select class="form-select<?php echo p202_setup_invalid($oaiErrors, 'settings.scope'); ?>" id="oai_scope" name="oai_scope">
+                                <?php echo p202_setup_options(array_combine(OpenAiAdsDestination::SCOPES, array_map('p202_destination_openai_scope', OpenAiAdsDestination::SCOPES)), $postedAction === 'create_openai_ads' ? $value('oai_scope', 'oppref') : 'oppref'); ?>
+                            </select>
+                            <?php echo p202_setup_feedback($oaiErrors, 'settings.scope'); ?>
+                            <div class="form-text">Every conversion lets OpenAI credit people who saw an ad without clicking it, and sends OpenAI conversions from your other traffic too.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="oai_ppc_account_id">Traffic source account</label>
+                            <select class="form-select<?php echo p202_setup_invalid($oaiErrors, 'settings.ppc_account_id'); ?>" id="oai_ppc_account_id" name="oai_ppc_account_id">
+                                <?php echo p202_setup_options($trafficSources, $postedAction === 'create_openai_ads' ? $value('oai_ppc_account_id') : '', 'Only with one traffic source…'); ?>
+                            </select>
+                            <?php echo p202_setup_feedback($oaiErrors, 'settings.ppc_account_id'); ?>
+                        </div>
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" id="oai_send_user_data" name="oai_send_user_data" value="1"<?php echo $postedAction === 'create_openai_ads' && $value('oai_send_user_data') === '1' ? ' checked' : ''; ?>>
+                            <label class="form-check-label" for="oai_send_user_data">Send hashed email and phone, and the visitor's IP address</label>
+                        </div>
+                    </div>
+                </details>
+                <div class="p202-form-actions">
+                    <button type="submit" class="btn btn-primary">Add destination</button>
                 </div>
             </div>
         </form>

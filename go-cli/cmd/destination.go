@@ -23,7 +23,9 @@ var (
 	destinationIDPattern    = regexp.MustCompile(`^[1-9][0-9]{0,9}$`)
 	destinationParamFields  = []string{"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "keyword", "c1", "c2", "c3", "c4", "campaign_id", "click_id"}
 	destinationConsent      = newEnum([]string{"granted", "denied", "unset"}, enumHint("What you state for Google's consent signal; unset stops sending it."))
-	destinationTypes        = newEnum([]string{"ga4", "google_ads"})
+	destinationTypes        = newEnum([]string{"ga4", "google_ads", "openai_ads"})
+	openAiEventTypes        = []string{"order_created", "checkout_started", "items_added", "contents_viewed", "lead_created", "registration_completed", "appointment_scheduled", "page_viewed", "subscription_created", "trial_started", "custom"}
+	openAiScopes            = newEnum([]string{"oppref", "source", "all"}, enumHint("oppref: only conversions from ChatGPT ad clicks (the default); source: every conversion of --ppc-account-id; all: every conversion."))
 	googleAdsCredentialKeys = []string{"developer_token", "oauth_client_id", "oauth_client_secret"}
 )
 
@@ -31,12 +33,13 @@ const destinationListHint = "`p202 destination list` shows your destinations and
 
 var destinationCmd = &cobra.Command{
 	Use:   "destination",
-	Short: "Send conversions to ad platforms (GA4, Google Ads) from your server: add, test, delivery log",
+	Short: "Send conversions to ad platforms (GA4, Google Ads, ChatGPT Ads) from your server: add, test, delivery log",
 	Long: "Each new conversion is queued for every enabled destination with the conversion itself and\n" +
 		"sent by the minutely cron job from this server, retried with backoff. Raw personal data never\n" +
 		"leaves it: with --send-user-data, only SHA-256 hashes of the customer's normalised email and phone.\n\n" +
 		"  p202 destination create --name \"Store GA4\" --measurement-id G-ABC123 --api-secret-file secret.txt\n" +
 		"  p202 destination create --type google_ads --name Search --credentials-file google-ads.json\n" +
+		"  p202 destination create --type openai_ads --name \"ChatGPT Ads\" --pixel-id px_4821 --conversions-api-key-file key.txt\n" +
 		"  p202 destination connect 2   # open the link it prints, signed in to Prosper202\n" +
 		"  p202 destination pick 2 --account \"Online Store\" --action Purchase   # from your Google Ads account\n" +
 		"  p202 destination test 1\n" +
@@ -61,24 +64,35 @@ func destinationNoStaged(name string) error {
 
 // readAPISecret reads the secret from --api-secret-file ("-" is piped stdin).
 func readAPISecret(file string) (string, error) {
+	return readSecretFile(file, "api-secret-file", "API secret",
+		"Create a secret in GA4: Admin › Data streams › your web stream › Measurement Protocol API secrets.")
+}
+
+// readConversionsAPIKey reads the key from --conversions-api-key-file ("-" is piped stdin).
+func readConversionsAPIKey(file string) (string, error) {
+	return readSecretFile(file, "conversions-api-key-file", "Conversions API key",
+		"Create a key in ChatGPT Ads Manager › Conversions › Conversions API keys.")
+}
+
+// readSecretFile reads one secret from a file ("-" is piped stdin), trimmed.
+func readSecretFile(file, flag, what, emptyHint string) (string, error) {
 	var raw []byte
 	var err error
 	if file == "-" {
 		if isTerminal(os.Stdin) {
-			return "", validationError("--api-secret-file - reads piped stdin, and nothing is piped").
-				WithHint("Pipe it in (`printf %%s \"$SECRET\" | p202 destination create … --api-secret-file -`) or pass a file path.")
+			return "", validationError("--%s - reads piped stdin, and nothing is piped", flag).
+				WithHint("Pipe it in (`printf %%s \"$SECRET\" | p202 destination create … --%s -`) or pass a file path.", flag)
 		}
 		raw, err = io.ReadAll(io.LimitReader(os.Stdin, 4096))
 	} else {
 		raw, err = os.ReadFile(file)
 	}
 	if err != nil {
-		return "", validationError("reading the API secret: %v", err).WithHint("Pass the path of a file holding only the secret, or - for piped stdin.")
+		return "", validationError("reading the %s: %v", what, err).WithHint("Pass the path of a file holding only the secret, or - for piped stdin.")
 	}
 	secret := strings.TrimSpace(string(raw))
 	if secret == "" {
-		return "", validationError("the API secret file is empty").
-			WithHint("Create a secret in GA4: Admin › Data streams › your web stream › Measurement Protocol API secrets.")
+		return "", validationError("the %s file is empty", what).WithHint("%s", emptyHint)
 	}
 	return secret, nil
 }
@@ -124,8 +138,9 @@ func readGoogleAdsCredentials(file string) (map[string]interface{}, error) {
 // settingKeys and its credentials). A flag of the other type is refused,
 // never dropped: an agent would read a dropped flag as applied.
 var destinationTypeFlags = map[string][]string{
-	"ga4":        {"measurement-id", "api-secret-file", "event-name", "client-id-source", "user-id-source", "param"},
-	"google_ads": {"credentials-file", "customer-id", "login-customer-id", "conversion-action", "campaign-conversion-action"},
+	"ga4":        {"measurement-id", "api-secret-file", "event-name", "client-id-source", "user-id-source", "param", "ad-user-data", "ad-personalization"},
+	"google_ads": {"credentials-file", "customer-id", "login-customer-id", "conversion-action", "campaign-conversion-action", "ad-user-data", "ad-personalization"},
+	"openai_ads": {"pixel-id", "conversions-api-key-file", "event-type", "custom-event-name", "campaign-event-type", "scope", "ppc-account-id"},
 }
 
 // destinationFlagsFor refuses a flag the destination's type does not read.
@@ -135,7 +150,7 @@ func destinationFlagsFor(cmd *cobra.Command, typ, hint string) error {
 			continue
 		}
 		for _, f := range destinationTypeFlags[other] {
-			if cmd.Flags().Changed(f) {
+			if cmd.Flags().Changed(f) && !containsString(destinationTypeFlags[typ], f) {
 				return validationError("--%s is for %s destinations; this one is %s", f, other, typ).WithHint(hint, f)
 			}
 		}
@@ -163,16 +178,60 @@ func destinationSettings(cmd *cobra.Command, base map[string]interface{}) (map[s
 		s[k] = v
 	}
 	for flag, key := range map[string]string{"measurement-id": "measurement_id", "event-name": "event_name",
-		"customer-id": "customer_id", "login-customer-id": "login_customer_id", "conversion-action": "conversion_action"} {
+		"customer-id": "customer_id", "login-customer-id": "login_customer_id", "conversion-action": "conversion_action",
+		"pixel-id": "pixel_id", "custom-event-name": "custom_event_name"} {
 		if cmd.Flags().Changed(flag) {
 			v, _ := cmd.Flags().GetString(flag)
 			s[key] = v
 		}
 	}
-	for flag, key := range map[string]string{"client-id-source": "client_id_source", "user-id-source": "user_id_source"} {
+	for flag, key := range map[string]string{"client-id-source": "client_id_source", "user-id-source": "user_id_source", "event-type": "event_type", "scope": "scope"} {
 		if v := enumValue(cmd, flag); v != "" {
 			s[key] = v
 		}
+	}
+	if cmd.Flags().Changed("scope") && s["scope"] != "source" {
+		// The account is a setting of scope source only; the server refuses it beside any other.
+		if cmd.Flags().Changed("ppc-account-id") {
+			return nil, validationError("--ppc-account-id is for --scope source").WithHint("Give --scope source with it, or leave it out.")
+		}
+		delete(s, "ppc_account_id")
+	}
+	if cmd.Flags().Changed("ppc-account-id") {
+		n, _ := cmd.Flags().GetInt("ppc-account-id")
+		if n <= 0 {
+			return nil, validationError("--ppc-account-id must be a traffic source account id: %d", n).WithHint("`p202 ppc-account list` shows the ids.")
+		}
+		s["ppc_account_id"] = n
+	}
+	if cmd.Flags().Changed("event-type") && s["event_type"] != "custom" {
+		if cmd.Flags().Changed("custom-event-name") {
+			return nil, validationError("--custom-event-name is for --event-type custom").WithHint("Give --event-type custom with it, or leave it out.")
+		}
+		delete(s, "custom_event_name")
+	}
+	if cmd.Flags().Changed("campaign-event-type") {
+		// Merged into the stored map, as --campaign-conversion-action is: N= (on an update) removes campaign N's.
+		types := map[string]interface{}{}
+		if stored, ok := s["event_types"].(map[string]interface{}); ok {
+			for k, v := range stored {
+				types[k] = v
+			}
+		}
+		values, _ := cmd.Flags().GetStringArray("campaign-event-type")
+		for _, p := range values {
+			id, typ, ok := strings.Cut(p, "=")
+			if n, err := strconv.Atoi(id); !ok || err != nil || n <= 0 || (typ == "" && base == nil) || (typ != "" && (!containsString(openAiEventTypes, typ) || typ == "custom")) {
+				return nil, validationError("--campaign-event-type %q must be campaign_id=event_type, the type one of: %s", p, strings.Join(openAiEventTypes[:len(openAiEventTypes)-1], ", ")).
+					WithHint("For example --campaign-event-type 12=lead_created; on an update, 12= removes campaign 12's. `p202 campaign list` shows the campaign ids.")
+			}
+			if typ == "" {
+				delete(types, id)
+				continue
+			}
+			types[id] = typ
+		}
+		s["event_types"] = types
 	}
 	if cmd.Flags().Changed("param") {
 		params := map[string]interface{}{}
@@ -297,19 +356,26 @@ var destinationGetCmd = &cobra.Command{
 
 var destinationCreateCmd = &cobra.Command{
 	Use:   "create --name <name> --measurement-id <G-…> --api-secret-file <file>",
-	Short: "Add a GA4 or Google Ads destination",
+	Short: "Add a GA4, Google Ads or ChatGPT Ads destination",
 	Long: "GA4 (the default): each new conversion goes to a GA4 web stream as an event (purchase by default)\n" +
 		"with its value, currency and transaction id. Run `p202 destination test <id>` after: GA4's\n" +
 		"validation endpoint says what is wrong without recording anything.\n\n" +
 		"--type google_ads uploads each new conversion as a click conversion with your own developer\n" +
 		"token and OAuth client (--credentials-file, a JSON file). Then run\n" +
-		"`p202 destination connect <id>` and open the address it prints; until then conversions wait.",
+		"`p202 destination connect <id>` and open the address it prints; until then conversions wait.\n\n" +
+		"--type openai_ads sends each new conversion to ChatGPT Ads through OpenAI's Conversions API with\n" +
+		"--pixel-id and --conversions-api-key-file. By default only conversions whose click was on a\n" +
+		"ChatGPT ad (it carries oppref) go; --scope all sends every conversion. OpenAI keeps the first event\n" +
+		"it gets for a conversion and takes nothing older than 7 days.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if enumValue(cmd, "type") == "google_ads" {
+		switch enumValue(cmd, "type") {
+		case "google_ads":
 			return createGoogleAdsDestination(cmd)
+		case "openai_ads":
+			return createOpenAiDestination(cmd)
 		}
-		if err := destinationFlagsFor(cmd, "ga4", "Add --type google_ads to make a Google Ads destination, or leave --%s out."); err != nil {
+		if err := destinationFlagsFor(cmd, "ga4", "Add --type google_ads or --type openai_ads for that kind of destination, or leave --%s out."); err != nil {
 			return err
 		}
 		name, _ := cmd.Flags().GetString("name")
@@ -341,8 +407,40 @@ var destinationCreateCmd = &cobra.Command{
 	},
 }
 
+func createOpenAiDestination(cmd *cobra.Command) error {
+	if err := destinationFlagsFor(cmd, "openai_ads", "Leave --%s out: it is not a ChatGPT Ads setting."); err != nil {
+		return err
+	}
+	name, _ := cmd.Flags().GetString("name")
+	file, _ := cmd.Flags().GetString("conversions-api-key-file")
+	if name == "" || file == "" || !cmd.Flags().Changed("pixel-id") {
+		return validationError("--name, --pixel-id and --conversions-api-key-file are required for openai_ads").
+			WithHint("Both are in ChatGPT Ads Manager › Conversions: your web pixel's id, and a key under Conversions API keys.")
+	}
+	settings, err := destinationSettings(cmd, nil)
+	if err != nil {
+		return err
+	}
+	key, err := readConversionsAPIKey(file)
+	if err != nil {
+		return err
+	}
+	c, err := destinationClient("create")
+	if err != nil {
+		return err
+	}
+	data, err := c.Post("destinations", map[string]interface{}{
+		"type": "openai_ads", "name": name, "settings": settings, "credentials": map[string]interface{}{"conversions_api_key": key},
+	})
+	if err != nil {
+		return err
+	}
+	render(data)
+	return nil
+}
+
 func createGoogleAdsDestination(cmd *cobra.Command) error {
-	if err := destinationFlagsFor(cmd, "google_ads", "Leave --%s out: it is a GA4 setting."); err != nil {
+	if err := destinationFlagsFor(cmd, "google_ads", "Leave --%s out: it is not a Google Ads setting."); err != nil {
 		return err
 	}
 	name, _ := cmd.Flags().GetString("name")
@@ -521,9 +619,15 @@ var destinationUpdateCmd = &cobra.Command{
 		if enable && disable {
 			return validationError("--enable and --disable are exclusive").WithHint("Give one of them.")
 		}
-		if cmd.Flags().Changed("api-secret-file") && cmd.Flags().Changed("credentials-file") {
-			return validationError("--api-secret-file and --credentials-file are exclusive: a destination has one kind of credentials").
-				WithHint("--api-secret-file is a GA4 destination's, --credentials-file a Google Ads one's; `p202 destination get %s` shows its type.", args[0])
+		credentialFlags := 0
+		for _, f := range []string{"api-secret-file", "credentials-file", "conversions-api-key-file"} {
+			if cmd.Flags().Changed(f) {
+				credentialFlags++
+			}
+		}
+		if credentialFlags > 1 {
+			return validationError("--api-secret-file, --credentials-file and --conversions-api-key-file are exclusive: a destination has one kind of credentials").
+				WithHint("--api-secret-file is a GA4 destination's, --credentials-file a Google Ads one's, --conversions-api-key-file a ChatGPT Ads one's; `p202 destination get %s` shows its type.", args[0])
 		}
 		c, err := destinationClient("update")
 		if err != nil {
@@ -538,7 +642,8 @@ var destinationUpdateCmd = &cobra.Command{
 			body["enabled"] = enable
 		}
 		settingsFlags := []string{"measurement-id", "event-name", "client-id-source", "user-id-source", "param", "campaign-id", "all-campaigns", "send-user-data", "ad-user-data", "ad-personalization",
-			"customer-id", "login-customer-id", "conversion-action", "campaign-conversion-action"}
+			"customer-id", "login-customer-id", "conversion-action", "campaign-conversion-action",
+			"pixel-id", "event-type", "custom-event-name", "campaign-event-type", "scope", "ppc-account-id"}
 		changed := false
 		for _, f := range settingsFlags {
 			changed = changed || cmd.Flags().Changed(f)
@@ -572,6 +677,13 @@ var destinationUpdateCmd = &cobra.Command{
 				return err
 			}
 			body["credentials"] = map[string]interface{}{"api_secret": secret}
+		}
+		if file, _ := cmd.Flags().GetString("conversions-api-key-file"); file != "" {
+			key, err := readConversionsAPIKey(file)
+			if err != nil {
+				return err
+			}
+			body["credentials"] = map[string]interface{}{"conversions_api_key": key}
 		}
 		if file, _ := cmd.Flags().GetString("credentials-file"); file != "" {
 			creds, err := readGoogleAdsCredentials(file)
@@ -756,6 +868,15 @@ func destinationSettingFlags(cmd *cobra.Command) {
 	cmd.Flags().String("login-customer-id", "", "For google_ads: the manager account your access goes through, if any")
 	cmd.Flags().String("conversion-action", "", "For google_ads: conversion action ID (ctId in its address), or customers/<id>/conversionActions/<id>")
 	cmd.Flags().StringArray("campaign-conversion-action", nil, "For google_ads: campaign_id=conversion_action for one campaign (repeatable); on update it is merged with the stored ones, and campaign_id= removes one")
+	cmd.Flags().String("pixel-id", "", "For openai_ads: the ChatGPT Ads web pixel id (Ads Manager › Conversions)")
+	cmd.Flags().String("conversions-api-key-file", "", "For openai_ads: file holding the Conversions API key; - reads piped stdin")
+	cmd.Flags().String("event-type", "", "For openai_ads: the event type conversions are sent as, one of {values} (default order_created)")
+	cmd.Flags().String("custom-event-name", "", "For openai_ads with --event-type custom: its name (lowercase letters, digits, - and _)")
+	cmd.Flags().StringArray("campaign-event-type", nil, "For openai_ads: campaign_id=event_type for one campaign (repeatable); on update it is merged with the stored ones, and campaign_id= removes one")
+	cmd.Flags().String("scope", "", "For openai_ads: which conversions are sent, one of {values}")
+	cmd.Flags().Int("ppc-account-id", 0, "For openai_ads with --scope source: the traffic source account whose conversions are sent")
+	enumFlag(cmd, "event-type", newEnum(openAiEventTypes))
+	enumFlag(cmd, "scope", openAiScopes)
 	enumFlag(cmd, "client-id-source", newEnum([]string{"click", "c1", "c2", "c3", "c4"}))
 	enumFlag(cmd, "user-id-source", newEnum([]string{"none", "customer"}))
 	enumFlag(cmd, "ad-user-data", destinationConsent)
@@ -784,7 +905,7 @@ func init() {
 	destinationResendCmd.Flags().Int("delivery-id", 0, "The one delivery to send again (from `destination deliveries`)")
 	destinationResendCmd.Flags().String("status", "", "Send every delivery of this status again, one of {values}")
 	enumFlag(destinationResendCmd, "status", destinationResendStatuses)
-	destinationBackfillCmd.Flags().Int("days", 0, "How many days back (1-3 for GA4, 1-90 for Google Ads)")
+	destinationBackfillCmd.Flags().Int("days", 0, "How many days back (1-3 for GA4, 1-7 for ChatGPT Ads, 1-90 for Google Ads)")
 	destinationCmd.AddCommand(destinationListCmd, destinationGetCmd, destinationCreateCmd, destinationUpdateCmd,
 		destinationDeleteCmd, destinationTestCmd, destinationDeliveriesCmd, destinationConnectCmd,
 		destinationResendCmd, destinationBackfillCmd,

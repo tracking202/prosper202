@@ -53,6 +53,12 @@ final readonly class ClickRecord
     public const FBCLID_CHARS = 1000;
 
     /**
+     * OpenAI's click id on a ChatGPT ad's landing URL, 202_google.oppref:
+     * opaque and of undocumented length, so a VARCHAR(1000) as the fbclid.
+     */
+    public const OPPREF_CHARS = 1000;
+
+    /**
      * The ad platforms' click ids a click keeps, each by the request
      * parameter it arrives in, with its column's width in characters.
      */
@@ -63,6 +69,7 @@ final readonly class ClickRecord
         'ttclid' => self::TTCLID_CHARS,
         'msclkid' => self::MSCLKID_CHARS,
         'fbclid' => self::FBCLID_CHARS,
+        'oppref' => self::OPPREF_CHARS,
     ];
 
     private const DECIMAL = '/\A-?\d+(?:\.\d+)?\z/';
@@ -98,6 +105,11 @@ final readonly class ClickRecord
         return StoredText::chars($fbclid, self::FBCLID_CHARS);
     }
 
+    public static function storedOppref(string $oppref): string
+    {
+        return StoredText::chars($oppref, self::OPPREF_CHARS);
+    }
+
     /**
      * An ad click id (AD_CLICK_IDS, by name) as its column keeps it: cut to
      * the column's width in characters, as the gclid always was.
@@ -113,6 +125,7 @@ final readonly class ClickRecord
             'ttclid' => self::storedTtclid($value),
             'msclkid' => self::storedMsclkid($value),
             'fbclid' => self::storedFbclid($value),
+            'oppref' => self::storedOppref($value),
             default => throw new InvalidArgumentException("$name is not an ad click id a click keeps"),
         };
     }
@@ -174,6 +187,7 @@ final readonly class ClickRecord
         public string $ttclid = '',
         public string $msclkid = '',
         public string $fbclid = '',
+        public string $oppref = '',
         public int $utmSourceId = 0,
         public int $utmMediumId = 0,
         public int $utmCampaignId = 0,
@@ -273,7 +287,7 @@ final readonly class ClickRecord
         }
         $adClickIds = [
             'gclid' => $gclid, 'gbraid' => $gbraid, 'wbraid' => $wbraid, 'ttclid' => $ttclid,
-            'msclkid' => $msclkid, 'fbclid' => $fbclid,
+            'msclkid' => $msclkid, 'fbclid' => $fbclid, 'oppref' => $oppref,
         ];
         foreach ($adClickIds as $name => $value) {
             if (self::storedAdClickId($name, $value) !== $value) {
@@ -285,7 +299,7 @@ final readonly class ClickRecord
         $campaignValues = [$variableSetId, $utmSourceId, $utmMediumId, $utmCampaignId, $utmTermId, $utmContentId];
         if (!$recordsCampaignRows && (implode('', $adClickIds) !== '' || array_filter($campaignValues) !== [])) {
             throw new InvalidArgumentException(
-                'A click that records no gclid, gbraid, wbraid, ttclid, msclkid, fbclid, UTM values or'
+                'A click that records no gclid, gbraid, wbraid, ttclid, msclkid, fbclid, oppref, UTM values or'
                     . ' tracking variables was given one'
             );
         }

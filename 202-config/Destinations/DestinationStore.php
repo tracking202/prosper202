@@ -38,7 +38,17 @@ final class DestinationStore
     /** @return array<string, DestinationType> */
     public function types(): array
     {
-        return $this->types ??= [Ga4Destination::TYPE => new Ga4Destination(), GoogleAdsDestination::TYPE => new GoogleAdsDestination()];
+        return $this->types ??= self::builtInTypes();
+    }
+
+    /** @return array<string, DestinationType> every type this install sends to */
+    public static function builtInTypes(): array
+    {
+        return [
+            Ga4Destination::TYPE => new Ga4Destination(),
+            GoogleAdsDestination::TYPE => new GoogleAdsDestination(),
+            OpenAiAdsDestination::TYPE => new OpenAiAdsDestination(),
+        ];
     }
 
     public function type(string $type): DestinationType
@@ -282,13 +292,20 @@ final class DestinationStore
             $ids[$id] = $id;
         }
         $this->ownCampaigns($userId, array_values($ids), 'settings.campaign_ids');
-        // A type's per-campaign mapping names campaigns too (Google Ads' conversion action per campaign).
+        // A type's per-campaign mapping names campaigns too (Google Ads' conversion action, ChatGPT Ads' event type).
         $this->ownCampaigns($userId, array_map('intval', array_keys((array) ($own['campaign_conversion_actions'] ?? []))), 'settings.campaign_conversion_actions');
+        $this->ownCampaigns($userId, array_map('intval', array_keys((array) ($own['event_types'] ?? []))), 'settings.event_types');
+        if (isset($own['ppc_account_id'])) {
+            $this->ownTrafficSource($userId, (int) $own['ppc_account_id']);
+        }
         $sendUserData = $settings['send_user_data'] ?? false;
         if (!is_bool($sendUserData)) {
             throw new DestinationInputException('settings.send_user_data', 'send_user_data must be true or false.');
         }
         $consent = $settings['consent'] ?? [];
+        if (!$adapter->takesConsent() && $consent !== [] && $consent !== null) {
+            throw new DestinationInputException('settings.consent', 'consent is not a setting this destination takes: its platform takes no ad_user_data or ad_personalization signal.');
+        }
         if (!is_array($consent) || array_diff(array_keys($consent), ['ad_user_data', 'ad_personalization']) !== []) {
             throw new DestinationInputException('settings.consent', 'consent may hold ad_user_data and ad_personalization.');
         }
@@ -321,6 +338,16 @@ final class DestinationStore
         if ((int) ($this->conn->fetchOne($stmt)['n'] ?? 0) !== count($ids)) {
             $name = substr($field, strlen('settings.'));
             throw new DestinationInputException($field, $name . ' names a campaign that is not one of yours (p202 campaign list).');
+        }
+    }
+
+    /** A traffic source account a setting names is the account's own (CLAUDE.md #27). */
+    private function ownTrafficSource(int $userId, int $ppcAccountId): void
+    {
+        $stmt = $this->conn->prepareRead('SELECT COUNT(*) AS n FROM 202_ppc_accounts WHERE ppc_account_id = ? AND user_id = ? AND ppc_account_deleted = 0');
+        $this->conn->bind($stmt, 'ii', [$ppcAccountId, $userId]);
+        if ((int) ($this->conn->fetchOne($stmt)['n'] ?? 0) !== 1) {
+            throw new DestinationInputException('settings.ppc_account_id', 'ppc_account_id names a traffic source account that is not one of yours (p202 ppc-account list).');
         }
     }
 
@@ -372,8 +399,11 @@ final class DestinationStore
     private function status(array $row): string
     {
         $adapter = $this->types()[(string) $row['type']] ?? null;
-        if (!$adapter instanceof AuthorisedDestination) {
+        if ($adapter === null) {
             return 'ready';
+        }
+        if (!$adapter instanceof AuthorisedDestination) {
+            return $this->configured($adapter, $row);
         }
         $sealed = (string) $row['credentials'];
         $credentials = [];
@@ -395,16 +425,19 @@ final class DestinationStore
         if (!$adapter->authorised($credentials)) {
             return 'needs_authorisation';
         }
-        if ($adapter instanceof GoogleAdsDestination) {
-            try {
-                return $adapter->configured(self::decode((string) $row['settings'])) ? 'ready' : 'needs_account';
-            } catch (\JsonException | \RuntimeException) {
-                // Unreadable settings are shown as such by shape().
-                return 'ready';
-            }
-        }
 
-        return 'ready';
+        return $this->configured($adapter, $row);
+    }
+
+    /** @param array<string, mixed> $row */
+    private function configured(DestinationType $adapter, array $row): string
+    {
+        try {
+            return $adapter->configured(self::decode((string) $row['settings'])) ? 'ready' : 'needs_account';
+        } catch (\JsonException | \RuntimeException) {
+            // Unreadable settings are shown as such by shape().
+            return 'ready';
+        }
     }
 
     /**

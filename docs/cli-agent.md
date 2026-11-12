@@ -956,6 +956,10 @@ p202 destination create --type google_ads --name S --customer-id 123-456-7890 --
                        # credentials JSON: developer_token, oauth_client_id, oauth_client_secret; status needs_authorisation
                        # a flag of the other type (e.g. --credentials-file without --type google_ads) is a validation error, never ignored
                        # update: --campaign-conversion-action merges with the stored map; N= removes campaign N's
+p202 destination create --type openai_ads --name S --pixel-id ID --conversions-api-key-file FILE|-   # ChatGPT Ads Conversions API
+                       [--event-type order_created|lead_created|...|custom] [--custom-event-name N]
+                       [--scope oppref|source|all] [--ppc-account-id N] [--campaign-event-type N=TYPE]... [--send-user-data] [--json]
+                       # scope oppref (default): only conversions whose click carries oppref; no consent flags (refused)
 p202 destination connect <id> [--json]                  # Google Ads: authorisation_url for a human's browser (same user, 10 min)
 p202 destination accounts <id> [--json]                 # Google Ads, connected: the accounts it can send to, read from Google
 p202 destination conversion-actions <id> [--customer-id N [--login-customer-id N]] [--json]   # the account's click-upload actions
@@ -1597,7 +1601,7 @@ Visitor-authored (or visitor-derived) fields returned by this CLI:
 | Referrer, landing and outbound URLs | The visitor's browser (`Referer`) and the tracking link's query | `click list`/`click get` (`referer`, `landing`, `outbound`), `report breakdown`/`analytics` by `referer` (the domain) and `referer_url` |
 | SubIDs `c1`--`c4` | Query parameters on the tracking link | `click get` (`c1`..`c4`), `report breakdown`/`analytics` by `c1`..`c4` |
 | UTM values | `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content` on the tracking link | `report breakdown`/`analytics` by `utm_source` .. `utm_content` |
-| Ad click ids | `gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid` on the tracking or landing URL | `click list`/`click get` (`gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid`; capped at 1,000 characters, not 512) |
+| Ad click ids | `gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid`, `oppref` on the tracking or landing URL | `click list`/`click get` (`gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid`, `oppref`; capped at 1,000 characters, not 512) |
 | IP addresses | The visitor's connection (or the `X-Forwarded-For` header the redirect honours) | `report breakdown`/`analytics` by `ip` |
 | Browser, platform, device names | Parsed from the visitor's user-agent string | `click list`/`click get` resolved names, `report breakdown`/`analytics` by `browser`/`platform`/`device` |
 | Region, city, ISP names | GeoIP resolution of the visitor's IP | `click list`/`click get`, `report breakdown`/`analytics` by `region`/`city`/`isp` |

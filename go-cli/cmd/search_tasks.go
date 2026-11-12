@@ -96,7 +96,7 @@ var searchTasks = []searchTask{
 			"bing offline conversions", "scheduled conversion upload"}},
 	{Run: "p202 destination create", Pages: []string{"Setup › Destinations"},
 		Phrases: []string{"send conversions to google analytics", "ga4 measurement protocol", "server side conversions",
-			"conversions api", "send conversions to ad platforms"}},
+			"conversions api", "send conversions to ad platforms", "send conversions to chatgpt ads", "openai conversions api"}},
 	{Run: "p202 ad-connection create --api-key-file key.txt",
 		Phrases: []string{"connect chatgpt ads", "connect openai ads", "chatgpt ads api key", "advertiser api key",
 			"link my chatgpt ad account"}},
