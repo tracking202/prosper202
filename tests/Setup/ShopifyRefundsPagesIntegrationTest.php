@@ -282,6 +282,12 @@ final class ShopifyRefundsPagesIntegrationTest extends TestCase
             $noLog = 'the card links no log this role cannot open';
             self::assertStringNotContainsString('inbound_log.php?endpoint=shopify', $card, $noLog);
 
+            // Record it now stays the log's: Update beside API Integrations does not open it without Setup.
+            self::grant(['access_to_api_integrations', 'access_to_update_section']);
+            $replay = self::decoded(self::page(self::LOG, ['inbound_id' => '1', 'token' => 'SESSION']));
+            self::assertStringContainsString('Your role may not record conversions, so nothing was recorded.', $replay);
+            self::grant(['access_to_api_integrations']);
+
             self::page(self::LOG, ['action' => 'close_refund', 'refund_id' => '9100002', 'token' => 'SESSION']);
             self::page(self::LOG, $record);
             self::assertSame(['59.00000', '-10.00000'], self::payouts());

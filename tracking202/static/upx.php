@@ -85,6 +85,11 @@ if (!$cvar_sql_row) {
     p202RespondJsonError(404, 'Click data not found');
 }
 
+if ($purLinkSubid === null) {
+    // Kept with how it was found, so a refused request can be recorded from the log.
+    \Prosper202\InboundLog\RequestLog::current()?->matched($clickId, $matchedBy);
+}
+
 // Postback authentication: the click's account's token or signature, before anything is written.
 p202RequirePostbackAuth($db, $cvar_sql_row['user_id'] ?? null, 'upx');
 

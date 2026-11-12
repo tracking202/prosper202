@@ -17,11 +17,13 @@ if (!\Prosper202\PaymentNotification\Shopify\RefundAccess::maySee($hasPermission
 }
 
 require_once __DIR__ . '/_includes/setup_ui.php';
+require_once dirname(__DIR__, 2) . '/202-config/functions-ui-overview.php';
 
 use Api\V3\Controllers\InboundLogController;
 use Api\V3\Exception\ValidationException;
 use Prosper202\Http\PostedId;
 use Prosper202\InboundLog\InboundLog;
+use Prosper202\InboundLog\InboundReplay;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\OutcomeKind;
 use Prosper202\PaymentNotification\Shopify\RefundAccess;
@@ -34,6 +36,8 @@ use Prosper202\PaymentNotification\Shopify\WebhookStatus;
  * install answered for the account, newest first, and why each one that
  * recorded nothing was refused. The same list as GET
  * /api/v3/conversions/inbound-log; secrets and visitor details are never kept.
+ * A refused postback or pixel can be recorded from its row (InboundReplay) by a
+ * role that may also record conversions under Update.
  * Above it, the Shopify refunds that are not recorded while their order's
  * sale is (RefundsToSettle), each with a form to record or close it for a
  * role RefundAccess lets settle them, as the API asks.
@@ -44,10 +48,26 @@ $base = get_absolute_url();
 $self = $base . 'tracking202/setup/inbound_log.php';
 $shopifyCard = $base . '202-account/api-integrations.php#shopify';
 $seesUnattributed = $seesLog && $userObj->hasPermission('add_users');
+// Recording writes a conversion: the Update section's permission, beside this page's (Setup).
+$mayRecord = $seesLog && $userObj->hasPermission('access_to_update_section');
+$recorded = null;
+// "Record it now" names a row of the log (inbound_id) and answers on this page; the refunds desk below redirects.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && array_key_exists('inbound_id', $_POST)) {
+    $inboundId = PostedId::read($_POST['inbound_id'] ?? null);
+    if (!AUTH::check_csrf_token()) {
+        $recorded = ['status' => 'refused', 'message' => 'That was not recorded: the page had expired. Reload it and try again.'];
+    } elseif (!$mayRecord) {
+        $recorded = ['status' => 'refused', 'message' => 'Your role may not record conversions, so nothing was recorded.'];
+    } elseif ($inboundId === null) {
+        $recorded = ['status' => 'refused', 'message' => 'That is not a request of this log, so nothing was recorded.'];
+    } else {
+        $recorded = (new InboundReplay($db))->replay($userId, $inboundId);
+    }
+}
 
 $canSettle = RefundAccess::maySettle($hasPermission);
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !array_key_exists('inbound_id', $_POST)) {
     $flash = ['bad', 'That form has expired. Reload the page and try again; nothing was changed.'];
     if (!$canSettle) {
         $flash = ['bad', 'Your role cannot record or close a refund: that needs Account › API Integrations,'
@@ -70,8 +90,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     RefundsToSettle::THE_PAGE,
                     is_string($_POST['currency'] ?? null) && $_POST['currency'] !== '' ? $_POST['currency'] : null
                 );
-                $recorded = in_array($outcome->kind, [OutcomeKind::REVERSED, OutcomeKind::DUPLICATE], true);
-                $flash = [$recorded ? 'ok' : 'bad', 'Refund ' . $refundId . ': ' . $outcome->message];
+                $refundRecorded = in_array($outcome->kind, [OutcomeKind::REVERSED, OutcomeKind::DUPLICATE], true);
+                $flash = [$refundRecorded ? 'ok' : 'bad', 'Refund ' . $refundId . ': ' . $outcome->message];
             } elseif ($refundId !== null && $action === 'close_refund') {
                 $flash = $desk->close($userId, (string) $refundId)
                     ? ['ok', 'Refund ' . $refundId . ' was closed with nothing recorded.']
@@ -90,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $flash = $_SESSION['p202_inbound_log_flash'] ?? null;
 unset($_SESSION['p202_inbound_log_flash']);
 
-$params = array_intersect_key($_GET, array_flip(['outcome', 'endpoint', 'before']));
+$params = array_intersect_key($_GET, array_flip(['outcome', 'endpoint', 'search', 'click_id', 'before']));
 $params = array_filter($params, static fn (mixed $v): bool => is_string($v) && $v !== '');
 $rows = [];
 $errors = [];
@@ -135,6 +155,46 @@ $endpointLabels = [
 $outcomeChoices = ['' => 'Everything', 'refused' => 'Refused or nothing recorded', 'accepted' => 'Accepted'];
 $endpointChoices = ['' => 'Every endpoint'] + $endpointLabels;
 $when = static fn (int $ts): string => date('Y-m-d H:i:s', $ts);
+// What a postback or pixel carried to say who sent it.
+$carried = ['none' => 'carried no token', 'invalid' => 'carried a wrong token or signature', 'token' => 'carried your token',
+    'signed' => 'signed'];
+// The account's destinations, which the question before recording warns about when the request is too old for one.
+$destinations = [];
+try {
+    $destinations = (new \Prosper202\Destinations\DestinationStore(new \Prosper202\Database\Connection($db)))->list($userId);
+} catch (\Throwable $e) {
+    error_log('Setup › Inbound Log: the destinations could not be read for the record question: ' . $e->getMessage());
+}
+// A row's click, as the destinations judge it, read only when a switched-on destination could refuse one for its age.
+$switchedOn = array_filter($destinations, static fn (array $d): bool => ($d['enabled'] ?? false) === true);
+// Whether the sale a reversal or a negative amount names is on file, so the question says what becomes of it.
+$saleFor = static function (array $row) use ($db, $userId): ?bool {
+    $plan = InboundReplay::plan($row);
+    $click = InboundReplay::clickOf($row);
+    $takesBack = $plan !== null && ($plan['reversal'] || ($plan['amount'] !== null && (float) $plan['amount'] < 0));
+    if (!$takesBack || $click === null || $plan['transaction'] === '') {
+        return null;
+    }
+    try {
+        return (new InboundReplay($db))->saleOnFile($userId, $click, $plan['transaction']);
+    } catch (\Throwable $e) {
+        error_log('Setup › Inbound Log: the sale of request ' . (int) $row['inbound_id'] . ' could not be read: ' . $e->getMessage());
+
+        return null;
+    }
+};
+$clickFor = static function (array $row) use ($db, $userId, $switchedOn): ?array {
+    if ($switchedOn === []) {
+        return null;
+    }
+    try {
+        return (new InboundReplay($db))->clickFacts($userId, $row);
+    } catch (\Throwable $e) {
+        error_log('Setup › Inbound Log: the click of request ' . (int) $row['inbound_id'] . ' could not be read: ' . $e->getMessage());
+
+        return null;
+    }
+};
 
 AUTH::set_timezone($_SESSION['user_timezone'] ?? date_default_timezone_get());
 template_top('Inbound Log');
@@ -161,7 +221,19 @@ template_top('Inbound Log');
 <?php } ?>
 
 <?php
-echo p202_setup_error_flashes($errors, ['outcome', 'endpoint', 'before']);
+if ($recorded !== null) {
+    echo p202_flash(match ($recorded['status']) {
+        'recorded' => 'ok',
+        'duplicate', 'already_recorded', 'in_progress' => 'info',
+        default => 'bad',
+    }, $recorded['message']);
+}
+echo p202_setup_error_flashes($errors, ['outcome', 'endpoint', 'search', 'before']);
+if (isset($filters['click_id'])) {
+    echo '<div class="alert alert-info p202-flash" role="status"><i class="bi bi-info-circle"></i><div class="p202-flash__body">'
+        . p202_setup_e('Showing the requests for click ' . $filters['click_id'] . '.')
+        . ' <a class="alert-link" href="' . p202_setup_e($self) . '">Show every request</a></div></div>';
+}
 if (is_array($flash) && is_string($flash[0] ?? null) && is_string($flash[1] ?? null)) {
     echo p202_flash($flash[0], $flash[1]);
 }
@@ -272,14 +344,14 @@ if ($seesUnattributed) {
 <section class="p202-panel">
     <div class="p202-panel__body">
         <form method="get" action="<?php echo p202_setup_e($self); ?>" class="row g-2 align-items-end mb-3">
-            <div class="col-12 col-md-4">
+            <div class="col-12 col-md-3">
                 <label class="form-label" for="outcome">Show</label>
                 <select class="form-select<?php echo p202_setup_invalid($errors, 'outcome'); ?>" id="outcome" name="outcome">
                     <?php echo p202_setup_options($outcomeChoices, (string) ($params['outcome'] ?? '')); ?>
                 </select>
                 <?php echo p202_setup_feedback($errors, 'outcome'); ?>
             </div>
-            <div class="col-12 col-md-4">
+            <div class="col-12 col-md-3">
                 <label class="form-label" for="endpoint">Endpoint</label>
                 <select class="form-select<?php echo p202_setup_invalid($errors, 'endpoint'); ?>" id="endpoint" name="endpoint">
                     <?php echo p202_setup_options($endpointChoices, (string) ($params['endpoint'] ?? '')); ?>
@@ -287,12 +359,20 @@ if ($seesUnattributed) {
                 <?php echo p202_setup_feedback($errors, 'endpoint'); ?>
             </div>
             <div class="col-12 col-md-4">
+                <label class="form-label" for="search">Subid or transaction id</label>
+                <input type="search" class="form-control<?php echo p202_setup_invalid($errors, 'search'); ?>" id="search" name="search"
+                    value="<?php echo p202_setup_e((string) ($params['search'] ?? '')); ?>" placeholder="The whole id" autocomplete="off">
+                <?php echo p202_setup_feedback($errors, 'search'); ?>
+            </div>
+            <div class="col-12 col-md-2">
                 <button type="submit" class="btn btn-primary">Show</button>
             </div>
         </form>
 
         <?php if ($rows === [] && $errors === []) { ?>
-            <p class="text-body-secondary mb-0">Nothing here yet. A postback, pixel or payment notification shows up here as soon as it arrives.</p>
+            <p class="text-body-secondary mb-0"><?php echo $params === []
+                ? 'Nothing here yet. A postback, pixel or payment notification shows up here as soon as it arrives.'
+                : 'No request the log still holds matches. A search finds a subid, conversion id or transaction id given whole.'; ?></p>
         <?php } elseif ($rows !== []) { ?>
         <div class="p202-table-wrap">
             <table class="table p202-table" id="inbound-log">
@@ -303,14 +383,30 @@ if ($seesUnattributed) {
                 <?php foreach ($rows as $row) {
                     $fields = $row['fields'];
                     $fieldsText = is_array($fields) ? (string) json_encode($fields, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : '';
+                    $fix = $row['fix'];
                     ?>
                     <tr class="<?php echo $row['accepted'] ? '' : 'table-warning'; ?>">
                         <td><?php echo p202_setup_e($when((int) $row['received_at'])); ?></td>
                         <td><?php echo p202_setup_e($endpointLabels[$row['endpoint']] ?? $row['endpoint']); ?><?php echo $row['user_id'] === null ? ' <span class="text-body-secondary">(account —)</span>' : ''; ?></td>
                         <td class="num"><?php echo (int) $row['http_status']; ?></td>
-                        <td><?php echo p202_setup_e(str_replace('_', ' ', (string) $row['outcome'])); ?></td>
-                        <td><?php echo p202_setup_e((string) $row['reason']); ?></td>
-                        <td class="num"><?php echo $row['click_id'] === null ? '' : p202_setup_e((string) $row['click_id']); ?></td>
+                        <td><?php echo p202_setup_e(str_replace('_', ' ', (string) $row['outcome'])); ?>
+                            <?php if ($row['auth'] !== null) { ?><div class="form-text"><?php echo p202_setup_e($carried[$row['auth']] ?? $row['auth']); ?></div><?php } ?></td>
+                        <td><?php echo p202_setup_e((string) $row['reason']); ?>
+                            <?php if ($fix !== null) { ?>
+                                <div class="form-text"><?php echo p202_setup_e($fix['text']); ?>
+                                    <?php if ($fix['page'] !== null) { ?><a href="<?php echo p202_setup_e($base . $fix['page']); ?>"><?php echo p202_setup_e((string) $fix['label']); ?></a><?php } ?></div>
+                            <?php } ?>
+                            <?php if ($row['recorded_later_at'] !== null) { ?>
+                                <div class="form-text">Recorded from this log on <?php echo p202_setup_e($when((int) $row['recorded_later_at'])); ?>.</div>
+                            <?php } elseif ($mayRecord && $row['can_record'] && $row['user_id'] === $userId) { ?>
+                                <form method="post" action="<?php echo p202_setup_e($self . ($params === [] ? '' : '?' . http_build_query($params))); ?>" class="mt-1"
+                                    data-p202-confirm="<?php echo p202_setup_e(InboundReplay::question($row, $destinations, time(), $clickFor($row), $saleFor($row))); ?>">
+                                    <?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>
+                                    <input type="hidden" name="inbound_id" value="<?php echo (int) $row['inbound_id']; ?>">
+                                    <button type="submit" class="btn btn-sm btn-outline-primary">Record it now</button>
+                                </form>
+                            <?php } ?></td>
+                        <td class="num"><?php echo $row['click_id'] === null || $row['user_id'] !== $userId ? p202_setup_e((string) $row['click_id']) : p202_click_breakdown_button($base, (int) $row['click_id']); ?></td>
                         <td class="num"><?php echo $row['conversion_id'] === null ? '' : p202_setup_e((string) $row['conversion_id']); ?></td>
                         <td><?php if ($fieldsText !== '') { ?><details><summary>fields</summary><pre class="mb-0 small"><?php echo p202_setup_e($fieldsText); ?></pre></details><?php } ?></td>
                     </tr>
@@ -326,5 +422,6 @@ if ($seesUnattributed) {
 </section>
 <?php } ?>
 
+<?php echo $seesLog ? p202_click_breakdown_modal($base) : ''; ?>
 <?php echo p202_setup_script_tag($base); ?>
 <?php template_bottom();

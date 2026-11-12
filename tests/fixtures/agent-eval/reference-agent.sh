@@ -167,6 +167,31 @@ case "$ask" in
             jq -r '[.data.changes.rules[] | "\(.action) \(.rule_name)\(if .position then " at \(.position)" else "" end)"] | join("; ")')
         printf 'Nothing is changed yet. Per `p202 rotator set-rules %s --dry-run`, the set would be: %s. The new rule sends visitors from 203.0.113.62 to https://eval-preview.example/, ahead of the catch-all, which stays as it is for everyone else. Say so and I will make the change.\n' "$rotator" "$changes"
         ;;
+    # The inbound log (inbound-log.json): a refused postback is found by the
+    # order number the network names and recorded from its own row, never
+    # typed in by hand and never let through by opening the gate.
+    *"order EVAL-REFUSED-1"*)
+        row=$(p202 conversion inbound-log --search EVAL-REFUSED-1 --outcome refused --json | jq -c '[.data[] | select(.can_record)][0] // empty')
+        if [ -z "$row" ]; then
+            printf 'The inbound log holds no refused request for order EVAL-REFUSED-1 that can be recorded (`p202 conversion inbound-log --search EVAL-REFUSED-1`), so nothing was recorded.\n'
+        else
+            id=$(printf '%s' "$row" | jq -r '.inbound_id')
+            done=$(p202 conversion inbound-log record "$id" --json | jq -r '.data.message')
+            printf 'The postback for order EVAL-REFUSED-1 did arrive and was refused: %s %s I recorded it from the log (`p202 conversion inbound-log record %s`): %s Your postback authentication is unchanged, so give the network the URL from `p202 conversion postback-url`, which carries your token, or its next postbacks will be refused too.\n' \
+                "$(printf '%s' "$row" | jq -r '.reason')" "$(printf '%s' "$row" | jq -r '.fix.text // ""')" "$id" "$done"
+        fi
+        ;;
+    *"Is it safe to switch that on today"*)
+        report=$(p202 conversion postback-auth readiness --json)
+        if [ "$(printf '%s' "$report" | jq -r '.data.safe_to_require_token')" = "true" ]; then
+            printf 'Per `p202 conversion postback-auth readiness`, all %s postbacks and pixels of the last 7 days carried your token or a signature, so requiring it would refuse none of them. I changed nothing.\n' \
+                "$(printf '%s' "$report" | jq -r '.data.requests')"
+        else
+            printf 'Not yet. Per `p202 conversion postback-auth readiness`, %s of the %s postbacks and pixels of the last 7 days arrived without your token, and requiring it would refuse them: %s. Give each of those senders the URL from `p202 conversion postback-url`, then check again. I changed nothing.\n' \
+                "$(printf '%s' "$report" | jq -r '.data.without_credentials')" "$(printf '%s' "$report" | jq -r '.data.requests')" \
+                "$(printf '%s' "$report" | jq -r '[.data.senders[] | select(.presented=="none" or .presented=="invalid") | "\(.endpoint).php, \(.campaign_name // ("subid " + (.subids | join(", "))))  (\(.requests) request(s))"] | join("; ")')"
+        fi
+        ;;
     # The Update section (update.json). First, because two of the asks say
     # "delete" or "cost" and must not fall through to the general branches.
     *"Record that cost"*)

@@ -878,6 +878,14 @@ try {
 } catch (Throwable $pbReadError) {
 	error_log('api-integrations.php: the postback token could not be read: ' . $pbReadError->getMessage());
 }
+// Who a stricter setting would refuse, from the last 7 days of the inbound log.
+$pbReady = null;
+try {
+	$pbReady = (new \Prosper202\Conversion\PostbackAuth\PostbackAuthReadiness(new \Prosper202\Database\Connection($db)))
+		->forAccount((int) $_SESSION['user_id'], time());
+} catch (Throwable $pbReadyError) {
+	error_log('api-integrations.php: postback readiness could not be read: ' . $pbReadyError->getMessage());
+}
 $ipqsSaved = SavedSecret::isSaved($user_row['ipqs_api_key'] ?? null);
 // What the payment cards say of notifications that recorded nothing lately.
 require_once dirname(__DIR__) . '/202-config/functions-payment-notices.php';
@@ -941,8 +949,65 @@ template_top('API Integrations');
 					<p class="text-secondary">A pixel runs in the visitor's browser, so its token can be read on the
 						advertiser's page: it stops guessing, not someone who saw the page. A pixel cannot sign, so
 						<strong>Signed postbacks only</strong> refuses every pixel.</p>
+					<?php
+					$pbOff = $pbAuth->mode === \Prosper202\Conversion\PostbackAuth\PostbackAuthMode::OFF;
+					$pbWithout = $pbReady['without_credentials'] ?? 0;
+					$pbEndpoints = ['pb' => 'Postback (pb.php)', 'gpb' => 'Global postback (gpb.php)', 'px' => 'Pixel (px.php)',
+						'gpx' => 'Global pixel (gpx.php)', 'upx' => 'Universal pixel (upx.php)'];
+					$pbCame = ['none' => 'nothing', 'invalid' => 'a wrong token or signature', 'token' => 'the token', 'signed' => 'a signature'];
+					?>
+					<div class="mb-4" id="postback-auth-readiness">
+						<p class="mb-1"><strong>Who would be refused</strong> <span class="text-secondary">(your postbacks and pixels of the last <?php echo (int) \Prosper202\Conversion\PostbackAuth\PostbackAuthReadiness::WINDOW_DAYS; ?> days)</span></p>
+						<?php if ($pbReady === null) { ?>
+							<p class="text-danger">This could not be checked just now, so it is not known who a stricter setting would refuse. Reload the page before changing the setting.</p>
+						<?php } elseif ($pbReady['requests'] === 0) { ?>
+							<p class="text-secondary" data-postback-ready="unknown">No postback or pixel has arrived in that time, so there is nothing to judge a stricter setting by.</p>
+						<?php } elseif ($pbWithout === 0 && $pbReady['unread'] === 0) { ?>
+							<p data-postback-ready="yes"><span class="p202-pill p202-pill--good">Safe to require the token</span>
+								All <?php echo $e(number_format($pbReady['requests'])); ?> carried your token or a signature.</p>
+						<?php } elseif ($pbWithout === 0) { ?>
+							<p class="text-secondary" data-postback-ready="unknown">None is known to have come without your token, and for <?php echo $e(number_format($pbReady['unread'])); ?> of <?php echo $e(number_format($pbReady['requests'])); ?> what they carried was not read. Look again once newer ones have arrived.</p>
+						<?php } else { ?>
+							<p data-postback-ready="no"><span class="p202-pill p202-pill--warn"><?php echo $pbOff ? 'Not yet safe to require the token' : 'Being refused'; ?></span>
+								<?php echo $e(number_format($pbWithout)); ?> of <?php echo $e(number_format($pbReady['requests'])); ?> came without your token or a signature that verifies.
+								<?php echo $pbOff
+									? 'Requiring the token would refuse them and record nothing. Give each sender below its URL from <a href="' . $e($base . 'tracking202/setup/get_postback.php') . '">Setup › Postback / Pixel</a> first.'
+									: 'They are refused and nothing is recorded. Give each sender below its URL from <a href="' . $e($base . 'tracking202/setup/get_postback.php') . '">Setup › Postback / Pixel</a>; a refused request can be recorded from the <a href="' . $e($base . 'tracking202/setup/inbound_log.php?outcome=unauthenticated') . '">Inbound Log</a>.'; ?></p>
+						<?php } ?>
+						<?php if ($pbReady !== null && $pbReady['senders'] !== []) { ?>
+							<div class="p202-table-wrap">
+								<table class="table p202-table" id="postback-auth-senders">
+									<thead><tr><th>Endpoint</th><th>Campaign</th><th>Carried</th><th class="num">Requests</th><th class="num">Conversions recorded</th><th>Last one</th></tr></thead>
+									<tbody>
+									<?php foreach ($pbReady['senders'] as $pbSender) { ?>
+										<tr<?php echo in_array($pbSender['presented'], ['none', 'invalid'], true) ? ' class="table-warning"' : ''; ?>>
+											<td><?php echo $e($pbEndpoints[$pbSender['endpoint']] ?? $pbSender['endpoint']); ?></td>
+											<td><?php echo $pbSender['campaign_name'] === null
+												? '<span class="text-secondary">' . ($pbSender['subids'] === [] ? 'not known' : 'not known; subid ' . $e(implode(', ', $pbSender['subids']))) . '</span>'
+												: $e($pbSender['campaign_name']) . ($pbSender['network_name'] !== null ? ' <span class="text-secondary">(' . $e($pbSender['network_name']) . ')</span>' : ''); ?></td>
+											<td><?php echo $e($pbCame[$pbSender['presented']] ?? $pbSender['presented']); ?></td>
+											<td class="num"><?php echo $e(number_format($pbSender['requests'])); ?></td>
+											<td class="num"><?php echo $e(number_format($pbSender['conversions'])); ?></td>
+											<td><?php echo $e(date('M j, g:i a', $pbSender['last_received_at'])); ?></td>
+										</tr>
+									<?php } ?>
+									</tbody>
+								</table>
+							</div>
+							<?php if ($pbReady['more_senders'] > 0) { ?>
+								<p class="form-text"><?php echo $e(number_format($pbReady['more_senders'])); ?> more with fewer requests are not listed; the <a href="<?php echo $e($base . 'tracking202/setup/inbound_log.php'); ?>">Inbound Log</a> has every request.</p>
+							<?php } ?>
+							<?php if ($pbReady['token_only'] + $pbReady['pixels'] > 0) { ?>
+								<p class="form-text">Signed postbacks only would also refuse the <?php echo $e(number_format($pbReady['token_only'])); ?> that carried the token alone, and every pixel (<?php echo $e(number_format($pbReady['pixels'])); ?> here).</p>
+							<?php } ?>
+						<?php } ?>
+						<?php if ($pbReady !== null && $pbReady['covers_since'] > $pbReady['since']) { ?>
+							<p class="form-text">The inbound log keeps a number of requests, not a number of days: for this account it reaches back to <?php echo $e(date('M j, g:i a', $pbReady['covers_since'])); ?>.</p>
+						<?php } ?>
+					</div>
 					<form method="post" action="<?php echo $e($self . '#postback-auth'); ?>" class="mb-4"
-						data-p202-confirm="<?php echo $e('Change what your postbacks and pixels must carry? Anything your networks call that does not carry it will be refused from now on, and nothing recorded.'); ?>">
+						data-p202-confirm="<?php echo $e('Change what your postbacks and pixels must carry? Anything your networks call that does not carry it will be refused from now on, and nothing recorded.'
+							. ($pbOff && $pbWithout > 0 ? ' In the last 7 days ' . number_format($pbWithout) . ' came without your token.' : '')); ?>">
 						<?php echo p202_account_token_field(); ?>
 						<input type="hidden" name="postback_auth_action" value="mode">
 						<fieldset>
