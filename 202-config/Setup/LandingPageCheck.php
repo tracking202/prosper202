@@ -30,6 +30,11 @@ final class LandingPageCheck
     public const USER_AGENT = 'Mozilla/5.0 (compatible; Prosper202 landing page check)';
     /** Seconds for the whole fetch, redirects included. */
     public const TIMEOUT = 10;
+
+    /** The words around the other ids in a mixed and a wrong-id message (otherIdsNamedIn()). */
+    private const MIXED_OTHERS = [') and also code for ', '. Only one of them'];
+    private const WRONG_ID_OTHERS = [' carries code for another landing page (', '), not this one (lpip='];
+    private const NO_ID = 'an lpip= with no id';
     public const MAX_REDIRECTS = 5;
     /** Bytes of the page read; the rest is not fetched. */
     public const MAX_BYTES = 2097152;
@@ -126,6 +131,42 @@ final class LandingPageCheck
     }
 
     /**
+     * The other landing pages' ids a stored check's message names, as
+     * inspect() wrote them: the result's otherIds, for an answer read back
+     * from 202_landing_page_checks, which keeps the message alone.
+     *
+     * @return list<string>
+     */
+    public static function otherIdsNamedIn(string $status, string $message): array
+    {
+        $around = match ($status) {
+            LandingPageCheckResult::MIXED => self::MIXED_OTHERS,
+            LandingPageCheckResult::WRONG_ID => self::WRONG_ID_OTHERS,
+            default => null,
+        };
+        if ($around === null) {
+            return [];
+        }
+        // The page's URL comes first in the message, so the last opening is the list's.
+        $start = strrpos($message, $around[0]);
+        $end = $start === false ? false : strpos($message, $around[1], $start + strlen($around[0]));
+        if ($start === false || $end === false) {
+            return [];
+        }
+        $ids = [];
+        $from = $start + strlen($around[0]);
+        foreach (explode(', ', substr($message, $from, $end - $from)) as $named) {
+            if ($named === self::NO_ID) {
+                $ids[] = '';
+            } elseif (preg_match('/^lpip=(\d+)$/D', $named, $m) === 1) {
+                $ids[] = $m[1];
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
      * What a page's HTML says about the code for $publicId. Pure, for tests.
      */
     public static function inspect(
@@ -144,7 +185,7 @@ final class LandingPageCheck
             array_filter($found, static fn (array $s): bool => $s[1] !== $publicId)
         )));
         $named = static fn (array $ids): string => implode(', ', array_map(
-            static fn (string $id): string => $id === '' ? 'an lpip= with no id' : 'lpip=' . $id,
+            static fn (string $id): string => $id === '' ? self::NO_ID : 'lpip=' . $id,
             $ids
         ));
 
@@ -161,9 +202,12 @@ final class LandingPageCheck
             }
             $mine = $here;
             if ($others !== []) {
-                return new LandingPageCheckResult(LandingPageCheckResult::MIXED,
-                    $yours . ' carries this landing page\'s code (lpip=' . $publicId . ') and also code for '
-                    . $named($others) . '. Only one of them records the visit: remove the other.', $others);
+                return new LandingPageCheckResult(
+                    LandingPageCheckResult::MIXED,
+                    $yours . ' carries this landing page\'s code (lpip=' . $publicId . self::MIXED_OTHERS[0]
+                    . $named($others) . self::MIXED_OTHERS[1] . ' records the visit: remove the other.',
+                    $others
+                );
             }
             foreach ($mine as $s) {
                 if ($s[0] === 'php') {
@@ -179,7 +223,7 @@ final class LandingPageCheck
         }
         if ($others !== []) {
             return new LandingPageCheckResult(LandingPageCheckResult::WRONG_ID,
-                $yours . ' carries code for another landing page (' . $named($others) . '), not this one (lpip='
+                $yours . self::WRONG_ID_OTHERS[0] . $named($others) . self::WRONG_ID_OTHERS[1]
                 . $publicId . '). Its visits are recorded for that other landing page: replace the code with the code above.', $others);
         }
         foreach (self::snippets($comments) as $s) {

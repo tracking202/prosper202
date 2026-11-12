@@ -314,6 +314,25 @@ func TestDestinationPickCommandsSendNamesAndListFromTheInstall(t *testing.T) {
 	if len(calls) != 1 || calls[0].body != "{}" {
 		t.Errorf("pick with no flags sent %v", calls)
 	}
+
+	// The server's per-key limit on these reads: the next step is to wait, not to reconnect or re-pick.
+	status, answer = http.StatusTooManyRequests,
+		`{"error":true,"status":429,"message":"Rate limit exceeded","retry_after_seconds":23,"rate_limit":{"limit":10,"window_seconds":60}}`
+	for _, args := range [][]string{
+		{"destination", "accounts", "7", "--json"},
+		{"destination", "conversion-actions", "7", "--customer-id", "444-555-6666", "--json"},
+		{"destination", "pick", "7", "--json"},
+	} {
+		resetAllFlags(destinationPickCmd)
+		resetAllFlags(destinationConversionActionsCmd)
+		_, _, err := executeCommand(args...)
+		if err == nil {
+			t.Fatalf("%v: a 429 was reported as done", args)
+		}
+		if code, hint := exitCodeForError(err), hintFor(err); code != ExitRateLimited || !strings.Contains(hint, "Wait 23 seconds") || strings.Contains(hint, "connect") {
+			t.Errorf("%v: exit %d, hint %q; want %d and the wait", args, code, hint, ExitRateLimited)
+		}
+	}
 }
 
 func TestDestinationPickCommandsRefuseBadInputBeforeTheServerAndHintOnARefusal(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"regexp"
 	"sort"
@@ -670,10 +671,10 @@ func isClickNotFound(err error) bool {
 }
 
 // abortsImport reports errors that every later request would repeat (a refused key, no connection,
-// an install that refuses the CLI without a Pro licence).
+// an install that refuses the CLI without a Pro licence, a rate limit until its window passes).
 func abortsImport(err error) bool {
 	cat := api.ErrorCategory(err)
-	return cat == "auth" || cat == "network" || cat == "licence"
+	return cat == "auth" || cat == "network" || cat == "licence" || cat == "rate_limited"
 }
 
 // oneLine flattens an error for a table cell.
@@ -1139,7 +1140,15 @@ func runConversionImport(cmd *cobra.Command, args []string) (retErr error) {
 				"and record the row under its own transaction id; if the recorded sale is right, correct the row. Re-running the file as it is changes nothing.")
 	}
 	retry := "Rows with status failed carry the server's error. Fix the cause and re-run the same command: rows already recorded come back as duplicate (each row keeps its Idempotency-Key and transaction id, and each click's conversions are read first), so only the failures are sent again."
-	if stoppedAt > 0 {
+	var limited *api.APIError
+	switch {
+	case stoppedAt > 0 && errors.As(stopErr, &limited) && limited.Status == http.StatusTooManyRequests:
+		wait := "a minute"
+		if limited.RetryAfter > 0 {
+			wait = fmt.Sprintf("%d seconds (the server's Retry-After)", limited.RetryAfter)
+		}
+		retry = fmt.Sprintf("The import stopped at row %d at the server's rate limit, so no later row was sent. Wait %s, then re-run the same command: rows already recorded come back as duplicate, so only the rest are sent.", stoppedAt, wait)
+	case stoppedAt > 0:
 		retry = fmt.Sprintf("The import stopped at row %d, so no later row was sent. Check the connection and key with `p202 config test`, then re-run the same command: rows already recorded come back as duplicate, so only the rest are sent.", stoppedAt)
 	}
 	return partialFailureError("failed to record %d of %d row(s)", counts[importFailed], len(rows)).WithHint("%s", retry)

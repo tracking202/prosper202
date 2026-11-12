@@ -69,11 +69,16 @@ final class IdentityGraph
         }
         ksort($hashed);
 
+        // observed_at is the latest visit the signal came with (the click's
+        // time, not the clock's): a destination reads a browser signal as the
+        // consent of the click's latest visit only when it came with that
+        // visit (DestinationQueue::visitorMayBeIdentified()).
         foreach ($hashed as $h) {
             $obs = $this->conn->prepareWrite(
-                'INSERT IGNORE INTO 202_identity_observations (click_id, signal_type, signal_hash, observed_at) VALUES (?, ?, ?, ?)'
+                'INSERT INTO 202_identity_observations (click_id, signal_type, signal_hash, observed_at) VALUES (?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE observed_at = GREATEST(observed_at, VALUES(observed_at))'
             );
-            $this->conn->bind($obs, 'issi', [$clickId, $h['type'], $h['hash'], $now]);
+            $this->conn->bind($obs, 'issi', [$clickId, $h['type'], $h['hash'], max(0, $clickTime)]);
             $this->conn->executeUpdate($obs);
         }
 

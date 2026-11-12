@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -91,6 +92,9 @@ type APIError struct {
 	Category    string
 	FieldErrors map[string]string
 	Raw         map[string]interface{}
+	// RetryAfter is the seconds a 429 asks the caller to wait: the body's
+	// retry_after_seconds, else the Retry-After header; 0 when neither says.
+	RetryAfter int
 }
 
 type RequestError struct {
@@ -101,6 +105,10 @@ type RequestError struct {
 
 func (e *APIError) Error() string {
 	msg := fmt.Sprintf("API error (%d): %s", e.Status, e.Message)
+	if e.Status == http.StatusTooManyRequests && e.RetryAfter > 0 && !strings.Contains(e.Message, fmt.Sprintf("%d second", e.RetryAfter)) {
+		// The wait is in the text too, not only the --json envelope: a batch prints each command's error.
+		msg += fmt.Sprintf(" (retry after %d seconds)", e.RetryAfter)
+	}
 	if len(e.FieldErrors) > 0 {
 		for k, v := range e.FieldErrors {
 			msg += fmt.Sprintf("\n  %s: %s", k, v)
@@ -313,7 +321,10 @@ func HintFor(err error) string {
 		case apiErr.Status == 400 || apiErr.Status == 422:
 			return "The server rejected the request values; fix what the message names and retry (`--help` lists the flags)."
 		case apiErr.Status == 429:
-			return "Rate limited. Wait and retry with backoff; reduce --concurrency for bulk operations."
+			if apiErr.RetryAfter > 0 {
+				return fmt.Sprintf("Rate limited: nothing was done, and nothing in the request is wrong. Wait %d seconds (the server's Retry-After), then run the same command again; reduce --concurrency for bulk operations.", apiErr.RetryAfter)
+			}
+			return "Rate limited: nothing was done, and nothing in the request is wrong. Wait a minute and run the same command again, backing off if it repeats; reduce --concurrency for bulk operations."
 		// The files were deployed and the upgrade has not run (the message
 		// names both versions); `system health` answers healthy meanwhile.
 		case apiErr.Status == 503 && strings.Contains(apiErr.Message, "the database needs an upgrade"):
@@ -843,6 +854,9 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, params map
 	if resp.StatusCode >= 400 {
 		// The status still says what failed; only the message is not read.
 		apiErr := parseAPIError(resp.StatusCode, respBody)
+		if apiErr.Status == http.StatusTooManyRequests && apiErr.RetryAfter == 0 {
+			apiErr.RetryAfter = retryAfterHeader(resp.Header.Get("Retry-After"))
+		}
 		if tooMany != nil {
 			apiErr.Message = fmt.Sprintf("HTTP %d, with a message that was not read: %v", resp.StatusCode, tooMany.Err)
 		}
@@ -885,6 +899,10 @@ func parseAPIError(status int, body []byte) *APIError {
 		if cat, ok := data["category"].(string); ok && status == http.StatusPaymentRequired && cat == "licence" {
 			ae.Category = "licence"
 		}
+		if seconds, ok := data["retry_after_seconds"].(float64); ok && status == http.StatusTooManyRequests &&
+			seconds >= 1 && seconds == float64(int(seconds)) {
+			ae.RetryAfter = int(seconds)
+		}
 		if fe, ok := data["field_errors"].(map[string]interface{}); ok {
 			ae.FieldErrors = make(map[string]string, len(fe))
 			for k, v := range fe {
@@ -896,10 +914,24 @@ func parseAPIError(status int, body []byte) *APIError {
 	return ae
 }
 
+// retryAfterHeader reads a Retry-After header given in seconds; 0 for an
+// absent or unreadable one (an HTTP date is left to the hint's generic wait).
+func retryAfterHeader(value string) int {
+	seconds, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || seconds < 1 {
+		return 0
+	}
+	return seconds
+}
+
 func categoryForHTTPStatus(status int) string {
 	switch {
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
 		return "auth"
+	case status == http.StatusTooManyRequests:
+		// Nothing in the request is wrong: the same call succeeds once the
+		// limit's window has passed (RetryAfter).
+		return "rate_limited"
 	case status == http.StatusPaymentRequired:
 		// The install refuses p202-cli without a Pro licence with a 402 whose
 		// envelope carries category "licence" (parseAPIError reads it); a bare
