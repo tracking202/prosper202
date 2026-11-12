@@ -27,6 +27,55 @@ final class Redactor
         'external_product_id', 'product_name', 'qty', 'quantity', 'unit_price', 'currency',
     ];
 
+    /** An event's properties (event_props) longer than this are not kept. */
+    public const MAX_EVENT_PROPS = 1000;
+
+    /**
+     * The parameters a classic postback or pixel row keeps the values of:
+     * what its recorder reads.
+     *
+     * @return list<string>
+     */
+    public static function classicFields(): array
+    {
+        return [...self::CLASSIC, 'event_props'];
+    }
+
+    /**
+     * An event's properties as sent, kept only whole: a JSON object no key
+     * of which names a secret or a person and no value of which holds an
+     * email or IP address. Anything else is redacted entire, never in part,
+     * so what is kept is what the event said.
+     */
+    private static function eventProps(mixed $value): string
+    {
+        if (!is_string($value) || strlen($value) > self::MAX_EVENT_PROPS) {
+            return self::REDACTED;
+        }
+        $decoded = json_decode($value, true, 4);
+        if (!is_array($decoded) || ($decoded !== [] && array_is_list($decoded)) || !self::plainProps($decoded)) {
+            return self::REDACTED;
+        }
+
+        return $value;
+    }
+
+    /** @param array<array-key, mixed> $props */
+    private static function plainProps(array $props): bool
+    {
+        foreach ($props as $key => $value) {
+            $key = (string) $key;
+            if (preg_match(self::SECRET_NAME, $key) !== 0 || preg_match(self::VISITOR_NAME, $key) !== 0 || self::namesAPerson($key)) {
+                return false;
+            }
+            if (is_array($value) ? !self::plainProps($value) : (is_string($value) && self::namesAPerson($value))) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     /** Per endpoint, the fields whose values are kept. */
     private const KEEP = [
         'pb' => self::CLASSIC,
@@ -89,7 +138,10 @@ final class Redactor
             $shown = self::namesAPerson($name) ? '_redacted_name_' . $kept : self::text($name, 64);
             $pairs = self::PASS_THROUGH[$endpoint][$name] ?? null;
             $out[$shown] = match (true) {
+                // A blank names nothing and is kept as one, so "sent empty" is told from "sent and hidden".
+                $value === '' => '',
                 $pairs !== null => self::passThrough($value, $pairs),
+                $name === 'event_props' && in_array('event', $keep, true) => self::eventProps($value),
                 in_array($name, $keep, true) => self::value($value, 0),
                 default => self::REDACTED,
             };
