@@ -48,8 +48,9 @@ func TestMCPServerOverStdio(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools.Tools) != len(mcpToolSpecs) {
-		t.Fatalf("listed %d tools, want %d", len(tools.Tools), len(mcpToolSpecs))
+	// Every always-loaded tool, and get_more_tools for the deferred ones.
+	if len(tools.Tools) != len(mcpToolSpecs)+1 {
+		t.Fatalf("listed %d tools, want %d", len(tools.Tools), len(mcpToolSpecs)+1)
 	}
 	for _, tool := range tools.Tools {
 		if tool.Annotations == nil || tool.Annotations.DestructiveHint == nil || tool.Title == "" {

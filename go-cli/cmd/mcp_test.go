@@ -90,7 +90,7 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 // A tool's declared positionals must be exactly what its command accepts;
 // the command's Args validator is the authority.
 func TestMCPToolPositionalsMatchCommands(t *testing.T) {
-	for _, s := range mcpToolSpecs {
+	for _, s := range mcpAllToolSpecs() {
 		c, err := s.command(rootCmd)
 		if err != nil {
 			t.Error(err)
@@ -117,7 +117,7 @@ func TestMCPToolPositionalsMatchCommands(t *testing.T) {
 // and a delete is marked destructive.
 func TestMCPWriteToolsAreMarked(t *testing.T) {
 	deleting := regexp.MustCompile(`^(delete|remove|discard|erase)`)
-	for _, s := range mcpToolSpecs {
+	for _, s := range mcpAllToolSpecs() {
 		c, err := s.command(rootCmd)
 		if err != nil {
 			t.Fatal(err)
@@ -289,7 +289,7 @@ var mcpReadToolPosts = map[string]string{
 // Every read tool, run with placeholder arguments, asks the install for data
 // and sends no write.
 func TestMCPReadToolsSendNoWrites(t *testing.T) {
-	for _, s := range mcpToolSpecs {
+	for _, s := range mcpAllToolSpecs() {
 		if !s.readOnly() {
 			continue
 		}
