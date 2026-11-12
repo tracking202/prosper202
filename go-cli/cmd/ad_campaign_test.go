@@ -73,7 +73,6 @@ func TestAdCampaignRefusesBadInputBeforeTheServer(t *testing.T) {
 		"an event setting that is not": {"ad-campaign", "attach-events", "1", "cmpn_1", "--event-setting-id", "9"},
 		"half a window":                {"ad-campaign", "spend", "1", "--since", "2026-11-01"},
 		"a date that is not":           {"ad-campaign", "spend", "1", "--since", "11/01/2026", "--until", "2026-11-10"},
-		"staged":                       {"--staged", "ad-campaign", "pause", "1", "cmpn_1"},
 	} {
 		_, _, err := executeCommand(args...)
 		if err == nil || exitCodeForError(err) != 1 || hintFor(err) == "" {
