@@ -64,11 +64,39 @@ var conversionPostbackAuthGetCmd = &cobra.Command{
 	},
 }
 
+var conversionPostbackAuthReadinessCmd = &cobra.Command{
+	Use:   "readiness",
+	Short: "Who a stricter mode would refuse: the last 7 days' postbacks and pixels by what each carried",
+	Long: "Run this before `p202 conversion postback-auth set --mode token`. It reads the inbound log:\n" +
+		"how many of your postbacks and pixels of the last 7 days carried nothing or a wrong token\n" +
+		"(without_credentials), with the token alone (token_only) or signed, and lists the senders by\n" +
+		"endpoint and the campaign they recorded on. safe_to_require_token is true only when every\n" +
+		"request seen carried the token or a signature; it is null, not true, when none arrived or\n" +
+		"some could not be read. Give each sender listed its URL from `p202 conversion postback-url`,\n" +
+		"then look again. covers_since says how far back the log reaches when that is under 7 days.",
+	Example: "  p202 conversion postback-auth readiness\n" +
+		"  p202 conversion postback-auth readiness --json",
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		data, err := c.Get("conversions/postback-auth/readiness", nil)
+		if err != nil {
+			return withHint(err, "%s", "Reading it needs a role with access_to_api_integrations, as Account > API Integrations does.")
+		}
+		render(data)
+		return nil
+	},
+}
+
 var conversionPostbackAuthSetCmd = &cobra.Command{
 	Use:   "set",
 	Short: "Choose what postbacks and pixels must carry: --mode off, token or signed",
 	Long: "--mode token refuses every postback and pixel of your account that carries neither the token\n" +
-		"nor a signature: give your networks the postbacks from `p202 conversion postback-url` first.\n" +
+		"nor a signature: give your networks the postbacks from `p202 conversion postback-url` first,\n" +
+		"and check `p202 conversion postback-auth readiness` for senders that still send none.\n" +
 		"--mode signed accepts only a signature keyed with the signing secret: the token alone is\n" +
 		"refused, and every pixel too, since a browser cannot sign. --mode off accepts every request,\n" +
 		"a stale or wrong token included. Needs a role with access_to_api_integrations.",
@@ -213,6 +241,6 @@ func init() {
 	conversionPostbackAuthRotateCmd.Flags().String("credential", "", "What to replace ({values}; default token)")
 	enumFlag(conversionPostbackAuthRotateCmd, "credential", newEnum(postbackCredentials))
 	conversionPostbackAuthRotateCmd.Flags().Int("grace_hours", 168, "Hours the old one keeps working (0 to 720; 0 stops it at once)")
-	conversionPostbackAuthCmd.AddCommand(conversionPostbackAuthGetCmd, conversionPostbackAuthSetCmd, conversionPostbackAuthRotateCmd)
+	conversionPostbackAuthCmd.AddCommand(conversionPostbackAuthGetCmd, conversionPostbackAuthReadinessCmd, conversionPostbackAuthSetCmd, conversionPostbackAuthRotateCmd)
 	conversionCmd.AddCommand(conversionPostbackAuthCmd)
 }

@@ -626,6 +626,7 @@ if ($tsOwners['error'] !== null) {
 } elseif ($tsSaid) {
     echo p202_ts_owners_notice($tsOwners['report'], $self);
 }
+echo p202_postback_queue_notice($db, (int) ($_SESSION['user_own_id'] ?? $_SESSION['user_id'] ?? 0), get_absolute_url());
 echo p202_restore_notice(p202_restore_notices($db), $self, (string) ($_SESSION['token'] ?? ''));
 ?>
 

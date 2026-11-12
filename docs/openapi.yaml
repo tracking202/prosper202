@@ -367,6 +367,27 @@ paths:
                               type: integer
                             time_human:
                               type: string
+                      traffic_source_postbacks:
+                        type: object
+                        nullable: true
+                        description: >-
+                          Conversion postbacks queued for traffic sources and
+                          left unsent, every account's. `stuck` is true when
+                          one has been due for 15 minutes and no scheduler
+                          has run since; `warning` then says so and names the fix.
+                          `overdue` counts up to 1,001, which reads as more than
+                          1,000. Null when the queue could not be read.
+                        properties:
+                          stuck:
+                            type: boolean
+                          overdue:
+                            type: integer
+                          oldest_due_at:
+                            type: integer
+                            nullable: true
+                          warning:
+                            type: string
+                            nullable: true
         "403":
           $ref: "#/components/responses/Forbidden"
 
@@ -2791,9 +2812,30 @@ paths:
         proves whose they are. The newest 5,000 per account are kept.
         `fields` holds every field's name, and its value only for the
         fields the endpoint is known to send and only when it holds no
-        email or IP address; every other value is `[redacted]`.
+        email or IP address; every other value is `[redacted]`. `search`
+        finds the requests for one subid (click id), conversion id or
+        transaction id, given whole; for a role that does not manage users it
+        covers only the account's own requests. `click_id` lists the
+        requests for one click. A row that recorded nothing carries `fix`:
+        what to do about it and the page that does it.
       operationId: listInboundLog
       parameters:
+        - name: search
+          in: query
+          description: >-
+            A subid (click id), conversion id or transaction id, matched whole:
+            the row's own, or the one the request carried.
+          schema:
+            type: string
+            maxLength: 255
+        - name: click_id
+          in: query
+          description: >-
+            Only the requests the endpoint found this click for (exactly; unlike
+            search, a conversion id of the same number is not matched).
+          schema:
+            type: integer
+            minimum: 1
         - name: outcome
           in: query
           description: >-
@@ -2869,6 +2911,48 @@ paths:
                           type: object
                           nullable: true
                           additionalProperties: true
+                        auth:
+                          type: string
+                          nullable: true
+                          enum: [none, token, signed, invalid]
+                          description: >-
+                            What a postback or pixel presented: nothing, the
+                            account's token, a signature that verifies, or a
+                            token or signature the account would refuse. Null
+                            for a payment notification and where no account
+                            was found.
+                        recorded_later_at:
+                          type: integer
+                          nullable: true
+                          description: Unix time the row's conversion was recorded from the log (POST .../record); null otherwise.
+                        record_started_at:
+                          type: integer
+                          nullable: true
+                          description: Unix time a recording from the log began and has not finished; null otherwise.
+                        match_method:
+                          type: string
+                          nullable: true
+                          description: >-
+                            How the endpoint found the click (click_id, cookie,
+                            same_ip), where it said before it answered; null on
+                            a row logged without it.
+                        fix:
+                          type: object
+                          nullable: true
+                          description: What to do about a request that recorded nothing; null when there is nothing to fix.
+                          properties:
+                            text:
+                              type: string
+                            page:
+                              type: string
+                              nullable: true
+                              description: The page that fixes it, as a path under the install's address.
+                            label:
+                              type: string
+                              nullable: true
+                        can_record:
+                          type: boolean
+                          description: Whether POST /conversions/inbound-log/{id}/record can record this request's conversion.
                   next_before:
                     type: integer
                     nullable: true
@@ -2879,6 +2963,70 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /conversions/inbound-log/{id}/record:
+    post:
+      tags: [Conversions]
+      summary: Record a refused postback or pixel from the log
+      description: |
+        Records what a refused postback or pixel would have recorded, from
+        the request the log kept ("Record it now" on Setup › Inbound Log):
+        the same click, amount and transaction id, dated when the request
+        arrived, or its event, handed to the click's goals. For a `pb`,
+        `gpb`, `px`, `gpx` or `upx` request that was refused as
+        `unauthenticated` or `failed` and whose kept values are whole;
+        `can_record` on the row says so. A pixel's click and a form post's
+        body are kept from 1.9.80 on (`match_method` on the row); a row
+        logged without them is not offered. Each is recorded as its own
+        endpoint records it, with the same checks: the click must be the
+        account's, a `pb` row's click must have visited the campaign it
+        names, a transaction id or event id on file is a duplicate, and
+        without one a click converts once. Sent twice it records once: the
+        second call answers `already_recorded`. `conversion_id` is null for
+        an event that reached no goal that records a conversion. Asks for the role's
+        access to the Setup and Update sections. It takes no body.
+      operationId: recordInboundLogRequest
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The row's inbound_id
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "201":
+          description: The conversion was recorded (`status` recorded)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboundLogRecorded"
+        "200":
+          description: >-
+            Nothing was added: the conversion was on file under its transaction
+            id (`duplicate`), or this row was recorded before (`already_recorded`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboundLogRecorded"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Another call is recording this row now; nothing was written by this one
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: >-
+            The row cannot be recorded from the log, or the recorder refused it
+            (the click is not the account's, the click had converted already);
+            the message says which, and nothing was written
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /conversions/shopify-refunds:
     get:
@@ -3081,7 +3229,6 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
-
   /conversions/offline-export:
     get:
       tags: [Conversions]
@@ -12367,6 +12514,103 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+  /conversions/postback-auth/readiness:
+    get:
+      tags: [Setup]
+      summary: Who a stricter postback mode would refuse
+      description: |
+        The account's postbacks and pixels of the last 7 days, from the
+        inbound log, by what each presented: nothing or a token or signature
+        that does not verify (`without_credentials`), the token alone
+        (`token_only`) or a signature (`signed`). Ask it before PUT
+        /conversions/postback-auth with `token` or `signed`:
+        `safe_to_require_token` is true only when every request seen carried
+        the token or a signature, false when one did not, and null when none
+        arrived or what one carried was not read (`unread`). `senders` lists
+        the ones a stricter mode would refuse, by endpoint and campaign, most
+        requests first: the campaign a request recorded on, or for one that
+        recorded nothing the campaign its URL names (`acip`) or its click's;
+        where none can be told, `subids` holds a few of the subids named. The log keeps
+        a number of requests, not of days: `covers_since` is later than
+        `since` when it reaches back less than 7 days. Asks what GET
+        /conversions/postback-auth asks.
+      operationId: getPostbackAuthReadiness
+      responses:
+        "200":
+          description: The readiness report
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      mode:
+                        type: string
+                        enum: ["off", token, signed]
+                      window_days:
+                        type: integer
+                      since:
+                        type: integer
+                        description: Unix time the window begins
+                      covers_since:
+                        type: integer
+                        description: Unix time the log reaches back to within the window
+                      requests:
+                        type: integer
+                      unread:
+                        type: integer
+                      without_credentials:
+                        type: integer
+                      token_only:
+                        type: integer
+                      signed:
+                        type: integer
+                      pixels:
+                        type: integer
+                        description: Requests to px, gpx and upx, which `signed` refuses whatever they carry
+                      safe_to_require_token:
+                        type: boolean
+                        nullable: true
+                      safe_to_require_signature:
+                        type: boolean
+                        nullable: true
+                      senders:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            endpoint:
+                              type: string
+                            presented:
+                              type: string
+                              enum: [none, invalid, token, signed]
+                            campaign_id:
+                              type: integer
+                              nullable: true
+                            campaign_name:
+                              type: string
+                              nullable: true
+                            network_name:
+                              type: string
+                              nullable: true
+                            subids:
+                              type: array
+                              description: Up to 3 subids the group's requests named, when no campaign could be told
+                              items:
+                                type: string
+                            requests:
+                              type: integer
+                            conversions:
+                              type: integer
+                            last_received_at:
+                              type: integer
+                      more_senders:
+                        type: integer
+                        description: Groups left out of `senders` past its first 50
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /conversions/postback-auth/rotate:
     post:
       tags: [Setup]
@@ -13337,6 +13581,25 @@ components:
           additionalProperties:
             type: string
 
+    InboundLogRecorded:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [recorded, duplicate, already_recorded]
+            message:
+              type: string
+            conversion_id:
+              type: integer
+              nullable: true
+            click_id:
+              type: integer
+              nullable: true
+            inbound_id:
+              type: integer
     PostbackAuth:
       type: object
       properties:

@@ -4,9 +4,13 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\Exception\ConflictException;
+use Api\V3\Exception\DatabaseException;
+use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\QueryInt;
 use Prosper202\InboundLog\InboundLog;
+use Prosper202\InboundLog\InboundReplay;
 
 /**
  * GET /conversions/inbound-log: the postbacks, pixels and payment
@@ -15,7 +19,7 @@ use Prosper202\InboundLog\InboundLog;
  */
 final class InboundLogController
 {
-    public const PARAMS = ['outcome', 'endpoint', 'limit', 'before'];
+    public const PARAMS = ['outcome', 'endpoint', 'search', 'click_id', 'limit', 'before'];
 
     /**
      * @param bool $seesUnattributed whether the requests no account was found for are listed too (admins)
@@ -55,8 +59,30 @@ final class InboundLogController
     }
 
     /**
+     * POST /conversions/inbound-log/{id}/record: the conversion of a refused
+     * server postback, recorded from the log (InboundReplay). Sent twice it
+     * records once; a row that cannot be recorded is a 422 saying why.
+     *
+     * @return array{data: array{status: string, message: string, conversion_id: int|null, click_id: int|null, inbound_id: int}}
+     */
+    public function recordNow(int $inboundId): array
+    {
+        $result = (new InboundReplay($this->db))->replay($this->userId, $inboundId);
+        $data = ['data' => $result + ['inbound_id' => $inboundId]];
+
+        return match ($result['status']) {
+            'recorded' => ['_status' => 201] + $data,
+            'duplicate', 'already_recorded' => $data,
+            'not_found' => throw new NotFoundException($result['message']),
+            'in_progress' => throw new ConflictException($result['message']),
+            'failed' => throw new DatabaseException($result['message']),
+            default => throw new ValidationException($result['message'], ['id' => $result['message']]),
+        };
+    }
+
+    /**
      * @param array<string, mixed> $params
-     * @return array{outcome?: string, endpoint?: string, before?: int}
+     * @return array{outcome?: string, endpoint?: string, search?: string, click_id?: int, before?: int}
      */
     public static function filters(array $params): array
     {
@@ -83,8 +109,19 @@ final class InboundLogController
                 $filters['endpoint'] = $endpoint;
             }
         }
+        $search = $params['search'] ?? null;
+        if ($search !== null && $search !== '') {
+            if (!is_string($search) || trim($search) === '' || mb_strlen(trim($search), 'UTF-8') > InboundLog::MAX_SEARCH) {
+                $errors['search'] = 'a subid (click id), conversion id or transaction id, whole, at most ' . InboundLog::MAX_SEARCH . ' characters';
+            } else {
+                $filters['search'] = trim($search);
+            }
+        }
         if ($errors !== []) {
             throw new ValidationException('Invalid inbound log filter', $errors);
+        }
+        if (array_key_exists('click_id', $params) && $params['click_id'] !== '' && $params['click_id'] !== null) {
+            $filters['click_id'] = QueryInt::param($params, 'click_id', 0, 1, PHP_INT_MAX, 'the click the requests named');
         }
         if (array_key_exists('before', $params) && $params['before'] !== '' && $params['before'] !== null) {
             $filters['before'] = QueryInt::param($params, 'before', 0, 1, PHP_INT_MAX, 'the next_before of the previous page');

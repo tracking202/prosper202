@@ -36,6 +36,8 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
     public const CLICK_HOLD = 6 * 3600;
     /** No conversion action's click-through window is longer than 90 days. */
     public const CLICK_MAX_AGE = 90 * 86400;
+    /** The click ids Google matches a conversion by, in Google's own precedence; gbraid and wbraid together are refused. */
+    public const CLICK_IDS = ['gclid', 'wbraid', 'gbraid'];
     /** How long a destination that needs its operator waits before it is tried again. */
     public const AUTH_WAIT = 3600;
     /** A test's made-up click id: Google checks everything else, then refuses the click, which is expected. */
@@ -323,7 +325,7 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
         $clickType = '';
         $conversion = [];
         // Google's own precedence; gbraid and wbraid together are refused (GBRAID_WBRAID_BOTH_SET).
-        foreach (['gclid', 'wbraid', 'gbraid'] as $type) {
+        foreach (self::CLICK_IDS as $type) {
             $id = trim((string) ($facts->click[$type] ?? ''));
             if ($id !== '') {
                 $clickType = $type;
