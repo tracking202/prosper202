@@ -40,6 +40,14 @@ var mcpDeferredToolSpecs = []mcpToolSpec{
 	{Name: "destination_test", Command: []string{"destination", "test"}, Title: "Test a destination", Kind: mcpCreate, NotHosted: true, NotStaged: true,
 		Args:  []mcpArg{idArg("id", "Destination id (from destination_list).", true)},
 		Words: []string{"test destination", "test fire", "validate destination", "destinations"}},
+
+	// The spend ledger: what ad platforms billed (ChatGPT Ads' hourly pull).
+	{Name: "ad_spend", Command: []string{"ad-spend"}, Title: "What ad platforms billed, per ad", Kind: mcpRead, NotHosted: true, Keep: []string{"interval"},
+		Note: "Per day or hour and ad: impressions, clicks, spend, your clicks that carried the ad, and spend no click carried (unallocated); reaches says how far it goes. No rows: the ad account's hourly pull may be off.",
+		Words: []string{"ad spend", "what did chatgpt ads cost", "openai ads spend", "spend per ad", "cost per ad", "ad platform billed",
+			"unallocated spend", "spend ledger"}},
+	{Name: "ad_spend_sync_status", Command: []string{"ad-spend", "sync", "list"}, Title: "ChatGPT Ads spend sync status", Kind: mcpRead, NotHosted: true,
+		Words: []string{"spend sync", "is my spend sync working", "spend sync status", "last spend pull", "spend sync error", "chatgpt ads sync", "openai ads sync"}},
 }
 
 // mcpAllToolSpecs is every tool `p202 mcp call` can run.

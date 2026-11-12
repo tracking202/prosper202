@@ -598,7 +598,13 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   only. Today they are `destination_list`, `destination_deliveries` and
   `destination_test` (Setup › Destinations: each destination's status, its
   delivery log with why a conversion failed or was withheld, and a test
-  fire; the test fire is not offered with `--staged`).
+  fire; the test fire is not offered with `--staged`), `ad_spend` (`p202
+  ad-spend`: what ad platforms billed per ad per day or hour, your clicks
+  that carried each ad, the spend no click carried, and `reaches`) and
+  `ad_spend_sync_status` (`p202 ad-spend sync list`: each ChatGPT Ads
+  connection's spend sync, on or off, its last run and error). Asked "what
+  did ChatGPT Ads cost" or "is my spend sync working", get_more_tools loads
+  them.
 - With `--staged`, a write returns a change id and changes nothing; you apply
   it with `p202 change apply <id>`. The assistant is not offered the apply and
   discard tools.

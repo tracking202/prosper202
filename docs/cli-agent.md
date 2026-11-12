@@ -1480,6 +1480,10 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
   person applies a proposal (`p202 change apply <id>`), not the assistant.
 - `p202 mcp tools` prints the tool list as JSON; `p202 mcp call <tool> --input
   '<json>'` runs one tool as the app would.
+- Some tools are not in the list the app reads at the start (the
+  destination tools, `ad_spend` and `ad_spend_sync_status`): the server lists
+  `get_more_tools`, which takes the task in words and loads the tools that
+  match. `p202 mcp tools --deferred` lists them. They are local only.
 - For claude.ai and other hosted apps there is Tracking202's hosted MCP server
   (`https://mcp.tracking202.com/mcp`): the person approves the connection on
   their own install, signed in as their own user, and chooses read only,

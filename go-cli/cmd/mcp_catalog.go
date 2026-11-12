@@ -139,6 +139,10 @@ type mcpToolSpec struct {
 	// Words are what a person asks for the task in, for get_more_tools to
 	// match a deferred tool by (mcpDeferredToolSpecs); unused otherwise.
 	Words []string
+	// Keep lists flags of mcpOmittedFlags the tool takes all the same, where
+	// its command gives the name another meaning (ad-spend's --interval is
+	// day or hour, not a poll).
+	Keep []string
 	// NotStaged: the tool acts on proposed changes themselves, so a server
 	// that only proposes (--staged) does not offer it. Applying a proposal
 	// is a person's decision; a model that could stage a write and then
@@ -529,9 +533,17 @@ func (s mcpToolSpec) params(c *cobra.Command) ([]mcpParam, map[string]*pflag.Fla
 		}
 		hostedOmit[f] = mcpHostedRun
 	}
+	keep := map[string]bool{}
+	for _, f := range s.Keep {
+		// --force is the approval's to give, never a tool's argument.
+		if !mcpOmittedFlags[f] || f == "force" || c.LocalFlags().Lookup(f) == nil {
+			return nil, nil, fmt.Errorf("tool %s: Keep names --%s, which is not a flag of its command that mcpOmittedFlags leaves out (or is --force)", s.Name, f)
+		}
+		keep[f] = true
+	}
 	var err error
 	c.LocalFlags().VisitAll(func(f *pflag.Flag) {
-		if err != nil || !keepFlag(f) || mcpOmittedFlags[f.Name] || omit[f.Name] || mcpIsAlias(f) || hostedOmit[f.Name] {
+		if err != nil || !keepFlag(f) || (mcpOmittedFlags[f.Name] && !keep[f.Name]) || omit[f.Name] || mcpIsAlias(f) || hostedOmit[f.Name] {
 			return
 		}
 		kind, ok := mcpFlagKinds[f.Value.Type()]
