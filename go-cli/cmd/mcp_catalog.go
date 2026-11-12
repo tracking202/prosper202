@@ -144,6 +144,9 @@ type mcpToolSpec struct {
 	Required []string
 	// Note is added to the command's own summary in the description.
 	Note string
+	// Words are what a person asks for the task in, for get_more_tools to
+	// match a deferred tool by (mcpDeferredToolSpecs); unused otherwise.
+	Words []string
 	// NotStaged: the tool acts on proposed changes themselves, so a server
 	// that only proposes (--staged) does not offer it. Applying a proposal
 	// is a person's decision; a model that could stage a write and then
@@ -493,7 +496,7 @@ var mcpFlagKinds = map[string]string{
 }
 
 func findMCPSpec(name string) (mcpToolSpec, bool) {
-	for _, s := range mcpToolSpecs {
+	for _, s := range mcpAllToolSpecs() {
 		if s.Name == name {
 			return s, true
 		}

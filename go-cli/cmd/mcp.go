@@ -16,6 +16,7 @@ import (
 
 var mcpReadOnly bool
 var mcpCallInput string
+var mcpToolsDeferred bool
 
 // mcpToolRun is set for the `p202 mcp` commands by root's PersistentPreRunE,
 // and for `p202 search` in the hosted engine by hostedPinOutput:
@@ -52,11 +53,20 @@ var mcpToolsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		var listed interface{} = cat
+		if mcpToolsDeferred {
+			// The tools get_more_tools loads on request, in the catalogue's tool shape.
+			deferred, err := buildMCPDeferredTools(rootCmd, mcpReadOnly, api.StagedMode())
+			if err != nil {
+				return err
+			}
+			listed = map[string]interface{}{"schema": mcpCatalogSchema, "tools": deferred}
+		}
 		var buf bytes.Buffer
 		enc := json.NewEncoder(&buf)
 		enc.SetEscapeHTML(false)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(cat); err != nil {
+		if err := enc.Encode(listed); err != nil {
 			return fmt.Errorf("encoding the tool list: %w", err)
 		}
 		_, err = os.Stdout.Write(buf.Bytes())
@@ -193,6 +203,7 @@ func mcpAskForLess(s mcpToolSpec) string {
 func init() {
 	mcpCmd.Flags().BoolVar(&mcpReadOnly, "read-only", false, "Serve only the tools that read; writes are refused")
 	mcpToolsCmd.Flags().BoolVar(&mcpReadOnly, "read-only", false, "List only the tools that read")
+	mcpToolsCmd.Flags().BoolVar(&mcpToolsDeferred, "deferred", false, "List the tools `p202 mcp` loads on request (get_more_tools) instead")
 	mcpCallCmd.Flags().BoolVar(&mcpReadOnly, "read-only", false, "Refuse a tool that changes data")
 	mcpCallCmd.Flags().StringVar(&mcpCallInput, "input", "{}", "The tool's arguments as a JSON object, or - to read them from stdin")
 	mcpCmd.AddCommand(mcpToolsCmd, mcpCallCmd)
