@@ -527,13 +527,24 @@ final class DestinationsIntegrationTest extends TestCase
         self::assertSame([hash('sha256', 'jane.doe+promo@gmail.com')], $event['user']['emails_sha256'], 'OpenAI\'s normalisation, not Google\'s');
         self::assertSame([hash('sha256', '15551234567')], $event['user']['phone_numbers_sha256']);
 
+        // The positive control for scope oppref: a click that carries one is sent, its id unmodified.
+        $this->click(102);
+        self::fixture('DELETE FROM 202_google WHERE click_id=102');
+        self::fixture("INSERT INTO 202_google SET click_id=102, gclid='', oppref='opp_7Hq2-Xk9_aZ'");
+        self::fixture('INSERT INTO 202_clicks_site SET click_id=102, click_landing_site_url_id=11');
+        $this->record(102, 'ORD-72');
+        self::assertSame(2, $queue->sendDue(10, 5, time() + 1)['sent']);
+        self::assertSame(['opp_7Hq2-Xk9_aZ', 'opp_7Hq2-Xk9_aZ'], array_map(static fn (array $b): ?string => $b['events'][0]['oppref'] ?? null, array_slice($this->bodies, 1)));
+        self::assertSame('sent', self::deliveries($oppref)[1]['status']);
+        $this->bodies = [];
+
         // A visitor who may be in Europe is withheld even with privacy Disabled: OpenAI takes no consent signal.
         $this->click(101);
         $this->record(101, 'ORD-71');
         $eu = new DestinationQueue(new Connection(self::$db), $store, static fn (string $ip): bool => true);
         self::assertSame(2, $eu->sendDue(10, 5, time() + 2)['withheld']);
-        self::assertStringContainsString('takes no consent signal', (string) self::deliveries($all)[1]['last_error']);
-        self::assertCount(1, $this->bodies);
+        self::assertStringContainsString('takes no consent signal', (string) self::deliveries($all)[2]['last_error']);
+        self::assertSame([], $this->bodies);
 
         try {
             $queue->backfill(1, $all, 8, time());
