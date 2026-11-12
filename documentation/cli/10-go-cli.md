@@ -317,8 +317,10 @@ p202 import campaigns /tmp/campaigns.json --skip-errors
 
 `import` stops at the first record that fails and exits with that record's
 category. `--skip-errors` skips a record the server rejects and goes on; a
-refused key, no connection or the licence refusal still stop it, since every
-later record would meet the same failure.
+refused key, no connection, the licence refusal or a rate limit (429) still
+stop it, since every later record would meet the same failure. When records
+were imported before the stop, the hint names the records to send next: the
+whole file again would create the first ones twice.
 
 ## Analytics Shorthand
 
@@ -654,8 +656,13 @@ A 429 (`rate_limited`, exit 7) means nothing in the request is wrong: a
 limit's window is spent (sync and bulk-upsert per minute, Google Ads reads,
 landing page checks per key). Wait
 `retry_after_seconds` and run the same command again; do not change its
-flags. `sync --skip-errors` and `conversion import` stop at a 429 rather
-than send every later record into the same refusal.
+flags. `sync --skip-errors`, `conversion import` and `import` stop at a 429
+rather than send every later record into the same refusal. Re-running sync
+or a conversion import is safe (rows already recorded come back as
+duplicates), but `import` creates: its hint names the records still to
+send, and running the whole file again would create the first ones twice.
+A shell batch or `exec` whose every failure was a 429 exits 7 as well, and
+its hint names the commands or profiles to run again, not the whole run.
 
 Lists of valid values (supported entities, the metrics a response did
 contain) sit in the message itself, so they are visible even when the hint

@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
@@ -79,8 +81,9 @@ var dataImportCmd = &cobra.Command{
 				// --skip-errors as well. %w keeps the record's own category,
 				// exit code and hint (auth 2, network 3, licence 6, ...).
 				if !skipErrors || abortsImport(err) {
-					return fmt.Errorf("import failed at record %d of %d (%d imported and %d staged before it, the rest not attempted): %w",
+					stopped := fmt.Errorf("import failed at record %d of %d (%d imported and %d staged before it, the rest not attempted): %w",
 						i+1, len(records), imported, staged, err)
+					return importStoppedHint(stopped, err, i+1, len(records), imported+staged)
 				}
 				failed++
 				errorsOut = append(errorsOut, fmt.Sprintf("record %d: %v", i+1, err))
@@ -184,4 +187,30 @@ func init() {
 	dataImportCmd.Flags().Bool("dry-run", false, "Validate import and count records without creating them")
 	dataImportCmd.Flags().Bool("skip-errors", false, "Continue importing after record-level failures; exits 5 when any record failed, and a 401 or 403 still stops it")
 	rootCmd.AddCommand(dataImportCmd)
+}
+
+// importStoppedHint is the next step for an import that stopped at record
+// at of total with sent records already imported or staged: the record's own
+// error's step, and then to send records at to total only, since running the
+// whole file again sends the first ones a second time (CLAUDE.md #13). A 429
+// says nothing was done and to run the same command again, which is true of
+// the request and not of the import, so its wait is named instead.
+func importStoppedHint(stopped, err error, at, total, sent int) error {
+	if sent == 0 {
+		return stopped
+	}
+	resume := fmt.Sprintf("import a file of records %d to %d only: records 1 to %d were already sent (%d imported or staged), "+
+		"and running the whole file again sends them a second time.", at, total, at-1, sent)
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) && apiErr.Status == http.StatusTooManyRequests {
+		wait := "a minute"
+		if apiErr.RetryAfter > 0 {
+			wait = fmt.Sprintf("%d seconds (the server's Retry-After)", apiErr.RetryAfter)
+		}
+		return withHint(stopped, "Rate limited at record %d. Wait %s, then %s", at, wait, resume)
+	}
+	if first := strings.TrimSpace(rawHintFor(err)); first != "" {
+		return withHint(stopped, "%s Then %s", first, resume)
+	}
+	return withHint(stopped, "Fix what the message names, then %s", resume)
 }

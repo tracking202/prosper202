@@ -5131,3 +5131,98 @@ func TestUserIdentityKeyRotateStagedProposesWithoutAsking(t *testing.T) {
 		t.Errorf("request = %q, want a staged POST", got)
 	}
 }
+
+// An import a 429 stops part-way has sent records already: the hint names the
+// wait and the records still to send, never "run the same command again",
+// which would send the first ones a second time. With --skip-errors too.
+func TestImportStoppedByARateLimitNamesTheRecordsLeft(t *testing.T) {
+	for _, flags := range [][]string{{"--json"}, {"--skip-errors", "--json"}} {
+		posts := 0
+		srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == "POST" && r.URL.Path == "/api/v3/campaigns" {
+				posts++
+				if posts <= 2 {
+					w.WriteHeader(201)
+					w.Write([]byte(`{"data":{"aff_campaign_id":1}}`))
+					return
+				}
+				w.Header().Set("Retry-After", "30")
+				w.WriteHeader(429)
+				w.Write([]byte(`{"error":true,"status":429,"message":"Rate limit exceeded","retry_after_seconds":30}`))
+				return
+			}
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+		}))
+		tmp := t.TempDir()
+		setTestHome(t, tmp)
+		writeTestConfig(t, tmp, srv.URL, "test-key")
+		inFile := filepath.Join(tmp, "campaigns.json")
+		if err := os.WriteFile(inFile, []byte(`[{"aff_campaign_name":"A"},{"aff_campaign_name":"B"},{"aff_campaign_name":"C"},{"aff_campaign_name":"D"}]`), 0600); err != nil {
+			t.Fatalf("writing import file: %v", err)
+		}
+
+		_, _, err := executeCommand(append([]string{"import", "campaigns", inFile}, flags...)...)
+		srv.Close()
+		if err == nil {
+			t.Fatalf("%v: a rate-limited import was reported as done", flags)
+		}
+		hint := hintFor(err)
+		if code := exitCodeForError(err); code != ExitRateLimited {
+			t.Errorf("%v: exit %d, want %d", flags, code, ExitRateLimited)
+		}
+		for _, want := range []string{"Wait 30 seconds", "records 3 to 4 only", "a second time"} {
+			if !strings.Contains(hint, want) {
+				t.Errorf("%v: hint %q lacks %q", flags, hint, want)
+			}
+		}
+		if strings.Contains(hint, "run the same command again") || strings.Contains(hint, "nothing was done") {
+			t.Errorf("%v: hint %q would send records 1 and 2 again", flags, hint)
+		}
+		if posts != 3 {
+			t.Errorf("%v: %d POSTs, want 3: the import stops at the 429", flags, posts)
+		}
+	}
+}
+
+// Stopped at the first record, nothing was sent: the 429's own step stands.
+func TestImportRateLimitedAtTheFirstRecordSaysToRunItAgain(t *testing.T) {
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/api/v3/campaigns" {
+			w.WriteHeader(429)
+			w.Write([]byte(`{"error":true,"status":429,"message":"Rate limit exceeded","retry_after_seconds":9}`))
+			return
+		}
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"not found"}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	inFile := filepath.Join(tmp, "campaigns.json")
+	if err := os.WriteFile(inFile, []byte(`[{"aff_campaign_name":"A"},{"aff_campaign_name":"B"}]`), 0600); err != nil {
+		t.Fatalf("writing import file: %v", err)
+	}
+	_, _, err := executeCommand("import", "campaigns", inFile, "--json")
+	hint := hintFor(err)
+	if exitCodeForError(err) != ExitRateLimited || !strings.Contains(hint, "Wait 9 seconds") ||
+		!strings.Contains(hint, "run the same command again") || strings.Contains(hint, "records 1 to") {
+		t.Errorf("exit %d, hint %q", exitCodeForError(err), hint)
+	}
+}
+
+// One 429 beside another failure is not a rate-limited run.
+func TestRateLimitedOnlyWhenEveryFailureIs(t *testing.T) {
+	limited := &api.APIError{Status: 429, Message: "Rate limit exceeded"}
+	var first *api.APIError
+	if got := rateLimited(nil, limited, limited); !errors.As(got, &first) || first != limited {
+		t.Error("every failure a 429: the first one is the run's")
+	}
+	if rateLimited(limited, &api.APIError{Status: 404, Message: "Not found"}) != nil {
+		t.Error("a 404 among them: not a rate-limited run")
+	}
+	if rateLimited() != nil || rateLimited(nil) != nil {
+		t.Error("no failure: nothing to report")
+	}
+}

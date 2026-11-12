@@ -399,8 +399,8 @@ func TestLandingPageCheckSaysWhenItAnsweredFromTheLastCheck(t *testing.T) {
 
 func TestLandingPageCheckPastTheKeysLimitSaysWhenToTryAgain(t *testing.T) {
 	newSetupServer(t, setupFeatures, func(r *http.Request) (int, string) {
-		return 429, `{"error":true,"status":429,"message":"This API key has had 10 landing pages fetched in the last 60 seconds,` +
-			` the most it may: nothing was fetched. Try again in 37 seconds.","retry_after_seconds":37,` +
+		return 429, `{"error":true,"status":429,"message":"This API key has had the 10 landing page fetches it may have this minute:` +
+			` nothing was fetched. Try again in 37 seconds.","retry_after_seconds":37,` +
 			`"rate_limit":{"limit":10,"window_seconds":60,"per":"api_key"}}`
 	})
 

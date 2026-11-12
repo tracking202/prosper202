@@ -8,7 +8,9 @@ use Api\V3\Exception\TooManyRequestsException;
 
 /**
  * How often an API key may have the server fetch a landing page
- * (POST /landing-pages/{id}/check): PER_KEY fetches a WINDOW, counted by
+ * (POST /landing-pages/{id}/check): PER_KEY fetches a WINDOW, a fixed
+ * window from the key's first fetch in it (so up to twice PER_KEY across
+ * one window's end and the next's start), counted by
  * the key the request authenticated with (Auth::apiKeyRef()), never by a
  * header the caller chooses. A page checked less than COOLDOWN seconds ago
  * is answered from that check without fetching (SetupCodeController), and
@@ -46,8 +48,8 @@ final class LandingPageCheckLimit
         }
 
         throw new TooManyRequestsException(
-            'This API key has had ' . self::PER_KEY . ' landing pages fetched in the last ' . self::WINDOW
-            . ' seconds, the most it may: nothing was fetched. Try again in ' . $retryAfter . ' seconds.',
+            'This API key has had the ' . self::PER_KEY . ' landing page fetches it may have this minute:'
+            . ' nothing was fetched. Try again in ' . $retryAfter . ' seconds.',
             $retryAfter,
             ['rate_limit' => ['limit' => self::PER_KEY, 'window_seconds' => self::WINDOW, 'per' => 'api_key']]
         );

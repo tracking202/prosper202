@@ -227,6 +227,12 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 			// licence category, exit 6 and the trial hint, not a generic failure.
 			return fmt.Errorf("one or more commands failed: %w", refused)
 		}
+		if limited := rateLimited(failures...); limited != nil {
+			// Every failed command met a 429: keep its category and exit 7, but
+			// not its "run the same command again": the batch's other commands ran.
+			return withHint(fmt.Errorf("one or more commands failed: %w", limited),
+				"Every failed command was rate limited; nothing in them is wrong. Wait the seconds its error names, then run only the commands that failed again: the others already ran.")
+		}
 		return fmt.Errorf("one or more commands failed")
 	}
 	return nil

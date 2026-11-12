@@ -891,8 +891,7 @@ $ipqsSaved = SavedSecret::isSaved($user_row['ipqs_api_key'] ?? null);
 require_once dirname(__DIR__) . '/202-config/functions-payment-notices.php';
 $accountCurrency = strtoupper(trim((string) ($user_row['user_account_currency'] ?? '')));
 $paymentCards = p202_payment_card_state($db, (int) $_SESSION['user_id']);
-$currencyNotice = static fn (string $source, string $provider): string => p202_currency_mismatch_notice(
-	$paymentCards['held'], $source, $provider, $accountCurrency, $base, $self . '#' . $source, p202_account_token_field());
+$currencyNotice = static fn (string $source, string $provider): string => p202_currency_mismatch_notice($paymentCards['held'], $source, $provider, $accountCurrency, $base, $self . '#' . $source, p202_account_token_field(), $userObj->hasPermission('access_to_setup_section'));
 $ipqsNote = p202_ipqs_card_note($db, (int) $_SESSION['user_id'], $ipqsSaved);
 
 template_top('API Integrations');
@@ -972,7 +971,7 @@ template_top('API Integrations');
 								<?php echo $e(number_format($pbWithout)); ?> of <?php echo $e(number_format($pbReady['requests'])); ?> came without your token or a signature that verifies.
 								<?php echo $pbOff
 									? 'Requiring the token would refuse them and record nothing. Give each sender below its URL from <a href="' . $e($base . 'tracking202/setup/get_postback.php') . '">Setup › Postback / Pixel</a> first.'
-									: 'They are refused and nothing is recorded. Give each sender below its URL from <a href="' . $e($base . 'tracking202/setup/get_postback.php') . '">Setup › Postback / Pixel</a>; a refused request can be recorded from the <a href="' . $e($base . 'tracking202/setup/inbound_log.php?outcome=unauthenticated') . '">Inbound Log</a>.'; ?></p>
+									: 'They are refused and nothing is recorded. Give each sender below its URL from <a href="' . $e($base . 'tracking202/setup/get_postback.php') . '">Setup › Postback / Pixel</a>' . ($userObj->hasPermission('access_to_setup_section') ? '; a refused request can be recorded from the <a href="' . $e($base . 'tracking202/setup/inbound_log.php?outcome=unauthenticated') . '">Inbound Log</a>.' : '.'); ?></p>
 						<?php } ?>
 						<?php if ($pbReady !== null && $pbReady['senders'] !== []) { ?>
 							<div class="p202-table-wrap">
@@ -995,7 +994,7 @@ template_top('API Integrations');
 								</table>
 							</div>
 							<?php if ($pbReady['more_senders'] > 0) { ?>
-								<p class="form-text"><?php echo $e(number_format($pbReady['more_senders'])); ?> more with fewer requests are not listed; the <a href="<?php echo $e($base . 'tracking202/setup/inbound_log.php'); ?>">Inbound Log</a> has every request.</p>
+								<p class="form-text"><?php echo $e(number_format($pbReady['more_senders'])); ?> more with fewer requests are not listed<?php echo $userObj->hasPermission('access_to_setup_section') ? '; the <a href="' . $e($base . 'tracking202/setup/inbound_log.php') . '">Inbound Log</a> has every request' : ''; ?>.</p>
 							<?php } ?>
 							<?php if ($pbReady['token_only'] + $pbReady['pixels'] > 0) { ?>
 								<p class="form-text">Signed postbacks only would also refuse the <?php echo $e(number_format($pbReady['token_only'])); ?> that carried the token alone, and every pixel (<?php echo $e(number_format($pbReady['pixels'])); ?> here).</p>

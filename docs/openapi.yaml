@@ -12104,7 +12104,8 @@ paths:
         answered from that check: `fetched` is false, `checked_at` says when
         it was made, `fetch_again_in_seconds` when the page is fetched again,
         and `note` says so in words. Nothing is fetched or counted for it.
-        Otherwise each API key may have 10 pages fetched a minute, counted by
+        Otherwise each API key may have 10 pages fetched a minute (a fixed
+        window that starts at the key's first fetch in it), counted by
         the key the request authenticated with; past that the answer is a
         429 with `Retry-After`, and nothing is fetched.
       operationId: checkLandingPageCode
@@ -12126,7 +12127,7 @@ paths:
           $ref: "#/components/responses/ValidationError"
         "429":
           description: >-
-            This API key has had 10 pages fetched in the last minute; nothing
+            This API key has had its 10 page fetches for this minute; nothing
             was fetched. `Retry-After` and `retry_after_seconds` say when to
             ask again, and `rate_limit` names the limit. A page checked in the
             last 30 seconds is still answered from that check.

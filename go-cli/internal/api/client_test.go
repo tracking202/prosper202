@@ -634,6 +634,10 @@ func TestA429IsRateLimitedAndCarriesItsWait(t *testing.T) {
 		{"header only", "12", ``, 12},
 		{"a date is not read as seconds", "Wed, 21 Oct 2026 07:28:00 GMT", ``, 0},
 		{"neither", "", `{"error":true,"status":429,"message":"slow down"}`, 0},
+		// A fraction is not cut to fewer seconds than asked: the header's whole seconds are read instead.
+		{"a fractional body", "38", `{"error":true,"status":429,"message":"slow down","retry_after_seconds":37.5}`, 38},
+		{"a negative header", "-5", ``, 0},
+		{"a zero header", "0", ``, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

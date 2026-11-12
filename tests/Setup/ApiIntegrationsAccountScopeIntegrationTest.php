@@ -552,7 +552,9 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
             self::assertStringContainsString($warning, $out);
             self::assertStringContainsString('this account counts in USD', $out);
             self::assertStringContainsString($setting, $out);
-            self::assertStringContainsString('inbound_log.php?outcome=currency_mismatch&amp;endpoint=shopify', $out);
+            // This role has API Integrations and not Setup: no link to a log it cannot open
+            // (CurrencyMismatchNoticeLinksTest draws it for a role that can).
+            self::assertStringNotContainsString('inbound_log.php?outcome=currency_mismatch', $out);
             self::assertStringNotContainsString('data-held-recordable', $out);
             self::assertStringNotContainsString('data-jvzoo-roleless-notice', $out);
 

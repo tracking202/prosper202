@@ -119,13 +119,15 @@ page checked less than 30 seconds ago, for the URL it has now, is answered
 from that check without fetching it: `fetched` is false,
 `fetch_again_in_seconds` says when the page is fetched again, and `note` says
 so. That answer costs nothing. Otherwise each API key may have 10 pages
-fetched a minute, counted by the key the request authenticated with; past
+fetched a minute (a fixed window that starts at the key's first fetch in
+it, so a key can have up to 20 fetched across the end of one window and the
+start of the next), counted by the key the request authenticated with; past
 that the answer is a `429` with `Retry-After`, `retry_after_seconds` and
 `rate_limit`, and nothing is fetched:
 
 ```json
 {"error": true, "status": 429,
- "message": "This API key has had 10 landing pages fetched in the last 60 seconds, the most it may: nothing was fetched. Try again in 37 seconds.",
+ "message": "This API key has had the 10 landing page fetches it may have this minute: nothing was fetched. Try again in 37 seconds.",
  "retry_after_seconds": 37,
  "rate_limit": {"limit": 10, "window_seconds": 60, "per": "api_key"}}
 ```

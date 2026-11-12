@@ -364,6 +364,39 @@ final class LandingPageCheckStoreIntegrationTest extends TestCase
         self::assertTrue($check($pages[$perKey], $later, $other)['fetched'], 'another key has its own count');
     }
 
+    /**
+     * The limit fails closed: a count that cannot be written answers a 500
+     * and nothing is fetched, and a key with no name has no count at all.
+     */
+    public function testALimitThatCannotCountFetchesNothing(): void
+    {
+        $id = self::page(self::USER, 'https://shop.example.com/spring');
+        $limit = $this->limit();
+        $buckets = $this->state . '/rate_limits';
+        self::assertDirectoryExists($buckets, 'sanity: the store made its bucket directory');
+        chmod($buckets, 0500);
+        try {
+            $guard = new WebhookGuard(static fn (string $host): array => [self::PUBLIC], self::ALLOW);
+            $checker = new LandingPageCheck($guard, function (array $options): array {
+                $this->fetched[] = (string) $options[CURLOPT_URL];
+
+                return ['status' => 200, 'error' => null, 'timed_out' => false, 'primary_ip' => self::PUBLIC,
+                    'redirect_url' => null, 'body' => '<body></body>', 'truncated' => false];
+            });
+            $api = new SetupCodeController(self::$db, self::USER);
+            $api->landingPageCheck($id, [], [], $limit, [], $checker, self::NOW);
+            self::fail('a check was answered with no count of the key\'s fetches');
+        } catch (\Api\V3\Exception\DatabaseException $e) {
+            self::assertSame(500, $e->getHttpStatus());
+        } finally {
+            chmod($buckets, 0700);
+        }
+        self::assertSame([], $this->fetched, 'nothing was fetched');
+
+        $this->expectException(\LogicException::class);
+        new LandingPageCheckLimit(new ServerStateStore($this->state), '');
+    }
+
     public function testASavedTrackingDomainIsReadAsItsHost(): void
     {
         self::assertSame('track.example.com', LandingPageCheckStore::hostOf('https://Track.Example.com/'));

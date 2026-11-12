@@ -121,6 +121,24 @@ func licenceRefusal(errs ...error) error {
 	return refused
 }
 
+// rateLimited returns the first of errs when every non-nil one is a 429
+// (category rate_limited), and nil otherwise, as licenceRefusal does.
+func rateLimited(errs ...error) error {
+	var limited error
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+		if api.ErrorCategory(err) != "rate_limited" {
+			return nil
+		}
+		if limited == nil {
+			limited = err
+		}
+	}
+	return limited
+}
+
 // licenceRefusalError is the refusal as a parent sees it from child
 // processes that all exited ExitLicence: the same category, exit code and
 // hint the children printed.
