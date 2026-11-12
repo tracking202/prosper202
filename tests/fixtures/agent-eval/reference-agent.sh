@@ -793,6 +793,14 @@ case "$ask" in
         ;;
     # Traffic sources (setup-traffic-sources.json): a rename is an update of
     # the source that is there, so its accounts and their trackers keep it.
+    # ChatGPT Ads (setup-traffic-sources.json): the one-step setup, never a
+    # hand-built source with variables of the agent's own choosing.
+    *"ads in ChatGPT"*)
+        made=$(p202 ppc-network add-chatgpt-ads --json)
+        printf 'I set ChatGPT Ads up as a traffic source with `p202 ppc-network add-chatgpt-ads`: source %s, account %s, and the campaign_id and ad_id variables Ads Manager fills in (%s). For a tracker on that account, Get Links or `p202 tracker get-url <id>` gives the destination URL and the tracking template to paste into Ads Manager.\n' \
+            "$(printf '%s' "$made" | jq -r '.data.ppc_network_id')" "$(printf '%s' "$made" | jq -r '.data.ppc_account_id')" \
+            "$(printf '%s' "$made" | jq -r 'if .data.source_created then "newly made" else "it was already there; only what was missing was added" end')"
+        ;;
     *"EVAL Source - Main"*)
         source=$(p202 ppc-network list --all --json | jq -r '[.data[] | select(.ppc_network_name=="EVAL Source - Main")][0].ppc_network_id // empty')
         if [ -z "$source" ]; then

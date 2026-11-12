@@ -654,10 +654,10 @@ if ($error) {
 				<form method="post" action="<?php echo p202_setup_e($self); ?>" class="mt-3 pt-3 border-top" id="chatgpt-ads-form">
 					<?php echo p202_setup_token_field($token); ?>
 					<input type="hidden" name="add_chatgpt_ads" value="1">
+					<div class="form-text mt-0 mb-2">Buying ads in ChatGPT? One click adds the source, an account and the <code>campaign_id</code> and <code>ad_id</code> variables Ads Manager fills in. A second click adds nothing twice.</div>
 					<div class="p202-form-actions">
 						<button type="submit" class="btn btn-secondary">Add ChatGPT Ads</button>
 					</div>
-					<div class="form-text">Buying ads in ChatGPT? One click adds the source, an account and the <code>campaign_id</code> and <code>ad_id</code> variables Ads Manager fills in. A second click adds nothing twice.</div>
 				</form>
 				<?php } ?>
 			</div>
