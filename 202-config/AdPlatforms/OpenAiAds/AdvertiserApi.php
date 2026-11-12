@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\AdPlatforms\OpenAiAds;
 
+use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookSender;
 use Prosper202\Destinations\GoogleAdsOAuth;
 
@@ -32,10 +33,17 @@ final class AdvertiserApi
     public const OVERALL_PER_MINUTE = 1200;
     private const MESSAGE_CHARS = 300;
 
+    public const ENV_ENDPOINT = 'P202_OPENAI_ADS_ENDPOINT';
+    public const ENV_CA_FILE = 'P202_OPENAI_ADS_CA_FILE';
+    private const LOOPBACK = ['127.0.0.1', '[::1]', 'localhost'];
+
     /** @var array<string, list<float>> request times in the last minute, by key and endpoint ('' is overall) */
     private array $sent = [];
     /** @var (callable(): float) */
     private $clock;
+    private string $base = self::BASE;
+    /** @var list<int> */
+    private array $ports = [443];
 
     /** @param (callable(): float)|null $clock seconds */
     public function __construct(private ?WebhookSender $sender = null, ?callable $clock = null)
@@ -43,12 +51,62 @@ final class AdvertiserApi
         $this->clock = $clock ?? static fn (): float => microtime(true);
     }
 
-    /** @param array<string, scalar> $query */
+    /**
+     * The API the install uses: OpenAI's, or, for tests and the live pass, the loopback server
+     * P202_OPENAI_ADS_ENDPOINT names (https://127.0.0.1:<port> only, so a stray setting in production
+     * cannot send the key off this machine), trusted through P202_OPENAI_ADS_CA_FILE with
+     * verification on. The request is still checked, pinned and bounded by WebhookSender.
+     *
+     * @throws \InvalidArgumentException for an endpoint that is not a loopback https origin
+     */
+    public static function fromEnvironment(): self
+    {
+        $endpoint = getenv(self::ENV_ENDPOINT);
+        if ($endpoint === false || $endpoint === '') {
+            return new self();
+        }
+        $parts = parse_url($endpoint);
+        $host = is_array($parts) ? strtolower((string) ($parts['host'] ?? '')) : '';
+        if (!is_array($parts) || ($parts['scheme'] ?? '') !== 'https' || !in_array($host, self::LOOPBACK, true)
+            || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])
+            || !in_array($parts['path'] ?? '', ['', '/'], true)) {
+            throw new \InvalidArgumentException(self::ENV_ENDPOINT . ' must be https://127.0.0.1:<port> (or [::1], localhost): it exists for tests, and an Advertiser API off this machine is refused');
+        }
+        $ca = getenv(self::ENV_CA_FILE);
+        $ca = $ca === false || $ca === '' ? null : $ca;
+        $transport = static function (array $options) use ($ca): array {
+            if ($ca !== null) {
+                $options[CURLOPT_CAINFO] = $ca;
+            }
+
+            return WebhookSender::curlTransport($options, WebhookSender::MAX_READ_BYTES, WebhookSender::MAX_READ_BYTES);
+        };
+        $api = new self(new WebhookSender(new WebhookGuard(null, '127.0.0.0/8,::1/128'), $transport));
+        $api->base = 'https://' . $host . (isset($parts['port']) ? ':' . (int) $parts['port'] : '') . '/v1/';
+        $api->ports = [isset($parts['port']) ? (int) $parts['port'] : 443];
+
+        return $api;
+    }
+
+    /** @param array<string, scalar|list<scalar>> $query a list is sent as name[]=a&name[]=b, as OpenAI reads it */
     public function get(#[\SensitiveParameter] string $key, string $path, array $query = []): AdvertiserAnswer
     {
-        $url = self::BASE . ltrim($path, '/') . ($query === [] ? '' : '?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986));
+        $url = $this->base . ltrim($path, '/') . ($query === [] ? '' : '?' . self::query($query));
 
         return $this->call($key, 'GET', $path, $url, null, null);
+    }
+
+    /** @param array<string, scalar|list<scalar>> $query */
+    public static function query(array $query): string
+    {
+        $pairs = [];
+        foreach ($query as $name => $value) {
+            foreach (is_array($value) ? $value : [$value] as $item) {
+                $pairs[] = rawurlencode($name) . (is_array($value) ? '[]' : '') . '=' . rawurlencode(is_bool($item) ? ($item ? 'true' : 'false') : (string) $item);
+            }
+        }
+
+        return implode('&', $pairs);
     }
 
     /**
@@ -64,7 +122,7 @@ final class AdvertiserApi
             return AdvertiserAnswer::failed(AdvertiserAnswer::REFUSED, 0, 'not sent: the request could not be written as JSON (' . $e->getMessage() . ')');
         }
 
-        return $this->call($key, 'POST', $path, self::BASE . ltrim($path, '/'), $json, $idempotencyKey);
+        return $this->call($key, 'POST', $path, $this->base . ltrim($path, '/'), $json, $idempotencyKey);
     }
 
     /** The endpoint a path is counted under: its ids (cmpn_101, adgrp_…: a prefix, _, and a value with a digit) read as one. */
@@ -115,7 +173,7 @@ final class AdvertiserApi
             $headers[] = 'Idempotency-Key: ' . $idempotencyKey;
         }
         $this->sender ??= new WebhookSender();
-        $sent = $this->sender->read($url, $body, $headers, [443]);
+        $sent = $this->sender->read($url, $body, $headers, $this->ports);
         if ($sent['refused'] !== null) {
             return $failed(AdvertiserAnswer::UNAVAILABLE, 0, 'not sent: ' . $sent['refused']);
         }

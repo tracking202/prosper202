@@ -127,7 +127,7 @@ final class TrafficSourcePixelsTest extends TestCase
         ]);
         $db->whenQueryContainsReturnRows('user_account_currency', [['user_account_currency' => 'EUR']]);
 
-        $out = TrafficSourcePixels::fire(new Connection($db), 3, ['subid' => '12', 'payout' => '24.5', 'transactionid' => 'ORDER-9'], static fn (): bool => true, true, true, static fn (): bool => true);
+        $out = TrafficSourcePixels::fire(new Connection($db), 3, ['subid' => '12', 'payout' => '24.5', 'transactionid' => 'ORDER-9', TrafficSourcePixels::EVENT_ID => 'ORDER-9'], static fn (): bool => true, true, true, static fn (): bool => true);
 
         self::assertSame(
             "<img src='https://www.facebook.com/tr?id=123456789012345&amp;ev=Purchase&amp;noscript=1&amp;cd%5Bvalue%5D=24.50&amp;cd%5Bcurrency%5D=EUR&amp;eid=ORDER-9' height='1' width='1' style='display:none' alt='' />\n"

@@ -404,3 +404,74 @@ func TestAGoogleAdsDestinationIsCreatedWithoutItsIDs(t *testing.T) {
 		t.Errorf("it reached the server: %v", bodies)
 	}
 }
+
+func TestAChatGptAdsDestinationIsCreatedWithItsKeyFromAFile(t *testing.T) {
+	var bodies []string
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(body))
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"data":{"destination_id":3,"type":"openai_ads","status":"ready"}}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	resetAllFlags(destinationCreateCmd)
+	t.Cleanup(func() { resetAllFlags(destinationCreateCmd) })
+	keyFile := filepath.Join(tmp, "key.txt")
+	if err := os.WriteFile(keyFile, []byte(" oai-capi-Key_0123456789abcdef\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := executeCommand("destination", "create", "--type", "openai_ads", "--name", "ChatGPT Ads", "--pixel-id", "px_4821",
+		"--conversions-api-key-file", keyFile, "--campaign-event-type", "12=lead_created", "--json"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if len(bodies) != 1 {
+		t.Fatalf("sent %v", bodies)
+	}
+	for _, want := range []string{`"type":"openai_ads"`, `"pixel_id":"px_4821"`, `"conversions_api_key":"oai-capi-Key_0123456789abcdef"`, `"event_types":{"12":"lead_created"}`} {
+		if !strings.Contains(bodies[0], want) {
+			t.Errorf("the body lacks %s: %s", want, bodies[0])
+		}
+	}
+	if strings.Contains(bodies[0], `"scope"`) {
+		t.Errorf("no --scope sends none, so the server's default (oppref) applies: %s", bodies[0])
+	}
+
+	refused := map[string][]string{
+		"a consent flag":             {"--ad-user-data", "granted"},
+		"a GA4 flag":                 {"--measurement-id", "G-ABC123"},
+		"a custom type's name":       {"--event-type", "lead_created", "--custom-event-name", "demo"},
+		"an account without scope":   {"--scope", "all", "--ppc-account-id", "70"},
+		"a custom per campaign":      {"--campaign-event-type", "12=custom"},
+		"source without its account": {"--scope", "source"},
+	}
+	for name, extra := range refused {
+		bodies = nil
+		resetAllFlags(destinationCreateCmd)
+		args := append([]string{"destination", "create", "--type", "openai_ads", "--name", "C", "--pixel-id", "px_4821", "--conversions-api-key-file", keyFile}, extra...)
+		_, _, err := executeCommand(args...)
+		if err == nil || exitCodeForError(err) != 1 || hintFor(err) == "" {
+			t.Errorf("%s: err %v, hint %q", name, err, hintFor(err))
+		}
+		if len(bodies) != 0 {
+			t.Errorf("%s reached the server: %v", name, bodies)
+		}
+	}
+}
+
+func TestChatGptAdsSettingsMergeOnAnUpdate(t *testing.T) {
+	stored := map[string]interface{}{"pixel_id": "px_4821", "scope": "source", "ppc_account_id": 70.0, "event_types": map[string]interface{}{"12": "lead_created", "14": "trial_started"}}
+	got, err := destinationSettings(destinationFlagsCmd(t, "--scope", "all", "--campaign-event-type", "12=", "--campaign-event-type", "20=page_viewed"), stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["ppc_account_id"]; ok || got["scope"] != "all" {
+		t.Errorf("scope all drops the account: %v", got)
+	}
+	if !reflect.DeepEqual(got["event_types"], map[string]interface{}{"14": "trial_started", "20": "page_viewed"}) {
+		t.Errorf("event_types %v", got["event_types"])
+	}
+}

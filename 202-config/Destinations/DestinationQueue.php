@@ -12,8 +12,10 @@ use Prosper202\DataEngine\IpAddressSql;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\Database\Schema\TableRegistry;
+use Prosper202\Identity\RequestSignals;
 use Prosper202\Http\EuropeanVisitor;
 use Prosper202\Http\PrivacySetting;
+use Prosper202\Http\StoredVisitorIp;
 use Prosper202\Notifications\NotificationOutbox;
 use Prosper202\Report\AccountZone;
 
@@ -58,6 +60,8 @@ final class DestinationQueue
     public const NO_CURRENCY = 'withheld: nothing recorded which currency this conversion\'s amount is in';
     /** The minutely cron's budget. */
     public const RUN_SECONDS = 15;
+    /** The longest page address a destination is given; a longer one is none, never cut into another page. */
+    public const PAGE_URL_CHARS = 2048;
 
     private readonly DestinationStore $store;
     /** @var \Closure(string): bool */
@@ -310,7 +314,7 @@ final class DestinationQueue
         if ($destination === null) {
             return null;
         }
-        $most = self::backfillDays((string) $destination['type']);
+        $most = $this->store->type((string) $destination['type'])->backfillDays();
         if ($days < 1 || $days > $most) {
             throw new DestinationInputException('days', 'days must be 1 to ' . $most . ' for this destination: its platform takes nothing older.');
         }
@@ -342,12 +346,6 @@ final class DestinationQueue
         }
 
         return ['queued' => $queued, 'more' => true];
-    }
-
-    /** How far back a type's platform takes a conversion, in days. */
-    public static function backfillDays(string $type): int
-    {
-        return $type === Ga4Destination::TYPE ? intdiv(Ga4Destination::MAX_AGE_SECONDS, 86400) : intdiv(GoogleAdsDestination::CLICK_MAX_AGE, 86400);
     }
 
     /**
@@ -438,10 +436,17 @@ final class DestinationQueue
     {
         $userId = $destination['user_id'];
         // The primary, not a replica: a row a lagging replica lacks is not a deleted one.
+        // 202_clicks_advance and 202_clicks_site are one row per click, written by its latest visit.
         $stmt = $this->conn->prepareWrite('SELECT cl.click_id, cl.campaign_id, cl.conv_time, cl.click_payout, cl.transaction_id, cl.deleted, cl.superseded_by, cl.customer_id, cl.match_method, cl.currency, '
-            . IpAddressSql::address('ip', 'ip6') . ' AS ip_address
+            . IpAddressSql::address('ip', 'ip6') . ' AS ip_address, landing.site_url_address AS landing_url, outbound.site_url_address AS outbound_url,
+                   cv.click_id AS visitor_tracked, ac.aff_campaign_id AS campaign_found, ac.identity_signals
             FROM 202_conversion_logs cl LEFT JOIN 202_clicks_advance ca ON ca.click_id = cl.click_id LEFT JOIN 202_ips ip ON ip.ip_id = ca.ip_id'
             . IpAddressSql::join('ip', 'ip6') . '
+            LEFT JOIN 202_clicks_visitor cv ON cv.click_id = cl.click_id AND cv.user_id = cl.user_id
+            LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cl.campaign_id AND ac.user_id = cl.user_id
+            LEFT JOIN 202_clicks_site cs ON cs.click_id = cl.click_id
+            LEFT JOIN 202_site_urls landing ON landing.site_url_id = cs.click_landing_site_url_id AND cs.click_landing_site_url_id > 0
+            LEFT JOIN 202_site_urls outbound ON outbound.site_url_id = cs.click_outbound_site_url_id AND cs.click_outbound_site_url_id > 0
             WHERE cl.conv_id = ? AND cl.user_id = ? LIMIT 1');
         $this->conn->bind($stmt, 'ii', [$convId, $userId]);
         $conv = $this->conn->fetchOne($stmt);
@@ -473,6 +478,9 @@ final class DestinationQueue
             if ($setting !== 'disabled') {
                 return ['withheld', new SendResult(false, false, null, 'withheld: your privacy setting holds back visitors who may be in Europe, and this click\'s address is not placed outside it')];
             }
+            if (!$destination['adapter']->takesConsent()) {
+                return ['withheld', new SendResult(false, false, null, 'withheld: the visitor may be in the EEA or UK, and this destination\'s platform takes no consent signal to state theirs with')];
+            }
             if (!self::consentGranted($destination['settings'])) {
                 return ['withheld', new SendResult(false, false, null, 'withheld: the visitor may be in the EEA or UK, and this destination does not state consent granted (ad_user_data and ad_personalization)')];
             }
@@ -493,8 +501,9 @@ final class DestinationQueue
         $visit = $this->conn->prepareWrite('SELECT c.click_time FROM ' . FirstVisit::of('?') . ' AS c WHERE c.user_id = ?');
         $this->conn->bind($visit, 'ii', [$clickId, $userId]);
         $clickTime = $this->conn->fetchOne($visit)['click_time'] ?? null;
-        [$customerId, $emails, $phones] = $this->customer($destination['settings'], (int) ($conv['customer_id'] ?? 0), $userId);
-        $transactionId = $this->replacedTransactionId($clickId, $convId, $userId) ?? trim((string) ($conv['transaction_id'] ?? ''));
+        [$customerId, $emails, $phones] = $this->customer($destination['adapter'], $destination['settings'], (int) ($conv['customer_id'] ?? 0), $userId);
+        $ownTransactionId = isset($conv['transaction_id']) ? (string) $conv['transaction_id'] : null;
+        $eventId = DestinationEventId::of($this->conn, $userId, $clickId, $convId, $ownTransactionId);
         $facts = new ConversionFacts(
             $convId,
             $clickId,
@@ -502,13 +511,19 @@ final class DestinationQueue
             (int) $conv['conv_time'],
             (string) $conv['click_payout'],
             $currency,
-            $transactionId !== '' ? $transactionId : 'P202-' . $convId,
+            $eventId,
             $tokens,
             $customerId,
             $emails,
             $phones,
             $this->zone($userId),
-            $clickTime === null ? null : (int) $clickTime
+            $clickTime === null ? null : (int) $clickTime,
+            self::sendsUserData($destination['settings']) && self::visitorMayBeIdentified($conv) ? self::visitorAddress($ip) : null,
+            // Not stored for a click yet: nothing is guessed in its place.
+            null,
+            self::pageUrl($conv['landing_url'] ?? null) ?? self::pageUrl($conv['outbound_url'] ?? null),
+            $click['ppc_account_id'],
+            $eventId !== DestinationEventId::from($ownTransactionId, $convId)
         );
         $result = $destination['adapter']->send($destination['settings'], $destination['credentials'], $facts, false, $now);
 
@@ -521,34 +536,13 @@ final class DestinationQueue
     }
 
     /**
-     * The transaction id of the first conversion this one replaced (the
-     * campaign pays the latest conversion, or a newer revenue upload), so
-     * the platform counts the sale once. Null when it replaced none.
-     */
-    private function replacedTransactionId(int $clickId, int $convId, int $userId): ?string
-    {
-        // A recompute points every replaced row at the current winner, so the earliest is the sale's first send.
-        $stmt = $this->conn->prepareWrite("SELECT conv_id, transaction_id FROM 202_conversion_logs
-            WHERE click_id = ? AND user_id = ? AND superseded_by = ? AND superseded_reason IN ('replace', 'batch')
-            ORDER BY conv_id LIMIT 1");
-        $this->conn->bind($stmt, 'iii', [$clickId, $userId, $convId]);
-        $row = $this->conn->fetchOne($stmt);
-        if ($row === null) {
-            return null;
-        }
-        $first = trim((string) ($row['transaction_id'] ?? ''));
-
-        return $first !== '' ? $first : 'P202-' . (int) $row['conv_id'];
-    }
-
-    /**
      * The customer's id and, when the destination sends user data and the
      * account has not stated ad_user_data denied, their hashed email and phone.
      *
      * @param array<string, mixed> $settings
      * @return array{0: int|null, 1: list<string>, 2: list<string>}
      */
-    private function customer(array $settings, int $customerId, int $userId): array
+    private function customer(DestinationType $adapter, array $settings, int $customerId, int $userId): array
     {
         if ($customerId <= 0) {
             return [null, [], []];
@@ -559,15 +553,83 @@ final class DestinationQueue
         if ($row === null) {
             return [null, [], []];
         }
-        // The id goes only where the hashes may. An allowlist: unstated or granted sends, anything else (denied, a corrupt value) does not.
-        $send = ($settings['send_user_data'] ?? false) === true && in_array($settings['consent']['ad_user_data'] ?? null, [null, 'granted'], true);
-        if (!$send) {
+        // The id goes only where the hashes may.
+        if (!self::sendsUserData($settings)) {
             return [null, [], []];
         }
-        $email = PiiHash::email($row['email'] ?? null);
-        $phone = PiiHash::phone($row['phone'] ?? null);
+        // Each platform's own normalisation (CLAUDE.md #30).
+        $email = $adapter->hashEmail($row['email'] ?? null);
+        $phone = $adapter->hashPhone($row['phone'] ?? null);
 
         return [$customerId, $email === null ? [] : [$email], $phone === null ? [] : [$phone]];
+    }
+
+    /**
+     * Whether the destination sends what identifies the visitor (hashes, the
+     * customer's id, the address). An allowlist: unstated or granted
+     * ad_user_data sends, anything else (denied, a corrupt value) does not.
+     *
+     * @param array<string, mixed> $settings
+     */
+    private static function sendsUserData(array $settings): bool
+    {
+        return ($settings['send_user_data'] ?? false) === true && in_array($settings['consent']['ad_user_data'] ?? null, [null, 'granted'], true);
+    }
+
+    /**
+     * Whether the click's visitor may be identified to a platform, as a Meta
+     * Purchase pixel asks it (FacebookPixelAssistantScript::mayTrack()): the
+     * campaign's identity capture is on (RequestSignals::campaignAllows()),
+     * and the visitor did not refuse consent (p202_consent). A refusal is
+     * not stored, but its mark is: a click is linked to its visitor
+     * (202_clicks_visitor) only when consent was not refused and the
+     * campaign allowed it (ClickIdentity::fromRequest()). A click with no
+     * such link, or whose campaign is not found, is not; nor is one whose
+     * campaign has turned capture off since.
+     *
+     * @param array<string, mixed> $conv
+     */
+    private static function visitorMayBeIdentified(array $conv): bool
+    {
+        return ($conv['visitor_tracked'] ?? null) !== null && ($conv['campaign_found'] ?? null) !== null
+            && RequestSignals::campaignAllows($conv['identity_signals'] ?? null);
+    }
+
+    /**
+     * The click's stored address as the visitor's, or null: an address
+     * stored masked (StoredVisitorIp::mask(), the privacy setting at the
+     * click) names a /24 or /48, not the visitor (CLAUDE.md #30), and a
+     * private or reserved one names no one a platform could match.
+     */
+    private static function visitorAddress(string $ip): ?string
+    {
+        if ($ip === '' || StoredVisitorIp::mask($ip) === $ip) {
+            return null;
+        }
+        $public = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
+
+        return is_string($public) ? $public : null;
+    }
+
+    /**
+     * A stored page address as the page, or null when it is not an http(s)
+     * URL. Its query and fragment are cut off: they carry what the link put
+     * there (subids, click ids, a landing page's ?email=), and the page is
+     * sent whatever the user-data setting says. At most PAGE_URL_CHARS.
+     */
+    private static function pageUrl(mixed $url): ?string
+    {
+        if (!is_string($url)) {
+            return null;
+        }
+        $url = trim($url);
+        $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
+        if (($scheme !== 'http' && $scheme !== 'https') || (string) parse_url($url, PHP_URL_HOST) === '') {
+            return null;
+        }
+        $page = (string) preg_replace('/[?#].*\z/s', '', $url);
+
+        return mb_strlen($page) <= self::PAGE_URL_CHARS ? $page : null;
     }
 
     /** @param array<string, mixed> $settings */

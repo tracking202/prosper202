@@ -91,13 +91,21 @@ final class TrafficSourceNotifier implements OutcomeNotifier
             }
             $amount = self::money((string) ($notice['amount'] ?? '0'));
             $tx = $notice['transaction_id'] ?? null;
+            $eventKey = $tx !== null && $tx !== '' ? (string) $tx : (string) ($notice['dedupe_key'] ?? '');
             $tokens = $click['tokens'] + [
                 'payout' => $amount,
-                'transactionid' => $tx !== null && $tx !== '' ? (string) $tx : (string) ($notice['dedupe_key'] ?? ''),
+                'transactionid' => $eventKey,
                 'p202_goal' => $names[$goalId],
                 'p202_goal_id' => $goalId,
                 'p202_goal_value' => $amount,
             ];
+            // A payable outcome is a ledger conversion the destinations send: its pixels take that conversion's id.
+            // One that wrote no conversion keeps its own key.
+            if (($notice['conversion_id'] ?? null) !== null && ($notice['payable'] ?? false) === true) {
+                $tokens = TrafficSourcePixels::withConversionEventId($this->conn, $tokens, $userId, (int) $subject->clickId, (int) $notice['conversion_id'], $tx === null ? null : (string) $tx);
+            } else {
+                $tokens[TrafficSourcePixels::EVENT_ID] = $eventKey;
+            }
             // Browser pixels only: the server postbacks are the outbox's.
             $clickId = $subject->clickId;
             $mayTrack = $this->visitorMayBeTracked;
