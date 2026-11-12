@@ -19,6 +19,27 @@ import (
 // before any request (ids, at least one field to change) and leave the rest
 // to the server's field errors, which name the field and the rule.
 
+// newPpcNetworkChatGptAdsCmd is Setup > Traffic Sources' "Add ChatGPT Ads".
+func newPpcNetworkChatGptAdsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "add-chatgpt-ads",
+		Short: "Add ChatGPT Ads as a traffic source, with an account and its campaign_id/ad_id variables",
+		Long: "Makes the traffic source ChatGPT Ads, an account on it, and the custom variables\n" +
+			"campaign_id={campaign_id} and ad_id={ad_id} that Ads Manager fills in. Safe to run\n" +
+			"again: an account that already has the ChatGPT Ads source gets no second one, only\n" +
+			"what it lacks (an account, either variable); nothing you changed is touched.\n\n" +
+			"Then `p202 tracker get-url <id>` for a tracker on its account answers chatgpt_ads:\n" +
+			"the destination URL and the tracking template to paste into Ads Manager.",
+		Example: "  p202 ppc-network add-chatgpt-ads",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return setupWrite(func(c *api.Client) ([]byte, error) {
+				return c.Post("ppc-networks/chatgpt-ads", map[string]string{})
+			})
+		},
+	}
+}
+
 func newPpcNetworkVariableCmd() *cobra.Command {
 	group := &cobra.Command{
 		Use:     "variable",

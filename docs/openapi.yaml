@@ -2183,6 +2183,14 @@ paths:
                         type: string
                         description: The link's query from t202id on, for appending to a URL of your own
                         example: "?t202id=8837291&adid={ad_id}&t202kw={keyword}"
+                      chatgpt_ads:
+                        description: >-
+                          For a tracker whose traffic source account is on the ChatGPT Ads
+                          source (POST /ppc-networks/chatgpt-ads), what to paste into Ads
+                          Manager, as Get Links shows it; null for any other tracker.
+                        nullable: true
+                        allOf:
+                          - $ref: "#/components/schemas/ChatGptAdsLinks"
         "404":
           $ref: "#/components/responses/NotFound"
         "422":
@@ -12191,6 +12199,44 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+  /ppc-networks/chatgpt-ads:
+    post:
+      tags: [Setup]
+      summary: Add ChatGPT Ads as a traffic source
+      description: |
+        Setup > Traffic Sources' "Add ChatGPT Ads" button: makes the traffic
+        source ChatGPT Ads, an account on it, and the custom variables
+        `campaign_id={campaign_id}` and `ad_id={ad_id}`, which Ads Manager
+        fills in. `GET /trackers/{id}/url` then answers `chatgpt_ads` for a
+        tracker on it.
+
+        Safe to call again: when the account already has a live ChatGPT Ads
+        source, no second one is made. That source is given what it lacks (a
+        live account, a live variable for `campaign_id` or `ad_id`), and
+        nothing the user changed (its name, a placeholder) is touched. The
+        answer is `201` when the source was made and `200` when it was
+        already there. The source is found by what this call stored on it,
+        never by its name. The body is empty; any field is refused. Needs
+        `access_to_setup_section`, as adding a traffic source does.
+      operationId: addChatGptAdsSource
+      responses:
+        "201":
+          description: The source was made
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatGptAdsSetup"
+        "200":
+          description: The source was already there; what it lacked was added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatGptAdsSetup"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /ppc-networks/{id}/variables:
     parameters:
       - $ref: "#/components/parameters/resourceId"
@@ -13235,6 +13281,47 @@ components:
             iframe:
               type: string
 
+    ChatGptAdsSetup:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            ppc_network_id:
+              type: integer
+              description: The ChatGPT Ads traffic source
+            ppc_account_id:
+              type: integer
+              description: Its account (the first live one when it already had one)
+            source_created:
+              type: boolean
+            account_created:
+              type: boolean
+            variables_added:
+              type: array
+              description: The parameters given a variable by this call; empty when both were there
+              items:
+                type: string
+                enum: [campaign_id, ad_id]
+    ChatGptAdsLinks:
+      type: object
+      properties:
+        destination:
+          type: string
+          enum: [landing_page, tracking_link]
+          description: >-
+            landing_page for a tracker whose landing page has a URL (the visitor goes
+            straight to it, and its landing page code records the click), else tracking_link
+        destination_url:
+          type: string
+          description: The ad's destination URL in Ads Manager. Carries no ChatGPT macro.
+          example: "https://shop.example.com/sale"
+        tracking_template:
+          type: string
+          description: >-
+            The ad's tracking template (OpenAI's query_string_template), appended to the
+            destination URL. On a landing page it also carries t202id and t202kw.
+          example: "utm_source=chatgpt&utm_medium=paid&utm_campaign={campaign_id}&utm_content={ad_id}&campaign_id={campaign_id}&ad_id={ad_id}&oppref={oppref}&t202id=8837291&t202kw="
     PpcNetworkVariable:
       type: object
       properties:

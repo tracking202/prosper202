@@ -29,6 +29,7 @@ record links only to the caller's own records
 | Page | API | CLI | |
 | ---- | --- | --- | - |
 | Traffic Sources: sources and accounts | `/ppc-networks`, `/ppc-accounts` | `p202 ppc-network …`, `p202 ppc-account …` | ✅ |
+| Traffic Sources: Add ChatGPT Ads; Get Links' ChatGPT Ads pair | `POST /ppc-networks/chatgpt-ads`, `GET /trackers/{id}/url` (`chatgpt_ads`) | `p202 ppc-network add-chatgpt-ads`, `p202 tracker get-url` | ✅ |
 | Traffic Sources: an account's pixels, a source's custom variables | `/ppc-accounts/{id}/pixels`, `/ppc-networks/{id}/variables` ([Setup API](../api/27-setup.md)) | `p202 ppc-account pixel list\|create\|update\|delete`, `p202 ppc-network variable list\|create\|update\|delete` | ✅ |
 | Categories | `/aff-networks` | `p202 aff-network …` | ◐ DNI networks (a hosted service) are not offered |
 | Campaigns | `/campaigns` (+ `attribution_model_id`, `app_registration_id`) | `p202 campaign …`, `campaign clone`, `campaign check-urls`, `campaign replace-url` | ✅ |

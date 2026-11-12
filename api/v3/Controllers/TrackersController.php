@@ -9,6 +9,9 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\TrackingBaseLookup;
 use Prosper202\Click\TrackingLinkVariables;
+use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
+use Prosper202\Setup\ChatGptAdsSource;
 use Prosper202\Setup\TrackerPublicId;
 
 class TrackersController extends Controller
@@ -216,8 +219,38 @@ class TrackersController extends Controller
                 'tracker_id_public' => $publicId,
                 'direct_url'        => self::buildDirectUrl($baseUrl, $publicId, $row, $variables),
                 'tracking_params'   => '?t202id=' . $publicId . $variables,
+                'chatgpt_ads'       => $this->chatGptAdsLinks($row, $baseUrl, $publicId, $variables),
             ],
         ];
+    }
+
+    /**
+     * Get Links' ChatGPT Ads pair for a tracker whose account is on the
+     * ChatGPT Ads source (ChatGptAdsSource), or null for any other tracker.
+     *
+     * @param array<string, mixed> $row the tracker, with landing_page_url when it names a page
+     * @return array{destination: string, destination_url: string, tracking_template: string}|null
+     */
+    private function chatGptAdsLinks(array $row, string $baseUrl, int $publicId, string $variables): ?array
+    {
+        try {
+            $onSource = (new ChatGptAdsSource(new Connection($this->db)))
+                ->isAccountOnSource($this->userId, (int) ($row['ppc_account_id'] ?? 0));
+        } catch (QueryException $e) {
+            throw new DatabaseException('Traffic source platform lookup failed', $e);
+        }
+        if (!$onSource) {
+            return null;
+        }
+
+        return ChatGptAdsSource::links(
+            rtrim($baseUrl, '/') . '/',
+            (string) $publicId,
+            '',
+            $variables,
+            (int) ($row['landing_page_id'] ?? 0) > 0 ? (string) ($row['landing_page_url'] ?? '') : '',
+            (int) ($row['rotator_id'] ?? 0) > 0
+        );
     }
 
     /**

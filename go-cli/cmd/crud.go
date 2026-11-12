@@ -1479,6 +1479,7 @@ func init() {
 			cmd.AddCommand(newLandingPageCheckCmd(e))
 		case "ppc-network":
 			cmd.AddCommand(newPpcNetworkVariableCmd())
+			cmd.AddCommand(newPpcNetworkChatGptAdsCmd())
 		case "ppc-account":
 			cmd.AddCommand(newPpcAccountPixelCmd())
 		}

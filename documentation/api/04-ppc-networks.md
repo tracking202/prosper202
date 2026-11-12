@@ -12,6 +12,7 @@ Manage pay-per-click ad networks (Google Ads, Bing Ads, Facebook, etc.).
 | `PUT` | `/ppc-networks/{id}` | Update a PPC network |
 | `DELETE` | `/ppc-networks/{id}` | Delete a PPC network |
 | `POST` | `/ppc-networks/bulk-upsert` | Bulk create/update |
+| `POST` | `/ppc-networks/chatgpt-ads` | Add ChatGPT Ads: the source, an account and its variables (below) |
 | `GET` | `/ppc-networks/{id}/variables` | The source's custom variables ([Setup API](27-setup.md)) |
 | `POST` | `/ppc-networks/{id}/variables` | Add one |
 | `PUT` | `/ppc-networks/{id}/variables/{variableId}` | Change one |
@@ -27,6 +28,35 @@ A traffic source's custom variables are the extra `parameter=placeholder`
 pairs its tracking links carry; they are edited under
 `/ppc-networks/{id}/variables`, held to Setup › Traffic Sources' rules (see
 the [Setup API](27-setup.md)).
+
+## Add ChatGPT Ads
+
+`POST /ppc-networks/chatgpt-ads`, with no body, is Setup › Traffic Sources'
+**Add ChatGPT Ads** button. It makes the traffic source *ChatGPT Ads*, an
+account on it, and the custom variables `campaign_id={campaign_id}` and
+`ad_id={ad_id}`, which Ads Manager fills in. It is safe to call again: an
+account that already has the ChatGPT Ads source gets no second one, only what
+that source lacks (a live account, either variable), and nothing you changed
+there (its name, a placeholder) is touched. `201` when the source was made,
+`200` when it was already there:
+
+```json
+{
+  "data": {
+    "ppc_network_id": 12,
+    "ppc_account_id": 30,
+    "source_created": true,
+    "account_created": true,
+    "variables_added": ["campaign_id", "ad_id"]
+  }
+}
+```
+
+The source is recognised by what this call stored on it, not by its name, so
+renaming it is fine and a source you named "ChatGPT Ads" yourself is not it.
+`GET /trackers/{id}/url` answers `chatgpt_ads` for a tracker on its account
+([Trackers](06-trackers.md#get-tracking-url)). The CLI is
+`p202 ppc-network add-chatgpt-ads`.
 
 ## Example
 
