@@ -26,8 +26,7 @@ address below on a database shaped like a paid 1.9.56 one, after the upgrade.
   original SubID in its PurLinks, with the visitor's consent. Values set in
   `t202Settings` and `t202UrlVars` are applied as before. `t202SubidOrig` and
   `t202SourceId` are filled once the visit is recorded, where 1.9.56 knew them
-  when the script loaded, and the first click is kept only on a page that
-  shows `t202SubidOrig` or sets `t202UseSubidOrig`. PurLinks are
+  when the script loaded. PurLinks are
   refreshed when a visitor returns with the Back or Forward button. A PurLink
   that names a deeper URL of its campaign keeps it while its SubID is
   prepared. See [PurLinks](../features/purlinks.md).

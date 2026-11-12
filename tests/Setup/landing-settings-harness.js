@@ -94,4 +94,35 @@ for (const settings of [undefined, null, 'x', 7, {}, {t202UseSubidOrig: true, t2
     assert.deepStrictEqual(warned, [], 'nothing to say about settings that are used');
 }
 
+// The real p202SettingWarn says a message once a page, however often it is asked.
+{
+    const c = page({t202C1: ['x']}, QUERY);
+    vm.runInContext("p202SettingWarn('t202Settings.t202C1 is not text or a number, and is not used.');"
+        + "p202SettingWarn('another');p202SettingWarn('another');", c);
+    assert.deepStrictEqual(warned, ['Prosper202: t202Settings.t202C1 is not text or a number, and is not used.',
+        'Prosper202: another']);
+}
+
+// A Symbol, a throwing getter or a throwing t202UrlVars entry skips that key only.
+{
+    const settings = {t202C2: Symbol('s'), t202C3: 'kept', t202UrlVars: {}};
+    Object.defineProperty(settings, 't202C1', {enumerable: true, get() { throw new Error('boom'); }});
+    Object.defineProperty(settings.t202UrlVars, 't202Kw', {enumerable: true, get() { throw new Error('boom'); }});
+    const c = page(settings, QUERY);
+    assert.strictEqual(c.c3, 'kept', 'the readable key is applied');
+    assert.strictEqual(c.c1, 'one', 'the unreadable one leaves the URL\'s value');
+    assert.deepStrictEqual(warned.slice().sort(), [
+        'Prosper202: t202Settings.t202C1 could not be read, and is not used.',
+        'Prosper202: t202Settings.t202C2 is not text or a number, and is not used.',
+        'Prosper202: t202Settings.t202UrlVars.t202Kw does not name a URL parameter, and is not used.',
+    ]);
+}
+// t202Settings itself throwing on enumeration (a Proxy) is said, and the URL's values stand.
+{
+    const settings = new Proxy({}, {ownKeys() { throw new Error('boom'); }});
+    const c = page(settings, QUERY);
+    assert.deepStrictEqual(sent(c).c1, 'one');
+    assert.deepStrictEqual(warned, ['Prosper202: t202Settings could not be read, and is not used.']);
+}
+
 console.log('Landing settings harness passed');

@@ -535,9 +535,10 @@ const accepted = (status) => status === 200 || status === 202;
     let plainStored = clickValues(plainVisit.id);
     check(plainStored.keyword === 'blue' && plainStored.c1 === '' && plainStored.c2 === 'zz', 'a page without settings records the URL\'s own values: ' + JSON.stringify(plainStored));
     check((await plainVisit.p.getAttribute('#tokens', 'href')) === 'http://partner.example/?kw=blue&c1=&c2=zz', 'and fills its links from them');
-    // It shows no first click and does not turn t202UseSubidOrig on: no cookie, the visit's own subid.
-    check((await firstClickCookie(ctx)) === null && (await plainVisit.p.evaluate(() => window.t202GetSubidOrig())) === plainVisit.id,
-      'a page that does not use the first click keeps no cookie for it');
+    // It shows no first click and does not turn t202UseSubidOrig on: it keeps it all the same, as 1.9.56 did.
+    const entryCookie = await firstClickCookie(ctx);
+    check(!!entryCookie && entryCookie.value === plainVisit.id && (await plainVisit.p.evaluate(() => window.t202GetSubidOrig())) === plainVisit.id,
+      'a page that does not show the first click keeps it for the pages that do: ' + (entryCookie ? entryCookie.value : 'none'));
     await ctx.close();
 
     console.log('t202SubidOrig, t202SourceId and the 1.9.56 globals');

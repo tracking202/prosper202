@@ -93,15 +93,21 @@ Here `c1` is `homepage`, the keyword is read from `?q=…` and `c2` from
 a value; otherwise the value set in `t202Settings` is used, and otherwise the
 usual parameter (`t202kw`, `c2`).
 
-The keyword, c1–c4, the UTM values, the ad click ids (`t202GCLID`,
-`t202GBRAID`, `t202WBRAID`, `t202TTCLID`, `t202MSCLKID`, `t202FBCLID`) and
-`t202Pubid` are recorded on the click with these values, shown on the page
-and used in PurLinks. The click is recorded with them from the start, with no
-second request. Another key the data object already has (`t202Country`) is
-shown on the page only. A key it does not have is ignored, as in 1.9.56; add
-one with `dcs.addDataObj()`. `t202Subid`, `t202SubidOrig`, `t202SourceId` and
-`t202IP` cannot be set. A key that is ignored, and a value that is not text
-or a number, is named once in the browser console.
+The keyword, c1–c4, the UTM values and the ad click ids (`t202GCLID`,
+`t202GBRAID`, `t202WBRAID`, `t202TTCLID`, `t202MSCLKID`, `t202FBCLID`) are
+recorded on the click with these values, shown on the page and used in
+PurLinks. `t202Pubid` is recorded on the click and used in PurLinks
+(`[[t202pubid]]`); no element shows it. The click is recorded with them from
+the start, with no second request. Another key the data object already has
+(`t202Country`) is shown on the page only. A key it does not have is ignored,
+as in 1.9.56; add one with `dcs.addDataObj()`. `t202Subid`, `t202SubidOrig`,
+`t202SourceId` and `t202IP` cannot be set.
+
+What the page sets and is not used is named once in the browser console: a
+key that is ignored or cannot be set, a value that is not text or a number,
+a `t202UrlVars` entry that names no parameter, a `t202UseSubidOrig` that is
+not true or false, a `t202ExpireSubidOrig` that is not a number of days, and
+a setting that cannot be read.
 
 Put the script anywhere in the page's HTML: the settings are read once, when
 the page has finished loading and before the visit is sent. Settings added
@@ -111,13 +117,13 @@ later are not read; use `dcs.updateDataObj()` for those.
 
 Once the visit is recorded, two more keys are filled, as in 1.9.56:
 
-- `t202SubidOrig` is the SubID of the visitor's first visit to your site,
-  on a page that uses it: one with an element named for `t202SubidOrig` (or
-  `t202attribute="t202SubidOrig"`), or one that sets
-  `t202Settings.t202UseSubidOrig`. It is kept in a cookie on your landing
-  page's site (`_t202SubidOrig`) for `t202Settings.t202ExpireSubidOrig` days,
-  7 when left out. On a first visit it equals `t202Subid`. A page that does
-  neither sets no cookie, and its `t202SubidOrig` is the visit's own SubID.
+- `t202SubidOrig` is the SubID of the visitor's first visit to your site. As
+  in 1.9.56, every landing page with the script keeps it, in a cookie on your
+  landing page's site (`_t202SubidOrig`), for
+  `t202Settings.t202ExpireSubidOrig` days (7 when left out), so an entry page
+  that shows nothing keeps it for the order page that does. On a first visit
+  it equals `t202Subid`. Every page reads it, from an element or from its own
+  script.
 - `t202SourceId` is the id of the click's traffic source account, the value
   `[[sourceid]]` takes in a campaign URL. It is empty for a click with no
   traffic source account.

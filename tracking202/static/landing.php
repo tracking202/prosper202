@@ -257,6 +257,16 @@ function p202SettingWarn(message) {
     p202SettingWarned[message] = true;
     window.console.warn('Prosper202: ' + message);
 }
+// One setting, or undefined; a getter that throws is said, never thrown on.
+function p202Setting(name) {
+    try {
+        var s = window.t202Settings;
+        return (s && typeof s === 'object') ? s[name] : undefined;
+    } catch (e) {
+        p202SettingWarn('t202Settings.' + name + ' could not be read, and is not used.');
+        return undefined;
+    }
+}
 var p202SettingsApplied = false;
 var p202DcsSet = null;
 // A value the pageview sends: the page's setting for it, else the URL's.
@@ -267,9 +277,16 @@ function p202Var(param) {
 function p202ApplySettings() {
     if (p202SettingsApplied) { return; }
     p202SettingsApplied = true;
+    try {
+        p202ApplyTheSettings();
+    } catch (e) {
+        p202SettingWarn('t202Settings could not be read, and is not used.');
+    }
+}
+function p202ApplyTheSettings() {
     var s = window.t202Settings;
     if (!s || typeof s !== 'object') { return; }
-    var own = Object.prototype.hasOwnProperty, data = {}, any = false, key, text;
+    var own = Object.prototype.hasOwnProperty, data = {}, any = false, key, text, value;
     for (key in s) {
         if (!own.call(s, key)) { continue; }
         if (p202SettingNotAValue.test(key)) {
@@ -278,18 +295,21 @@ function p202ApplySettings() {
             }
             continue;
         }
-        text = typeof s[key] === 'number' && isFinite(s[key]) ? String(s[key]) : s[key];
+        value = p202Setting(key);
+        if (value === undefined) { continue; }
+        text = typeof value === 'number' && isFinite(value) ? String(value) : value;
         if (typeof text !== 'string') {
             p202SettingWarn('t202Settings.' + key + ' is not text or a number, and is not used.');
             continue;
         }
         if (text !== '') { data[key] = text; any = true; }
     }
-    var map = s.t202UrlVars;
+    var map = p202Setting('t202UrlVars');
     if (map && typeof map === 'object') {
         for (key in map) {
             if (!own.call(map, key)) { continue; }
-            if (typeof map[key] !== 'string' || map[key] === '') {
+            try { value = map[key]; } catch (e) { value = null; }
+            if (typeof value !== 'string' || value === '') {
                 p202SettingWarn('t202Settings.t202UrlVars.' + key + ' does not name a URL parameter, and is not used.');
                 continue;
             }
@@ -297,7 +317,7 @@ function p202ApplySettings() {
                 p202SettingWarn('t202Settings.t202UrlVars.' + key + ' cannot be set by the page, and is not used.');
                 continue;
             }
-            text = t202GetVar(map[key]);
+            text = t202GetVar(value);
             if (text !== '') { data[key] = text; any = true; }
         }
     }
@@ -441,11 +461,10 @@ function p202PurLinkFallback(offer, template) {
 // full tracking (pageview.keepSubid), one cookie per offer or simple page.
 var P202_SUBID_ORIG = '_t202SubidOrig';
 function p202SubidOrigExpiry() {
-    var s = window.t202Settings;
-    var given = (s && typeof s === 'object') ? s.t202ExpireSubidOrig : undefined;
-    var days = Number(given);
+    var given = p202Setting('t202ExpireSubidOrig');
     if (given === undefined) { return 7; }
-    if (typeof given === 'boolean' || given === null || given === '' || !isFinite(days) || days <= 0) {
+    var days = (typeof given === 'number' || typeof given === 'string') ? Number(given) : NaN;
+    if (given === '' || !isFinite(days) || days <= 0) {
         p202SettingWarn('t202Settings.t202ExpireSubidOrig is not a number of days; 7 days are used.');
         return 7;
     }
@@ -453,11 +472,13 @@ function p202SubidOrigExpiry() {
     return Math.min(days, 365);
 }
 function p202SubidOrigDays() {
-    var s = window.t202Settings;
-    if (!s || typeof s !== 'object') { return 0; }
-    var use = s.t202UseSubidOrig;
-    if (use !== true && use !== 1 && use !== '1' && use !== 'true') { return 0; }
-    return p202SubidOrigExpiry();
+    var use = p202Setting('t202UseSubidOrig');
+    if (use === true || use === 1 || use === '1' || use === 'true') { return p202SubidOrigExpiry(); }
+    if (use !== undefined && use !== false && use !== 0 && use !== '0' && use !== 'false') {
+        p202SettingWarn('t202Settings.t202UseSubidOrig is not true or false (true, 1, "1" or "true" turn it on);'
+            + ' the original SubID is not kept in PurLinks.');
+    }
+    return 0;
 }
 function p202SubidOrigName(offer) {
     return P202_SUBID_ORIG + (offer ? '_' + offer : '_p' + p202PurLinkPage);
@@ -1059,7 +1080,8 @@ if (document.readyState === 'loading') {
             }
         }
         for (var unused in values) {
-            if (own(values, unused) && !used[unused]) {
+            // A key the pageview carries (t202Pubid) is used though no element shows it.
+            if (own(values, unused) && !used[unused] && !own(p202SettingParams, unused.toLowerCase())) {
                 p202SettingWarn('t202Settings.' + unused + ' is not a key of dcs.t202DataObj, and is ignored;'
                     + ' add it with dcs.addDataObj().');
             }
@@ -1072,26 +1094,15 @@ if (document.readyState === 'loading') {
 	if (document.readyState === 'loading') {
 		document.addEventListener('DOMContentLoaded', function() { if (window.dcs === dcs) { render(dcs, null); } });
 	}
-    // t202UseSubidOrig, or an element that shows the first click.
-    function keepsFirstClick() {
-        if (p202SubidOrigDays() > 0) { return true; }
-        var els = document.querySelectorAll('[name],[t202attribute]');
-        for (var i = 0; i < els.length; i++) {
-            if (els[i].hasAttribute('data-p202-purlink-input')) { continue; }
-            var name = els[i].getAttribute('name') || '';
-            if ((name.indexOf('t202SubidOrig') !== -1 && name.indexOf('t202p13n_') !== 0) ||
-                els[i].getAttribute('t202attribute') === 't202SubidOrig') { return true; }
-        }
-        return false;
-    }
 	// The click's id, from record.php's answer (p202DcsClickJs()).
 	window.p202DcsClick = function(click) {
 		if (!click || typeof click.t202Subid !== 'string' || !consented() || window.dcs !== dcs) { return; }
 		dcs.t202DataObj.t202Subid = click.t202Subid;
         if (/^[1-9][0-9]{0,18}$/.test(click.t202Subid)) {
-            // Kept t202ExpireSubidOrig days (7 when unset), and only by a page
-            // that uses it: elsewhere it is this visit's, and no cookie is set.
-            var orig = keepsFirstClick() ? readCookie(P202_SUBID_ORIG) : click.t202Subid;
+            // Kept t202ExpireSubidOrig days (7 when unset) by every page, as
+            // 1.9.56 kept it: an entry page that shows nothing keeps it for
+            // the order page that does.
+            var orig = readCookie(P202_SUBID_ORIG);
             if (!/^[1-9][0-9]{0,18}$/.test(orig || '')) {
                 orig = click.t202Subid;
                 createCookie(P202_SUBID_ORIG, orig, p202SubidOrigExpiry());

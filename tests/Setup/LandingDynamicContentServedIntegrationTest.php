@@ -30,6 +30,9 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
     /** The tracked account's traffic source account, and a tracker on it. */
     private const SOURCE = 7464;
     private const TRACKER_PUBLIC = 746407;
+    /** Another account's traffic source account and tracker (#27). */
+    private const OTHER_SOURCE = 7465;
+    private const OTHER_TRACKER_PUBLIC = 746507;
 
     /** @var resource|null */
     private static $server = null;
@@ -127,19 +130,25 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
                 'landing_page_url' => 'https://lp.example/', 'landing_page_type' => 0, 'landing_page_time' => time(),
             ]);
         }
-        $mine = ['user_id' => self::TRACKED];
-        self::row('202_ppc_networks', $mine + [
-            'ppc_network_id' => self::SOURCE, 'ppc_network_name' => 'Source', 'ppc_network_time' => time(),
-        ]);
-        self::row('202_ppc_accounts', $mine + [
-            'ppc_account_id' => self::SOURCE, 'ppc_network_id' => self::SOURCE, 'ppc_account_name' => 'Account',
-            'ppc_account_time' => time(),
-        ]);
-        self::row('202_trackers', $mine + [
-            'tracker_id' => self::SOURCE, 'tracker_id_public' => self::TRACKER_PUBLIC, 'text_ad_id' => 0,
-            'ppc_account_id' => self::SOURCE, 'landing_page_id' => self::TRACKED, 'aff_campaign_id' => self::TRACKED,
-            'rotator_id' => 0, 'click_cpc' => 0.1, 'click_cloaking' => -1, 'tracker_time' => time(),
-        ]);
+        $accounts = [
+            [self::TRACKED, self::SOURCE, self::TRACKER_PUBLIC],
+            [self::HELD_BACK, self::OTHER_SOURCE, self::OTHER_TRACKER_PUBLIC],
+        ];
+        foreach ($accounts as [$user, $source, $public]) {
+            $mine = ['user_id' => $user];
+            self::row('202_ppc_networks', $mine + [
+                'ppc_network_id' => $source, 'ppc_network_name' => 'Source', 'ppc_network_time' => time(),
+            ]);
+            self::row('202_ppc_accounts', $mine + [
+                'ppc_account_id' => $source, 'ppc_network_id' => $source, 'ppc_account_name' => 'Account',
+                'ppc_account_time' => time(),
+            ]);
+            self::row('202_trackers', $mine + [
+                'tracker_id' => $source, 'tracker_id_public' => $public, 'text_ad_id' => 0,
+                'ppc_account_id' => $source, 'landing_page_id' => $user, 'aff_campaign_id' => $user,
+                'rotator_id' => 0, 'click_cpc' => 0.1, 'click_cloaking' => -1, 'tracker_time' => time(),
+            ]);
+        }
     }
 
     protected function setUp(): void
@@ -250,10 +259,18 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
         // Through a tracker: the click's traffic source account, as [[sourceid]] takes it.
         $answer = $this->dcsAnswer('lpip=' . self::TRACKED_PAGE . '&t202id=' . self::TRACKER_PUBLIC);
         $db = self::requireScratch();
-        $click = (string) $db->query('SELECT MAX(click_id) FROM 202_clicks WHERE user_id = ' . self::TRACKED)->fetch_row()[0];
+        $latest = 'SELECT MAX(click_id) FROM 202_clicks WHERE user_id = ' . self::TRACKED;
+        $click = (string) $db->query($latest)->fetch_row()[0];
         self::assertSame([$click, (string) self::SOURCE], [$answer['t202Subid'], $answer['t202SourceId']]);
         $stored = $db->query("SELECT ppc_account_id FROM 202_clicks WHERE click_id = $click")->fetch_row()[0];
         self::assertSame((string) self::SOURCE, (string) $stored, 'the click is recorded on that account');
+
+        // Another account's tracker names no traffic source account of this page's (#27).
+        $answer = $this->dcsAnswer('lpip=' . self::TRACKED_PAGE . '&t202id=' . self::OTHER_TRACKER_PUBLIC);
+        $click = (string) $db->query($latest)->fetch_row()[0];
+        self::assertSame([$click, ''], [$answer['t202Subid'], $answer['t202SourceId']]);
+        $stored = $db->query("SELECT ppc_account_id FROM 202_clicks WHERE click_id = $click")->fetch_row()[0];
+        self::assertSame('0', (string) $stored, 'and the click is recorded on none');
 
         foreach (['refused' => self::TRACKED_PAGE . '&p202_consent=0', 'held back' => (string) self::HELD_BACK_PAGE,
             "'eu'" => (string) self::EU_PAGE] as $why => $query) {

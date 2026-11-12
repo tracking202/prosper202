@@ -15,6 +15,8 @@ const slice = (from, to) => {
 };
 const cookies = slice('function createCookie(name, value, days) {', '// Expose cookie/param functions globally');
 const block = slice('// The redirect that stands in for a PurLink carries', 'function p202ConfigurePurLinks(pageview) {');
+// landing.php's own warning and settings reader, not a copy.
+const warn = slice('var p202SettingWarned = {};', 'var p202SettingsApplied = false;');
 
 function page(settings, advanced) {
     const jar = new Map();
@@ -42,13 +44,7 @@ function page(settings, advanced) {
         var p202PurLinkAdvanced = ${advanced ? 'true' : 'false'};
         var p202PurLinkPage = '77';
         var p202PurLinkRevoked = false;
-        var p202SettingWarned = {};
-        function p202SettingWarn(message) {
-            if (p202SettingWarned[message]) { return; }
-            p202SettingWarned[message] = true;
-            window.console.warn('Prosper202: ' + message);
-        }
-    ` + block, context);
+    ` + warn + block, context);
     return {context, jar, warned, run: (code) => vm.runInContext(code, context)};
 }
 
@@ -138,7 +134,8 @@ for (const [settings, days] of [[{t202UseSubidOrig: true}, 7], [{t202UseSubidOri
 // A t202ExpireSubidOrig that is not a number of days is said, once.
 for (const [given, days, said] of [[undefined, 7, null], [30, 30, null], ['30', 30, null], [400, 365, 'more than 365'],
     ['abc', 7, 'not a number'], [0, 7, 'not a number'], [-3, 7, 'not a number'], [Infinity, 7, 'not a number'],
-    [true, 7, 'not a number'], [null, 7, 'not a number'], ['', 7, 'not a number']]) {
+    [true, 7, 'not a number'], [null, 7, 'not a number'], ['', 7, 'not a number'], [Symbol('x'), 7, 'not a number'],
+    [{}, 7, 'not a number'], [[30], 7, 'not a number']]) {
     const settings = {t202UseSubidOrig: true};
     if (given !== undefined) { settings.t202ExpireSubidOrig = given; }
     const p = page(settings, false);
@@ -146,6 +143,27 @@ for (const [given, days, said] of [[undefined, 7, null], [30, 30, null], ['30', 
     p.run('p202SubidOrigDays()');
     assert.equal(p.warned.length, said ? 1 : 0, String(given) + ': ' + JSON.stringify(p.warned));
     if (said) { assert.ok(p.warned[0].includes(said), p.warned[0]); }
+}
+
+// t202UseSubidOrig: only true, 1, "1" and "true" turn it on; any other value but off is said, once.
+for (const [use, on, said] of [[true, true, false], [1, true, false], ['1', true, false], ['true', true, false],
+    [false, false, false], [0, false, false], ['0', false, false], ['false', false, false], [undefined, false, false],
+    ['yes', false, true], ['on', false, true], ['True', false, true], [2, false, true], [null, false, true]]) {
+    const settings = use === undefined ? {} : {t202UseSubidOrig: use};
+    const p = page(settings, false);
+    assert.equal(p.run('p202SubidOrigDays()') > 0, on, String(use));
+    p.run('p202SubidOrigDays()');
+    assert.equal(p.warned.length, said ? 1 : 0, String(use) + ': ' + JSON.stringify(p.warned));
+    if (said) { assert.ok(p.warned[0].includes('t202UseSubidOrig is not true or false'), p.warned[0]); }
+}
+
+// A getter on t202Settings that throws is said, and never thrown out of the script.
+{
+    const settings = {t202UseSubidOrig: true};
+    Object.defineProperty(settings, 't202ExpireSubidOrig', {enumerable: true, get() { throw new Error('boom'); }});
+    const p = page(settings, false);
+    assert.equal(p.run('p202SubidOrigDays()'), 7);
+    assert.deepStrictEqual(p.warned, ['Prosper202: t202Settings.t202ExpireSubidOrig could not be read, and is not used.']);
 }
 
 console.log('Landing original-subid harness passed');
