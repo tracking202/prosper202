@@ -413,6 +413,7 @@ final class DestinationsIntegrationTest extends TestCase
             109 => [5, 11, 0, 30, 'cookie'],
             110 => [5, 11, 0, 30, 'cookie'],
             111 => [5, 11, 0, 30, 'cookie'],
+            112 => [5, 11, 0, 30, 'cookie'],
         ];
         foreach ($clicks as $click => [$ip, $landing, $outbound, $campaign, $carried]) {
             self::fixture("INSERT INTO 202_clicks_advance SET click_id=$click, ip_id=$ip");
@@ -429,7 +430,7 @@ final class DestinationsIntegrationTest extends TestCase
         }
         // A re-click of 110 refuses consent, one of 111 gives it: the address is the latest visit's, and so is the consent asked.
         $cookie = ['p202vid' => str_repeat('b8', 16)];
-        foreach ([110 => ['p202_consent' => '0'], 111 => []] as $click => $get) {
+        foreach ([110 => ['p202_consent' => '0'], 111 => [], 112 => []] as $click => $get) {
             \Prosper202\Identity\ClickIdentity::fromRequest([], $cookie, true, false)->attach($conn, 1, $click, self::CLICK_TIME);
             self::fixture("INSERT INTO 202_clicks SET click_id=$click, user_id=1, aff_campaign_id=30, ppc_account_id=70, click_payout=2.5, click_cpc=0, click_lead=0, click_time=" . (self::CLICK_TIME + 100));
             \Prosper202\Identity\ClickIdentity::fromRequest($get, $cookie, true, false)->attach($conn, 1, $click, self::CLICK_TIME + 100);
@@ -444,7 +445,7 @@ final class DestinationsIntegrationTest extends TestCase
 
         $on = $create(['send_user_data' => true]);
         $ids = ['ORD-60' => $this->record(100, 'ORD-60'), '' => $this->record(101, ''), 'ORD-62' => $this->record(102, 'ORD-62')];
-        foreach ([103, 104, 105, 107, 108, 109, 110, 111] as $click) {
+        foreach ([103, 104, 105, 107, 108, 109, 110, 111, 112] as $click) {
             $conv = $this->record($click, 'ORD-' . $click);
             if ($click === 108) {
                 // A campaign id that names another account's campaign reads as no campaign (CLAUDE.md #27).
@@ -453,9 +454,9 @@ final class DestinationsIntegrationTest extends TestCase
                 self::fixture("UPDATE 202_conversion_logs SET campaign_id=999 WHERE conv_id=$conv");
             }
         }
-        // A later row of another account under 111's id is no visit of it (CLAUDE.md #27).
-        self::fixture('INSERT INTO 202_clicks SET click_id=111, user_id=2, aff_campaign_id=40, ppc_account_id=70, click_payout=2.5, click_cpc=0, click_lead=0, click_time=' . (self::CLICK_TIME + 500));
-        self::assertSame(11, $queue()->sendDue(20, 5, time() + 1)['sent']);
+        // A later row of another account under 112's id: its latest visit is not the account's, and reads as none (CLAUDE.md #27).
+        self::fixture('INSERT INTO 202_clicks SET click_id=112, user_id=2, aff_campaign_id=40, ppc_account_id=70, click_payout=2.5, click_cpc=0, click_lead=0, click_time=' . (self::CLICK_TIME + 500));
+        self::assertSame(12, $queue()->sendDue(20, 5, time() + 1)['sent']);
         $by = [];
         foreach ($facts as $f) {
             $by[$f->clickId] = $f;
@@ -470,6 +471,7 @@ final class DestinationsIntegrationTest extends TestCase
         self::assertSame('198.51.100.7', $by[100]->ipAddress, 'the positive control for the visitor cookie');
         self::assertNull($by[110]->ipAddress, 'a re-click that refused consent sends no address, whatever an earlier visit gave');
         self::assertSame('198.51.100.7', $by[111]->ipAddress, 'and a re-click that gave it sends the address');
+        self::assertNull($by[112]->ipAddress, 'a latest visit of another account under the click id is no visit of it');
         self::assertNull($by[105]->ipAddress, 'nor one whose campaign has identity capture off');
         self::assertSame('198.51.100.7', $by[102]->ipAddress, 'and for the landing page id');
         self::assertSame('https://shop.example.com/spring', $by[100]->pageUrl, 'the landing page, without what its query and fragment carry');
