@@ -266,8 +266,9 @@ if (isset($_SESSION['p202_destination_queued']) && is_array($_SESSION['p202_dest
 $destinations = $store->list($userId);
 $adConnectionList = $adStore->list($userId);
 $ppcAccountNames = [];
-foreach (p202_setup_rows($db, 'SELECT a.ppc_account_id, a.ppc_account_name, n.ppc_network_name FROM 202_ppc_accounts a JOIN 202_ppc_networks n ON n.ppc_network_id = a.ppc_network_id AND n.user_id = a.user_id'
-    . ' WHERE a.user_id = ' . $userId . ' AND a.ppc_account_deleted = 0 AND n.ppc_network_deleted = 0 ORDER BY n.ppc_network_name, a.ppc_account_name') as $row) {
+$ppcAccountSql = 'SELECT a.ppc_account_id, a.ppc_account_name, n.ppc_network_name FROM 202_ppc_accounts a JOIN 202_ppc_networks n ON n.ppc_network_id = a.ppc_network_id AND n.user_id = a.user_id'
+    . ' WHERE a.user_id = ' . $userId . ' AND a.ppc_account_deleted = 0 AND n.ppc_network_deleted = 0 ORDER BY n.ppc_network_name, a.ppc_account_name';
+foreach (p202_setup_rows($db, $ppcAccountSql) as $row) {
     $ppcAccountNames[(int) $row['ppc_account_id']] = $row['ppc_network_name'] . ' › ' . $row['ppc_account_name'];
 }
 // The destination whose account or conversion action is being changed.

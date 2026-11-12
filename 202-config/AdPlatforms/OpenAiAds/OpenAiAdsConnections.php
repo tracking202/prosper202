@@ -437,8 +437,9 @@ final class OpenAiAdsConnections
                 return 'OpenAI\'s description of the ad account has no ' . $field . ', so nothing was saved.';
             }
         }
-        if (preg_match('/\A[A-Za-z0-9_-]{1,64}\z/D', $json['id']) !== 1 || preg_match('/\A[A-Z]{3}\z/D', $json['currency_code']) !== 1
-            || preg_match('#\A[A-Za-z0-9_+/-]{1,64}\z#D', $json['timezone']) !== 1) {
+        $readable = preg_match('/\A[A-Za-z0-9_-]{1,64}\z/D', $json['id']) === 1 && preg_match('/\A[A-Z]{3}\z/D', $json['currency_code']) === 1
+            && preg_match('#\A[A-Za-z0-9_+/-]{1,64}\z#D', $json['timezone']) === 1;
+        if (!$readable) {
             return 'OpenAI\'s description of the ad account has an id, currency or time zone this cannot read, so nothing was saved.';
         }
 

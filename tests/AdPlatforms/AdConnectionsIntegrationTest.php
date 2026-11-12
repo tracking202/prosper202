@@ -56,16 +56,16 @@ final class AdConnectionsIntegrationTest extends TestCase
         self::fixture("INSERT INTO 202_users_pref SET user_id=2, user_account_currency='EUR'");
         $this->requests = [];
         $this->routes = [
-            'GET ad_account' => [['body' => self::fixture_('ad_account.json')]],
-            'GET conversions/pixels' => [['body' => self::fixture_('pixels_empty.json')]],
-            'POST conversions/pixels' => [['body' => self::fixture_('pixel_created.json')]],
-            'POST conversions/api_keys' => [['body' => self::fixture_('api_key_created.json')]],
-            'GET conversions/event_settings' => [['body' => self::fixture_('event_settings_empty.json')]],
-            'POST conversions/event_settings' => [['body' => self::fixture_('event_setting_created.json')]],
+            'GET ad_account' => [['body' => self::answer('ad_account.json')]],
+            'GET conversions/pixels' => [['body' => self::answer('pixels_empty.json')]],
+            'POST conversions/pixels' => [['body' => self::answer('pixel_created.json')]],
+            'POST conversions/api_keys' => [['body' => self::answer('api_key_created.json')]],
+            'GET conversions/event_settings' => [['body' => self::answer('event_settings_empty.json')]],
+            'POST conversions/event_settings' => [['body' => self::answer('event_setting_created.json')]],
         ];
     }
 
-    private static function fixture_(string $name): string
+    private static function answer(string $name): string
     {
         return (string) file_get_contents(dirname(__DIR__) . '/fixtures/openai-ads/' . $name);
     }
@@ -117,8 +117,8 @@ final class AdConnectionsIntegrationTest extends TestCase
 
         self::assertSame(['GET ad_account'], $this->routes());
         self::assertSame(['id' => 'adacct_123', 'name' => 'Northwind Outfitters', 'currency' => 'USD', 'timezone' => 'America/New_York'], $made['account']);
-        self::assertEquals(['platform' => 'openai_ads', 'ppc_account_id' => 70, 'status' => 'connected', 'currency_matches_account' => true],
-            array_intersect_key($made, array_flip(['platform', 'ppc_account_id', 'status', 'currency_matches_account'])));
+        $facts = array_intersect_key($made, array_flip(['platform', 'ppc_account_id', 'status', 'currency_matches_account']));
+        self::assertEquals(['platform' => 'openai_ads', 'ppc_account_id' => 70, 'status' => 'connected', 'currency_matches_account' => true], $facts);
         self::assertSame(['advertiser_api_key' => true, 'conversions_api_key' => false], $made['credentials_set']);
         self::assertSame(1_800_000_000, $made['checked_at']);
     }
@@ -200,13 +200,13 @@ final class AdConnectionsIntegrationTest extends TestCase
         $id = $this->connect();
         $first = $this->connections()->setup(1, $id, [], 1_800_000_100);
 
-        self::assertSame(['pixel' => 'created', 'conversions_key' => 'created', 'destination' => 'unavailable', 'event_settings' => 'created'],
-            array_column($first['steps'], 'outcome', 'step'));
+        $outcomes = array_column($first['steps'], 'outcome', 'step');
+        self::assertSame(['pixel' => 'created', 'conversions_key' => 'created', 'destination' => 'unavailable', 'event_settings' => 'created'], $outcomes);
         $creates = array_values(array_filter($this->requests, static fn (array $r): bool => $r['method'] === 'POST'));
         self::assertSame(['name' => 'Prosper202', 'client_type' => 'web'], $creates[0]['body']);
         self::assertSame(['name' => 'Prosper202 server events'], $creates[1]['body']);
-        self::assertSame(['name' => 'Prosper202 order created', 'event_type' => 'order_created', 'attribution_window_days' => 30, 'source_ids' => ['clidsrc_123']], $creates[2]['body'],
-            'source_ids takes the source id, not the pixel id');
+        $setting = ['name' => 'Prosper202 order created', 'event_type' => 'order_created', 'attribution_window_days' => 30, 'source_ids' => ['clidsrc_123']];
+        self::assertSame($setting, $creates[2]['body'], 'source_ids takes the source id, not the pixel id');
         foreach ($creates as $create) {
             self::assertCount(1, preg_grep('/^Idempotency-Key: p202-[0-9a-f]{40}$/', $create['headers']));
         }
@@ -216,8 +216,8 @@ final class AdConnectionsIntegrationTest extends TestCase
         self::assertStringNotContainsString(self::CAPI_KEY, (string) json_encode($first));
 
         // Run again: OpenAI now lists what the first run made.
-        $this->routes['GET conversions/pixels'] = [['body' => (string) json_encode(['object' => 'list', 'data' => [json_decode(self::fixture_('pixel_created.json'), true)], 'first_id' => 'clidsrc_123', 'last_id' => 'clidsrc_123', 'has_more' => false])]];
-        $this->routes['GET conversions/event_settings'] = [['body' => (string) json_encode(['object' => 'list', 'data' => [json_decode(self::fixture_('event_setting_created.json'), true)], 'first_id' => 'ces_123', 'last_id' => 'ces_123', 'has_more' => false])]];
+        $this->routes['GET conversions/pixels'] = [['body' => (string) json_encode(['object' => 'list', 'data' => [json_decode(self::answer('pixel_created.json'), true)], 'first_id' => 'clidsrc_123', 'last_id' => 'clidsrc_123', 'has_more' => false])]];
+        $this->routes['GET conversions/event_settings'] = [['body' => (string) json_encode(['object' => 'list', 'data' => [json_decode(self::answer('event_setting_created.json'), true)], 'first_id' => 'ces_123', 'last_id' => 'ces_123', 'has_more' => false])]];
         $this->requests = [];
         $again = $this->connections()->setup(1, $id, [], 1_800_000_200);
 
@@ -342,7 +342,7 @@ final class AdConnectionsIntegrationTest extends TestCase
         $this->routes['GET ad_account'] = [['status' => 401, 'body' => '{}']];
         self::assertSame('key_refused', $this->connections()->check(1, $id, 6)['status']);
 
-        $this->routes['GET ad_account'] = [['body' => str_replace('Northwind Outfitters', 'Northwind Outfitters EU', self::fixture_('ad_account.json'))]];
+        $this->routes['GET ad_account'] = [['body' => str_replace('Northwind Outfitters', 'Northwind Outfitters EU', self::answer('ad_account.json'))]];
         $back = $this->connections()->check(1, $id, 7);
         self::assertSame(['connected', null, 'Northwind Outfitters EU'], [$back['status'], $back['last_error'], $back['account']['name']]);
         self::assertNull($this->connections()->check(2, $id, 8), 'not another account\'s');
@@ -351,7 +351,7 @@ final class AdConnectionsIntegrationTest extends TestCase
     public function testAReplacedKeyMustReachTheSameAdAccount(): void
     {
         $id = $this->connect();
-        $this->routes['GET ad_account'] = [['body' => str_replace('adacct_123', 'adacct_999', self::fixture_('ad_account.json'))]];
+        $this->routes['GET ad_account'] = [['body' => str_replace('adacct_123', 'adacct_999', self::answer('ad_account.json'))]];
         try {
             $this->connections()->replaceKey(1, $id, 'sk-ads-other-account-1', 1);
             self::fail('a key for another ad account replaced this one\'s');
@@ -385,14 +385,15 @@ final class AdConnectionsIntegrationTest extends TestCase
     public function testSetupOptionsAreReadStrictly(): void
     {
         $id = $this->connect();
-        foreach ([
+        $refused = [
             [['skip' => ['pixels']], 'skip'],
             [['event_types' => ['purchase']], 'event_types'],
             [['source_id' => 'clidsrc_1'], 'source_id'],
             [['pixel_id' => '1', 'pixel_source_id' => 'clidsrc_1'], 'pixel_source_id'],
             [['conversions_api_key' => 'short'], 'conversions_api_key'],
             [['colour' => 'blue'], 'colour'],
-        ] as [$options, $field]) {
+        ];
+        foreach ($refused as [$options, $field]) {
             try {
                 $this->connections()->setup(1, $id, $options, 1);
                 self::fail($field . ' was accepted');

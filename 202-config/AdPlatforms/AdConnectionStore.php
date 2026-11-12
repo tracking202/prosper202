@@ -104,7 +104,7 @@ final class AdConnectionStore
         $this->ownPpcAccount($userId, $ppcAccountId);
         $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::AD_CONNECTIONS . '` SET ppc_account_id = ?, updated_at = ? WHERE connection_id = ? AND user_id = ? AND deleted_at IS NULL');
         $this->conn->bind($stmt, 'iiii', [$ppcAccountId, $now, $connectionId, $userId]);
-        $this->conn->execute($stmt);
+        $this->conn->executeUpdate($stmt);
 
         return $this->get($userId, $connectionId);
     }
@@ -127,7 +127,7 @@ final class AdConnectionStore
                  WHERE connection_id = ? AND user_id = ? AND account_ref = ? AND deleted_at IS NULL');
             $this->conn->bind($stmt, 'sssssiiiis', [$account['name'], $account['currency'], $account['timezone'], $status, $error, $now, $now, $connectionId, $userId, $account['ref']]);
         }
-        $this->conn->execute($stmt);
+        $this->conn->executeUpdate($stmt);
 
         return $this->row($userId, $connectionId) !== null;
     }

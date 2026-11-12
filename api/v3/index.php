@@ -823,13 +823,13 @@ try {
         // carries a key, and a check or setup is a call to the platform.
         $router->group('/ad-connections', function (Router $r) use ($crud, $payload) {
             $cls = \Api\V3\Controllers\AdConnectionsController::class;
-            $r->get('',              fn() => $crud($cls)->list());
-            $r->get('/{id}',         fn($ctx) => $crud($cls)->get(PathId::of($ctx)));
-            $r->post('',             fn() => ['_status' => 201] + $crud($cls)->create($payload));
-            $r->patch('/{id}',       fn($ctx) => $crud($cls)->update(PathId::of($ctx), $payload));
-            $r->delete('/{id}',      fn($ctx) => tap($crud($cls), fn($c) => $c->delete(PathId::of($ctx))));
-            $r->post('/{id}/check',  fn($ctx) => $crud($cls)->check(PathId::of($ctx)));
-            $r->post('/{id}/setup',  fn($ctx) => $crud($cls)->setup(PathId::of($ctx), $payload));
+            $r->get('', fn() => $crud($cls)->list());
+            $r->get('/{id}', fn($ctx) => $crud($cls)->get(PathId::of($ctx)));
+            $r->post('', fn() => ['_status' => 201] + $crud($cls)->create($payload));
+            $r->patch('/{id}', fn($ctx) => $crud($cls)->update(PathId::of($ctx), $payload));
+            $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->delete(PathId::of($ctx))));
+            $r->post('/{id}/check', fn($ctx) => $crud($cls)->check(PathId::of($ctx)));
+            $r->post('/{id}/setup', fn($ctx) => $crud($cls)->setup(PathId::of($ctx), $payload));
         }, [$setupSection]);
 
         // ── API capabilities ────────────────────────────────────────────
