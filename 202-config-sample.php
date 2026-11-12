@@ -18,6 +18,12 @@ $mchost = 'localhostmemcache'; // this is the memcache server host, if you don't
 //
 // define('TRACKING202_JSON_ARCHITECTURE_ENABLED', true);
 
+// ** Optional: Conversion Logs' Download CSV ** //
+// A download holds the newest 100,000 conversions of the list. To hold fewer
+// (a small server), uncomment and set a smaller whole number:
+//
+// define('P202_CONVERSION_LOGS_CSV_MAX', 50000);
+
 /*---DONT EDIT ANYTHING BELOW THIS LINE!---*/
 
 //Database connection class

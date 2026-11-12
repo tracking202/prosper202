@@ -48,6 +48,8 @@ final class PagePingIsNotACronRunTest extends TestCase
         '202-config/Database/Tables/CoreTables.php' => 'creates the table',
         '202-config/Database/Schema/TableRegistry.php' => 'the name',
         '202-config/Cron/CronRun.php' => 'names it in its docblock',
+        '202-config/Notifications/OutboxBacklog.php' => 'reads row 1: queued traffic-source postbacks are reported unsent'
+            . ' only when no scheduler has run since they were due',
         '202-config/Cron/AutoCronSwitch.php' => 'names it in its docblock (Settings reads it)',
     ];
 

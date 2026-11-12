@@ -1255,7 +1255,8 @@ if (!function_exists('p202RecordLegacyConversion')) {
      *     source?: string, reversal?: bool, reversal_ref?: string, reverses_carried_value?: bool,
      *     event_name?: string|null,
      *     conv_time?: int,
-     *     notify_traffic_source?: bool
+     *     notify_traffic_source?: bool,
+     *     items?: list<array<string, mixed>>
      * } $opts source is the ledger source the row is recorded under
      *     (legacy_pixel for px and pb, clickbank for cb202); event_name is
      *     a campaign-without-goals hit's `event=`, kept on the row; conv_time
@@ -1263,7 +1264,8 @@ if (!function_exists('p202RecordLegacyConversion')) {
      *     notify_traffic_source queues the click's traffic-source server
      *     postbacks with the row, as gpb.php does (pb.php and the payment
      *     notifications ask for it; px.php, a browser pixel like gpx.php,
-     *     does not). A reversal never announces anything.
+     *     does not). A reversal never announces anything. items are the
+     *     product lines of a request that carried them (p202ExtractItems()).
      *     $matchedBy is how the endpoint found the click (match_method).
      * @return array{recorded: bool, duplicate: bool, conv_id: int, reason: string}
      *         reason is '' when recorded; otherwise one of unknown_click,
@@ -1361,7 +1363,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
             $usePixelPayout ? $payout : '',
             $transactionId,
             [],
-            [],
+            is_array($opts['items'] ?? null) ? array_values($opts['items']) : [],
             $purLinkSubid[0] ?? null,
             $purLinkSubid[1] ?? null,
         );
@@ -1424,13 +1426,16 @@ if (!function_exists('p202RecordWebEvent')) {
      * @param \Prosper202\Conversion\Ledger\MatchMethod $matchedBy how the
      *        endpoint found the click, which the event and the ledger rows it
      *        reaches carry (GoalEngine::ingest())
-     * @param array{user_id?: int, campaign_id?: int, expected_campaign_id?: int, browser?: bool, trusted?: bool} $opts
+     * @param array{user_id?: int, campaign_id?: int, expected_campaign_id?: int, browser?: bool, trusted?: bool, at?: int} $opts
      *        user_id: the click must belong to that owner (px scope);
      *        campaign_id: some visit of it must be on that campaign (pb
      *        scope, p202ClickVisitedCampaign()). browser: a browser renders the
      *        response, so image, iframe and script pixels are returned for
      *        it to load. trusted: whether `amount` may set a paid value, as it
      *        does for this endpoint's plain conversions (default true).
+     *        at: when the request arrived (a Unix time; now when it is left
+     *        out), which dates the event and what its goals record: an event
+     *        recorded later from the inbound log counts when it happened.
      * @return array<string, mixed>|null
      */
     function p202RecordWebEvent(
@@ -1459,7 +1464,10 @@ if (!function_exists('p202RecordWebEvent')) {
             return ['status' => 'not_found', 'reason' => 'campaign_mismatch'];
         }
         // The goals and the conversion are the latest visit's campaign's.
-        $now = time();
+        $now = $opts['at'] ?? time();
+        if (!is_int($now) || $now <= 0) {
+            throw new \InvalidArgumentException('p202RecordWebEvent: at must be a positive Unix time');
+        }
         if (!$events->campaignEvaluatesGoals($click['user_id'], $click['campaign_id'], $now)) {
             return ['status' => 'no_goals', 'event_name' => \Prosper202\Goals\WebEvents::nameFrom($get)];
         }

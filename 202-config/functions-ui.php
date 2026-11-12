@@ -206,6 +206,34 @@ function p202_flash(string $kind, string $text): string
 }
 
 /**
+ * The warning that the account's queued traffic-source postbacks are not
+ * being sent (Prosper202\Notifications\OutboxBacklog), with the page that
+ * fixes it; '' when they are. A check that fails is logged and shows
+ * nothing: the banner is advice on pages with their own reads to fail on.
+ */
+function p202_postback_queue_notice(\mysqli $db, int $userId, string $base): string
+{
+    if ($userId <= 0) {
+        return '';
+    }
+    try {
+        $backlog = \Prosper202\Notifications\OutboxBacklog::read(new \Prosper202\Database\Connection($db), time(), $userId);
+    } catch (\Throwable $e) {
+        error_log('The traffic-source postback queue could not be checked: ' . $e->getMessage());
+
+        return '';
+    }
+    if ($backlog['warning'] === null) {
+        return '';
+    }
+    $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
+
+    return '<div class="alert alert-warning p202-flash" role="status" data-p202-postback-queue><i class="bi bi-exclamation-triangle"></i>'
+        . '<div class="p202-flash__body">' . $e($backlog['warning'])
+        . ' <a class="alert-link" href="' . $e(rtrim($base, '/') . '/202-account/administration.php#autocron') . '">Open Settings</a></div></div>';
+}
+
+/**
  * Home's and Account Overview's notice that Google Ads is still fetching
  * paid 1.9.56's retired feed (Prosper202\OfflineConversion\
  * LegacyGoogleFeedFetches), linking to where each schedule is moved over.
