@@ -614,3 +614,68 @@ func TestHostedOmitNamesAnOptionalFlag(t *testing.T) {
 		t.Errorf("HostedOmit [force] on campaign_delete: err %v", err)
 	}
 }
+
+// A hosted run refuses every tool the relay does not list, deferred or not,
+// before anything is sent: its connection's key cannot reach the area, and
+// the scope refusal it would get says to approve the connection again, which
+// cannot help. Natively the same call runs.
+func TestHostedRunRefusesWhatItDoesNotList(t *testing.T) {
+	checked := 0
+	for _, s := range mcpAllToolSpecs() {
+		if !s.NotHosted {
+			continue
+		}
+		input, ok := mcpNotHostedInput[s.Name]
+		if !ok {
+			input = `{}`
+			if len(s.Args) > 0 {
+				input = `{"` + s.Args[0].Name + `":"4"}`
+			}
+		}
+		for _, hosted := range []bool{true, false} {
+			withHostedRun(t, hosted)
+			fake := &mcpFakeInstall{}
+			srv := fake.server(t)
+			tmp := t.TempDir()
+			setTestHome(t, tmp)
+			writeTestConfig(t, tmp, srv.URL, "test-key-123456")
+			_, _, err := mcpExecute(t, "mcp", "call", s.Name, "--input", input)
+			if !hosted {
+				if mcpHitPrefix(fake.requests(), "/api/v3/") == 0 {
+					t.Errorf("native %s sent nothing: %v", s.Name, err)
+				}
+				continue
+			}
+			if err == nil || !strings.Contains(err.Error(), "not offered by the hosted server") || exitCodeForError(err) != ExitValidation ||
+				!strings.Contains(hintFor(err), "`p202 mcp`") {
+				t.Errorf("hosted %s: want the not-hosted refusal, got %v (hint %q)", s.Name, err, hintFor(err))
+			}
+			if n := mcpHitPrefix(fake.requests(), "/api/v3/"); n != 0 {
+				t.Errorf("hosted %s reached the install: %q", s.Name, fake.requests())
+			}
+			checked++
+		}
+	}
+	if checked < 4 {
+		t.Fatalf("checked %d NotHosted tools", checked)
+	}
+}
+
+// mcpNotHostedInput: the arguments a NotHosted tool needs before it sends.
+var mcpNotHostedInput = map[string]string{
+	"click_filter_update":   `{"repeat_visits":"1"}`,
+	"click_filter_test":     `{"ip":"203.0.113.7"}`,
+	"click_filter_list_add": `{"action":"count","address":"203.0.113.7"}`,
+}
+
+// mcpHitPrefix counts the requests to a path under prefix, past the version
+// and capability probes.
+func mcpHitPrefix(hits []string, prefix string) int {
+	n := 0
+	for _, h := range hits {
+		if _, path, ok := strings.Cut(h, " "); ok && strings.HasPrefix(path, prefix) && !strings.HasPrefix(path, "/api/v3/capabilities") {
+			n++
+		}
+	}
+	return n
+}

@@ -84,6 +84,7 @@ func RenderWith(data []byte, opts Opts) {
 	if opts.CSV {
 		renderCSVData(data, opts)
 		noteMasked(data)
+		noteSpendLedger(data)
 		return
 	}
 
@@ -93,6 +94,7 @@ func RenderWith(data []byte, opts Opts) {
 		fmt.Println()
 		return
 	}
+	defer noteSpendLedger(data)
 	defer noteMasked(data)
 
 	switch v := parsed.(type) {
@@ -128,6 +130,29 @@ func noteMasked(data []byte) {
 	if json.Unmarshal(data, &top) == nil && top.Masked {
 		fmt.Fprintln(os.Stderr, MaskedNote)
 	}
+}
+
+// noteSpendLedger prints, on stderr under a human view, what a report whose
+// cost read the spend ledger says beside its figures (`spend_ledger`): how
+// far the spend data reaches and the spend no click carries. A table shows
+// only the rows, and ROI quoted from it must say how far its cost reaches.
+func noteSpendLedger(data []byte) {
+	var top struct {
+		SpendLedger *struct {
+			Note        string `json:"note"`
+			Unallocated struct {
+				TotalCost *json.Number `json:"total_cost"`
+			} `json:"unallocated"`
+		} `json:"spend_ledger"`
+	}
+	if json.Unmarshal(data, &top) != nil || top.SpendLedger == nil || top.SpendLedger.Note == "" {
+		return
+	}
+	line := "Note: " + top.SpendLedger.Note
+	if c := top.SpendLedger.Unallocated.TotalCost; c != nil && c.String() != "0" {
+		line += " Spend no click carries (unallocated, in no row): " + c.String() + "."
+	}
+	fmt.Fprintln(os.Stderr, line)
 }
 
 func renderJSON(data []byte, compact bool) {

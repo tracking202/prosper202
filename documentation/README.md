@@ -42,6 +42,7 @@
 - [Conversions](api/10-conversions.md)
 - [Update: past clicks' CPC, subids, revenue reports](api/26-update.md)
 - [Setup: landing-page code, pixels and postbacks, traffic-source variables and pixels](api/27-setup.md)
+- [Spend ledger: what each ad platform billed, per ad per hour](api/29-spend-ledger.md)
 - [Reports](api/11-reports.md)
 - [Rotators](api/12-rotators.md)
 - [Attribution](api/13-attribution.md)

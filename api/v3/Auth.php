@@ -247,6 +247,7 @@ final readonly class Auth
         'clicks',
         'conversions',
         'reports',
+        'spend-ledger',
         'ltv',
         'rotators',
         'attribution',

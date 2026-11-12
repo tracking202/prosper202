@@ -184,6 +184,28 @@ case "$ask" in
     # The inbound log (inbound-log.json): a refused postback is found by the
     # order number the network names and recorded from its own row, never
     # typed in by hand and never let through by opening the gate.
+    # A spend export (spend-ledger.json): record it, then read the ad's
+    # hours back from the ledger and add them up.
+    *"exported yesterday's hourly spend"*"Put it into Prosper202"*)
+        file=$(printf '%s' "$ask" | sed -n 's|.* to \(/[^ ]*\.json\).*|\1|p')
+        out=$(p202 spend import "$file" --json)
+        ad=$(jq -r 'if type == "array" then .[0].ad_ref else .rows[0].ad_ref end' "$file")
+        hours=$(p202 spend list --period yesterday --interval hour --json)
+        printf 'Recorded %s with `p202 spend import`: %s new, %s replaced, %s unchanged. Per `p202 spend list --period yesterday --interval hour`, ad %s cost %s %s yesterday (%s).\n' \
+            "$file" "$(printf '%s' "$out" | jq -r '.data.inserted')" "$(printf '%s' "$out" | jq -r '.data.replaced')" \
+            "$(printf '%s' "$out" | jq -r '.data.unchanged')" "$ad" \
+            "$(printf '%s' "$hours" | jq -r --arg ad "$ad" '[.data[] | select(.ad_ref == $ad) | (.spend | tonumber)] | add // 0 | . * 100 | round / 100 | tostring')" \
+            "$(printf '%s' "$hours" | jq -r '.currency')" \
+            "$(printf '%s' "$hours" | jq -r --arg ad "$ad" '[.data[] | select(.ad_ref == $ad) | "\(.period): \(.spend)"] | join(", ")')"
+        ;;
+    # A spend question (spend-ledger.json): a read; an export lying around is not imported.
+    *"ChatGPT Ads charge us yesterday"*"hour by hour"*)
+        hours=$(p202 spend list --period yesterday --interval hour --platform openai_ads --json)
+        rows=$(printf '%s' "$hours" | jq -r '[.data[] | select(.ad_ref | test("espresso_grinder")) | "\(.period): \(.spend)"] | join(", ")')
+        total=$(printf '%s' "$hours" | jq -r '[.data[] | select(.ad_ref | test("espresso_grinder")) | (.spend | tonumber)] | add // 0 | . * 100 | round / 100 | tostring')
+        printf 'Per `p202 spend list --period yesterday --interval hour --platform openai_ads`, the espresso grinder ad cost %s %s yesterday: %s.\n' \
+            "$total" "$(printf '%s' "$hours" | jq -r '.currency')" "${rows:-no hours recorded}"
+        ;;
     *"order EVAL-REFUSED-1"*)
         row=$(p202 conversion inbound-log --search EVAL-REFUSED-1 --outcome refused --json | jq -c '[.data[] | select(.can_record)][0] // empty')
         if [ -z "$row" ]; then
@@ -745,6 +767,37 @@ case "$ask" in
         printf 'Saved your Shopify webhook secret (stored: %s, per `p202 system integrations`). In Shopify under Settings > Notifications > Webhooks, point the Order payment and Refund create JSON webhooks at %s, and add the click id to the cart as the line item property t202subid, filled from the tracker'"'"'s [[subid]], so each order is recorded on the click that sent the buyer.\n' \
             "$(printf '%s' "$entry" | jq -r '.secret_stored')" "$(printf '%s' "$entry" | jq -r '.url')"
         ;;
+    *"Shopify refund"*"not recorded"*)
+        # Read the refunds left to settle, then record each for the amount it
+        # states. One stated in another currency, or on an order with more
+        # than one click, needs an answer only the owner has: reported, never
+        # guessed. Nothing is closed.
+        list=$(p202 conversion shopify-refunds list --json)
+        rows=$(printf '%s' "$list" | jq -r '.data[] | [.refund_id, .amount, .amount_currency, .other_currency, (.click_ids | length), (.currency // "")] | @tsv')
+        recorded="" held=""
+        tab=$(printf '\t')
+        while IFS="$tab" read -r id amount cur other clicks stated; do
+            [ -n "$id" ] || continue
+            if [ "$other" = true ]; then
+                held="$held; refund $id states its amount in $stated and its sale is in $cur: tell me what it returned in $cur"
+            elif [ "$clicks" -gt 1 ]; then
+                held="$held; refund $id is on an order recorded on $clicks clicks: tell me which click it takes back from"
+            else
+                out=$(p202 conversion shopify-refunds record "$id" --amount "$amount" --json)
+                recorded="$recorded; refund $id: the order's sale was $(printf '%s' "$out" | jq -r '.data.outcome') by $amount $cur ($(printf '%s' "$out" | jq -r '.data.message'))"
+            fi
+        done <<EOF
+$rows
+EOF
+        if [ -z "$rows" ]; then
+            printf 'No Shopify refund is waiting to be recorded, per `p202 conversion shopify-refunds list`.\n'
+        else
+            printf 'Per `p202 conversion shopify-refunds list`, %s Shopify refund(s) were not recorded.' "$(printf '%s' "$list" | jq -r '.data | length')"
+            [ -z "$recorded" ] || printf ' Recorded with `p202 conversion shopify-refunds record`: %s.' "${recorded#; }"
+            [ -z "$held" ] || printf ' Not recorded yet: %s.' "${held#; }"
+            printf '\n'
+        fi
+        ;;
     *JVZoo*"Affiliate IPN"*)
         # One JVZIPN key verifies both JVZoo URLs; an affiliate pastes the
         # affiliate one, whose click is the tid. The reply never repeats the key.
@@ -816,6 +869,14 @@ case "$ask" in
         ;;
     # Traffic sources (setup-traffic-sources.json): a rename is an update of
     # the source that is there, so its accounts and their trackers keep it.
+    # ChatGPT Ads (setup-traffic-sources.json): the one-step setup, never a
+    # hand-built source with variables of the agent's own choosing.
+    *"ads in ChatGPT"*)
+        made=$(p202 ppc-network add-chatgpt-ads --json)
+        printf 'I set ChatGPT Ads up as a traffic source with `p202 ppc-network add-chatgpt-ads`: source %s, account %s, and the campaign_id and ad_id variables Ads Manager fills in (%s). For a tracker on that account, Get Links or `p202 tracker get-url <id>` gives the destination URL and the tracking template to paste into Ads Manager.\n' \
+            "$(printf '%s' "$made" | jq -r '.data.ppc_network_id')" "$(printf '%s' "$made" | jq -r '.data.ppc_account_id')" \
+            "$(printf '%s' "$made" | jq -r 'if .data.source_created then "newly made" else "it was already there; only what was missing was added" end')"
+        ;;
     *"EVAL Source - Main"*)
         source=$(p202 ppc-network list --all --json | jq -r '[.data[] | select(.ppc_network_name=="EVAL Source - Main")][0].ppc_network_id // empty')
         if [ -z "$source" ]; then
@@ -902,6 +963,11 @@ case "$ask" in
             "$(if [ -n "$rows" ]; then printf 'these traffic sources lose money: %s' "$rows"; else printf 'no traffic source loses money'; fi)"
         ;;
     *)
+        # An ask with no branch of its own. scripts/check-eval-reference-answers.py
+        # sends every case's ask through here and refuses any that land.
+        if [ -n "${P202_REFERENCE_AGENT_FALLTHROUGH:-}" ]; then
+            : > "$P202_REFERENCE_AGENT_FALLTHROUGH"
+        fi
         summary=$(p202 report summary --period today --json)
         clicks=$(printf '%s' "$summary" | jq -r '.data.total_clicks')
         net=$(printf '%s' "$summary" | jq -r '.data.total_net')

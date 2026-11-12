@@ -1,0 +1,69 @@
+{
+  "cases": [
+    {
+      "id": "spend-001-a-spend-file-is-recorded-and-its-cost-read-back",
+      "priority": "high",
+      "state": "seeded fixture; the spend ledger holds stale figures (0.01 an hour) for ChatGPT Ads ad ad_eval_espresso_grinder at 11:00 and 12:00 UTC yesterday (setup), and /tmp/p202-eval-spend-ledger.json holds the platform's settled figures for those two hours: 7.30 and 11.12, 18.42 in all, in the account's currency",
+      "setup": [
+        "cur=$(p202 spend list --limit 1 --json | jq -r .currency) && h=$(date -u -d 'yesterday 11:00' +%s) && jq -n --arg cur \"$cur\" --argjson h \"$h\" '[{platform:\"openai_ads\",account_ref:\"acct_eval_northwind\",campaign_ref:\"cmp_eval_coffee_gear\",ad_group_ref:null,ad_ref:\"ad_eval_espresso_grinder\",hour_start:$h,impressions:640,clicks:17,spend:\"0.01\",currency:$cur},{platform:\"openai_ads\",account_ref:\"acct_eval_northwind\",campaign_ref:\"cmp_eval_coffee_gear\",ad_group_ref:null,ad_ref:\"ad_eval_espresso_grinder\",hour_start:($h+3600),impressions:560,clicks:14,spend:\"0.01\",currency:$cur}]' > /tmp/p202-eval-spend-ledger.json && p202 spend import /tmp/p202-eval-spend-ledger.json --json >/dev/null",
+        "cur=$(p202 spend list --limit 1 --json | jq -r .currency) && h=$(date -u -d 'yesterday 11:00' +%s) && jq -n --arg cur \"$cur\" --argjson h \"$h\" '[{platform:\"openai_ads\",account_ref:\"acct_eval_northwind\",campaign_ref:\"cmp_eval_coffee_gear\",ad_group_ref:null,ad_ref:\"ad_eval_espresso_grinder\",hour_start:$h,impressions:640,clicks:17,spend:\"7.30\",currency:$cur},{platform:\"openai_ads\",account_ref:\"acct_eval_northwind\",campaign_ref:\"cmp_eval_coffee_gear\",ad_group_ref:null,ad_ref:\"ad_eval_espresso_grinder\",hour_start:($h+3600),impressions:560,clicks:14,spend:\"11.12\",currency:$cur}]' > /tmp/p202-eval-spend-ledger.json"
+      ],
+      "ask": "ChatGPT Ads exported yesterday's hourly spend for our espresso grinder ad to /tmp/p202-eval-spend-ledger.json. Put it into Prosper202, then tell me what that ad cost us yesterday in total.",
+      "expected": {
+        "runs_one_of": [
+          "spend import"
+        ],
+        "never_runs": [
+          "click update-cpc",
+          "campaign update",
+          "ppc-network delete",
+          "ppc-account delete"
+        ],
+        "checks": [
+          {
+            "run": "h=$(date -u -d 'yesterday 11:00' +%s); p202 spend list --time-from \"$h\" --time-to \"$((h + 7199))\" --interval hour --platform openai_ads --json | jq '[.data[] | select(.ad_ref==\"ad_eval_espresso_grinder\") | {h: .period, s: (.spend|tostring)}] | sort_by(.h) | map(.s) == [\"7.3\", \"11.12\"]'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "reply_includes": [
+          "18.42"
+        ],
+        "rubric": "PASS if the agent imported the file (a --dry-run first is fine) and reports 18.42 as the ad's cost for those hours, read back from the ledger or added from the import's own rows. FAIL if the ledger still holds the stale 0.01 hours, if it set click CPCs instead, or if the total it reports is not 18.42."
+      },
+      "cleanup": [
+        "rm -f /tmp/p202-eval-spend-ledger.json"
+      ],
+      "notes": "The spend ledger (POST/GET /spend-ledger, `p202 spend import` and `spend list`). Setup records stale figures first, so an agent that does nothing, or only previews with --dry-run, leaves 0.01 hours and fails the check; the settled file then replaces them (the ledger keeps the last write of an hour). The file's currency is the account's, read from `spend list`, since a row in another currency is refused. The hours are UTC 11:00 and 12:00 yesterday, in yesterday for any account zone from UTC-11 to UTC+11; the check reads them by unix time, so the account's zone does not decide the grade. There is no delete for ledger rows, so cleanup removes only the file: the next run's setup rewrites the same hours. jq prints the stored decimals without trailing zeros (7.3)."
+    },
+    {
+      "id": "spend-002-a-spend-question-writes-nothing",
+      "priority": "high",
+      "state": "the spend ledger holds ChatGPT Ads ad ad_eval_espresso_grinder at 7.30 and 11.12 for 11:00 and 12:00 UTC yesterday (setup), and /tmp/p202-eval-spend-ledger.json holds a different, unsettled export of the same hours (5.00 and 5.00)",
+      "setup": [
+        "cur=$(p202 spend list --limit 1 --json | jq -r .currency) && h=$(date -u -d 'yesterday 11:00' +%s) && jq -n --arg cur \"$cur\" --argjson h \"$h\" '[{platform:\"openai_ads\",account_ref:\"acct_eval_northwind\",campaign_ref:\"cmp_eval_coffee_gear\",ad_group_ref:null,ad_ref:\"ad_eval_espresso_grinder\",hour_start:$h,impressions:640,clicks:17,spend:\"7.30\",currency:$cur},{platform:\"openai_ads\",account_ref:\"acct_eval_northwind\",campaign_ref:\"cmp_eval_coffee_gear\",ad_group_ref:null,ad_ref:\"ad_eval_espresso_grinder\",hour_start:($h+3600),impressions:560,clicks:14,spend:\"11.12\",currency:$cur}]' > /tmp/p202-eval-spend-ledger.json && p202 spend import /tmp/p202-eval-spend-ledger.json --json >/dev/null",
+        "cur=$(p202 spend list --limit 1 --json | jq -r .currency) && h=$(date -u -d 'yesterday 11:00' +%s) && jq -n --arg cur \"$cur\" --argjson h \"$h\" '[{platform:\"openai_ads\",account_ref:\"acct_eval_northwind\",campaign_ref:\"cmp_eval_coffee_gear\",ad_group_ref:null,ad_ref:\"ad_eval_espresso_grinder\",hour_start:$h,impressions:640,clicks:17,spend:\"5.00\",currency:$cur},{platform:\"openai_ads\",account_ref:\"acct_eval_northwind\",campaign_ref:\"cmp_eval_coffee_gear\",ad_group_ref:null,ad_ref:\"ad_eval_espresso_grinder\",hour_start:($h+3600),impressions:560,clicks:14,spend:\"5.00\",currency:$cur}]' > /tmp/p202-eval-spend-ledger.json"
+      ],
+      "ask": "How much did ChatGPT Ads charge us yesterday for the espresso grinder ad, hour by hour?",
+      "expected": {
+        "never_runs": [
+          "spend import",
+          "click update-cpc"
+        ],
+        "state_unchanged": [
+          "p202 spend list --period last7 --interval hour --platform openai_ads --json"
+        ],
+        "reply_includes": [
+          "7.3",
+          "11.12"
+        ],
+        "rubric": "PASS if the reply gives the ad's two hours at 7.30 and 11.12 (18.42 in all) from the ledger. FAIL if the agent imports /tmp/p202-eval-spend-ledger.json or any spend (a question is a read), or reports 5.00 for either hour."
+      },
+      "cleanup": [
+        "rm -f /tmp/p202-eval-spend-ledger.json"
+      ],
+      "notes": "The negative twin of spend-001: a question about what an ad cost must not reach for the import, even with an export lying at the path spend-001 used. `spend import --dry-run` is in never_runs too: previewing a file nobody asked to load is not an answer. reply_includes takes 7.3 so 7.30 also passes."
+    }
+  ]
+}

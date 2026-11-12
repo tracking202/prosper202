@@ -407,7 +407,9 @@ $clickIdentity = p202ClickIdentity(
 // Built outside the try: a record the builder refuses is a bug, not a
 // database failure, and the uncaught handler logs it as one.
 if ($raParallelClick !== null) {
-    // The page's identity signals go to the click it took.
+    // The page's identity signals go to the click it took; a page that
+    // withheld consent takes back the marks the template's hit left.
+    $clickIdentity->withdrawIfWithheld($conn, $click_id);
     $clickIdentity->attach($conn, (int) $mysql['user_id'], $click_id, $raParallelClick->clickTime);
     // The template's hit (pt.php) that finds the page's click brings the
     // tracker's cost, keyword and c1-c4 the page's URL did not carry.

@@ -43,6 +43,8 @@ final class MiscTables
             self::dirtyHours(),
             self::sortBreakdowns(),
             self::charts(),
+            // Spend ledger
+            self::spendLedger(),
             // Export tables
             self::exportAdgroups(),
             self::exportCampaigns(),
@@ -308,6 +310,40 @@ final class MiscTables
                 `time_to` int(10) unsigned NOT NULL DEFAULT '0',
                 `processing` tinyint(1) NOT NULL DEFAULT '0',
                 `processed` tinyint(1) NOT NULL DEFAULT '0'
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * What an ad platform billed, per external ad per hour
+     * (Prosper202\Spend\SpendLedger), from 1.9.80 on. hour_start is the
+     * UTC instant the hour begins, so a day is read in the account's zone
+     * per row (LocalTime). The key is the account, the platform, its ad
+     * account, the ad and the hour: a re-pull of an hour replaces that
+     * hour's row. campaign_ref and ad_group_ref are '' when the platform
+     * names none. Text key columns are binary: ad ids are case-sensitive.
+     */
+    public static function spendLedger(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::SPEND_LEDGER,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::SPEND_LEDGER . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `platform` varchar(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `account_ref` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+                `ad_ref` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+                `hour_start` int(10) unsigned NOT NULL,
+                `campaign_ref` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',
+                `ad_group_ref` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',
+                `impressions` bigint(20) unsigned NOT NULL DEFAULT '0',
+                `platform_clicks` bigint(20) unsigned NOT NULL DEFAULT '0',
+                `spend` decimal(16,6) NOT NULL,
+                `currency` char(3) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `created_at` int(10) unsigned NOT NULL,
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`user_id`,`platform`,`account_ref`,`ad_ref`,`hour_start`),
+                KEY `user_hour` (`user_id`,`hour_start`),
+                KEY `user_ad_hour` (`user_id`,`ad_ref`,`hour_start`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

@@ -104,6 +104,7 @@ foreach (['clicks' => 'Clicks', 'click_out' => 'Click throughs', 'ctr' => 'LP CT
 
 // Revenue of the period that is not in the account's currency is said above the figures (RevenueCurrencies).
 echo \Prosper202\Conversion\Ledger\RevenueCurrencies::notice($db, \Prosper202\DataEngine\DataScope::userId() ?? 0, (int) $time['from'], (int) $time['to']);
+echo p202_spend_ledger_note($summary_form->getSpendLedger(), $masked);
 echo '<p class="text-secondary small mb-2">' . $e('Report for ' . date('m/d/Y', strtotime($summary_form->getStartDate())) . ' to ' . date('m/d/Y', strtotime($summary_form->getEndDate())) . ' · ' . $summary_form->getRanOn()) . '</p>';
 echo p202_data_table($columns, $rows, [
 	'id' => 'group-overview-table',

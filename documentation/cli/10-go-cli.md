@@ -126,6 +126,7 @@ still needs the browser, see [UI parity](12-ui-parity.md).
 | `p202 campaign optimize <id>` | A campaign's diagnosis on stderr (the MCP tool `campaign_optimize` returns it as its notes): clicks, conversions, the reports' `conv_rate` (conversions ÷ click-throughs) beside the conversions per click, EPC, and the break-even CPC (payout × conversions per click); stdout ranks the other campaigns by EPC, each row with its `aff_campaign_id`. When the campaign loses money and the top row earns more per click, the Next step is `p202 rotator create --name "Salvage" --default-campaign <that row's id>`; otherwise it says there is no salvage offer and gives `p202 report losers` for the same window and filters. A ranking or summary that cannot be read fails the command with its category, exit code and hint (stdout empty), never an empty ranking. The campaign is the argument: `--aff-campaign-id` is refused, and a configured `report.aff_campaign_id` default does not narrow the ranking |
 | `p202 aff-network list` | List affiliate networks (alias: `category`) |
 | `p202 ppc-network list` | List PPC/traffic networks (alias: `traffic-network`) |
+| `p202 ppc-network add-chatgpt-ads` | Setup > Traffic Sources' Add ChatGPT Ads: the source, an account and the `campaign_id`/`ad_id` variables; run again, it adds only what is missing. `tracker get-url` then answers `chatgpt_ads` (destination URL and tracking template) for a tracker on it |
 | `p202 tracker list` | List trackers |
 | `p202 tracker get-url <id>` | The tracker's link as Get Links builds it: the tracking domain (or this server's address when none is set) and install directory, the traffic source's custom variables, then the built-in tokens. `--c1`..`--c4`, `--utm-source`, `--utm-medium`, `--utm-campaign`, `--utm-term`, `--utm-content`, `--t202ref`, `--t202b` and `--t202kw` fill a token with the value as given (the traffic source's macro, e.g. `--t202kw '{keyword}'`); `&`, `#`, `?`, whitespace and control characters are refused before any request. `create-with-url` and `bulk-urls` take the same flags; if `create-with-url` creates the tracker and then cannot fetch its link, the hint names the new `tracker_id` so the retry is `get-url`, not a second create |
 | `p202 landing-page list` | List landing pages; `--url-contains <text>` returns every landing page whose `landing_page_url` or `leave_behind_page_url` contains the text |
@@ -142,6 +143,7 @@ still needs the browser, see [UI parity](12-ui-parity.md).
 | `p202 click-filter list [add <address> \| update <entry-id> \| remove <entry-id>]` | The address list: `add 203.0.113.0/24 --action filter\|count --note "..."`; `remove` takes `--dry-run`, `--force` and `--ids` |
 | `p202 click-filter test <ip>` | Would a click from this address be filtered, and by which rule? Each check's answer too; records nothing |
 | `p202 click update-cpc` | Set what past clicks cost (the UI's Update CPC): `--from`/`--to` days in the account's time zone, `--cpc`, optional id filters and `--method-of-promotion`; counts first, asks, then writes only the clicks it counted. See [Update CPC, subids and revenue reports](#update-cpc-subids-and-revenue-reports) |
+| `p202 spend import <file\|->` / `p202 spend list` | Record and read what each ad platform billed per ad per hour (the spend ledger, which the reports read as cost). See [Spend ledger](#spend-ledger) |
 | `p202 conversion mark-subids <file\|->` | Mark clicks converted from a subid list, one per line (the UI's Update Subids); once per click, safe to repeat |
 | `p202 conversion delete-subids <file\|->` | Clear the conversions of a subid list (the UI's Delete Subids); previews, asks (`--force`), `--dry-run` |
 | `p202 conversion reset-subids` | Clear every conversion of a category (`--aff-network-id`) or one of its campaigns (`--aff-campaign-id`) (the UI's Reset Campaign Subids) |
@@ -464,6 +466,38 @@ p202 conversion upload-revenue march.csv --subid-column 'Sub ID 2' --amount-colu
 Under `--json` each prints the API's answer (for a list in parts, the parts
 put together); otherwise a table of the lines, and a summary on stderr.
 
+## Spend Ledger
+
+```bash
+p202 spend import spend.json --dry-run
+p202 spend import spend.json
+my-puller | p202 spend import -
+p202 spend list --period yesterday --platform openai_ads
+p202 spend list --period last7 --interval hour
+```
+
+- **`spend import <file|->`** sends a JSON file of rows (a list, or
+  `{"rows": [...]}`, 1 to 2000 rows) to `POST /api/v3/spend-ledger` in one
+  write. Each row is one UTC hour of one ad: `platform`, `account_ref`,
+  `campaign_ref`, `ad_group_ref` (both may be `null`), `ad_ref`, `hour_start`
+  (unix seconds, a multiple of 3600), `impressions`, `clicks`, `spend` (major
+  units, kept to the digits written) and `currency` (the account's). Sending
+  an hour again replaces it and the same rows again change nothing, so a
+  retry is safe. A file that is not one JSON list of objects, or holds more
+  than 2000 rows, is refused before anything is sent (split a longer list);
+  any row the server refuses (`rows.3.spend`, counted from 0) refuses the
+  whole file and nothing is written. `--dry-run` answers the same counts
+  (`received`, `inserted`, `replaced`, `unchanged`) and writes nothing. Needs
+  the `access_to_update_section` role permission and the
+  `spend-ledger:write` scope; refuses `--staged`.
+- **`spend list`** reads the ledger summed per `--interval day` (the
+  default, in the account's time zone) or `hour`, per platform, ad account,
+  campaign, ad group and ad, newest first, with `matched_clicks` (the
+  account's clicks that carried the ad) and `unallocated_spend` (spend in
+  hours no click carried it). The window is `--period` or
+  `--time-from`/`--time-to`, as the reports take it; `--platform` and
+  `--limit` (1 to 5000, default 500) narrow it. Needs `spend-ledger:read`.
+
 ## Setup Code and Traffic-Source Settings
 
 The UI's **Setup** section's code and per-source settings, over the
@@ -579,12 +613,14 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   Ads"}`), adds the matching tools to the list (the app hears
   `notifications/tools/list_changed`) and answers their names and what each
   does. A deferred tool called by name before that is loaded and run, so an
-  app that ignores the notification still works. `p202 mcp tools --deferred`
-  lists them; `p202 mcp call` runs them as any other tool. They are local
-  only. Today they are `destination_list`, `destination_deliveries` and
-  `destination_test` (Setup › Destinations: each destination's status, its
-  delivery log with why a conversion failed or was withheld, and a test
-  fire; the test fire is not offered with `--staged`).
+  app that ignores the notification still works; the answer also gives each
+  tool's input schema. `p202 mcp tools --deferred` lists them; `p202 mcp
+  call` runs them as any other tool, with the same `--read-only` and
+  `--staged` refusals. They are local only. Today they are
+  `destination_list`, `destination_deliveries` and `destination_test` (Setup
+  › Destinations: each destination's status, its delivery log with why a
+  conversion failed or was withheld, and a test fire; the test fire cannot be
+  proposed, so it is not offered with `--staged`, nor with `--read-only`).
 - With `--staged`, a write returns a change id and changes nothing; you apply
   it with `p202 change apply <id>`. The assistant is not offered the apply and
   discard tools.

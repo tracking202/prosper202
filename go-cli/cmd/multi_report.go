@@ -128,6 +128,17 @@ func fetchMultiProfileObjects(endpoint string, params map[string]string, profile
 			if err == nil && check != nil {
 				err = check(obj)
 			}
+			if err == nil {
+				// A profile whose cost read the spend ledger says so beside its
+				// figures; carried aside, never summed (runMultiProfileSummary).
+				var top struct {
+					SpendLedger map[string]interface{} `json:"spend_ledger"`
+				}
+				if json.Unmarshal(data, &top) == nil && top.SpendLedger != nil {
+					obj = cloneMap(obj)
+					obj[spendLedgerKey] = top.SpendLedger
+				}
+			}
 			if err != nil {
 				ch <- multiProfileFetch{profile: profile, err: notASummary(profile, err)}
 				return
@@ -243,6 +254,13 @@ func runMultiProfileSummary(params map[string]string, profiles []string) error {
 	if err != nil {
 		return err
 	}
+	ledgers := map[string]interface{}{}
+	for name, row := range profileData {
+		if l, ok := row[spendLedgerKey]; ok {
+			ledgers[name] = l
+			delete(row, spendLedgerKey)
+		}
+	}
 	total, err := totalSummaries(profileData)
 	if err != nil {
 		return err
@@ -251,8 +269,17 @@ func runMultiProfileSummary(params map[string]string, profiles []string) error {
 	if err != nil {
 		return err
 	}
+	if len(ledgers) > 0 {
+		payload, err = withSpendLedgers(payload, ledgers)
+		if err != nil {
+			return err
+		}
+	}
 	render(payload)
 	if !jsonOutput {
+		if note := spendLedgerProfilesNote(ledgers, len(profileData)); note != "" {
+			fmt.Fprintln(os.Stderr, note)
+		}
 		for _, e := range errorsOut {
 			fmt.Fprintf(os.Stderr, "Warning: the TOTAL leaves out a profile that failed: %s\n", e)
 		}
@@ -261,6 +288,51 @@ func runMultiProfileSummary(params map[string]string, profiles []string) error {
 		}
 	}
 	return nil
+}
+
+// spendLedgerKey carries a profile's `spend_ledger` beside its row until
+// the TOTAL is built.
+const spendLedgerKey = "\x00spend_ledger"
+
+// withSpendLedgers adds meta.spend_ledger: each profile whose cost read the
+// spend ledger, with what it said (how far the spend data reaches).
+func withSpendLedgers(payload []byte, ledgers map[string]interface{}) ([]byte, error) {
+	var out map[string]interface{}
+	if err := json.Unmarshal(payload, &out); err != nil {
+		return nil, fmt.Errorf("encoding output: %w", err)
+	}
+	if meta, ok := out["meta"].(map[string]interface{}); ok {
+		meta["spend_ledger"] = ledgers
+	}
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		return nil, fmt.Errorf("encoding output: %w", err)
+	}
+	return encoded, nil
+}
+
+// spendLedgerProfilesNote names, for a human view, the profiles whose cost
+// read the spend ledger: the TOTAL then adds ledger cost to CPC cost.
+func spendLedgerProfilesNote(ledgers map[string]interface{}, profiles int) string {
+	if len(ledgers) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(ledgers))
+	for name, l := range ledgers {
+		reach := ""
+		if m, ok := l.(map[string]interface{}); ok {
+			if at, ok := m["reaches_at"].(string); ok {
+				reach = " (spend data reaches " + at + ")"
+			}
+		}
+		names = append(names, name+reach)
+	}
+	sort.Strings(names)
+	others := ""
+	if len(ledgers) < profiles {
+		others = "; the other profiles' cost is their clicks' CPC"
+	}
+	return "Note: cost read from the spend ledger in " + strings.Join(names, ", ") + others + "."
 }
 
 func buildMultiProfilePayload(profileData map[string]map[string]interface{}, total summaryTotal, errorsOut []string) ([]byte, error) {

@@ -44,6 +44,27 @@ final class IdentityGraph
     }
 
     /**
+     * A visit of the click that brought no browser signal (it refused
+     * consent, or capture is off) takes back the marks earlier visits left:
+     * their observed_at goes to 0, below any visit's time, so a destination
+     * does not read them as this visit's (DestinationQueue::latestVisitSignalled()),
+     * also when both visits fall in one second. A later visit that brings
+     * the signal raises it again (attachClick()). The rows stay: the
+     * click's place in the graph is not what the visit took back.
+     *
+     * The caller has shown the click is the account's, and runs this in the
+     * transaction that records the visit where there is one.
+     */
+    public static function withdrawBrowserSignals(Connection $conn, int $clickId): void
+    {
+        $stmt = $conn->prepareWrite(
+            'UPDATE 202_identity_observations SET observed_at = 0 WHERE click_id = ? AND signal_type IN (?, ?)'
+        );
+        $conn->bind($stmt, 'iss', [$clickId, SignalType::VISITOR_COOKIE->value, SignalType::LANDING_PAGE->value]);
+        $conn->executeUpdate($stmt);
+    }
+
+    /**
      * Link a click to the person its signals name.
      *
      * Safe to call again for the same click with more signals (a signed
