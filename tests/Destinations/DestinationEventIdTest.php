@@ -88,12 +88,14 @@ final class DestinationEventIdTest extends TestCase
         try {
             $tokens = TrafficSourcePixels::withConversionEventId($conn, ['transactionid' => 'ORD-1'], 1, 4242, 7, 'ORD-1');
             self::assertArrayNotHasKey(TrafficSourcePixels::EVENT_ID, $tokens, 'outside a transaction: logged, the pixels go without it');
+            $caught = null;
             try {
                 $conn->transaction(static fn () => TrafficSourcePixels::withConversionEventId($conn, [], 1, 4242, 7, 'ORD-1'));
-                self::fail('a deadlock inside the caller\'s transaction was swallowed');
             } catch (\Throwable $e) {
-                self::assertTrue(Connection::isRetryableLockError($e), 'the deadlock itself reaches the transaction\'s owner: ' . $e->getMessage());
+                $caught = $e;
             }
+            self::assertNotNull($caught, 'a deadlock inside the caller\'s transaction was swallowed');
+            self::assertTrue(Connection::isRetryableLockError($caught), 'the deadlock itself reaches the transaction\'s owner: ' . $caught->getMessage());
         } finally {
             ini_set('error_log', (string) $log);
         }
