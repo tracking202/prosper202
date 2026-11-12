@@ -164,8 +164,37 @@ final class OpenAiAdsDestinationTest extends TestCase
         self::assertSame(['lead_created', 'customer_action'], [$event['type'], $event['data']['type']]);
         $custom = OpenAiAdsDestination::body($this->settings(['event_type' => 'custom', 'custom_event_name' => 'demo_booked']), self::facts())['events'][0];
         self::assertSame(['custom', 'demo_booked', 'custom'], [$custom['type'], $custom['custom_event_name'], $custom['data']['type']]);
-        foreach (OpenAiAdsDestination::EVENT_TYPES as $type => $dataType) {
-            self::assertContains($dataType, ['contents', 'customer_action', 'plan_enrollment', 'custom'], $type);
+    }
+
+    /**
+     * OpenAI's own table (developers.openai.com/ads/supported-events, read
+     * 2026-11-12), typed out here and not read from the class: an event sent
+     * with another data type is refused. The app events (app_installed,
+     * app_opened) are not offered: a web conversion is never one.
+     */
+    public function testEachEventTypeCarriesTheDataTypeOpenAisTableGivesIt(): void
+    {
+        $table = [
+            'order_created' => 'contents',
+            'checkout_started' => 'contents',
+            'items_added' => 'contents',
+            'contents_viewed' => 'contents',
+            'page_viewed' => 'contents',
+            'lead_created' => 'customer_action',
+            'registration_completed' => 'customer_action',
+            'appointment_scheduled' => 'customer_action',
+            'subscription_created' => 'plan_enrollment',
+            'trial_started' => 'plan_enrollment',
+            'custom' => 'custom',
+        ];
+        $offered = OpenAiAdsDestination::EVENT_TYPES;
+        ksort($table);
+        ksort($offered);
+        self::assertSame(array_keys($table), array_keys($offered), 'the types offered are the table\'s web events');
+        foreach ($table as $type => $dataType) {
+            $given = ['event_type' => $type] + ($type === 'custom' ? ['custom_event_name' => 'demo_booked'] : []);
+            $event = OpenAiAdsDestination::body($this->settings($given), self::facts())['events'][0];
+            self::assertSame([$type, $dataType], [$event['type'], $event['data']['type']], $type);
         }
     }
 

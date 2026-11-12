@@ -101,9 +101,10 @@ once.
   it cannot place counts as possibly European. Setup › Destinations says
   which setting is in force beside the consent fields, and warns under a
   destination that states both signals granted while the setting still
-  holds those visitors back. ChatGPT Ads takes no consent signal, so a
-  visitor who may be in the EEA or UK is never sent to it, whatever the
-  setting.
+  holds those visitors back. ChatGPT Ads has no field that states a
+  visitor's consent to measurement (its per-event `opt_out` is about
+  personalisation only), so a visitor who may be in the EEA or UK is never
+  sent to it, whatever the setting.
 - **Your privacy setting** (Personal settings, the same setting that masks
   addresses and drops cookies) applies on top: `all` sends no visitor; `eu`
   (the default for new accounts) sends only visitors placed outside Europe
@@ -325,7 +326,13 @@ another type (or `custom` with a name of your own), to
 - `id`: the conversion's transaction id, else `P202-<conversion id>`; a
   conversion that replaced an earlier one goes under the first one's id.
   The same id is the event id of a Meta Purchase pixel for that conversion.
-- `oppref`: OpenAI's click id from the click, as it arrived.
+  OpenAI counts an event once per pixel id, event name and id, and keeps
+  the first it receives: if the ChatGPT Ads pixel on your page reports the
+  same sale, give it this id as `event_id` and the same event name, or the
+  sale is counted twice.
+- `oppref`: OpenAI's click id from the click, as it arrived. It is sent
+  whenever the click has one, also when the visit refused consent, as
+  Google's click id is: it names the ad click, not the person.
 - `source_url`: the click's landing page, or the tracking link the click
   came through, without its query string or fragment (they carry what the
   link put there). A click with neither stored is failed, not sent: OpenAI

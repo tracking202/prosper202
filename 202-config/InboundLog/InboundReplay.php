@@ -14,6 +14,7 @@ use Prosper202\Conversion\Ledger\ReversalException;
 use Prosper202\Database\Connection;
 use Prosper202\Destinations\Ga4Destination;
 use Prosper202\Destinations\GoogleAdsDestination;
+use Prosper202\Destinations\OpenAiAdsDestination;
 
 /**
  * "Record it now": the conversion or event of a postback or pixel the log
@@ -244,6 +245,7 @@ final class InboundReplay
     {
         $analytics = [];
         $ads = [];
+        $chat = [];
         foreach ($destinations as $destination) {
             if (($destination['enabled'] ?? false) !== true) {
                 continue;
@@ -257,6 +259,10 @@ final class InboundReplay
             if (($destination['type'] ?? '') === Ga4Destination::TYPE && $now - $arrived > Ga4Destination::MAX_AGE_SECONDS) {
                 $analytics[] = $name;
             }
+            $type = (string) ($destination['type'] ?? '');
+            if ($type === OpenAiAdsDestination::TYPE && $now - $arrived > OpenAiAdsDestination::MAX_AGE_SECONDS) {
+                $chat[] = $name;
+            }
             if (($destination['type'] ?? '') === GoogleAdsDestination::TYPE && $click !== null && $click['google_click']
                 && $now - ($click['first_visit'] ?? $arrived) > GoogleAdsDestination::CLICK_MAX_AGE) {
                 $ads[] = $name;
@@ -266,6 +272,11 @@ final class InboundReplay
         if ($analytics !== []) {
             $said .= ' Google Analytics takes conversions up to ' . intdiv(Ga4Destination::MAX_AGE_SECONDS, 3600) . ' hours old, so '
                 . implode(', ', $analytics) . (count($analytics) === 1 ? ' does' : ' do') . ' not receive this one.';
+        }
+        if ($chat !== []) {
+            $said .= ' ChatGPT Ads takes conversions up to ' . intdiv(OpenAiAdsDestination::MAX_AGE_SECONDS, 86400)
+                . ' days old, so ' . implode(', ', $chat) . (count($chat) === 1 ? ' does' : ' do')
+                . ' not receive this one.';
         }
         if ($ads !== []) {
             $said .= ' Google Ads takes a conversion up to ' . intdiv(GoogleAdsDestination::CLICK_MAX_AGE, 86400) . ' days after its'
