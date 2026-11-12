@@ -28,9 +28,10 @@ import (
 // task (TestMCPDeferredToolsAreFoundByTheirTask asks each tool's first Word).
 
 // mcpDeferredListing is `p202 mcp tools --deferred`: the deferred tools in
-// the catalogue's tool shape; hosted_excludes and staged_excludes, as the
-// catalogue's: the ones the hosted relay's own get_more_tools never loads,
-// and the ones a connection that only proposes is not given; and words, each
+// the catalogue's tool shape; hosted_excludes, staged_excludes and
+// hosted_omits, as the catalogue's: the ones the hosted relay's own
+// get_more_tools never loads, the ones a connection that only proposes is not
+// given, and the arguments the relay leaves out; and words, each
 // tool's Words, so the relay matches a task by the words mcpMatchDeferred does.
 func mcpDeferredListing(root *cobra.Command, readOnly, staged bool) (map[string]interface{}, error) {
 	deferred, err := buildMCPDeferredTools(root, readOnly, staged)
@@ -38,8 +39,11 @@ func mcpDeferredListing(root *cobra.Command, readOnly, staged bool) (map[string]
 		return nil, err
 	}
 	excludes, stagedExcludes := []string{}, []string{}
-	words := map[string][]string{}
+	words, omits := map[string][]string{}, map[string][]string{}
 	for _, s := range mcpDeferredToolSpecs {
+		for _, f := range s.HostedOmit {
+			omits[s.Name] = append(omits[s.Name], strings.ReplaceAll(f, "-", "_"))
+		}
 		if s.NotHosted {
 			excludes = append(excludes, s.Name)
 		}
@@ -49,7 +53,7 @@ func mcpDeferredListing(root *cobra.Command, readOnly, staged bool) (map[string]
 		words[s.Name] = s.Words
 	}
 	return map[string]interface{}{"schema": mcpCatalogSchema, "tools": deferred, "hosted_excludes": excludes,
-		"staged_excludes": stagedExcludes, "words": words}, nil
+		"staged_excludes": stagedExcludes, "hosted_omits": omits, "words": words}, nil
 }
 
 // mcpGetMoreTools is the always-loaded tool that loads deferred ones.

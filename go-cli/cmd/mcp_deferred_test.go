@@ -210,7 +210,8 @@ func TestMCPGetMoreToolsLoadsDeferredToolsOverStdio(t *testing.T) {
 
 // `p202 mcp tools --deferred` is what the hosted relay builds its own
 // get_more_tools from: every deferred tool, hosted_excludes and
-// staged_excludes naming exactly the NotHosted and NotStaged ones, and words
+// staged_excludes naming exactly the NotHosted and NotStaged ones,
+// hosted_omits each tool's HostedOmit as arguments, and words
 // carrying each tool's Words, so the relay matches a task by the words this
 // server does.
 func TestMCPDeferredListingCarriesWhatTheRelayMatches(t *testing.T) {
@@ -226,6 +227,7 @@ func TestMCPDeferredListingCarriesWhatTheRelayMatches(t *testing.T) {
 		Tools          []struct{ Name string } `json:"tools"`
 		HostedExcludes []string                `json:"hosted_excludes"`
 		StagedExcludes []string                `json:"staged_excludes"`
+		HostedOmits    map[string][]string     `json:"hosted_omits"`
 		Words          map[string][]string     `json:"words"`
 	}
 	if err := json.Unmarshal(body, &got); err != nil {
@@ -247,6 +249,13 @@ func TestMCPDeferredListingCarriesWhatTheRelayMatches(t *testing.T) {
 		}
 		if notStaged[s.Name] != s.NotStaged {
 			t.Errorf("%s: in staged_excludes %v, NotStaged %v", s.Name, notStaged[s.Name], s.NotStaged)
+		}
+		want := []string{}
+		for _, f := range s.HostedOmit {
+			want = append(want, strings.ReplaceAll(f, "-", "_"))
+		}
+		if strings.Join(got.HostedOmits[s.Name], "|") != strings.Join(want, "|") {
+			t.Errorf("%s: hosted_omits %q, want %q", s.Name, got.HostedOmits[s.Name], want)
 		}
 		if strings.Join(got.Words[s.Name], "|") != strings.Join(s.Words, "|") || len(s.Words) == 0 {
 			t.Errorf("%s: words %q, want its Words %q", s.Name, got.Words[s.Name], s.Words)
