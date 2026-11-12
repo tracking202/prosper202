@@ -50,6 +50,14 @@ var mcpDeferredToolSpecs = []mcpToolSpec{
 		Args:  []mcpArg{idArg("id", "Ad connection id (from ad_connection_list).", true)},
 		Note:  "The answer is recorded on the connection (status, last_error); nothing is changed at OpenAI.",
 		Words: []string{"is my chatgpt ads key working", "check chatgpt ads connection", "chatgpt ads"}},
+
+	// The spend ledger: what ad platforms billed (ChatGPT Ads' hourly pull).
+	{Name: "ad_spend", Command: []string{"spend", "list"}, Title: "What ad platforms billed, per ad", Kind: mcpRead, NotHosted: true, Keep: []string{"interval"},
+		Note: "Per day or hour and ad: impressions, clicks, spend, your clicks that carried the ad, and spend no click carried (unallocated); reaches says how far it goes. No rows: the ad account's hourly pull may be off.",
+		Words: []string{"ad spend", "what did chatgpt ads cost", "openai ads spend", "spend per ad", "cost per ad", "ad platform billed",
+			"unallocated spend", "spend ledger"}},
+	{Name: "ad_spend_sync_status", Command: []string{"spend", "sync", "list"}, Title: "ChatGPT Ads spend sync status", Kind: mcpRead, NotHosted: true,
+		Words: []string{"spend sync", "is my spend sync working", "spend sync status", "last spend pull", "spend sync error", "chatgpt ads sync", "openai ads sync"}},
 }
 
 // destinationDeliveriesNote names only keys the install's answer carries

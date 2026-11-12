@@ -1023,15 +1023,15 @@ currency than the Prosper202 account; spend is not converted. `--staged` is refu
 ### Ad spend (the spend ledger)
 
 ```
-p202 ad-spend [--period P | --time-from T --time-to T] [--interval day|hour] [--platform openai_ads] [--limit N] [--json]
-p202 ad-spend conversions [--period P] [--platform openai_ads] [--json]   # OpenAI's conversions per ad per day beside prosper202_conversions
-p202 ad-spend sync list [--json]              # each ChatGPT Ads connection: enabled, backfilled_at, last run, last_error / last_note
-p202 ad-spend sync enable <connection-id>     # off until enabled; first run reads 30 days, later runs the trailing 72 hours
-p202 ad-spend sync disable <connection-id>    # what the ledger holds stays
-p202 ad-spend sync run <connection-id>        # the hourly pull now (sync must be on)
+p202 spend list [--period P | --time-from T --time-to T] [--interval day|hour] [--platform openai_ads] [--limit N] [--json]
+p202 spend conversions [--period P] [--platform openai_ads] [--json]   # OpenAI's conversions per ad per day beside prosper202_conversions
+p202 spend sync list [--json]              # each ChatGPT Ads connection: enabled, backfilled_at, last run, last_error / last_note
+p202 spend sync enable <connection-id>     # off until enabled; first run reads 30 days, later runs the trailing 72 hours
+p202 spend sync disable <connection-id>    # what the ledger holds stays
+p202 spend sync run <connection-id>        # the hourly pull now (sync must be on)
 ```
 
-`p202 ad-spend` answers what the platform billed per ad per day (account zone) or hour, with `matched_clicks`
+`p202 spend list` answers what the platform billed per ad per day (account zone) or hour, with `matched_clicks`
 (clicks carrying the ad through their `ad_id` variable) and `unallocated_spend`. `p202 report …` costs those
 clicks at their share of each hour's spend and carries `spend_ledger.reaches`; say how far spend data reaches
 when you quote ROI from it. An ad account in another currency is refused by name (`last_error`).
@@ -1498,9 +1498,12 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
   (`notifications/tools/list_changed`) and answers each one's name, what it
   does and its input schema. A deferred tool called by name before that is
   loaded and run. Today they are `destination_list`, `destination_deliveries`
-  and `destination_test` (Setup › Destinations); `--read-only` and `--staged`
-  leave out `destination_test`. They are local only: the hosted server below
-  refuses them.
+  and `destination_test` (Setup › Destinations), `ad_connection_list` and
+  `ad_connection_check` (ChatGPT Ads connections), and `ad_spend` and
+  `ad_spend_sync_status` (what ad platforms billed per ad, and each ChatGPT
+  Ads connection's hourly spend pull); `--read-only` and `--staged` leave out
+  `destination_test`, and `--staged` leaves out `ad_connection_check`. They
+  are local only: the hosted server below refuses them.
 - `p202 mcp tools` prints the tool list as JSON (`--deferred`: the tools
   `get_more_tools` loads); `p202 mcp call <tool> --input '<json>'` runs one
   tool as the app would, deferred ones included, with the server's

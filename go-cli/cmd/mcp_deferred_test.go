@@ -287,6 +287,7 @@ var mcpAnswerKeyRef = regexp.MustCompile(`\b([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*
 var mcpDeferredAnswerSources = map[string]string{
 	"destination":   "DestinationsController.php",
 	"ad-connection": "AdConnectionsController.php",
+	"spend":         "SpendLedgerController.php",
 }
 
 // A deferred tool's Note names only keys its answer carries: the answer is
@@ -345,13 +346,13 @@ func TestMCPToolsListsTheDeferredOnes(t *testing.T) {
 		mcpToolsDeferred, mcpReadOnly = false, false
 		return out
 	}
-	if got := strings.Join(names("mcp", "tools", "--deferred"), ","); got != "destination_list,destination_deliveries,destination_test,ad_connection_list,ad_connection_check" {
+	if got := strings.Join(names("mcp", "tools", "--deferred"), ","); got != "destination_list,destination_deliveries,destination_test,ad_connection_list,ad_connection_check,ad_spend,ad_spend_sync_status" {
 		t.Errorf("--deferred lists %s", got)
 	}
-	if got := strings.Join(names("mcp", "tools", "--deferred", "--read-only"), ","); got != "destination_list,destination_deliveries,ad_connection_list" {
+	if got := strings.Join(names("mcp", "tools", "--deferred", "--read-only"), ","); got != "destination_list,destination_deliveries,ad_connection_list,ad_spend,ad_spend_sync_status" {
 		t.Errorf("--deferred --read-only lists %s", got)
 	}
-	if got := strings.Join(names("--staged", "mcp", "tools", "--deferred"), ","); got != "destination_list,destination_deliveries,ad_connection_list" {
+	if got := strings.Join(names("--staged", "mcp", "tools", "--deferred"), ","); got != "destination_list,destination_deliveries,ad_connection_list,ad_spend,ad_spend_sync_status" {
 		t.Errorf("--staged --deferred lists %s", got)
 	}
 	for _, name := range names("mcp", "tools") {
@@ -412,5 +413,109 @@ func TestMCPDeferredToolsDoNothingAPersonWasNotAsked(t *testing.T) {
 	}
 	if !seen["destination_test"] || !seen["ad_connection_check"] {
 		t.Errorf("the listing lacks a tool this test reads: %v", seen)
+	}
+}
+
+// The spend tools are found by what people ask about ad spend, ahead of the
+// destination tools that also name ChatGPT Ads; ad_spend takes the day or
+// hour interval mcpOmittedFlags leaves out of other tools, and nothing else
+// of that list.
+func TestMCPSpendToolsAreFoundAndTakeTheInterval(t *testing.T) {
+	tools, err := buildMCPDeferredTools(rootCmd, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for task, want := range map[string]string{
+		"What did ChatGPT Ads cost yesterday?":          "ad_spend",
+		"openai ads spend per ad last week":             "ad_spend",
+		"how much spend did no click carry":             "ad_spend",
+		"is my spend sync working":                      "ad_spend_sync_status",
+		"when did the ChatGPT Ads spend last sync":      "ad_spend_sync_status",
+		"why did a conversion not reach google ads":     "destination_deliveries",
+		"show me the destinations and their status now": "destination_list",
+	} {
+		got := mcpMatchDeferred(task, mcpDeferredToolSpecs, tools)
+		if len(got) == 0 || got[0].Name != want {
+			names := []string{}
+			for _, g := range got {
+				names = append(names, g.Name)
+			}
+			t.Errorf("get_more_tools %q ranks %v, want %s first", task, names, want)
+		}
+	}
+	spec, ok := findMCPSpec("ad_spend")
+	if !ok {
+		t.Fatal("ad_spend is not registered")
+	}
+	argv, err := mcpToolArgv(rootCmd, spec, []byte(`{"period":"yesterday","interval":"hour"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(argv, " "), "--interval=hour") {
+		t.Errorf("ad_spend's argv %v does not carry the interval", argv)
+	}
+	if _, err := mcpToolArgv(rootCmd, spec, []byte(`{"force":true}`)); err == nil {
+		t.Error("ad_spend took force")
+	}
+	forecast, _ := findMCPSpec("forecast")
+	if _, err := mcpToolArgv(rootCmd, forecast, []byte(`{"metric":"clicks","interval":"day"}`)); err == nil {
+		t.Error("forecast took interval, which Keep gives only ad_spend")
+	}
+	bad := spec
+	bad.Keep = []string{"force"}
+	if _, err := bad.tool(rootCmd); err == nil {
+		t.Error("a Keep of force was accepted")
+	}
+}
+
+// Through the real server, as an app asks: get_more_tools loads ad_spend for a
+// spend question, and both spend tools read the spend ledger's routes.
+func TestMCPGetMoreToolsLoadsTheSpendToolsOverStdio(t *testing.T) {
+	fake := &mcpFakeInstall{}
+	srv := fake.server(t)
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key-123456")
+	t.Setenv(mcpTestChildEnv, "1")
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "p202-test", Version: "1"}, nil)
+	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: osexec.Command(exe, "mcp", "--read-only")}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: mcpGetMoreTools, Arguments: map[string]any{"task": "What did ChatGPT Ads cost yesterday?"}})
+	if err != nil || res.IsError {
+		t.Fatalf("get_more_tools: %v %s", err, mcpResultText(res))
+	}
+	var answer struct {
+		Tools []struct{ Name string } `json:"tools"`
+	}
+	if err := json.Unmarshal([]byte(mcpResultText(res)), &answer); err != nil || len(answer.Tools) == 0 || answer.Tools[0].Name != "ad_spend" {
+		t.Fatalf("get_more_tools answered %s (%v)", mcpResultText(res), err)
+	}
+	res, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "ad_spend", Arguments: map[string]any{"period": "yesterday", "interval": "hour"}})
+	if err != nil || res.IsError {
+		t.Fatalf("ad_spend: %v %s", err, mcpResultText(res))
+	}
+	read := false
+	for _, h := range fake.requests() {
+		read = read || (strings.HasPrefix(h, "GET /api/v3/spend-ledger?") && strings.Contains(h, "interval=hour") && strings.Contains(h, "period=yesterday"))
+	}
+	if !read {
+		t.Fatalf("ad_spend did not read the ledger by the hour: %q", fake.requests())
+	}
+	res, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "ad_spend_sync_status", Arguments: map[string]any{}})
+	if err != nil || res.IsError {
+		t.Fatalf("ad_spend_sync_status: %v %s", err, mcpResultText(res))
+	}
+	if !mcpHit(fake.requests(), "GET /api/v3/spend-ledger/sync") {
+		t.Fatalf("requests: %q", fake.requests())
 	}
 }

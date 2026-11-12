@@ -562,18 +562,18 @@ API's answer as sent.
 
 ## Ad Spend
 
-`p202 ad-spend` reads the spend ledger: what ChatGPT Ads (or any platform writing
+`p202 spend list` reads the spend ledger: what ChatGPT Ads (or any platform writing
 it) billed per ad, by day in your time zone or by hour, with how many of your
-clicks carried each ad and the spend no click carried. `p202 ad-spend sync`
+clicks carried each ad and the spend no click carried. `p202 spend sync`
 turns the hourly ChatGPT Ads pull on or off for a connection made with
 `p202 ad-connection create`; it is off until you enable it.
 
 ```
-p202 ad-spend --period yesterday
-p202 ad-spend sync list
-p202 ad-spend sync enable 1
-p202 ad-spend sync run 1
-p202 ad-spend conversions --period last7   # OpenAI's conversions beside yours
+p202 spend list --period yesterday
+p202 spend sync list
+p202 spend sync enable 1
+p202 spend sync run 1
+p202 spend conversions --period last7   # OpenAI's conversions beside yours
 ```
 
 ## Config Defaults
@@ -641,7 +641,13 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   it does not take `--real`, which sends an event the platform counts),
   and `ad_connection_list` and `ad_connection_check` (Setup › Destinations ›
   ChatGPT Ads: each connected ad account, and a fresh read of it from
-  OpenAI; the check is not offered with `--staged`).
+  OpenAI; the check is not offered with `--staged`), `ad_spend` (`p202
+  spend list`: what ad platforms billed per ad per day or hour, your clicks
+  that carried each ad, the spend no click carried, and `reaches`) and
+  `ad_spend_sync_status` (`p202 spend sync list`: each ChatGPT Ads
+  connection's spend sync, on or off, its last run and error). Asked "what
+  did ChatGPT Ads cost" or "is my spend sync working", get_more_tools loads
+  them.
 - With `--staged`, a write returns a change id and changes nothing; you apply
   it with `p202 change apply <id>`. The assistant is not offered the apply and
   discard tools.

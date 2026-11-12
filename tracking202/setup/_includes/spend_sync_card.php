@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * Setup › Traffic Sources' ChatGPT Ads spend card: each ChatGPT Ads
  * connection with whether its spend is pulled into the spend ledger every
- * hour (off until turned on here, in `p202 ad-spend sync` or
+ * hour (off until turned on here, in `p202 spend sync` or
  * PUT /api/v3/spend-ledger/sync/{id}), its last run, and how far the
  * ledger's spend reaches. Nothing when the account has no connection.
  */
@@ -69,7 +69,7 @@ function p202_spend_sync_card(mysqli $db, int $userId, string $base, string $tok
         . '<p class="mb-2">' . ($reaches === null ? 'No spend data yet.' : 'Spend data reaches ' . p202_setup_e($at($reaches)) . '.') . '</p>'
         . ($week['rows'] === [] ? '' : '<p class="mb-2">Last 7 days\' conversions: ' . array_sum(array_column($week['rows'], 'platform_conversions'))
             . ' reported by ChatGPT Ads, ' . array_sum(array_column($week['rows'], 'prosper202_conversions'))
-            . ' recorded here for clicks carrying the same ads (<code>p202 ad-spend conversions</code>).</p>')
+            . ' recorded here for clicks carrying the same ads (<code>p202 spend conversions</code>).</p>')
         . '<ul class="p202-list">' . $rows . '</ul>'
         . '</div></section>';
 }

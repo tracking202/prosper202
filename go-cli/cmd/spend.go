@@ -28,7 +28,7 @@ var spendIntervals = []string{"day", "hour"}
 
 var spendCmd = &cobra.Command{
 	Use:   "spend",
-	Short: "What each ad platform billed, per ad per hour (the spend ledger)",
+	Short: "What each ad platform billed per ad per hour (the spend ledger): list, import, the ChatGPT Ads sync",
 }
 
 var spendListCmd = &cobra.Command{

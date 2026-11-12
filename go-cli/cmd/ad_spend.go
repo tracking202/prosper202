@@ -2,65 +2,21 @@ package cmd
 
 import (
 	"regexp"
-	"strconv"
+	"strings"
 
 	"p202/internal/api"
 
 	"github.com/spf13/cobra"
 )
 
-// Ad spend: what each ad platform billed per ad per hour, as the spend ledger
-// holds it (/spend-ledger), and the ChatGPT Ads spend sync that fills it from
-// OpenAI every hour (/spend-ledger/sync, off until turned on).
+// `p202 spend sync` and `p202 spend conversions`: the ChatGPT Ads spend sync
+// that fills the spend ledger from OpenAI every hour (/spend-ledger/sync, off
+// until turned on), and the conversions OpenAI reports per ad per day
+// (/spend-ledger/conversions). spend.go has `spend list` and `spend import`.
 
 var adSpendConnectionPattern = regexp.MustCompile(`^[1-9][0-9]{0,9}$`)
 
-const adSpendSyncListHint = "`p202 ad-spend sync list` shows your ChatGPT Ads connections and their ids."
-
-var adSpendCmd = &cobra.Command{
-	Use:   "ad-spend",
-	Short: "What ChatGPT Ads (and any platform writing the spend ledger) billed per ad, by day or hour",
-	Long: "Reads the spend ledger: per period (a day in your account's time zone, or an hour) and ad, the\n" +
-		"platform's impressions, clicks and spend, how many of your clicks carried the ad (their ad_id\n" +
-		"variable) and the spend no click carried (unallocated). Reports cost those clicks at their share\n" +
-		"of each hour's spend. `reaches` says how far the spend data goes; later clicks keep their CPC.\n" +
-		"`p202 ad-spend sync` turns the hourly ChatGPT Ads pull on or off per connection.",
-	Example: "  p202 ad-spend --period yesterday\n" +
-		"  p202 ad-spend --period last7 --platform openai_ads --json\n" +
-		"  p202 ad-spend --time-from 2026-11-10 --time-to 2026-11-10 --interval hour",
-	Args: cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		params := map[string]string{}
-		if cmd.Flags().Changed("period") {
-			params["period"] = enumValue(cmd, "period")
-		}
-		for _, name := range []string{"time_from", "time_to", "platform"} {
-			if v, _ := cmd.Flags().GetString(name); v != "" {
-				params[name] = v
-			}
-		}
-		if cmd.Flags().Changed("interval") {
-			params["interval"] = enumValue(cmd, "interval")
-		}
-		if cmd.Flags().Changed("limit") {
-			limit, _ := cmd.Flags().GetInt("limit")
-			if limit < 1 || limit > 5000 {
-				return validationError("--limit must be from 1 to 5000, not %d", limit).WithHint("%s", "Narrow --period or --platform for fewer rows.")
-			}
-			params["limit"] = strconv.Itoa(limit)
-		}
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		data, err := c.Get("spend-ledger", params)
-		if err != nil {
-			return withHint(err, "%s", "A server before 1.9.80 has no spend ledger; `p202 ad-spend sync list` shows whether ChatGPT Ads spend is pulled.")
-		}
-		render(data)
-		return nil
-	},
-}
+const adSpendSyncListHint = "`p202 spend sync list` shows your ChatGPT Ads connections and their ids."
 
 var adSpendSyncCmd = &cobra.Command{
 	Use:   "sync",
@@ -96,7 +52,7 @@ func adSpendSyncSet(enabled bool) func(cmd *cobra.Command, args []string) error 
 			return validationError("connection id must be a whole number greater than 0: %s", args[0]).WithHint("%s", adSpendSyncListHint)
 		}
 		if api.StagedMode() {
-			return validationError("--staged cannot apply to `ad-spend sync`: the route is not stageable").WithHint("Run it without --staged.")
+			return validationError("--staged cannot apply to `spend sync`: the route is not stageable").WithHint("Run it without --staged.")
 		}
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -114,7 +70,7 @@ func adSpendSyncSet(enabled bool) func(cmd *cobra.Command, args []string) error 
 var adSpendSyncEnableCmd = &cobra.Command{
 	Use:     "enable <connection-id>",
 	Short:   "Pull this ChatGPT Ads connection's spend every hour (the first run reads 30 days)",
-	Example: "  p202 ad-spend sync enable 1",
+	Example: "  p202 spend sync enable 1",
 	Args:    cobra.ExactArgs(1),
 	RunE:    adSpendSyncSet(true),
 }
@@ -122,7 +78,7 @@ var adSpendSyncEnableCmd = &cobra.Command{
 var adSpendSyncDisableCmd = &cobra.Command{
 	Use:     "disable <connection-id>",
 	Short:   "Stop pulling this connection's spend; what the ledger holds stays",
-	Example: "  p202 ad-spend sync disable 1",
+	Example: "  p202 spend sync disable 1",
 	Args:    cobra.ExactArgs(1),
 	RunE:    adSpendSyncSet(false),
 }
@@ -130,14 +86,14 @@ var adSpendSyncDisableCmd = &cobra.Command{
 var adSpendSyncRunCmd = &cobra.Command{
 	Use:     "run <connection-id>",
 	Short:   "Pull this connection's spend now, without waiting for the hourly run",
-	Example: "  p202 ad-spend sync run 1",
+	Example: "  p202 spend sync run 1",
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !adSpendConnectionPattern.MatchString(args[0]) {
 			return validationError("connection id must be a whole number greater than 0: %s", args[0]).WithHint("%s", adSpendSyncListHint)
 		}
 		if api.StagedMode() {
-			return validationError("--staged cannot apply to `ad-spend sync run`: the route is not stageable").WithHint("Run it without --staged.")
+			return validationError("--staged cannot apply to `spend sync run`: the route is not stageable").WithHint("Run it without --staged.")
 		}
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -145,7 +101,7 @@ var adSpendSyncRunCmd = &cobra.Command{
 		}
 		data, err := c.Post("spend-ledger/sync/"+args[0]+"/run", map[string]interface{}{})
 		if err != nil {
-			return withHint(err, "%s", "`p202 ad-spend sync list` shows the connection's last error and retry_after; if the sync is off, `p202 ad-spend sync enable "+args[0]+"` first.")
+			return withHint(err, "%s", "`p202 spend sync list` shows the connection's last error and retry_after; if the sync is off, `p202 spend sync enable "+args[0]+"` first.")
 		}
 		render(data)
 		return nil
@@ -157,17 +113,17 @@ var adSpendConversionsCmd = &cobra.Command{
 	Short: "ChatGPT Ads' reported conversions per ad per day, beside Prosper202's for the same ads",
 	Long: "Per day (in the ad account's time zone, as OpenAI reports it) and ad: OpenAI's goal conversions,\n" +
 		"click-through and view-through, and the purchase value it attributed, beside prosper202_conversions,\n" +
-		"the conversions of your clicks that carried the ad that day. Filled by `p202 ad-spend sync`.",
-	Example: "  p202 ad-spend conversions --period last7",
+		"the conversions of your clicks that carried the ad that day. Filled by `p202 spend sync`.",
+	Example: "  p202 spend conversions --period last7",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		params := map[string]string{}
 		if cmd.Flags().Changed("period") {
 			params["period"] = enumValue(cmd, "period")
 		}
-		for _, name := range []string{"time_from", "time_to", "platform"} {
-			if v, _ := cmd.Flags().GetString(name); v != "" {
-				params[name] = v
+		for flag, param := range map[string]string{"time-from": "time_from", "time-to": "time_to", "platform": "platform"} {
+			if v, _ := cmd.Flags().GetString(flag); v != "" {
+				params[param] = strings.TrimSpace(v)
 			}
 		}
 		c, err := api.NewFromConfig()
@@ -176,7 +132,7 @@ var adSpendConversionsCmd = &cobra.Command{
 		}
 		data, err := c.Get("spend-ledger/conversions", params)
 		if err != nil {
-			return withHint(err, "%s", "`p202 ad-spend sync list` shows whether ChatGPT Ads spend and conversions are pulled.")
+			return withHint(err, "%s", "`p202 spend sync list` shows whether ChatGPT Ads spend and conversions are pulled.")
 		}
 		render(data)
 		return nil
@@ -186,19 +142,9 @@ var adSpendConversionsCmd = &cobra.Command{
 func init() {
 	adSpendConversionsCmd.Flags().String("period", "", "Named window ({values})")
 	enumFlag(adSpendConversionsCmd, "period", newEnum(reportPeriods))
-	adSpendConversionsCmd.Flags().String("time_from", "", "First day (YYYY-MM-DD in your time zone) or second")
-	adSpendConversionsCmd.Flags().String("time_to", "", "Last day or second, inclusive")
+	adSpendConversionsCmd.Flags().String("time-from", "", "First day (YYYY-MM-DD in your time zone) or second")
+	adSpendConversionsCmd.Flags().String("time-to", "", "Last day or second, inclusive")
 	adSpendConversionsCmd.Flags().String("platform", "", "Only this platform's rows (e.g. openai_ads)")
-	adSpendCmd.AddCommand(adSpendConversionsCmd)
-	adSpendCmd.Flags().String("period", "", "Named window ({values})")
-	enumFlag(adSpendCmd, "period", newEnum(reportPeriods))
-	adSpendCmd.Flags().String("time_from", "", "First day or second (YYYY-MM-DD in your time zone, unix seconds, or a time with its offset)")
-	adSpendCmd.Flags().String("time_to", "", "Last day or second, inclusive")
-	adSpendCmd.Flags().String("interval", "", "Rows per day (your time zone) or per hour ({values}; default day)")
-	enumFlag(adSpendCmd, "interval", newEnum([]string{"day", "hour"}))
-	adSpendCmd.Flags().String("platform", "", "Only this platform's rows (e.g. openai_ads)")
-	adSpendCmd.Flags().Int("limit", 500, "Rows to return (1 to 5000)")
 	adSpendSyncCmd.AddCommand(adSpendSyncListCmd, adSpendSyncEnableCmd, adSpendSyncDisableCmd, adSpendSyncRunCmd)
-	adSpendCmd.AddCommand(adSpendSyncCmd)
-	rootCmd.AddCommand(adSpendCmd)
+	spendCmd.AddCommand(adSpendSyncCmd, adSpendConversionsCmd)
 }
