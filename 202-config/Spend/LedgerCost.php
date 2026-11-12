@@ -260,14 +260,27 @@ final class LedgerCost
      * report joins it (the variable or the one a split copied it from)
      * within the account's own traffic sources (CLAUDE.md #27). A set that
      * carries two different values for it is ambiguous and matches nothing.
+     * $adRefs, when given, names the ads instead of the ledger's ($currency,
+     * $lo and $hi are then not read).
      *
+     * @param list<string>|null $adRefs
      * @return list<array{set_no: int, network_id: int, ad_ref: string}>
      */
-    public static function sets(Connection $conn, int $userId, ?string $currency, int $lo, int $hi): array
+    public static function sets(Connection $conn, int $userId, ?string $currency, int $lo, int $hi, ?array $adRefs = null): array
     {
         $param = "pv.parameter COLLATE utf8mb4_bin = '" . self::AD_PARAMETER . "'";
-        $ads = 'SELECT DISTINCT la.ad_ref FROM 202_spend_ledger la'
-            . ' WHERE la.user_id = ?' . ($currency === null ? '' : ' AND la.currency = ?') . ' AND la.hour_start >= ? AND la.hour_start <= ?';
+        if ($adRefs !== null) {
+            // The ads named, not the ledger's: another record keyed by ad
+            // (the platform's reported conversions).
+            $adRefs = array_values(array_unique(array_map('strval', $adRefs)));
+            if ($adRefs === []) {
+                return [];
+            }
+            $ads = implode(' UNION ALL ', array_fill(0, count($adRefs), 'SELECT ? AS ad_ref'));
+        } else {
+            $ads = 'SELECT DISTINCT la.ad_ref FROM 202_spend_ledger la'
+                . ' WHERE la.user_id = ?' . ($currency === null ? '' : ' AND la.currency = ?') . ' AND la.hour_start >= ? AND la.hour_start <= ?';
+        }
         $candidates = 'SELECT DISTINCT vc.variable_set_id FROM (' . $ads . ') ads'
             . ' JOIN 202_custom_variables cc ON cc.variable = ads.ad_ref COLLATE utf8mb4_general_ci'
             . ' JOIN 202_variable_sets2 vc ON vc.variables = CAST(cc.custom_variable_id AS CHAR)';
@@ -282,7 +295,9 @@ final class LedgerCost
             . ' GROUP BY vs.variable_set_id, pv.ppc_network_id'
             . ' HAVING COUNT(DISTINCT CONVERT(cv.variable USING utf8mb4) COLLATE utf8mb4_bin) = 1';
         $stmt = $conn->prepareRead($sql);
-        if ($currency === null) {
+        if ($adRefs !== null) {
+            $conn->bind($stmt, 'i' . str_repeat('s', count($adRefs)), [$userId, ...$adRefs]);
+        } elseif ($currency === null) {
             $conn->bind($stmt, 'iiii', [$userId, $userId, $lo, $hi]);
         } else {
             $conn->bind($stmt, 'iisii', [$userId, $userId, $currency, $lo, $hi]);
