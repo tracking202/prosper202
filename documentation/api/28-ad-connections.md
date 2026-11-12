@@ -77,3 +77,43 @@ and give `pixel_id` with `source_id` (the pixel's `clidsrc_…` id), or
 
 Requests to OpenAI are held under its limits (600 a minute per endpoint,
 1,200 in all, per ad account) and a 429 is never retried by itself.
+
+## Campaigns, ad groups and ads
+
+Read from OpenAI and changed there, live, through the connection's key.
+Setup › Destinations › ChatGPT Ads › *campaigns* shows the same, with the
+pause and activate buttons behind a confirm.
+
+| Method | Path | |
+| ------ | ---- | - |
+| `GET` | `/ad-connections/{id}/campaigns` | A page: `status`, `serving_issues`, `budget` (micros), `query_string_template`, `conversion_event_setting_ids`; `limit` (1-500), `after` (the answer's `meta.after`) |
+| `GET` | `/ad-connections/{id}/ad-groups` | The same for ad groups; `campaign_id` narrows |
+| `GET` | `/ad-connections/{id}/ads` | The same for ads, with `review_status` and `review_reason`; `ad_group_id` narrows |
+| `GET` | `/ad-connections/{id}/{campaigns,ad-groups,ads}/{objectId}` | One, by OpenAI's id (`cmpn_…`, `adgrp_…`, `ad_…`) |
+| `POST` | `/ad-connections/{id}/{campaigns,ad-groups,ads}/{objectId}/pause` | Pause it at OpenAI |
+| `POST` | `/ad-connections/{id}/{campaigns,ad-groups,ads}/{objectId}/activate` | Activate it |
+| `POST` | `/ad-connections/{id}/{campaigns,ad-groups,ads}/{objectId}/template` | Set `landing_page_configuration.query_string_template`: `template`, or the Get Links ChatGPT Ads template without it |
+| `POST` | `/ad-connections/{id}/campaigns/{objectId}/event-settings` | Add `event_setting_ids` (or the ones setup made) to the campaign's own |
+| `GET` | `/ad-connections/{id}/spend` | Spend, impressions and clicks by campaign: `since`, `until` (whole days in the ad account's time zone, at most 365); yesterday there without them |
+
+Every write previews with `?dry_run=1`: the object is read and the answer
+says what would change (`change`, from and to), and nothing is sent. OpenAI's
+`conversion_event_setting_ids` replaces the list, so attaching reads the
+campaign, adds the ids and writes the list back; `unchanged: true` means
+there was nothing to add and nothing was sent. An id that is not shaped like
+OpenAI's is refused before it reaches a request.
+
+OpenAI's own failures are answered with its words: `404` (the ad account has
+no such object), `429` (its rate limit: try again in a minute), `502` (it did
+not answer or failed). A refused key is a `422` naming the connection.
+
+The same from the command line: `p202 ad-campaign list|get|pause|activate|set-template|attach-events|spend`,
+and, for an AI assistant on this computer (`p202 mcp`), the tools
+`ad_campaign_list`, `ad_campaign_pause`, `ad_campaign_activate`,
+`ad_campaign_spend` and `destination_list`.
+
+A money-loss alert for spend without conversions names the ChatGPT Ads
+campaigns its clicks came from (the `campaign_id` the tracking template puts
+on each click, on a traffic source account linked to a connection) and how
+to pause them; its webhook payload carries `chatgpt_connection_id` and
+`chatgpt_campaign_ids`.
