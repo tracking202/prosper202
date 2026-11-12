@@ -977,53 +977,87 @@ final class MysqlClickRepository implements ClickRepositoryInterface
     }
 
     /**
-     * The click's ad click ids and UTM values, or, while the 1.9.79 upgrade
-     * has not added the ids beside the gclid (AdClickIdColumns), the row
-     * without them: dl.php and the landing pages do not ask whether the
-     * database is upgraded either. A statement the server will not prepare
-     * changes nothing, so the transaction stands and the row is written
-     * after; a click that came with one of the ids says in the log that it
-     * was not kept. Any other failure fails the click.
+     * The click's ad click ids and UTM values, or, while the upgrade has not
+     * added the ids beside the gclid (AdClickIdColumns), the row without the
+     * ones it lacks: the 1.9.79 ids without the 1.9.80 oppref, or the gclid
+     * alone. dl.php and the landing pages do not ask whether the database is
+     * upgraded either. A statement the server will not prepare changes
+     * nothing, so the transaction stands and the row is written after; a
+     * click that came with an id says in the log that it was not kept. Any
+     * other failure fails the click.
      */
     private function writeGoogleRow(ClickRecord $click): void
     {
         try {
             $this->write(
-                'INSERT INTO 202_google (click_id, gclid, gbraid, wbraid, ttclid, msclkid, fbclid, utm_source_id,'
-                    . ' utm_medium_id, utm_campaign_id, utm_term_id, utm_content_id)'
-                    . ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                'issssssiiiii',
+                'INSERT INTO 202_google (click_id, gclid, gbraid, wbraid, ttclid, msclkid, fbclid, oppref,'
+                    . ' utm_source_id, utm_medium_id, utm_campaign_id, utm_term_id, utm_content_id)'
+                    . ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                'isssssssiiiii',
                 [
                     $click->clickId, $click->gclid, $click->gbraid, $click->wbraid, $click->ttclid,
-                    $click->msclkid, $click->fbclid, $click->utmSourceId, $click->utmMediumId,
+                    $click->msclkid, $click->fbclid, $click->oppref, $click->utmSourceId, $click->utmMediumId,
                     $click->utmCampaignId, $click->utmTermId, $click->utmContentId,
                 ]
             );
             $this->writeAdClickIdRows($click);
+
+            return;
         } catch (\RuntimeException $e) {
             if (!AdClickIdColumns::missing($e)) {
                 throw $e;
             }
-            $dropped = array_keys(array_filter(
-                [
-                    'gbraid' => $click->gbraid, 'wbraid' => $click->wbraid, 'ttclid' => $click->ttclid,
-                    'msclkid' => $click->msclkid, 'fbclid' => $click->fbclid,
-                ],
-                static fn (string $id): bool => $id !== ''
-            ));
-            if ($dropped !== []) {
-                error_log('p202 click: click ' . $click->clickId . ' is stored without the ' . implode(', ', $dropped)
-                    . ' it came with: the 1.9.79 upgrade has not added the 202_google columns yet. Run the upgrade.');
+            $missing = $e;
+        }
+        $ids = [
+            'gbraid' => $click->gbraid, 'wbraid' => $click->wbraid, 'ttclid' => $click->ttclid,
+            'msclkid' => $click->msclkid, 'fbclid' => $click->fbclid, 'oppref' => $click->oppref,
+        ];
+        if (AdClickIdColumns::missingSince1980($missing)) {
+            try {
+                $this->write(
+                    'INSERT INTO 202_google (click_id, gclid, gbraid, wbraid, ttclid, msclkid, fbclid, utm_source_id,'
+                        . ' utm_medium_id, utm_campaign_id, utm_term_id, utm_content_id)'
+                        . ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    'issssssiiiii',
+                    [
+                        $click->clickId, $click->gclid, $click->gbraid, $click->wbraid, $click->ttclid,
+                        $click->msclkid, $click->fbclid, $click->utmSourceId, $click->utmMediumId,
+                        $click->utmCampaignId, $click->utmTermId, $click->utmContentId,
+                    ]
+                );
+                $this->logDroppedAdClickIds(
+                    $click,
+                    array_intersect_key($ids, array_flip(AdClickIdColumns::ADDED_IN_1_9_80))
+                );
+                $this->writeAdClickIdRows($click);
+
+                return;
+            } catch (\RuntimeException $e) {
+                if (!AdClickIdColumns::missing($e)) {
+                    throw $e;
+                }
             }
-            $this->write(
-                'INSERT INTO 202_google (click_id, gclid, utm_source_id, utm_medium_id, utm_campaign_id,'
-                    . ' utm_term_id, utm_content_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                'isiiiii',
-                [
-                    $click->clickId, $click->gclid, $click->utmSourceId, $click->utmMediumId,
-                    $click->utmCampaignId, $click->utmTermId, $click->utmContentId,
-                ]
-            );
+        }
+        $this->logDroppedAdClickIds($click, $ids);
+        $this->write(
+            'INSERT INTO 202_google (click_id, gclid, utm_source_id, utm_medium_id, utm_campaign_id,'
+                . ' utm_term_id, utm_content_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            'isiiiii',
+            [
+                $click->clickId, $click->gclid, $click->utmSourceId, $click->utmMediumId,
+                $click->utmCampaignId, $click->utmTermId, $click->utmContentId,
+            ]
+        );
+    }
+
+    /** @param array<string, string> $ids the ones the row could not keep, by name */
+    private function logDroppedAdClickIds(ClickRecord $click, array $ids): void
+    {
+        $dropped = array_keys(array_filter($ids, static fn (string $id): bool => $id !== ''));
+        if ($dropped !== []) {
+            error_log('p202 click: click ' . $click->clickId . ' is stored without the ' . implode(', ', $dropped)
+                . ' it came with: the upgrade has not added the 202_google columns yet. Run the upgrade.');
         }
     }
 
@@ -1103,7 +1137,10 @@ final class MysqlClickRepository implements ClickRepositoryInterface
     private function writeAdClickIdRows(ClickRecord $click): void
     {
         $hashes = [];
-        $ids = [$click->gclid, $click->gbraid, $click->wbraid, $click->ttclid, $click->msclkid, $click->fbclid];
+        $ids = [
+            $click->gclid, $click->gbraid, $click->wbraid, $click->ttclid, $click->msclkid, $click->fbclid,
+            $click->oppref,
+        ];
         foreach ($ids as $id) {
             if ($id !== '') {
                 $hashes[AdClickIdIndex::hash($id)] = true;

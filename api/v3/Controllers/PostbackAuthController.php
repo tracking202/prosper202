@@ -7,6 +7,7 @@ namespace Api\V3\Controllers;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\PayloadKeys;
 use Prosper202\Conversion\PostbackAuth\PostbackAuthMode;
+use Prosper202\Conversion\PostbackAuth\PostbackAuthReadiness;
 use Prosper202\Conversion\PostbackAuth\PostbackAuthSettings;
 use Prosper202\Conversion\PostbackAuth\PostbackAuthStore;
 use Prosper202\Conversion\PostbackAuth\PostbackCredential;
@@ -22,6 +23,7 @@ use Prosper202\Database\Connection;
  * - GET /conversions/postback-auth: the mode, the URL token and the signing
  *   secret (each minted the first time, as a postback URL handed out mints
  *   them), and how to sign;
+ * - GET /conversions/postback-auth/readiness: who a stricter mode would refuse;
  * - PUT /conversions/postback-auth: `{"mode": "off"|"token"|"signed"}`;
  * - POST /conversions/postback-auth/rotate: `{"credential": "token" |
  *   "signing_secret", "grace_hours": 0-720}`, a new one, the old one working
@@ -48,6 +50,22 @@ final class PostbackAuthController
         $now ??= time();
 
         return ['data' => self::shape($this->store()->ensureCredentials($this->userId, $now), $now)];
+    }
+
+    /**
+     * GET /conversions/postback-auth/readiness: the account's postbacks and
+     * pixels of the last 7 days by what each presented, and whether a
+     * stricter mode would refuse any (PostbackAuthReadiness).
+     *
+     * @return array{data: array<string, mixed>}
+     */
+    public function readiness(?int $now = null): array
+    {
+        $now ??= time();
+        $conn = new Connection($this->db);
+
+        return ['data' => ['mode' => (new PostbackAuthStore($conn))->mode($this->userId)->value]
+            + (new PostbackAuthReadiness($conn))->forAccount($this->userId, $now)];
     }
 
     /**

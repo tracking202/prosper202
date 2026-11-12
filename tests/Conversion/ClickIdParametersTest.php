@@ -46,6 +46,7 @@ final class ClickIdParametersTest extends TestCase
         yield 'six names' => ['a,b,c,d,e,f', 'At most 5'];
         yield 'the subid itself' => ['subid', 'already means something else'];
         yield 'the token' => ['aff_sub3,P202_Token', 'already means something else'];
+        yield "OpenAI's click id" => ['aff_sub3,OPPREF', 'is read without being listed'];
         yield 'a list' => [['aff_sub3'], 'Must be a string'];
         yield 'a number' => [5, 'Must be a string'];
         yield 'null' => [null, 'Must be a string'];

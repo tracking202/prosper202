@@ -713,8 +713,8 @@ p202 click get 12345
 
 `click list` and `click get` carry the ad platforms' click ids the click
 arrived with — `gclid`, `gbraid`, `wbraid` (Google Ads' iOS click ids),
-`ttclid` (TikTok's), `msclkid` (Microsoft Advertising's) and `fbclid`
-(Meta's) — each `null` when it came with none. Direct links and landing pages
+`ttclid` (TikTok's), `msclkid` (Microsoft Advertising's), `fbclid`
+(Meta's) and `oppref` (OpenAI's, from ChatGPT ads) — each `null` when it came with none. Direct links and landing pages
 record them; a redirector click has none, and a click recorded before 1.9.79
 has only its gclid. In the table they are
 columns like any other (cut at 42 characters unless `--wide`); `--json` gives
@@ -820,6 +820,7 @@ prints the same.
 
 ```bash
 p202 conversion postback-auth get
+p202 conversion postback-auth readiness
 p202 conversion postback-auth set --mode token
 p202 conversion postback-auth rotate --credential signing_secret --grace-hours 168
 ```
@@ -844,6 +845,8 @@ with its postback, or signs it when the account accepts only signed ones.
 ```bash
 p202 conversion inbound-log --outcome refused
 p202 conversion inbound-log --endpoint jvzoo --limit 20 --json
+p202 conversion inbound-log --search ORD-20391
+p202 conversion inbound-log record 4812
 ```
 
 Every request the postback (`pb`, `gpb`), pixel (`px`, `gpx`, `upx`) and
@@ -856,6 +859,16 @@ addresses, emails and names redacted. An admin's key also lists the
 requests no account could be found for (`user_id` null). The newest 5,000
 per account are kept. `--json` is `GET /conversions/inbound-log`; page with
 `--before` set to the previous answer's `next_before`.
+
+`--search` finds the requests for one subid (click id), conversion id or
+transaction id, given whole. Each refused row says what to do about it and
+whether its conversion can be recorded now (`can_record`). `record
+<inbound_id>` records what a refused postback or pixel (`pb`, `gpb`, `px`,
+`gpx`, `upx`) would have recorded, from the request the log kept: for one
+refused for its token or signature, or by an error on the server. A request
+that carries an event is handed to the click's goals. The click must be your
+account's, a transaction id already on file is a duplicate, and without one
+a click converts once, so running it twice records once.
 
 ### Shopify refunds left to settle
 

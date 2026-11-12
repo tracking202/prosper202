@@ -85,6 +85,9 @@ var systemCronCmd = &cobra.Command{
 		"Like `p202 rotator check`, it exits 5 (partial_failure) when the last\n" +
 		"execution is older than 5 minutes (stale) or none is recorded (never_ran),\n" +
 		"with the summary still printed on stdout.\n\n" +
+		"From 1.9.80 a note also says when conversion postbacks queued for your traffic\n" +
+		"sources have gone unsent because no cron run has taken them\n" +
+		"(traffic_source_postbacks under --json).\n\n" +
 		"--raw prints every row as the server returns it; under --json it adds the\n" +
 		"server's jobs and recent_logs arrays to the summary object.",
 	Example: "  p202 system cron\n" +

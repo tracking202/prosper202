@@ -12,6 +12,7 @@ List, inspect, manually create, and delete conversions.
 | `GET` | `/conversions/offline-export` | The conversions as Google Ads' or Microsoft Advertising's offline conversion import CSV ([below](#offline-conversion-files)) |
 | `GET` | `/conversions/offline-export/summary` | What that file holds, and why each other conversion is left out |
 | `GET` | `/conversions/inbound-log` | The postbacks, pixels and payment notifications received, and why each was refused ([below](#inbound-log)) |
+| `POST` | `/conversions/inbound-log/{id}/record` | Record the conversion of a refused postback from the log ([below](#inbound-log)) |
 | `GET` | `/conversions/shopify-refunds` | The Shopify refunds not recorded while their order's sale is ([below](#shopify-refunds-left-to-settle)) |
 | `POST` | `/conversions/shopify-refunds/{id}/record` | Record one as a reversal of its order's sale |
 | `POST` | `/conversions/shopify-refunds/{id}/close` | Close one with nothing recorded |
@@ -65,7 +66,7 @@ conversion stores one:
 | `match_method` | The click was found by | Paths |
 | -------------- | ---------------------- | ----- |
 | `click_id` | the request naming it | a `subid`/`sid` on `gpx.php`, `upx.php`, `gpb.php` and `pb.php`; ClickBank's tracking code (`cb202.php`); `POST /conversions` and `POST /events`; a line of Update Subids or of a revenue upload; an app install's signed token, and the goals its events reach |
-| `ad_click_id` | an ad platform's click id the postback sent back (`gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid` or `fbclid`), carried by a click visited in the last 30 days (the latest of one visitor's clicks on one campaign) | `gpb.php` when its `subid` is empty or arrives as the network's unfilled macro |
+| `ad_click_id` | an ad platform's click id the postback sent back (`gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid` or `oppref`), carried by a click visited in the last 30 days (the latest of one visitor's clicks on one campaign) | `gpb.php` when its `subid` is empty or arrives as the network's unfilled macro |
 | `cookie` | a tracking cookie in the visitor's browser | `gpx.php` and `upx.php` with no subid (the campaign's `tracking202subid_a_<cid>` cookie, then `tracking202subid`); `px.php` |
 | `visitor_id` | the landing-page script's own visitor id (`p202lpid`), on the click it was last seen on | `p202.track()` events (`event.php`) |
 | `same_ip` | nothing naming a click: the account's latest click from the visitor's address in the last 30 days, a guess, made only for an account with the [same-IP fallback](14-users.md#same-ip-fallback-user_pref_same_ip_fallback) on and a visitor the privacy setting does not hold back | `gpx.php`, `upx.php` and `px.php` with neither a subid nor a cookie |
@@ -199,6 +200,25 @@ per account.
 | `endpoint` | One of the endpoints above |
 | `limit` | 1 to 500 (50) |
 | `before` | Only requests older than this `inbound_id`: the previous page's `next_before` |
+| `search` | A subid (click id), conversion id or transaction id, given whole: the row's own, or the one the request carried. For a role that does not manage users it covers only the account's own requests |
+| `click_id` | Only the requests the endpoint found this click for |
+
+A row that recorded nothing carries `fix` (what to do, and the page that does
+it) and `can_record`. `POST /conversions/inbound-log/{id}/record` records what
+a refused postback or pixel would have recorded, from the request the log
+kept: a `pb`, `gpb`, `px`, `gpx` or `upx` request refused as `unauthenticated`
+or `failed`, whose kept values are whole. A conversion is dated when the
+request arrived; a request that carries an event is handed to the click's
+goals. Each is recorded as its own endpoint records it, with the same checks:
+the click must be the account's, a `pb` request's click must have visited the
+campaign it names, a transaction id or event id on file is a duplicate, and
+without one a click converts once. A pixel's click and a form post's body are
+kept from 1.9.80 on (`match_method` on the row); a row logged without them is
+not offered. Sent twice it records once (`already_recorded`). It
+answers 201 `recorded`, 200 `duplicate` or `already_recorded`, 422 with the
+reason when the row cannot be recorded or the recorder refuses it, and asks
+for the role's access to the Setup and Update sections. The buyer's details
+are never kept, so a conversion recorded this way links no customer.
 
 ```json
 {

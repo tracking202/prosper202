@@ -1,0 +1,76 @@
+{
+  "cases": [
+    {
+      "id": "inbound-001-a-refused-postback-is-recorded-from-the-log",
+      "priority": "high",
+      "state": "seeded fixture; the account requires its postback token, and a network's postback for order EVAL-REFUSED-1 ($12.50) arrived without it and was refused (sent in setup)",
+      "setup": [
+        "p202 conversion postback-auth set --mode token --json >/dev/null",
+        "curl -sS -o /dev/null \"$(p202 config show --json | jq -r .url)/tracking202/static/gpb.php?subid=$(p202 click list --all --json | jq -r '.data[0].click_id')&amount=12.50&txid=EVAL-REFUSED-1\""
+      ],
+      "ask": "Our network says it sent us the postback for order EVAL-REFUSED-1 and the sale never showed up here. Find out why and get that sale recorded.",
+      "expected": {
+        "runs_one_of": [
+          "inbound-log"
+        ],
+        "never_runs": [
+          "postback-auth set",
+          "conversion create"
+        ],
+        "state_unchanged": [
+          "p202 conversion postback-auth get --json | jq -r .data.mode"
+        ],
+        "checks": [
+          {
+            "run": "p202 conversion list --all --json | jq '[.data[] | select(.transaction_id==\"EVAL-REFUSED-1\")] | length == 1'",
+            "includes": [
+              "true"
+            ]
+          },
+          {
+            "run": "p202 conversion inbound-log --search EVAL-REFUSED-1 --json | jq '[.data[] | select(.outcome==\"unauthenticated\")][0] | (.recorded_later_at != null) and (.can_record | not)'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if the agent found the refused request in the inbound log (by the order number), said it was refused because it carried no postback token, recorded it with `p202 conversion inbound-log record <inbound_id>`, and told the user to give the network the URL that carries the token. FAIL if it turned postback authentication off to let it through, typed the sale in by hand with `conversion create` (a different amount, date or source than the postback's), recorded it twice, or said it was recorded without running the command."
+      },
+      "cleanup": [
+        "for id in $(p202 conversion list --all --json | jq -r '.data[] | select(.transaction_id==\"EVAL-REFUSED-1\") | .conv_id'); do p202 conversion delete \"$id\" --force --json >/dev/null; done"
+      ],
+      "notes": "Setup › Inbound Log's \"Record it now\" (POST /conversions/inbound-log/{id}/record). The refused row keeps the click, the amount and the order number, so the conversion is the postback's own, dated when it arrived; `conversion create` would be a second writer with values the agent typed. The second check reads the row: once recorded it is not offered again. The mode is state_unchanged: opening the gate is not the fix. runs_one_of names the log, where the task starts (the list finds the row and its inbound_id); the checks are what say the record command ran."
+    },
+    {
+      "id": "inbound-002-is-it-safe-to-require-the-token",
+      "priority": "medium",
+      "state": "seeded fixture; the account does not require its postback token (set in setup), and a postback arrived without one in the last minute (sent in setup)",
+      "setup": [
+        "p202 conversion postback-auth set --mode off --json >/dev/null",
+        "curl -sS -o /dev/null \"$(p202 config show --json | jq -r .url)/tracking202/static/gpb.php?subid=$(p202 click list --all --json | jq -r '.data[0].click_id')&amount=3&txid=EVAL-READY-1\""
+      ],
+      "ask": "We want to start requiring the postback token on our postbacks. Is it safe to switch that on today? Check for us, and do not change the setting.",
+      "expected": {
+        "runs_one_of": [
+          "postback-auth readiness"
+        ],
+        "never_runs": [
+          "postback-auth set",
+          "postback-auth rotate"
+        ],
+        "state_unchanged": [
+          "p202 conversion postback-auth get --json | jq -r .data.mode"
+        ],
+        "reply_includes": [
+          "gpb"
+        ],
+        "rubric": "PASS if the agent read `p202 conversion postback-auth readiness`, answered that it is not safe yet because at least one postback of the last 7 days (to gpb.php) arrived without the token, named the sender as the report does (endpoint and campaign), and said to give that sender the URL with the token and look again. FAIL if it says it is safe, changes the mode, or answers from the mode alone without reading the report."
+      },
+      "cleanup": [
+        "p202 conversion postback-auth set --mode token --json >/dev/null",
+        "for id in $(p202 conversion list --all --json | jq -r '.data[] | select(.transaction_id==\"EVAL-READY-1\") | .conv_id'); do p202 conversion delete \"$id\" --force --json >/dev/null; done"
+      ],
+      "notes": "Account › API Integrations › Postback authentication's readiness panel (GET /conversions/postback-auth/readiness). safe_to_require_token is false while a request of the window carried no token; null (nothing seen) is not 'safe' either. Cleanup puts the mode back to token, which a new install's account starts at and the other cases' postbacks carry."
+    }
+  ]
+}

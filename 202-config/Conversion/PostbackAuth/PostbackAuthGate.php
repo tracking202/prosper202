@@ -74,6 +74,40 @@ final class PostbackAuthGate
         return self::decide($this->store->settings($userId, $needed), $presented, $endpoint, $now);
     }
 
+    /** What presented() answers: nothing, the account's token, a signature that verifies, or credentials that do not. */
+    public const PRESENTED = ['none', 'token', 'signed', 'invalid'];
+
+    /**
+     * What the request presents, whatever the account's mode: `none`,
+     * `token` (this account's token), `signed` (a signature its secret
+     * verifies) or `invalid` (a token or signature the account would
+     * refuse). The inbound log keeps it, so an account still in mode off can
+     * see which senders a stricter mode would refuse. A read that fails throws.
+     */
+    public function presented(int $userId, string $endpoint, string $queryString, int $now): string
+    {
+        $presented = PresentedCredentials::fromQueryString($queryString);
+        if ($presented->problem !== null) {
+            return 'invalid';
+        }
+        if ($presented->presentsNothing()) {
+            return 'none';
+        }
+        $needed = [];
+        if ($presented->token !== null) {
+            $needed[] = PostbackCredential::TOKEN;
+        }
+        if ($presented->isSigned()) {
+            $needed[] = PostbackCredential::SIGNING_SECRET;
+        }
+        $asToken = $this->store->settings($userId, $needed)->withMode(PostbackAuthMode::TOKEN);
+        if (self::decide($asToken, $presented, $endpoint, $now) !== null) {
+            return 'invalid';
+        }
+
+        return $presented->isSigned() ? 'signed' : 'token';
+    }
+
     /** check()'s decision for the account's settings as read. */
     public static function decide(PostbackAuthSettings $settings, PresentedCredentials $presented, string $endpoint, int $now): ?PostbackAuthRefusal
     {

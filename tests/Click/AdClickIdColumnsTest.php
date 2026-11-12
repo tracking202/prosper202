@@ -10,7 +10,8 @@ use Prosper202\Database\Exceptions\QueryException;
 
 /**
  * What reads as the window before the 1.9.79 upgrade: the server's 1054
- * naming gbraid, wbraid, ttclid, msclkid or fbclid, however the statement
+ * naming gbraid, wbraid, ttclid, msclkid or fbclid (or, before 1.9.80's,
+ * oppref), however the statement
  * named it and in whatever language the server answers. Anything else is a
  * failure, which the click path does not swallow.
  */
@@ -32,6 +33,7 @@ final class AdClickIdColumnsTest extends TestCase
         yield 'strict reporting' => [$strict('wbraid'), true];
         yield 'the msclkid' => [$prepare("Unknown column 'msclkid' in 'field list' [errno 1054]"), true];
         yield 'the fbclid, by alias' => [$prepare("Unknown column 'g.fbclid' in 'field list' [errno 1054]"), true];
+        yield 'the oppref' => [$prepare("Unknown column 'oppref' in 'field list' [errno 1054]"), true];
         yield 'a column that starts with one' => [
             $prepare("Unknown column 'msclkid_x' in 'field list' [errno 1054]"),
             false,
@@ -54,12 +56,30 @@ final class AdClickIdColumnsTest extends TestCase
         self::assertSame($missing, AdClickIdColumns::missing($e));
     }
 
+    /**
+     * A database the 1.9.79 upgrade reached and the 1.9.80 one has not
+     * answers 1054 for the oppref alone: the writer and of() then keep the
+     * 1.9.79 ids rather than none.
+     */
+    public function testOnlyTheOpprefIsTheWindowBeforeThe1980Upgrade(): void
+    {
+        $prepare = static fn (string $column): QueryException => new QueryException(
+            "Failed to prepare MySQL statement: Unknown column '$column' in 'field list' [errno 1054]"
+        );
+        self::assertTrue(AdClickIdColumns::missingSince1980($prepare('oppref')));
+        self::assertTrue(AdClickIdColumns::missingSince1980(new \RuntimeException('x', 0, $prepare('g.oppref'))));
+        self::assertFalse(AdClickIdColumns::missingSince1980($prepare('gbraid')));
+        self::assertFalse(AdClickIdColumns::missingSince1980($prepare('fbclid')));
+        self::assertFalse(AdClickIdColumns::missingSince1980($prepare('oppref_x')));
+    }
+
     public function testATokenForOneOfThemIsNamedInAUrl(): void
     {
         self::assertTrue(AdClickIdColumns::namedIn('https://o.example/?t=[[TTCLID]]'));
         self::assertTrue(AdClickIdColumns::namedIn('https://o.example/?g=[[gbraid]]&w=[[wbraid]]'));
         self::assertTrue(AdClickIdColumns::namedIn('https://o.example/?m=[[msclkid]]'));
         self::assertTrue(AdClickIdColumns::namedIn('https://o.example/?f=[[FBCLID]]'));
+        self::assertTrue(AdClickIdColumns::namedIn('https://o.example/?o=[[oppref]]'));
         self::assertFalse(AdClickIdColumns::namedIn('https://o.example/?g=[[gclid]]&s=[[subid]]'));
         self::assertFalse(AdClickIdColumns::namedIn('https://o.example/?ttclid=x'));
     }

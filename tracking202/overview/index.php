@@ -34,7 +34,8 @@ p202_overview_run([
     'names' => ['user_pref_show', 'user_cpc_or_cpv'],
     // The customer-lifetime-value strip: drawn only for an account that
     // tracks customers; the fragment answers nothing otherwise.
-    'before_panel' => p202_old_google_feed_notice(
+    'before_panel' => p202_postback_queue_notice($db, (int) ($_SESSION['user_own_id'] ?? $_SESSION['user_id'] ?? 0), $base)
+        . p202_old_google_feed_notice(
         $db,
         (int) ($_SESSION['user_id'] ?? 0),
         $userObj->hasPermission('access_to_setup_section') && $userObj->hasPermission('access_to_campaign_data'),

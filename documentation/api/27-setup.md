@@ -155,8 +155,8 @@ as `gpb.php?subid={aff_sub}&amount=49.00` with the macro itself where the
 click's id should be, or with `subid=` empty. Until 1.9.80 that conversion was
 answered `SubID not found` and lost. Now `gpb.php` looks for the click by an
 **ad click id** the postback sends back instead: the `gclid`, `gbraid` or
-`wbraid` Google put on the ad click, Microsoft's `msclkid`, Meta's `fbclid`
-or TikTok's `ttclid`, which every click keeps.
+`wbraid` Google put on the ad click, Microsoft's `msclkid`, Meta's `fbclid`,
+TikTok's `ttclid` or OpenAI's `oppref` (ChatGPT ads), which every click keeps.
 
 A SubID that is there is read exactly as before. The ad click id is asked
 only when `subid` (and `sid`) is empty or is one unfilled macro and nothing
@@ -170,7 +170,7 @@ through a network whose postbacks drop the sub id:
 1. Hand the network the ad click id when you send it the visitor. In the
    campaign's URL put the token in one of the network's sub id slots, e.g.
    `https://network.example/offer/812?aff_sub={aff_sub}&aff_sub3=[[gclid]]`
-   (`[[msclkid]]`, `[[fbclid]]`, `[[ttclid]]`, `[[gbraid]]` and `[[wbraid]]`
+   (`[[msclkid]]`, `[[fbclid]]`, `[[ttclid]]`, `[[oppref]]`, `[[gbraid]]` and `[[wbraid]]`
    work the same way).
 2. Have the network send it back. Either name it for what it is in the
    postback URL you give the network:
@@ -203,10 +203,13 @@ What it will and will not match:
   postback is answered `409` and nothing is recorded; when the clicks are
   all your account's, your Setup › Inbound Log says which of those it was.
   Send the SubID to settle those.
-- **An id, not a placeholder.** A value no platform issues, written where
-  the id was meant to go (`undefined`, `null`, `(not set)`, an unfilled
-  `__GCLID__`), is not looked up: every visitor whose page wrote it shares
-  it.
+- **An id, not a placeholder.** Only a value with an id's shape is looked
+  up: at least 8 letters, digits and `.` `_` `~` `-`, with a letter and a
+  digit among them, as every gclid, gbraid, wbraid, ttclid, msclkid and
+  fbclid is. What a page or template writes where the id was meant to go
+  (`undefined`, `null`, `(not set)`, an unfilled `__GCLID__`, a `{{ gclid }}`
+  or `$gclid` it left, the parameter's own name, `test`) is not: every
+  visitor whose page wrote it shares it.
 - **Exactly.** An id's case is part of it: `Cj0KCQ...` and `cj0kcq...` are
   different ids.
 - **The last 30 days.** The click must have been visited in the last 30 days.
@@ -273,6 +276,7 @@ page from opening anything.
 | ------ | ---- | ---- | ---------- |
 | `GET` | `/conversions/postback-auth` | — | `access_to_api_integrations`, `conversions:write` |
 | `PUT` | `/conversions/postback-auth` | `{"mode": "token"}` (`off`, `token` or `signed`) | `access_to_api_integrations`, `conversions:write` |
+| `GET` | `/conversions/postback-auth/readiness` | — | `access_to_api_integrations`, `conversions:write` |
 | `POST` | `/conversions/postback-auth/rotate` | `{"credential": "token", "grace_hours": 168}` (`token` or `signing_secret`; 0–720 hours, default 168) | `access_to_api_integrations`, `conversions:write` |
 
 The read hands out the token and the signing secret, which record and
@@ -454,6 +458,7 @@ p202 landing-page code 14 --offer campaign:3 --offer rotator:2
 p202 conversion postback-url --subid '{aff_sub}' --amount '{payout}'
 p202 conversion pixel --type universal
 p202 conversion postback-auth get                            # mode, token, signing secret, how to sign
+p202 conversion postback-auth readiness                      # who a stricter mode would refuse, from the last 7 days
 p202 conversion postback-auth set --mode token               # off | token | signed
 p202 conversion postback-auth rotate --credential signing_secret --grace-hours 168
 p202 ppc-network variable create 3 --name 'Ad id' --parameter adid --placeholder '{ad_id}'

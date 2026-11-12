@@ -897,6 +897,7 @@ p202 conversion list   [--limit 50] [--offset 0] [--campaign-id N] [--all]
 p202 conversion match-methods [--aff-campaign-id N] [--period P] [--time-from T] [--time-to T] [--json]
                        # each campaign's conversions, counted ones and income by how their click was found
 p202 conversion postback-auth get [--json]   # mode, the URL token (p202_token), the signing secret, how to sign
+p202 conversion postback-auth readiness [--json]  # run before set --mode token: who came without the token in the last 7 days
 p202 conversion postback-auth set --mode off|token|signed  # token: token or signature; signed: signatures only, pixels refused
 p202 conversion postback-auth rotate [--credential token|signing_secret] [--grace-hours 0-720]  # the old one works this long (168)
 p202 conversion offline-export --format google|google_uploads|microsoft [--days 1-90] [--aff-campaign-id N]
@@ -905,8 +906,12 @@ p202 conversion offline-export --format google|google_uploads|microsoft [--days 
                        # Setup › Offline Conversions: the Google Ads / Microsoft Advertising import CSV;
                        # --summary says how many conversions it holds and why each other one is left out
 p202 conversion inbound-log [--outcome refused|accepted|<outcome>] [--endpoint pb|gpb|px|gpx|upx|clickbank|jvzoo|paykickstart]
-                       [--limit 1-500] [--before ID] [--json]
-                       # Setup › Inbound Log: postbacks, pixels and IPNs received, newest first, with why each was refused
+                       [--search SUBID|TXID] [--click-id N] [--limit 1-500] [--before ID] [--json]
+                       # Setup › Inbound Log: postbacks, pixels and IPNs received, newest first, with why each was refused,
+                       # what to do about it (fix) and whether it can be recorded now (can_record)
+p202 conversion inbound-log record <inbound_id> [--json]
+                       # record a refused postback's or pixel's conversion or event from the log (rows with can_record);
+                       # run twice, it records once
 p202 conversion shopify-refunds list [--json]
                        # Shopify refunds still counted in a sale: waiting to settle or refused (Setup › Inbound Log)
 p202 conversion shopify-refunds record <refund-id> --amount F [--click-id N] [--currency CODE] [--json]
@@ -1555,7 +1560,7 @@ Visitor-authored (or visitor-derived) fields returned by this CLI:
 | Referrer, landing and outbound URLs | The visitor's browser (`Referer`) and the tracking link's query | `click list`/`click get` (`referer`, `landing`, `outbound`), `report breakdown`/`analytics` by `referer` (the domain) and `referer_url` |
 | SubIDs `c1`--`c4` | Query parameters on the tracking link | `click get` (`c1`..`c4`), `report breakdown`/`analytics` by `c1`..`c4` |
 | UTM values | `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content` on the tracking link | `report breakdown`/`analytics` by `utm_source` .. `utm_content` |
-| Ad click ids | `gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid` on the tracking or landing URL | `click list`/`click get` (`gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid`; capped at 1,000 characters, not 512) |
+| Ad click ids | `gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid`, `oppref` on the tracking or landing URL | `click list`/`click get` (`gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid`, `oppref`; capped at 1,000 characters, not 512) |
 | IP addresses | The visitor's connection (or the `X-Forwarded-For` header the redirect honours) | `report breakdown`/`analytics` by `ip` |
 | Browser, platform, device names | Parsed from the visitor's user-agent string | `click list`/`click get` resolved names, `report breakdown`/`analytics` by `browser`/`platform`/`device` |
 | Region, city, ISP names | GeoIP resolution of the visitor's IP | `click list`/`click get`, `report breakdown`/`analytics` by `region`/`city`/`isp` |

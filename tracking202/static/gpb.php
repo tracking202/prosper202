@@ -25,6 +25,8 @@ $mysql['click_id'] = 0;
 // A signed request reads its query alone: p202_sig signs nothing else.
 $signedQuery = \Prosper202\Conversion\PostbackAuth\PresentedCredentials::fromQueryString((string) ($_SERVER['QUERY_STRING'] ?? ''))->signature !== null;
 $request = p202PostbackRequest($_GET, $signedQuery ? [] : $_POST);
+// The log keeps the request as read here, a form post's body included (redacted as the query is).
+\Prosper202\InboundLog\RequestLog::current()?->request($request);
 
 // The click: an exact positive integer from subid (or sid), or a 404.
 // is_numeric() plus a cast used to turn "123.9" into click 123, and a
@@ -82,6 +84,10 @@ if ($parsedClickId === null) {
     }
 }
 $mysql['click_id'] = (string) $parsedClickId;
+if ($signedPurLink === null && $legacyPurLink === null) {
+    // The click and how it was found (its subid, or an ad click id sent back), kept so a refused request can be recorded from the log.
+    \Prosper202\InboundLog\RequestLog::current()?->matched($parsedClickId, $matchedBy);
+}
 
 // The click's latest visit, which the conversion credits (p202PostbackClickSql()).
 $cvar_sql = p202PostbackClickSql($parsedClickId);
@@ -161,6 +167,7 @@ $tokens = [
     "ttclid" => $adClickIds['ttclid'],
     "msclkid" => $adClickIds['msclkid'],
     "fbclid" => $adClickIds['fbclid'],
+    "oppref" => $adClickIds['oppref'],
     "utm_source" => $mysql['utm_source'],
     "utm_medium" => $mysql['utm_medium'],
     "utm_campaign" => $mysql['utm_campaign'],

@@ -328,6 +328,17 @@ final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
             'SELECT outcome, user_id FROM 202_inbound_log WHERE user_id IN (' . self::USER . ', ' . self::OTHER_USER
                 . ')'
         ));
+
+        // The refused row keeps the click and how it was found, so its owner can record it from the log, as found.
+        $row = (new \Prosper202\InboundLog\InboundLog(self::$db))->list(self::OTHER_USER, false)[0];
+        self::assertSame(['ad_click_id', true], [$row['match_method'], $row['can_record']]);
+        self::assertIsInt($row['click_id']);
+        $replay = new \Prosper202\InboundLog\InboundReplay(self::$db);
+        $answer = $replay->replay(self::OTHER_USER, $row['inbound_id']);
+        self::assertSame('recorded', $answer['status'], $answer['message']);
+        self::assertSame([[(string) $row['click_id'], '5.00000', 'ad_click_id']], self::conversions());
+        self::assertSame('already_recorded', $replay->replay(self::OTHER_USER, $row['inbound_id'])['status']);
+        self::assertCount(1, self::conversions());
     }
 
     public function testAReloadedVisitRecordsOnTheLatestOfItsClicks(): void
@@ -472,7 +483,7 @@ final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
     public function testAnIdThatFillsItsColumnNamesNoClick(): void
     {
         // The column may have cut it: it then stands for every id that starts so.
-        $filled = str_repeat('w', \Prosper202\Click\ClickRecord::AD_CLICK_IDS['gbraid']);
+        $filled = str_repeat('w', \Prosper202\Click\ClickRecord::AD_CLICK_IDS['gbraid'] - 1) . '0';
         self::carries(self::CLICK, ['gbraid' => $filled]);
         [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', 'gbraid' => $filled]);
         self::assertSame(404, $status, $body);
@@ -571,10 +582,14 @@ final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
     public function testAValueNoPlatformIssuesNamesNoClick(): void
     {
         $campaign = self::$campaigns[self::USER][0];
-        self::click(self::ADDED[0], self::USER, $campaign, 0, ['gclid' => 'undefined'], [600]);
-        self::click(self::ADDED[0] + 1, self::USER, $campaign, 0, ['gclid' => 'undefined'], [500]);
+        // Two visitors whose page wrote the same thing where the id goes, for each form a page writes.
+        $values = ['undefined', '__GCLID__', '{{ gclid }}', '{gclid}', '$gclid', 'gclid', 'test', '123'];
+        foreach ($values as $i => $value) {
+            self::click(self::ADDED[0] + 2 * $i, self::USER, $campaign, 0, ['gclid' => $value], [600]);
+            self::click(self::ADDED[0] + 2 * $i + 1, self::USER, $campaign, 0, ['gclid' => $value], [500]);
+        }
 
-        foreach (['undefined', '__GCLID__'] as $value) {
+        foreach ($values as $value) {
             [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', 'gclid' => $value]);
             self::assertSame(404, $status, $body);
             self::assertSame('SubID not found', json_decode($body, true)['msg'] ?? null, $value);
@@ -583,6 +598,23 @@ final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
     }
 
     /** Clicks older than the 30 days are not counted against the limit of clicks told apart. */
+    /** A ChatGPT ad's click: OpenAI's oppref, sent back under its own name, finds it. */
+    public function testAnUnfilledSubidIsMatchedByTheOpprefSentBack(): void
+    {
+        $click = self::ADDED[0] + 28;
+        $oppref = 'op_Q2hhdEdQVC1kZW1vLXNob3A';
+        self::click($click, self::USER, self::$campaigns[self::USER][0], 0, ['oppref' => $oppref], [600]);
+
+        [$status, $body] = self::gpb(['subid' => '', 'amount' => '89.00', 'oppref' => $oppref]);
+
+        self::assertSame(200, $status, $body);
+        $recorded = 'SELECT click_id, click_payout, match_method FROM 202_conversion_logs WHERE click_id = ' . $click;
+        self::assertSame([[(string) $click, '89.00000', 'ad_click_id']], self::all($recorded));
+        [$status, $body] = self::gpb(['subid' => '', 'amount' => '1', 'oppref' => strtolower($oppref)]);
+        self::assertSame(404, $status, 'an oppref is compared exactly: ' . $body);
+        self::assertCount(1, self::all($recorded));
+    }
+
     public function testOldClicksCarryingTheIdDoNotHideARecentOne(): void
     {
         $old = range(self::ADDED[0] + 2, self::ADDED[0] + 25);
