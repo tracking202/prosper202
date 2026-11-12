@@ -450,6 +450,28 @@ final class ShopifyRefundsToSettleIntegrationTest extends TestCase
         ]]);
     }
 
+    /**
+     * The held copy 1.9.79 kept of a refund refused for the account's
+     * currency. Since 1.9.80 a refund of a sale on file follows its sale's
+     * currency and is never held, but copies held before the upgrade remain.
+     *
+     * @param array<string, mixed> $refund
+     */
+    private static function heldBeforeTheUpgrade(array $refund): void
+    {
+        $db = self::requireScratch();
+        $shopify = new ShopifyAdapter($db);
+        $request = ShopifyAdapterTest::webhook('refunds/create', $refund, self::SECRET);
+        self::assertNotNull($shopify->verify($request, $shopify->storedSecrets(new Connection($db))));
+        self::assertTrue((new \Prosper202\PaymentNotification\HeldNotifications($db))->hold(
+            self::ACCOUNT,
+            $shopify,
+            $shopify->parse($request),
+            $request,
+            time()
+        ));
+    }
+
     public function testARefusalTheProcessorMadeThatCannotBeKeptIsAnsweredAsAFailureToo(): void
     {
         $db = self::requireScratch();
@@ -573,6 +595,56 @@ final class ShopifyRefundsToSettleIntegrationTest extends TestCase
         self::assertTrue(self::desk()->close(self::ACCOUNT, '9100001'), 'nothing to settle: it closes, as the answer said');
     }
 
+    public function testARefundRefusedBeforeItsOrderArrivesIsNotSaidToWaitAndCanBeClosed(): void
+    {
+        $db = self::requireScratch();
+        $this->pending(9100001, 71001, '10.00');
+        // Shopify settles it at another amount while its order is not on file: refused for good.
+        $this->settle(71001, '9.00');
+        $row = $db->query("SELECT order_on_file, refused_reason IS NOT NULL, completed_at IS NOT NULL FROM 202_shopify_pending_refunds"
+            . ' WHERE user_id = ' . self::ACCOUNT . " AND refund_id = '9100001'")->fetch_row();
+        self::assertSame(['0', '1', '1'], $row, 'refused, with no order on file');
+
+        self::assertNull(self::desk()->closeRefusal(self::ACCOUNT, '9100001'), 'nothing it waits for');
+        $record = self::desk()->takeBack(self::ACCOUNT, '9100001', '10.00', null, self::byHand());
+        self::assertSame(OutcomeKind::NOTHING_TO_REVERSE, $record->kind);
+        self::assertStringNotContainsString('recorded when', $record->message, 'a settlement refused is never recorded by the sale');
+        self::assertStringContainsString('was refused', $record->message);
+        self::assertStringContainsString('listed under Setup › Inbound Log', $record->message);
+        self::assertTrue(self::desk()->close(self::ACCOUNT, '9100001'));
+        self::assertSame([], self::payouts(), 'no sale on file, and nothing recorded');
+    }
+
+    public function testARefundWaitingForItsOrderIsToldSoBeforeAnythingAboutItsCurrency(): void
+    {
+        $this->pending(9100001, 71001, '10.00');
+
+        $record = self::desk()->takeBack(self::ACCOUNT, '9100001', '10.00', null, self::byHand(), RefundsToSettle::THE_PAGE, 'EUR');
+
+        self::assertSame(OutcomeKind::NOTHING_TO_REVERSE, $record->kind, $record->message);
+        self::assertStringContainsString('recorded when its sale arrives', $record->message);
+    }
+
+    public function testARefundClosedWhileItsHeldCopyCannotBeDroppedIsAnsweredAsClosed(): void
+    {
+        $this->deliver('orders/paid', self::order());
+        $this->deliver('refunds/create', self::refundIn('EUR'));
+        $previous = (string) ini_get('error_log');
+        $sink = (string) tempnam(sys_get_temp_dir(), 'p202-refund-close-log');
+        ini_set('error_log', $sink);
+        self::q('RENAME TABLE 202_held_payment_notifications TO 202_held_payment_notifications_away');
+        try {
+            self::assertTrue(self::desk()->close(self::ACCOUNT, '9100001'), 'closed (#13), though the held copy could not be dropped');
+        } finally {
+            self::q('RENAME TABLE 202_held_payment_notifications_away TO 202_held_payment_notifications');
+            ini_set('error_log', $previous);
+        }
+        self::assertStringContainsString('was closed for account ' . self::ACCOUNT . ' but its held copy could not be dropped', (string) file_get_contents($sink));
+        @unlink($sink);
+        self::assertSame([], self::desk()->list(self::ACCOUNT)['refunds']);
+        self::assertFalse(self::desk()->close(self::ACCOUNT, '9100001'), 'and a second press finds it closed');
+    }
+
     public function testARefundClosedByHandAndSentAgainIsNotRecordedWhenItsHeldCopyIsReplayed(): void
     {
         $db = self::requireScratch();
@@ -583,6 +655,9 @@ final class ShopifyRefundsToSettleIntegrationTest extends TestCase
         $again = $this->deliver('refunds/create', self::refundIn('EUR'));
         self::assertSame(OutcomeKind::CURRENCY_MISMATCH, $again->kind, $again->message);
         self::assertSame([], self::desk()->list(self::ACCOUNT)['refunds'], 'closed: not listed again');
+        // A copy held before the upgrade, and a sale since recorded in EUR: replay would net them.
+        self::heldBeforeTheUpgrade(self::refundIn('EUR'));
+        $db->query("UPDATE 202_conversion_logs SET currency = 'EUR' WHERE click_id = " . self::CLICK);
         $db->query("UPDATE 202_users_pref SET user_account_currency = 'EUR' WHERE user_id = " . self::ACCOUNT);
         try {
             $replayed = (new \Prosper202\PaymentNotification\HeldReplay($db))->replay(self::ACCOUNT, 'shopify');
@@ -600,10 +675,12 @@ final class ShopifyRefundsToSettleIntegrationTest extends TestCase
     {
         $db = self::requireScratch();
         $this->deliver('orders/paid', self::order());
-        // An EUR sale, so its EUR refund nets with it once the account counts in EUR.
-        $db->query("UPDATE 202_conversion_logs SET currency = 'EUR' WHERE click_id = " . self::CLICK);
-        $this->deliver('refunds/create', self::refundIn('EUR'));
+        $refused = $this->deliver('refunds/create', self::refundIn('EUR'));
+        self::assertSame(OutcomeKind::CURRENCY_MISMATCH, $refused->kind, $refused->message);
         self::assertCount(1, self::desk()->list(self::ACCOUNT)['refunds']);
+        self::heldBeforeTheUpgrade(self::refundIn('EUR'));
+        // The owner records that the sale was in EUR (RowCurrency::recordBefore()), and the account counts in EUR.
+        $db->query("UPDATE 202_conversion_logs SET currency = 'EUR' WHERE click_id = " . self::CLICK);
         $db->query("UPDATE 202_users_pref SET user_account_currency = 'EUR' WHERE user_id = " . self::ACCOUNT);
         try {
             $replayed = (new \Prosper202\PaymentNotification\HeldReplay($db))->replay(self::ACCOUNT, 'shopify');
@@ -639,8 +716,10 @@ final class ShopifyRefundsToSettleIntegrationTest extends TestCase
         $this->deliver('orders/paid', self::order());
         $refused = $this->deliver('refunds/create', self::refundIn('EUR'));
         self::assertSame(OutcomeKind::CURRENCY_MISMATCH, $refused->kind, $refused->message);
-        self::assertSame(1, $held(), 'held for the account counting in EUR, and listed');
+        self::assertSame(0, $held(), 'refused against its sale\'s USD: not held');
         self::assertCount(1, self::desk()->list(self::ACCOUNT)['refunds']);
+        self::heldBeforeTheUpgrade(self::refundIn('EUR'));
+        self::assertSame(1, $held());
 
         $outcome = self::desk()->takeBack(self::ACCOUNT, '9100001', '11.60', null, self::byHand(), RefundsToSettle::THE_PAGE, 'USD');
 
@@ -652,6 +731,7 @@ final class ShopifyRefundsToSettleIntegrationTest extends TestCase
         self::recordClick(self::CLICK);
         $this->deliver('orders/paid', self::order());
         $this->deliver('refunds/create', self::refundIn('EUR'));
+        self::heldBeforeTheUpgrade(self::refundIn('EUR'));
         self::assertSame(1, $held());
         self::assertTrue(self::desk()->close(self::ACCOUNT, '9100001'));
         self::assertSame(0, $held(), 'closed by hand: the held copy goes');

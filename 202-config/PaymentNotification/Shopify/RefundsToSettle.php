@@ -113,7 +113,7 @@ final class RefundsToSettle
 
     /**
      * Records the refund as a reversal of its order's sale, by the amount the
-     * operator states in the account's currency, capped at what is left of
+     * operator states in its sale's currency, capped at what is left of
      * the sale as a refund webhook is, and closes it. Recorded once under
      * the refund's id, so the webhook settling later, or a second click of
      * the button, is that same reversal.
@@ -152,6 +152,17 @@ final class RefundsToSettle
                 OutcomeKind::NOTHING_TO_REVERSE,
                 'Order ' . $orderId . ' is not on file yet: the refund is recorded when its sale arrives and Shopify'
                 . ' settles it. Nothing was recorded.',
+                null,
+                $account
+            );
+        }
+        if ((int) $row['order_on_file'] !== 1) {
+            return new Outcome(
+                OutcomeKind::NOTHING_TO_REVERSE,
+                'Order ' . $orderId . ' is not on file, so there is no sale to take the refund from. Shopify\'s'
+                . ' settlement of it was refused (' . rtrim((string) $row['refused_reason'], '.') . '): once the sale'
+                . ' arrives it is listed under Setup › Inbound Log to record by hand, or close it now if no money was'
+                . ' returned. Nothing was recorded.',
                 null,
                 $account
             );
@@ -256,18 +267,25 @@ final class RefundsToSettle
             . ' sale arrives and Shopify settles the refund. Nothing was changed.';
     }
 
-    /** @param array<string, mixed> $row listed()'s */
+    /**
+     * Still pending with its order not on file: recorded when the sale
+     * arrives and Shopify settles it. One refused already (a settlement
+     * at another amount, say) is not waiting for anything.
+     *
+     * @param array<string, mixed> $row listed()'s
+     */
     private static function waitsForItsOrder(array $row): bool
     {
-        return (int) $row['order_on_file'] !== 1;
+        return (int) $row['order_on_file'] !== 1 && $row['refused_reason'] === null;
     }
 
     /** Closes the refund with nothing recorded (no money was returned, or it is handled elsewhere). */
     public function close(int $account, string $refundId, string $from = self::THE_PAGE): bool
     {
         // A refund waiting for its order stays, to be recorded when the sale
-        // arrives (closeRefusal() says so); one whose sale is gone has
-        // nothing to settle and may be closed.
+        // arrives (closeRefusal() says so); one whose sale is gone, or one
+        // refused before its order arrived, has nothing to settle and may
+        // be closed.
         $row = $this->listed($account, $refundId);
         if (
             $row === null || self::waitsForItsOrder($row)
@@ -316,7 +334,7 @@ final class RefundsToSettle
             return null;
         }
         $stmt = $this->conn->prepareWrite(
-            'SELECT order_id, occurred_at, transactions, order_on_file FROM 202_shopify_pending_refunds'
+            'SELECT order_id, occurred_at, transactions, order_on_file, refused_reason FROM 202_shopify_pending_refunds'
             . ' WHERE user_id = ? AND refund_id = ?'
             . ' AND (completed_at IS NULL OR refused_reason IS NOT NULL)'
         );

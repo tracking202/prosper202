@@ -416,6 +416,17 @@ final class ShopifyRefundsServedIntegrationTest extends TestCase
         self::assertSame(['59.00000'], self::payouts());
     }
 
+    public function testARefundWaitingForItsOrderIsAConflictToCloseNotGone(): void
+    {
+        self::waitingRefund();
+
+        [$status, $body, $raw] = self::request('POST', '/conversions/shopify-refunds/9100001/close', self::$keys['mine'], []);
+
+        self::assertSame(409, $status, $this->context($raw));
+        self::assertSame('waiting_for_order', $body['details']['outcome'] ?? null, $raw);
+        self::assertStringContainsString('recorded when the sale arrives', $raw);
+    }
+
     public function testTheInboundLogShowsAnAccountWithASecretTheUnverifiedShopifyWebhooks(): void
     {
         self::deliver('orders/paid', ShopifyAdapterTest::order(), 'a-secret-the-store-does-not-have');
