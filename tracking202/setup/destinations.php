@@ -43,7 +43,7 @@ $userId = (int) $_SESSION['user_id'];
 $conn = new \Prosper202\Database\Connection($db);
 $store = new DestinationStore($conn);
 $adStore = new AdConnectionStore($conn);
-$adConnections = static fn (): OpenAiAdsConnections => new OpenAiAdsConnections($adStore, new AdvertiserApi(), $store, \Prosper202\Database\InstallId::of($db));
+$adConnections = static fn (): OpenAiAdsConnections => new OpenAiAdsConnections($adStore, AdvertiserApi::fromEnvironment(), $store, \Prosper202\Database\InstallId::of($db));
 $base = get_absolute_url();
 $self = $base . 'tracking202/setup/destinations.php';
 $redirectUri = GoogleAdsOAuth::redirectUri($_SERVER);
