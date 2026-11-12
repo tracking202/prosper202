@@ -11,6 +11,11 @@ const start = source.indexOf("// --- Dynamic content: 1.9.56's dcs.t202DataObj -
 const end = source.indexOf('// --- Manual ABM event instrumentation ---');
 assert.ok(start > 0 && end > start, 'the dynamic-content block is in landing.php');
 const block = source.slice(start, end);
+// The keys the pageview carries, as landing.php defines them.
+const paramsAt = source.indexOf('var p202SettingParams = {');
+const paramsEnd = source.indexOf('};', paramsAt) + 2;
+assert.ok(paramsAt > 0 && paramsEnd > paramsAt, 'landing.php defines p202SettingParams');
+const settingParams = source.slice(paramsAt, paramsEnd);
 
 class Element {
     constructor(tag, attrs = {}, extra = {}) {
@@ -92,6 +97,7 @@ function page(serverData, query, elements, options = {}) {
         t202GetVar: get,
         p202Var: (name) => (options.settingValues && name in options.settingValues ? options.settingValues[name] : get(name)),
         p202DcsSet: null,
+        p202SettingWarn: (m) => warnings.push('settings: ' + m),
         P202_SUBID_ORIG: '_t202SubidOrig',
         p202SubidOrigExpiry: () => options.expiry || 7,
         readCookie: (name) => (jar.has(name) ? jar.get(name).value : null),
@@ -111,7 +117,9 @@ function page(serverData, query, elements, options = {}) {
         .replace('<?php echo $p202ClientParamMapJs; ?>', JSON.stringify(map))
         .replace('<?php echo $p202DcsUpdateUrlJs; ?>', JSON.stringify(UPDATE_URL));
     assert.ok(!code.includes('<?php'), 'every PHP value is substituted');
-    vm.runInNewContext(code, context);
+    vm.createContext(context);
+    vm.runInContext(settingParams, context);
+    vm.runInContext(code, context);
     return {window, listeners, warnings, network, posts, queue, context, jar};
 }
 const UPDATE_URL = 'https://track.example/tracking202/static/dcs-update.php';
@@ -249,6 +257,22 @@ const query = 'c1=<b>one</b>&c2=two&t202kw=blue+shoes&utm_source=news&pci=88&t20
     }
     window.p202.consent(false);
     assert.deepStrictEqual([subid.value, orig.value, source.textContent, ip.textContent], ['', '', '', 'hidden'], 'a withdrawal clears them');
+    // The usual funnel: an entry page that shows nothing keeps the first
+    // click for the order page that shows it, and for a page's own script.
+    {
+        const funnel = new Map();
+        const entry = page(server, query, [new Element('span', {t202attribute: 't202Subid'})], {jar: funnel});
+        entry.window.p202DcsClick({t202Subid: '100'});
+        assert.deepStrictEqual(funnel.get('_t202SubidOrig'), {value: '100', days: 7}, 'the entry page keeps it');
+        const field = new Element('input', {name: 't202SubidOrig', type: 'hidden'});
+        const order = page(server, query, [field], {jar: funnel});
+        order.window.p202DcsClick({t202Subid: '200'});
+        assert.deepStrictEqual([field.value, order.window.t202GetSubid()], ['100', '200'], 'the order page shows the first click');
+        const script = page(server, query, [], {jar: funnel});
+        script.window.p202DcsClick({t202Subid: '300'});
+        assert.deepStrictEqual([script.window.t202GetSubidOrig(), script.window.dcs.t202DataObj.t202SubidOrig], ['100', '100'],
+            'and a page reading it from script gets it too');
+    }
     assert.deepStrictEqual([window.t202GetSubid(), window.t202GetSubidOrig()], ['', '']);
     window.p202DcsClick({t202Subid: '42'});
     assert.strictEqual(subid.value, '', 'no subid after a withdrawal');
@@ -259,13 +283,16 @@ const query = 'c1=<b>one</b>&c2=two&t202kw=blue+shoes&utm_source=news&pci=88&t20
 {
     const kw = new Element('input', {name: 't202Kw'});
     const c1 = new Element('span', {t202attribute: 't202c1'});
-    const {window, context, network, jar} = page(server, query, [kw, c1], {settingValues: {gclid: 'MAPPED'}});
+    const {window, context, network, jar, warnings} = page(server, query, [kw, c1], {settingValues: {gclid: 'MAPPED'}});
     assert.strictEqual(window.dcs.t202DataObj.t202GCLID, 'MAPPED', 'an ad click id read from the page\'s parameter');
-    context.p202DcsSet({t202kw: 'from settings', T202C1: 'home', t202Nope: 'x'});
+    context.p202DcsSet({t202kw: 'from settings', T202C1: 'home', t202Nope: 'x', t202Pubid: 'p9', T202PUBID: 'p9'});
     assert.deepStrictEqual([kw.value, c1.textContent], ['from settings', 'home']);
     assert.deepStrictEqual([window.dcs.t202DataObj.t202Kw, window.dcs.t202DataObj.t202kw, window.dcs.t202DataObj.t202C1],
         ['from settings', 'from settings', 'home']);
     assert.ok(!('t202Nope' in window.dcs.t202DataObj));
+    assert.deepStrictEqual(warnings.filter((w) => w.startsWith('settings: ')),
+        ['settings: t202Settings.t202Nope is not a key of dcs.t202DataObj, and is ignored; add it with dcs.addDataObj().'],
+        't202Pubid is carried by the pageview, so it is not called ignored');
     assert.deepStrictEqual(network, [], 'the pageview carries them: no update is sent');
     assert.strictEqual(jar.size, 0);
 }
