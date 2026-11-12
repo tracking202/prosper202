@@ -55,6 +55,7 @@ final class ClickRecordBuilderTest extends TestCase
         'ttclid' => ['ttclid', 'E.C.P.ttclid', 'E.C.P.ttclid'],
         'msclkid' => ['msclkid', 'cdd4afcccb1c9a4c', 'cdd4afcccb1c9a4c'],
         'fbclid' => ['fbclid', 'IwAR2F4-dbP0l7Mn', 'IwAR2F4-dbP0l7Mn'],
+        'oppref' => ['oppref', 'op_8fK2mQ7zR1', 'op_8fK2mQ7zR1'],
         'utm_source_id' => ['utmSourceId', '131', 131],
         'utm_medium_id' => ['utmMediumId', '132', 132],
         'utm_campaign_id' => ['utmCampaignId', '133', 133],
@@ -227,7 +228,8 @@ final class ClickRecordBuilderTest extends TestCase
      */
     public function testEachAdClickIdIsCutToItsColumn(): void
     {
-        $widths = ['gbraid' => 150, 'wbraid' => 150, 'ttclid' => 1000, 'msclkid' => 150, 'fbclid' => 1000];
+        $widths = ['gbraid' => 150, 'wbraid' => 150, 'ttclid' => 1000, 'msclkid' => 150, 'fbclid' => 1000,
+            'oppref' => 1000];
         foreach ($widths as $key => $width) {
             $long = str_repeat('é', $width - 1) . 'xyz';
             $click = ClickRecordBuilder::fromLegacyArray([$key => $long] + self::given(), 1);
@@ -254,8 +256,8 @@ final class ClickRecordBuilderTest extends TestCase
     {
         $stored = ClickRecord::storedAdClickIds(['gclid' => str_repeat('g', 200), 'ttclid' => 'E.C.P.x']);
 
-        self::assertSame(['gclid', 'gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid'], array_keys($stored));
-        self::assertSame([str_repeat('g', 150), '', '', 'E.C.P.x', '', ''], array_values($stored));
+        self::assertSame(['gclid', 'gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid', 'oppref'], array_keys($stored));
+        self::assertSame([str_repeat('g', 150), '', '', 'E.C.P.x', '', '', ''], array_values($stored));
     }
 
     public function testANameThatIsNoAdClickIdIsRefused(): void

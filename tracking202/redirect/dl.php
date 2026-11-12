@@ -125,7 +125,7 @@ if ($usedCachedRedirect == true) {
 
 			// c1-c4, the ad click ids and the UTM values as sent, or p202<name> for one not sent
 			$cachedTokens = [
-                'c1', 'c2', 'c3', 'c4', 'gclid', 'gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid',
+                'c1', 'c2', 'c3', 'c4', 'gclid', 'gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid', 'oppref',
                 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
 			];
 			foreach ($cachedTokens as $token) {
