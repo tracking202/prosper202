@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 
@@ -159,7 +161,8 @@ func runInteractive(state *shell.State) error {
 func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 	var failures []error // every failed command's error, built-ins included
 	activeProfile := currentProfileName()
-	for _, cmdStr := range commands {
+	ran := 0 // commands that ran before the current one, built-ins included
+	for i, cmdStr := range commands {
 		cmdStr = strings.TrimSpace(cmdStr)
 		if cmdStr == "" {
 			continue
@@ -186,7 +189,7 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 					fmt.Fprintf(os.Stderr, "Error [%s]: %v\n", cmdStr, builtinErr)
 				}
 				if stopOnError {
-					return fmt.Errorf("stopped on error: %w", builtinErr)
+					return batchStopped(fmt.Errorf("stopped on error: %w", builtinErr), builtinErr, commands[i:], ran)
 				}
 			}
 			if exit {
@@ -195,6 +198,7 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 			if newProfile != "" {
 				activeProfile = newProfile
 			}
+			ran++
 			continue
 		}
 
@@ -208,7 +212,7 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 				fmt.Fprintf(os.Stderr, "Error [%s]: %v\n", cmdStr, err)
 			}
 			if stopOnError {
-				return fmt.Errorf("stopped on error: %w", err)
+				return batchStopped(fmt.Errorf("stopped on error: %w", err), err, commands[i:], ran)
 			}
 			continue
 		}
@@ -219,6 +223,7 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 			printOutput(output)
 		}
 		storeResult(state, output)
+		ran++
 	}
 
 	if len(failures) > 0 {
@@ -230,8 +235,19 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 		if limited := rateLimited(failures...); limited != nil {
 			// Every failed command met a 429: keep its category and exit 7, but
 			// not its "run the same command again": the batch's other commands ran.
+			wait := 0
+			for _, f := range failures {
+				var apiErr *api.APIError
+				if errors.As(f, &apiErr) && apiErr.RetryAfter > wait {
+					wait = apiErr.RetryAfter
+				}
+			}
+			waitFor := "a minute"
+			if wait > 0 {
+				waitFor = fmt.Sprintf("%d seconds", wait)
+			}
 			return withHint(fmt.Errorf("one or more commands failed: %w", limited),
-				"Every failed command was rate limited; nothing in them is wrong. Wait the seconds its error names, then run only the commands that failed again: the others already ran.")
+				"Every failed command was rate limited; nothing in them is wrong. Wait %s, then run only the commands that failed again: the others already ran.", waitFor)
 		}
 		return fmt.Errorf("one or more commands failed")
 	}
@@ -631,4 +647,39 @@ func init() {
 	shellCmd.Flags().String("script", "", "Read and execute commands from a file")
 	shellCmd.Flags().Bool("stop-on-error", false, "Stop batch execution on first error")
 	rootCmd.AddCommand(shellCmd)
+}
+
+// batchStopped is the error of a --stop-on-error batch stopped at the first
+// of rest after ran commands already ran: the failed command's own step,
+// then to run only it and the commands after it. Its own hint ("run the
+// same command again" for a 429) is right for the command and wrong for the
+// batch, whose earlier commands would run a second time (CLAUDE.md #13).
+func batchStopped(stopped, err error, rest []string, ran int) error {
+	if ran == 0 {
+		return stopped
+	}
+	left := make([]string, 0, len(rest))
+	for _, c := range rest {
+		if c = strings.TrimSpace(c); c != "" {
+			left = append(left, c)
+		}
+	}
+	listed := strings.Join(left, "; ")
+	if len(left) > 5 {
+		listed = strings.Join(left[:5], "; ") + fmt.Sprintf("; and %d more", len(left)-5)
+	}
+	resume := fmt.Sprintf("The %d command(s) before it already ran: then run only the failed command and the ones after it (`%s`), "+
+		"not the whole batch, which would run those a second time.", ran, listed)
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) && apiErr.Status == http.StatusTooManyRequests {
+		wait := "a minute"
+		if apiErr.RetryAfter > 0 {
+			wait = fmt.Sprintf("%d seconds (the server's Retry-After)", apiErr.RetryAfter)
+		}
+		return withHint(stopped, "Rate limited; nothing in the command is wrong. Wait %s. %s", wait, resume)
+	}
+	if first := strings.TrimSpace(rawHintFor(err)); first != "" {
+		return withHint(stopped, "%s %s", first, resume)
+	}
+	return withHint(stopped, "Fix what the message names. %s", resume)
 }

@@ -1922,7 +1922,10 @@ account or server is refused row by row with the field named. To copy between se
 refused record stops the import with that record's number, how many were imported before it,
 and the API error's category, exit code and hint (a bad key exits 2; a 5xx, 4; a 429, 7). When
 records were imported before it, the hint names the records to send next (a file of the stopped
-one to the last), since the whole file again would create the first ones twice. With
+one to the last, and any `--skip-errors` refused before it, each named with its error), since the
+whole file again would create the first ones twice; a record whose create failed with a 5xx or on
+the connection may exist already, so the hint says to check `p202 <entity> list` first. Every item
+of the file must be an object: one that is not is refused before anything is sent, naming it. With
 `--skip-errors` the rest are sent, the summary lists each refusal under `errors`, and the command
 exits 5 when any record failed; a 401, 403 or 429 still stops it, since every later record would
 fail the same way.

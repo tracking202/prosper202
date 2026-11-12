@@ -105,6 +105,10 @@ type RequestError struct {
 
 func (e *APIError) Error() string {
 	msg := fmt.Sprintf("API error (%d): %s", e.Status, e.Message)
+	if e.Status == http.StatusTooManyRequests && e.RetryAfter > 0 && !strings.Contains(e.Message, fmt.Sprintf("%d second", e.RetryAfter)) {
+		// The wait is in the text too, not only the --json envelope: a batch prints each command's error.
+		msg += fmt.Sprintf(" (retry after %d seconds)", e.RetryAfter)
+	}
 	if len(e.FieldErrors) > 0 {
 		for k, v := range e.FieldErrors {
 			msg += fmt.Sprintf("\n  %s: %s", k, v)

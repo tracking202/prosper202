@@ -180,6 +180,8 @@ final class LandingPageCheckLimitServedIntegrationTest extends TestCase
         self::assertSame((int) $retryAfter, $body['retry_after_seconds'] ?? null, $raw);
         self::assertSame(LandingPageCheckLimit::PER_KEY, $body['rate_limit']['limit'] ?? null, $raw);
         self::assertStringContainsString('Try again in ' . $retryAfter . ' seconds', $body['message'] ?? '', $raw);
+        // A fixed window: "this minute", never "the last 60 seconds".
+        self::assertStringContainsString('fetches it may have this minute', $body['message'] ?? '', $raw);
         $unchecked = self::$db->query('SELECT 1 FROM 202_landing_page_checks WHERE landing_page_id = '
             . self::$pages[$perKey]);
         $rows = $unchecked instanceof \mysqli_result ? $unchecked->num_rows : -1;

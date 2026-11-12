@@ -371,6 +371,9 @@ final class LandingPageCheckStoreIntegrationTest extends TestCase
      */
     public function testALimitThatCannotCountFetchesNothing(): void
     {
+        if (function_exists('posix_geteuid') && posix_geteuid() === 0) {
+            self::markTestSkipped('root writes into a 0500 directory, so the count cannot be made unwritable');
+        }
         $id = self::page(self::USER, 'https://shop.example.com/spring');
         $limit = $this->limit();
         $buckets = $this->state . '/rate_limits';
@@ -396,6 +399,28 @@ final class LandingPageCheckStoreIntegrationTest extends TestCase
 
         $this->expectException(\LogicException::class);
         new LandingPageCheckLimit(new ServerStateStore($this->state), '');
+    }
+
+    /**
+     * forPage() answers for the account's own live page only: a removed page,
+     * and a stored row whose account is not the page's, read as unchecked.
+     */
+    public function testAPagesStoredCheckIsTheAccountsLivePagesOnly(): void
+    {
+        $id = self::page(self::USER, 'https://shop.example.com/spring');
+        $store = $this->store('<html><body>no code</body></html>');
+        $store->run(self::USER, $id, 'track.example.com');
+        self::assertNotNull($store->forPage(self::USER, $id), 'sanity: the check is stored');
+
+        // A row naming another account for this page: not that account's check, nor this one's.
+        self::q('UPDATE 202_landing_page_checks SET user_id = ' . self::OTHER . " WHERE landing_page_id = $id");
+        self::assertNull($store->forPage(self::OTHER, $id), 'the page is not the other account\'s');
+        self::assertNull($store->forPage(self::USER, $id), 'the row is not this account\'s');
+        self::q('UPDATE 202_landing_page_checks SET user_id = ' . self::USER . " WHERE landing_page_id = $id");
+        self::assertNotNull($store->forPage(self::USER, $id));
+
+        self::q("UPDATE 202_landing_pages SET landing_page_deleted = 1 WHERE landing_page_id = $id");
+        self::assertNull($store->forPage(self::USER, $id), 'a removed page has no check to answer from');
     }
 
     public function testASavedTrackingDomainIsReadAsItsHost(): void

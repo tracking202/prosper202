@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"p202/internal/api"
@@ -66,6 +67,7 @@ var dataImportCmd = &cobra.Command{
 		failed := 0
 		errorsOut := make([]string, 0)
 		changeIDs := make([]string, 0)
+		var failures []importFailure // under --skip-errors, the records refused so far
 
 		for i, rec := range records {
 			body := stripImmutableFields(entity, rec)
@@ -81,11 +83,16 @@ var dataImportCmd = &cobra.Command{
 				// --skip-errors as well. %w keeps the record's own category,
 				// exit code and hint (auth 2, network 3, licence 6, ...).
 				if !skipErrors || abortsImport(err) {
-					stopped := fmt.Errorf("import failed at record %d of %d (%d imported and %d staged before it, the rest not attempted): %w",
-						i+1, len(records), imported, staged, err)
-					return importStoppedHint(stopped, err, i+1, len(records), imported+staged)
+					refused := ""
+					if len(failures) > 0 {
+						refused = fmt.Sprintf(", %d refused before it (%s)", len(failures), describeImportFailures(failures))
+					}
+					stopped := fmt.Errorf("import failed at record %d of %d (%d imported and %d staged before it%s, the rest not attempted): %w",
+						i+1, len(records), imported, staged, refused, err)
+					return importStoppedHint(stopped, err, entity, i+1, len(records), imported+staged, failures)
 				}
 				failed++
+				failures = append(failures, importFailure{record: i + 1, err: err})
 				errorsOut = append(errorsOut, fmt.Sprintf("record %d: %v", i+1, err))
 				continue
 			}
@@ -131,17 +138,22 @@ var dataImportCmd = &cobra.Command{
 		// import a success. It exited 0 with every record failed, which a
 		// script reads as everything imported. The summary lists each.
 		if failed > 0 {
+			hint := fmt.Sprintf("Fix %s and import a file of just them: running the whole file again sends every record already imported a second time.",
+				recordsNamed(failureRecords(failures)))
+			if note := mayExistNote(entity, failures); note != "" {
+				hint += " " + note
+			}
 			return partialFailureError("failed to import %d of %d record(s); the summary lists each under errors", failed, len(records)).
-				WithHint("Fix those records and import a file of just them: running the whole file again sends every record already imported a second time.")
+				WithHint("%s", hint)
 		}
 		return nil
 	},
 }
 
 func parseImportRecords(raw []byte) ([]map[string]interface{}, error) {
-	var arr []map[string]interface{}
+	var arr []interface{}
 	if err := json.Unmarshal(raw, &arr); err == nil {
-		return arr, nil
+		return importObjects(arr, "")
 	}
 
 	var obj map[string]interface{}
@@ -157,11 +169,24 @@ func parseImportRecords(raw []byte) ([]map[string]interface{}, error) {
 	if !ok {
 		return nil, validationError("import file data field must be an array").WithHint("Produce it with `p202 export <entity> --output <file>`, or wrap your records as {\"data\": [...]}.")
 	}
+	return importObjects(items, "data")
+}
+
+// importObjects is the file's records, every one an object: an item that is
+// not (null, a number, a list) is refused naming its index, never skipped,
+// since a skip shifts every later record's number, which the import's errors
+// and hints name (CLAUDE.md #4).
+func importObjects(items []interface{}, field string) ([]map[string]interface{}, error) {
 	out := make([]map[string]interface{}, 0, len(items))
-	for _, item := range items {
+	where := "the file's array"
+	if field != "" {
+		where = "the file's `" + field + "` array"
+	}
+	for i, item := range items {
 		rec, ok := item.(map[string]interface{})
-		if !ok {
-			continue
+		if !ok || rec == nil {
+			return nil, validationError("record %d (index %d of %s) is not a JSON object", i+1, i, where).
+				WithHint("Every record must be an object of the entity's fields, as `p202 export <entity> --output <file>` writes them; remove or fix that item.")
 		}
 		out = append(out, rec)
 	}
@@ -189,18 +214,109 @@ func init() {
 	rootCmd.AddCommand(dataImportCmd)
 }
 
+// importFailure is a record --skip-errors went past: its number and error.
+type importFailure struct {
+	record int
+	err    error
+}
+
+func failureRecords(failures []importFailure) []int {
+	out := make([]int, 0, len(failures))
+	for _, f := range failures {
+		out = append(out, f.record)
+	}
+	return out
+}
+
+// describeImportFailures names each refused record with its error, the first
+// five in full.
+func describeImportFailures(failures []importFailure) string {
+	parts := make([]string, 0, len(failures))
+	for i, f := range failures {
+		if i == 5 {
+			parts = append(parts, fmt.Sprintf("and %d more", len(failures)-5))
+			break
+		}
+		parts = append(parts, fmt.Sprintf("record %d: %v", f.record, f.err))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// recordsNamed is "record 2", or "records 2, 4 to 6".
+func recordsNamed(records []int) string {
+	if len(records) == 1 {
+		return "record " + strconv.Itoa(records[0])
+	}
+	return "records " + recordList(records)
+}
+
+// recordList spells record numbers as runs: "2, 4 to 6".
+func recordList(records []int) string {
+	parts := []string{}
+	for i := 0; i < len(records); {
+		j := i
+		for j+1 < len(records) && records[j+1] == records[j]+1 {
+			j++
+		}
+		if j == i {
+			parts = append(parts, strconv.Itoa(records[i]))
+		} else {
+			parts = append(parts, fmt.Sprintf("%d to %d", records[i], records[j]))
+		}
+		i = j + 1
+	}
+	return strings.Join(parts, ", ")
+}
+
+// mayExistNote names the records whose create failed without saying it did
+// not happen (a 5xx, the connection): the server may have written them
+// before the answer was lost (CLAUDE.md #13), so they are looked up first.
+func mayExistNote(entity string, failures []importFailure) string {
+	var unsure []int
+	for _, f := range failures {
+		if cat := api.ErrorCategory(f.err); cat == "server" || cat == "network" {
+			unsure = append(unsure, f.record)
+		}
+	}
+	if len(unsure) == 0 {
+		return ""
+	}
+	noun := "R" + recordsNamed(unsure)[1:] + " failed with a server or connection error and may exist already"
+	return fmt.Sprintf("%s: check `p202 %s list` first and leave out any that is there.", noun, strings.TrimSuffix(entity, "s"))
+}
+
 // importStoppedHint is the next step for an import that stopped at record
-// at of total with sent records already imported or staged: the record's own
-// error's step, and then to send records at to total only, since running the
-// whole file again sends the first ones a second time (CLAUDE.md #13). A 429
-// says nothing was done and to run the same command again, which is true of
-// the request and not of the import, so its wait is named instead.
-func importStoppedHint(stopped, err error, at, total, sent int) error {
-	if sent == 0 {
+// at of total, with sent records imported or staged and failures refused
+// before it under --skip-errors: the stopping error's own step, then the
+// records to send next, the refused ones (fixed) and at to total, since
+// running the whole file again sends the sent ones a second time
+// (CLAUDE.md #13). A 429 says nothing was done and to run the same command
+// again, true of the request and not of the import, so its wait is named
+// instead. A create that failed with a 5xx or on the connection may have
+// been written, so the record is looked up first.
+func importStoppedHint(stopped, err error, entity string, at, total, sent int, failures []importFailure) error {
+	if sent == 0 && len(failures) == 0 {
+		if note := mayExistNote(entity, []importFailure{{record: at, err: err}}); note != "" {
+			return withHint(stopped, "%s", strings.TrimSpace(rawHintFor(err)+" "+note))
+		}
 		return stopped
 	}
-	resume := fmt.Sprintf("import a file of records %d to %d only: records 1 to %d were already sent (%d imported or staged), "+
-		"and running the whole file again sends them a second time.", at, total, at-1, sent)
+	next := append(failureRecords(failures), rangeOf(at, total)...)
+	before := fmt.Sprintf("records 1 to %d were already sent", at-1)
+	if at == 2 {
+		before = "record 1 was already sent"
+	}
+	if len(failures) > 0 {
+		before = fmt.Sprintf("the other records before %d were already sent", at)
+	}
+	resume := fmt.Sprintf("import a file of %s only: %s (%d imported or staged), "+
+		"and running the whole file again sends them a second time.", recordsNamed(next), before, sent)
+	if len(failures) > 0 {
+		resume += fmt.Sprintf(" Fix %s first: the message says why each was refused.", recordsNamed(failureRecords(failures)))
+	}
+	if note := mayExistNote(entity, append(append([]importFailure{}, failures...), importFailure{record: at, err: err})); note != "" {
+		resume += " " + note
+	}
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) && apiErr.Status == http.StatusTooManyRequests {
 		wait := "a minute"
@@ -213,4 +329,12 @@ func importStoppedHint(stopped, err error, at, total, sent int) error {
 		return withHint(stopped, "%s Then %s", first, resume)
 	}
 	return withHint(stopped, "Fix what the message names, then %s", resume)
+}
+
+func rangeOf(from, to int) []int {
+	out := make([]int, 0, to-from+1)
+	for n := from; n <= to; n++ {
+		out = append(out, n)
+	}
+	return out
 }

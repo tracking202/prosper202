@@ -458,7 +458,7 @@ func TestShellBatchOfRateLimitsKeepsExit7(t *testing.T) {
 	if code := exitCodeForError(err); code != ExitRateLimited {
 		t.Fatalf("exit %d (%v), want %d", code, err, ExitRateLimited)
 	}
-	if hint := hintFor(err); !strings.Contains(hint, "only the commands that failed") || strings.Contains(hint, "run the same command again") {
+	if hint := hintFor(err); !strings.Contains(hint, "Wait 20 seconds") || !strings.Contains(hint, "only the commands that failed") || strings.Contains(hint, "run the same command again") {
 		t.Errorf("hint = %q", hint)
 	}
 }
