@@ -204,6 +204,10 @@ func destinationSettings(cmd *cobra.Command, base map[string]interface{}) (map[s
 		}
 		s["ppc_account_id"] = n
 	}
+	if cmd.Flags().Changed("scope") && s["scope"] == "source" && s["ppc_account_id"] == nil {
+		return nil, validationError("--scope source needs --ppc-account-id: the traffic source account whose conversions are sent").
+			WithHint("`p202 ppc-account list` shows the ids; give --ppc-account-id with it.")
+	}
 	if cmd.Flags().Changed("event-type") && s["event_type"] != "custom" {
 		if cmd.Flags().Changed("custom-event-name") {
 			return nil, validationError("--custom-event-name is for --event-type custom").WithHint("Give --event-type custom with it, or leave it out.")

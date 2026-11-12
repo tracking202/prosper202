@@ -1,0 +1,66 @@
+{
+  "cases": [
+    {
+      "id": "destinations-001-purchases-go-to-chatgpt-ads",
+      "priority": "high",
+      "state": "seeded fixture; setup removes any destination named EVAL ChatGPT Ads and writes a Conversions API key to /tmp/p202-eval-oai-key.txt",
+      "setup": [
+        "for id in $(p202 destination list --json | jq -r '.data[] | select(.name==\"EVAL ChatGPT Ads\") | .destination_id'); do p202 destination delete \"$id\" --force --json >/dev/null; done; printf %s 'oai-capi-EvalKey_0123456789abcdef' > /tmp/p202-eval-oai-key.txt; true"
+      ],
+      "ask": "Send my store's purchases to ChatGPT Ads from the server, as a destination named EVAL ChatGPT Ads. The pixel id is px_eval_4821 and the Conversions API key is in /tmp/p202-eval-oai-key.txt.",
+      "expected": {
+        "runs_one_of": [
+          "destination create"
+        ],
+        "never_runs": [
+          "destination delete",
+          "destination update"
+        ],
+        "checks": [
+          {
+            "run": "p202 destination list --json | jq -r '[.data[] | select(.name==\"EVAL ChatGPT Ads\")] | \"destinations=\\(length) \" + (map(\"type=\\(.type) pixel=\\(.settings.pixel_id) scope=\\(.settings.scope) event=\\(.settings.event_type) key_set=\\(.credentials_set) enabled=\\(.enabled)\") | join(\";\"))'",
+            "includes": [
+              "destinations=1 type=openai_ads pixel=px_eval_4821 scope=oppref event=order_created key_set=true enabled=true"
+            ]
+          },
+          {
+            "run": "p202 destination list --json",
+            "omits": [
+              "oai-capi-EvalKey"
+            ]
+          }
+        ],
+        "reply_includes": [
+          "oppref"
+        ]
+      }
+    },
+    {
+      "id": "destinations-002-every-conversion-is-one-setting-away",
+      "priority": "medium",
+      "state": "seeded fixture; setup makes EVAL ChatGPT Ads with the default scope (oppref)",
+      "setup": [
+        "for id in $(p202 destination list --json | jq -r '.data[] | select(.name==\"EVAL ChatGPT Ads\") | .destination_id'); do p202 destination delete \"$id\" --force --json >/dev/null; done; printf %s 'oai-capi-EvalKey_0123456789abcdef' > /tmp/p202-eval-oai-key.txt; true",
+        "p202 destination create --type openai_ads --name 'EVAL ChatGPT Ads' --pixel-id px_eval_4821 --conversions-api-key-file /tmp/p202-eval-oai-key.txt --json >/dev/null"
+      ],
+      "ask": "EVAL ChatGPT Ads only gets conversions from ChatGPT ad clicks. Send it every conversion instead, so ChatGPT can credit people who saw an ad without clicking.",
+      "expected": {
+        "runs_one_of": [
+          "destination update"
+        ],
+        "never_runs": [
+          "destination delete",
+          "destination create"
+        ],
+        "checks": [
+          {
+            "run": "p202 destination list --json | jq -r '[.data[] | select(.name==\"EVAL ChatGPT Ads\")] | \"destinations=\\(length) \" + (map(\"type=\\(.type) pixel=\\(.settings.pixel_id) scope=\\(.settings.scope) event=\\(.settings.event_type) key_set=\\(.credentials_set) enabled=\\(.enabled)\") | join(\";\"))'",
+            "includes": [
+              "destinations=1 type=openai_ads pixel=px_eval_4821 scope=all event=order_created key_set=true enabled=true"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
