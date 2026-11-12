@@ -1165,6 +1165,7 @@ p202 destination connect 2
 | `destination create` | Add a GA4 destination: `--name`, `--measurement-id`, `--api-secret-file` (a file, or `-` for piped stdin; never a flag value) |
 | `destination update <id>` | `--enable` / `--disable`, `--name`, any setting flag, or a new `--api-secret-file`; only the flags given change |
 | `destination create --type google_ads` | Add a Google Ads destination: `--name`, `--customer-id`, `--conversion-action`, `--credentials-file` (JSON with `developer_token`, `oauth_client_id`, `oauth_client_secret`; a file or `-`) |
+| `destination create --type openai_ads` | Add a ChatGPT Ads destination: `--name`, `--pixel-id`, `--conversions-api-key-file` (a file or `-`); `--event-type`, `--custom-event-name`, `--scope oppref\|source\|all` (default `oppref`), `--ppc-account-id` (with `--scope source`), `--campaign-event-type N=TYPE` |
 | `destination connect <id>` | Google Ads: prints `authorisation_url` (open it signed in as the same user, within 10 minutes) and the `redirect_uri` to register on the OAuth client |
 | `destination test <id>` | Send a made-up conversion to the platform's validation endpoint (GA4's `/debug/mp/collect`, Google Ads `validateOnly`), which records nothing; prints `valid` and the `messages` |
 | `destination deliveries <id>` | The delivery log: `--status pending\|sent\|failed\|withheld\|cancelled`, `--kind conversion\|test`, `--conv-id`, `--limit`, `--offset` |
@@ -1184,7 +1185,7 @@ p202 destination connect 2
 | `--conversion-action` | Google Ads: the conversion action ID (`ctId`), or `customers/<id>/conversionActions/<id>` |
 | `--campaign-conversion-action N=ACTION` | Google Ads: the conversion action for one campaign (repeatable). On `update` it is merged with the stored ones; `N=` removes campaign N's |
 
-A flag of the other type is refused, not ignored: `--credentials-file`, `--customer-id`, `--login-customer-id`, `--conversion-action` and `--campaign-conversion-action` are Google Ads' (`create` needs `--type google_ads`); `--measurement-id`, `--api-secret-file`, `--event-name`, `--client-id-source`, `--user-id-source` and `--param` are GA4's. `update` checks them against the destination's stored type, and refuses `--api-secret-file` with `--credentials-file`.
+A flag of the other type is refused, not ignored: `--credentials-file`, `--customer-id`, `--login-customer-id`, `--conversion-action` and `--campaign-conversion-action` are Google Ads' (`create` needs `--type google_ads`); `--measurement-id`, `--api-secret-file`, `--event-name`, `--client-id-source`, `--user-id-source` and `--param` are GA4's. `--pixel-id`, `--conversions-api-key-file`, `--event-type`, `--custom-event-name`, `--campaign-event-type`, `--scope` and `--ppc-account-id` are ChatGPT Ads', which takes no `--ad-user-data` or `--ad-personalization`. `update` checks them against the destination's stored type, and refuses more than one of `--api-secret-file`, `--credentials-file` and `--conversions-api-key-file`.
 
 A conversion goes out with the minutely cron job and is retried with backoff,
 8 tries in all. A conversion whose click was guessed (same IP, visitor id), a

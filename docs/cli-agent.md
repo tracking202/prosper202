@@ -956,6 +956,10 @@ p202 destination create --type google_ads --name S --customer-id 123-456-7890 --
                        # credentials JSON: developer_token, oauth_client_id, oauth_client_secret; status needs_authorisation
                        # a flag of the other type (e.g. --credentials-file without --type google_ads) is a validation error, never ignored
                        # update: --campaign-conversion-action merges with the stored map; N= removes campaign N's
+p202 destination create --type openai_ads --name S --pixel-id ID --conversions-api-key-file FILE|-   # ChatGPT Ads Conversions API
+                       [--event-type order_created|lead_created|...|custom] [--custom-event-name N]
+                       [--scope oppref|source|all] [--ppc-account-id N] [--campaign-event-type N=TYPE]... [--send-user-data] [--json]
+                       # scope oppref (default): only conversions whose click carries oppref; no consent flags (refused)
 p202 destination connect <id> [--json]                  # Google Ads: authorisation_url for a human's browser (same user, 10 min)
 p202 destination accounts <id> [--json]                 # Google Ads, connected: the accounts it can send to, read from Google
 p202 destination conversion-actions <id> [--customer-id N [--login-customer-id N]] [--json]   # the account's click-upload actions
