@@ -13,6 +13,7 @@ use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\Database\Schema\TableRegistry;
 use Prosper202\Identity\RequestSignals;
+use Prosper202\Identity\SignalType;
 use Prosper202\Http\EuropeanVisitor;
 use Prosper202\Http\PrivacySetting;
 use Prosper202\Http\StoredVisitorIp;
@@ -62,6 +63,8 @@ final class DestinationQueue
     public const RUN_SECONDS = 15;
     /** The longest page address a destination is given; a longer one is none, never cut into another page. */
     public const PAGE_URL_CHARS = 2048;
+    /** Ranges filter_var() passes that hold no visitor a platform could match: shared, IETF-protocol, benchmarking. */
+    private const NOT_A_VISITOR = [['100.64.0.0', 10], ['192.0.0.0', 24], ['198.18.0.0', 15]];
 
     private readonly DestinationStore $store;
     /** @var \Closure(string): bool */
@@ -445,16 +448,16 @@ final class DestinationQueue
         // 202_clicks_advance and 202_clicks_site are one row per click, written by its latest visit.
         $stmt = $this->conn->prepareWrite('SELECT cl.click_id, cl.campaign_id, cl.conv_time, cl.click_payout, cl.transaction_id, cl.deleted, cl.superseded_by, cl.customer_id, cl.match_method, cl.currency, '
             . IpAddressSql::address('ip', 'ip6') . ' AS ip_address, landing.site_url_address AS landing_url, outbound.site_url_address AS outbound_url,
-                   cv.click_id AS visitor_tracked, ac.aff_campaign_id AS campaign_found, ac.identity_signals
+                   EXISTS (SELECT 1 FROM 202_identity_observations o WHERE o.click_id = cl.click_id AND o.signal_type IN (?, ?)) AS browser_signal,
+                   ac.aff_campaign_id AS campaign_found, ac.identity_signals
             FROM 202_conversion_logs cl LEFT JOIN 202_clicks_advance ca ON ca.click_id = cl.click_id LEFT JOIN 202_ips ip ON ip.ip_id = ca.ip_id'
             . IpAddressSql::join('ip', 'ip6') . '
-            LEFT JOIN 202_clicks_visitor cv ON cv.click_id = cl.click_id AND cv.user_id = cl.user_id
             LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cl.campaign_id AND ac.user_id = cl.user_id
             LEFT JOIN 202_clicks_site cs ON cs.click_id = cl.click_id
             LEFT JOIN 202_site_urls landing ON landing.site_url_id = cs.click_landing_site_url_id AND cs.click_landing_site_url_id > 0
             LEFT JOIN 202_site_urls outbound ON outbound.site_url_id = cs.click_outbound_site_url_id AND cs.click_outbound_site_url_id > 0
             WHERE cl.conv_id = ? AND cl.user_id = ? LIMIT 1');
-        $this->conn->bind($stmt, 'ii', [$convId, $userId]);
+        $this->conn->bind($stmt, 'ssii', [SignalType::VISITOR_COOKIE->value, SignalType::LANDING_PAGE->value, $convId, $userId]);
         $conv = $this->conn->fetchOne($stmt);
         if ($conv === null || (int) $conv['deleted'] === 1) {
             return ['cancelled', new SendResult(false, false, null, 'the conversion was deleted before this was sent')];
@@ -580,17 +583,21 @@ final class DestinationQueue
      * Purchase pixel asks it (FacebookPixelAssistantScript::mayTrack()): the
      * campaign's identity capture is on (RequestSignals::campaignAllows()),
      * and the visitor did not refuse consent (p202_consent). A refusal is
-     * not stored, but its mark is: a click is linked to its visitor
-     * (202_clicks_visitor) only when consent was not refused and the
-     * campaign allowed it (ClickIdentity::fromRequest()). A click with no
-     * such link, or whose campaign is not found, is not; nor is one whose
-     * campaign has turned capture off since.
+     * not stored, but its mark is: the click's own browser signals (the
+     * visitor cookie, the landing page id; 202_identity_observations) are
+     * recorded only from a request that did not refuse consent, under a
+     * campaign that allowed capture (ClickIdentity::fromRequest()). A link
+     * a conversion's customer id makes later (trustedCustomer(),
+     * customerOnly()) is no such mark, so it never stands in for the
+     * visitor's consent. A click with no browser signal, or whose campaign
+     * is not the account's or is gone, is not; nor is one whose campaign
+     * has turned capture off since.
      *
      * @param array<string, mixed> $conv
      */
     private static function visitorMayBeIdentified(array $conv): bool
     {
-        return ($conv['visitor_tracked'] ?? null) !== null && ($conv['campaign_found'] ?? null) !== null
+        return (int) ($conv['browser_signal'] ?? 0) === 1 && ($conv['campaign_found'] ?? null) !== null
             && RequestSignals::campaignAllows($conv['identity_signals'] ?? null);
     }
 
@@ -598,7 +605,8 @@ final class DestinationQueue
      * The click's stored address as the visitor's, or null: an address
      * stored masked (StoredVisitorIp::mask(), the privacy setting at the
      * click) names a /24 or /48, not the visitor (CLAUDE.md #30), and a
-     * private or reserved one names no one a platform could match.
+     * private, reserved, shared (carrier-grade NAT), benchmarking or
+     * IETF-protocol one names no one a platform could match.
      */
     private static function visitorAddress(string $ip): ?string
     {
@@ -606,8 +614,33 @@ final class DestinationQueue
             return null;
         }
         $public = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
+        if (!is_string($public)) {
+            return null;
+        }
+        $packed = (string) inet_pton($public);
+        foreach (self::NOT_A_VISITOR as [$network, $bits]) {
+            $base = (string) inet_pton($network);
+            if (strlen($base) === strlen($packed) && self::inPrefix($packed, $base, $bits)) {
+                return null;
+            }
+        }
 
-        return is_string($public) ? $public : null;
+        return $public;
+    }
+
+    private static function inPrefix(string $packed, string $base, int $bits): bool
+    {
+        $whole = intdiv($bits, 8);
+        if (substr($packed, 0, $whole) !== substr($base, 0, $whole)) {
+            return false;
+        }
+        $rest = $bits % 8;
+        if ($rest === 0) {
+            return true;
+        }
+        $mask = (0xFF << (8 - $rest)) & 0xFF;
+
+        return (ord($packed[$whole]) & $mask) === (ord($base[$whole]) & $mask);
     }
 
     /**
@@ -621,12 +654,15 @@ final class DestinationQueue
         if (!is_string($url)) {
             return null;
         }
-        $url = trim($url);
-        $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
-        if (($scheme !== 'http' && $scheme !== 'https') || (string) parse_url($url, PHP_URL_HOST) === '') {
+        $parts = parse_url(trim($url));
+        $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+        $host = (string) ($parts['host'] ?? '');
+        if (!is_array($parts) || ($scheme !== 'http' && $scheme !== 'https') || $host === '') {
             return null;
         }
-        $page = (string) preg_replace('/[?#].*\z/s', '', $url);
+        // Rebuilt from its scheme, host, port and path: no user:password@, and no ;session= path parameters.
+        $path = (string) preg_replace('/;[^\/]*/', '', (string) ($parts['path'] ?? ''));
+        $page = $scheme . '://' . $host . (isset($parts['port']) ? ':' . (int) $parts['port'] : '') . ($path === '' ? '/' : $path);
 
         return mb_strlen($page) <= self::PAGE_URL_CHARS ? $page : null;
     }

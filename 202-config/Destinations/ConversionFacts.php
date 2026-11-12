@@ -18,9 +18,11 @@ final class ConversionFacts
      * @param string $zone the account's time zone (AccountZone)
      * @param int|null $clickTime when the click was made, null when unknown
      * @param string $transactionId the conversion's DestinationEventId, the one name every channel sends it under
-     * @param string|null $ipAddress the visitor's address, only when the destination sends user data and it was stored unmasked
+     * @param string|null $ipAddress the visitor's address: only when the destination sends user data, the campaign
+     *        captures identity, the click's own request did not refuse consent, and it was stored unmasked and public
      * @param string|null $userAgent the visitor's user agent; no click stores one yet, so null
-     * @param string|null $pageUrl the click's landing page, else the tracking link it came through
+     * @param string|null $pageUrl the click's landing page, else the tracking link it came through: scheme, host, port
+     *        and path only (no query, fragment, user:password@ or ;path parameters), at most 2048 characters
      */
     public function __construct(
         public readonly ?int $convId,
