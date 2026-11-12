@@ -156,7 +156,7 @@ final class FacebookPixelAssistantIntegrationTest extends TestCase
         $account = $this->ids['account mine'];
         self::exec("INSERT INTO 202_ppc_account_pixels SET ppc_account_id = $account, pixel_type_id = 6, pixel_code = '123456789012345'");
 
-        $out = TrafficSourcePixels::fire(new Connection(self::$db), $account, ['payout' => '12', 'transactionid' => 'T1'], static fn (): bool => true, true, true, static fn (): bool => true);
+        $out = TrafficSourcePixels::fire(new Connection(self::$db), $account, ['payout' => '12', 'transactionid' => 'T1', TrafficSourcePixels::EVENT_ID => 'T1'], static fn (): bool => true, true, true, static fn (): bool => true);
 
         self::assertStringContainsString('https://www.facebook.com/tr?id=123456789012345&amp;ev=Purchase&amp;noscript=1&amp;cd%5Bvalue%5D=12.00&amp;cd%5Bcurrency%5D=EUR&amp;eid=T1', $out['markup']);
         self::assertSame([6], $out['types']);

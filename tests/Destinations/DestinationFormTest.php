@@ -9,6 +9,7 @@ use Prosper202\Destinations\DestinationForm;
 use Prosper202\Destinations\DestinationInputException;
 use Prosper202\Destinations\Ga4Destination;
 use Prosper202\Destinations\GoogleAdsDestination;
+use Prosper202\Destinations\OpenAiAdsDestination;
 
 /**
  * Setup › Destinations' edit form read into a patch: every setting the form
@@ -47,6 +48,33 @@ final class DestinationFormTest extends TestCase
         self::assertArrayNotHasKey('credentials', $patch, 'a blank secret is left out, which the page saves as keep');
         self::assertSame(['api_secret' => 'typed-secret-1'], DestinationForm::patch(self::ga4(['api_secret' => ' typed-secret-1 ']), self::GA4, new Ga4Destination())['credentials']);
         self::assertSame([12, 31], DestinationForm::patch(self::ga4(['all_campaigns' => '', 'campaign_ids' => ['12', '31', '12']]), self::GA4, new Ga4Destination())['settings']['campaign_ids']);
+    }
+
+    public function testAChatGptAdsFormSetsItsSettingsWithoutConsentAndOnlyTheKeyTyped(): void
+    {
+        $stored = ['destination_id' => 6, 'type' => 'openai_ads', 'name' => 'ChatGPT Ads', 'settings' => [
+            'pixel_id' => 'px_4821', 'event_type' => 'order_created', 'scope' => 'oppref', 'event_types' => [12 => 'lead_created'],
+            'campaign_ids' => [], 'send_user_data' => false, 'consent' => [],
+        ]];
+        $post = [
+            'name' => 'ChatGPT Ads', 'pixel_id' => 'px_9000', 'conversions_api_key' => '', 'event_type' => 'trial_started', 'custom_event_name' => '',
+            'scope' => 'source', 'ppc_account_id' => '70', 'et_campaign' => ['12', '31', ''], 'et_type' => ['', 'lead_created', ''],
+            'all_campaigns' => '1', 'send_user_data' => '1', 'ad_user_data' => 'granted', 'ad_personalization' => 'granted',
+        ];
+        $patch = DestinationForm::patch($post, $stored, new OpenAiAdsDestination());
+        self::assertSame([
+            'pixel_id' => 'px_9000', 'event_type' => 'trial_started', 'scope' => 'source', 'event_types' => [31 => 'lead_created'],
+            'campaign_ids' => [], 'send_user_data' => true, 'consent' => [], 'custom_event_name' => '', 'ppc_account_id' => 70,
+        ], $patch['settings'], 'no consent pair is read for a type that takes none');
+        self::assertArrayNotHasKey('credentials', $patch);
+        self::assertSame(['conversions_api_key' => 'oai-capi-Key_0123456789'], DestinationForm::patch(['conversions_api_key' => ' oai-capi-Key_0123456789 '] + $post, $stored, new OpenAiAdsDestination())['credentials']);
+        self::assertArrayNotHasKey('ppc_account_id', DestinationForm::patch(['ppc_account_id' => ''] + $post, $stored, new OpenAiAdsDestination())['settings']);
+        try {
+            DestinationForm::patch(['et_campaign' => ['x'], 'et_type' => ['lead_created']] + $post, $stored, new OpenAiAdsDestination());
+            self::fail('a row naming no campaign is refused');
+        } catch (DestinationInputException $e) {
+            self::assertSame('settings.event_types', $e->field);
+        }
     }
 
     public function testAGoogleAdsFormSetsItsRowsAndOnlyTheCredentialsTyped(): void

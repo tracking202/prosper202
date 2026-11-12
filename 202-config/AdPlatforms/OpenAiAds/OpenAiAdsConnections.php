@@ -532,7 +532,7 @@ final class OpenAiAdsConnections
             'pixel_source_id' => $id('pixel_source_id', $sourcePattern, 'a pixel\'s source id (clidsrc_…) from this ad account'),
             'pixel_id' => $id('pixel_id', $sourcePattern, 'the pixel id Ads Manager shows, up to 64 letters, digits, _ or -'),
             'source_id' => $id('source_id', $sourcePattern, 'the pixel\'s source id (clidsrc_…)'),
-            'conversions_api_key' => $id('conversions_api_key', '/\A[\x21-\x7e]{8,512}\z/D', 'a Conversions API key, 8 to 512 characters with no spaces'),
+            'conversions_api_key' => $id('conversions_api_key', '/\A[\x21-\x7e]{16,512}\z/D', 'a Conversions API key, 16 to 512 characters with no spaces'),
             'event_types' => [],
         ];
         if ($parsed['source_id'] !== null && $parsed['pixel_id'] === null) {

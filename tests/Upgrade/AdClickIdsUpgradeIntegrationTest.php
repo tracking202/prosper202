@@ -15,13 +15,14 @@ use Prosper202\Database\Tables\TrackingTables;
 
 /**
  * The 1.9.78 -> 1.9.79 rung adds 202_google's gbraid, wbraid, ttclid,
- * msclkid and fbclid as the installer declares them; and before it has,
+ * msclkid and fbclid as the installer declares them, and the 1.9.79 ->
+ * 1.9.80 rung its oppref; and before they have,
  * code already on 1.9.79 records a click without them rather than losing
  * it: the click path does not ask whether the database is upgraded, and an
  * install's files are replaced before its upgrade runs.
  *
  * Each test starts from 202_google as a 1.9.78 install has it, without the
- * five columns. The rung runs as the upgrade page runs it
+ * six columns, or as a 1.9.79 install has it, without the oppref. The rung runs as the upgrade page runs it
  * (UPGRADE::upgrade_databases(), fixtures/ladder-runner.php).
  *
  * @group integration
@@ -83,9 +84,18 @@ final class AdClickIdsUpgradeIntegrationTest extends TestCase
         self::cleanUp();
         self::restoreColumns();
         self::q('ALTER TABLE 202_google DROP COLUMN gbraid, DROP COLUMN wbraid, DROP COLUMN ttclid,'
-            . ' DROP COLUMN msclkid, DROP COLUMN fbclid');
+            . ' DROP COLUMN msclkid, DROP COLUMN fbclid, DROP COLUMN oppref');
         self::q('DELETE FROM 202_version');
         self::row('202_version', ['version' => '1.9.78']);
+    }
+
+    /** 202_google and the version as a 1.9.79 install has them: every id but the oppref. */
+    private static function at1979(): void
+    {
+        self::restoreColumns();
+        self::q('ALTER TABLE 202_google DROP COLUMN oppref');
+        self::q('DELETE FROM 202_version');
+        self::row('202_version', ['version' => '1.9.79']);
     }
 
     protected function tearDown(): void
@@ -98,12 +108,12 @@ final class AdClickIdsUpgradeIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         $range = 'BETWEEN ' . self::FIRST_CLICK . ' AND ' . (self::FIRST_CLICK + 99);
-        foreach ([...self::TABLES, '202_click_latest_visits'] as $table) {
+        foreach ([...self::TABLES, '202_click_latest_visits', '202_clicks_ad_ids'] as $table) {
             self::q("DELETE FROM $table WHERE click_id $range");
         }
     }
 
-    /** The five columns back where a test took them away, as the installer declares them. */
+    /** The six columns back where a test took them away, as the installer declares them. */
     private static function restoreColumns(): void
     {
         $reconciler = new SchemaReconciler(static fn (string $sql): mixed => self::$db->query($sql));
@@ -151,7 +161,8 @@ final class AdClickIdsUpgradeIntegrationTest extends TestCase
         string $gbraid,
         string $ttclid,
         string $msclkid = '',
-        string $fbclid = ''
+        string $fbclid = '',
+        string $oppref = ''
     ): string {
         $log = tempnam(sys_get_temp_dir(), 'p202-adids-log');
         self::assertIsString($log);
@@ -168,6 +179,7 @@ final class AdClickIdsUpgradeIntegrationTest extends TestCase
                 ttclid: $ttclid,
                 msclkid: $msclkid,
                 fbclid: $fbclid,
+                oppref: $oppref,
                 utmSourceId: 31,
                 clickIdPublic: '9' . $clickId,
             ));
@@ -182,7 +194,7 @@ final class AdClickIdsUpgradeIntegrationTest extends TestCase
 
     public function testTheRungAddsTheColumnsAsTheInstallerDeclaresThem(): void
     {
-        foreach (['`ttclid`', '`msclkid`', '`fbclid`'] as $column) {
+        foreach (['`ttclid`', '`msclkid`', '`fbclid`', '`oppref`'] as $column) {
             self::assertStringNotContainsString($column, self::createTable(), 'the test starts at 1.9.78');
         }
 
@@ -198,6 +210,79 @@ final class AdClickIdsUpgradeIntegrationTest extends TestCase
         [$out, $err] = self::upgrade();
         self::assertSame('RETURNED true', $out, $err);
         self::assertSame(self::$installed, self::createTable(), 'run again, the rung changes nothing');
+    }
+
+    public function testThe1980RungAddsTheOpprefAsTheInstallerDeclaresIt(): void
+    {
+        self::at1979();
+        self::assertStringNotContainsString('`oppref`', self::createTable(), 'the test starts at 1.9.79');
+        self::assertStringContainsString('`fbclid`', self::createTable(), 'the test starts at 1.9.79');
+
+        [$out, $err] = self::upgrade();
+
+        self::assertSame('RETURNED true', $out, $err);
+        self::assertSame('1.9.80', (string) self::all('SELECT version FROM 202_version')[0]['version']);
+        self::assertSame(self::$installed, self::createTable(), 'upgraded, 202_google is what an install creates');
+    }
+
+    /**
+     * A database the 1.9.79 upgrade reached and the 1.9.80 one has not keeps
+     * the 1.9.79 ids, and only the oppref is said in the log and read as
+     * none.
+     */
+    public function testAClickBeforeThe1980UpgradeKeepsEveryIdButTheOppref(): void
+    {
+        self::at1979();
+        $clickId = self::FIRST_CLICK + 10;
+        $logged = self::recordLogged(
+            $clickId,
+            'Cj0gclid',
+            '0AAAAgbraid',
+            'E.C.P.ttclid',
+            '',
+            'IwAR2F4-dbP0',
+            'op_8fK2mQ7z'
+        );
+
+        self::assertStringContainsString(
+            "p202 click: click $clickId is stored without the oppref it came with",
+            $logged
+        );
+        foreach (self::TABLES as $table) {
+            self::assertCount(1, self::all("SELECT 1 FROM $table WHERE click_id = $clickId"), "$table has the click");
+        }
+        self::assertSame(
+            [[
+                'gclid' => 'Cj0gclid', 'gbraid' => '0AAAAgbraid', 'ttclid' => 'E.C.P.ttclid',
+                'fbclid' => 'IwAR2F4-dbP0',
+            ]],
+            self::all("SELECT gclid, gbraid, ttclid, fbclid FROM 202_google WHERE click_id = $clickId")
+        );
+        self::assertSame(
+            ['gbraid' => '0AAAAgbraid', 'wbraid' => '', 'ttclid' => 'E.C.P.ttclid', 'msclkid' => '',
+                'fbclid' => 'IwAR2F4-dbP0', 'oppref' => ''],
+            AdClickIdColumns::of(new Connection(self::$db), $clickId)
+        );
+        self::assertSame(
+            '',
+            self::recordLogged($clickId + 1, 'Cj0other', '0AAAAg', ''),
+            'nothing dropped, nothing said'
+        );
+    }
+
+    /** Upgraded, a click keeps its oppref, and its [[oppref]] token reads it. */
+    public function testAClickAfterTheUpgradeKeepsItsOppref(): void
+    {
+        self::restoreColumns();
+        $clickId = self::FIRST_CLICK + 20;
+        self::assertSame('', self::recordLogged($clickId, '', '', '', '', '', 'op_8fK2mQ7z-Rw'));
+        self::assertSame(
+            [['oppref' => 'op_8fK2mQ7z-Rw']],
+            self::all("SELECT oppref FROM 202_google WHERE click_id = $clickId")
+        );
+        self::assertSame('op_8fK2mQ7z-Rw', AdClickIdColumns::of(new Connection(self::$db), $clickId)['oppref']);
+        $tokens = TrafficSourcePixels::clickTokens(new Connection(self::$db), self::USER, $clickId)['tokens'] ?? [];
+        self::assertSame('op_8fK2mQ7z-Rw', $tokens['oppref'] ?? null);
     }
 
     /**

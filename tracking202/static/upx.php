@@ -152,6 +152,7 @@ $tokens = [
     "ttclid" => $adClickIds['ttclid'],
     "msclkid" => $adClickIds['msclkid'],
     "fbclid" => $adClickIds['fbclid'],
+    "oppref" => $adClickIds['oppref'],
     "utm_source" => $mysql['utm_source'],
     "utm_medium" => $mysql['utm_medium'],
     "utm_campaign" => $mysql['utm_campaign'],
@@ -251,6 +252,14 @@ if (is_numeric($mysql['click_id'])) {
 			? $conversionResult['transaction_id']
 			: $conversionResult['dedupe_key'];
 		$tokens['payout'] = $conversionResult['payout'];
+		$tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId(
+			new \Prosper202\Database\Connection($db),
+			$tokens,
+			(int) ($cvar_sql_row['user_id'] ?? 0),
+			(int) $clickId,
+			(int) $conversionId,
+			(string) $conversionResult['transaction_id']
+		);
         // Markup only: the type-4 postbacks were queued with the conversion.
         echo p202FireTrafficSourcePixels(
             $db,

@@ -12,11 +12,8 @@ use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsConnections;
 use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookSender;
 use Prosper202\Database\Connection;
-use Prosper202\Destinations\ConversionFacts;
-use Prosper202\Destinations\DestinationInputException;
 use Prosper202\Destinations\DestinationStore;
-use Prosper202\Destinations\DestinationType;
-use Prosper202\Destinations\SendResult;
+use Prosper202\Destinations\Ga4Destination;
 use Tests\Apps\Android\AndroidDatabase;
 
 /**
@@ -201,7 +198,7 @@ final class AdConnectionsIntegrationTest extends TestCase
         $first = $this->connections()->setup(1, $id, [], 1_800_000_100);
 
         $outcomes = array_column($first['steps'], 'outcome', 'step');
-        self::assertSame(['pixel' => 'created', 'conversions_key' => 'created', 'destination' => 'unavailable', 'event_settings' => 'created'], $outcomes);
+        self::assertSame(['pixel' => 'created', 'conversions_key' => 'created', 'destination' => 'created', 'event_settings' => 'created'], $outcomes);
         $creates = array_values(array_filter($this->requests, static fn (array $r): bool => $r['method'] === 'POST'));
         self::assertSame(['name' => 'Prosper202', 'client_type' => 'web'], $creates[0]['body']);
         self::assertSame(['name' => 'Prosper202 server events'], $creates[1]['body']);
@@ -221,7 +218,7 @@ final class AdConnectionsIntegrationTest extends TestCase
         $this->requests = [];
         $again = $this->connections()->setup(1, $id, [], 1_800_000_200);
 
-        self::assertSame(['pixel' => 'kept', 'conversions_key' => 'kept', 'destination' => 'unavailable', 'event_settings' => 'found'], array_column($again['steps'], 'outcome', 'step'));
+        self::assertSame(['pixel' => 'kept', 'conversions_key' => 'kept', 'destination' => 'kept', 'event_settings' => 'found'], array_column($again['steps'], 'outcome', 'step'));
         self::assertSame([], array_filter($this->requests, static fn (array $r): bool => $r['method'] === 'POST'), 'nothing is made twice');
     }
 
@@ -288,47 +285,32 @@ final class AdConnectionsIntegrationTest extends TestCase
         self::assertStringContainsString('after=clidsrc_1', $this->requests[2]['url']);
     }
 
-    public function testTheDestinationIsMadeWhenItsTypeIsInThisVersion(): void
+    public function testTheDestinationIsMadeFromTheConnectionsPixelAndKey(): void
     {
-        $type = new class () implements DestinationType {
-            public function validate(array $settings, ?array $credentials): array
-            {
-                if (!is_string($settings['pixel_id'] ?? null)) {
-                    throw new DestinationInputException('settings.pixel_id', 'pixel_id is required.');
-                }
-
-                return [['pixel_id' => $settings['pixel_id'], 'event_type' => $settings['event_type'] ?? 'order_created'], $credentials];
-            }
-
-            public function send(array $settings, array $credentials, ConversionFacts $facts, bool $test, int $now): SendResult
-            {
-                throw new \LogicException('not sent in this test');
-            }
-
-            public function settingKeys(): array
-            {
-                return ['pixel_id', 'event_type', 'event_types'];
-            }
-
-            public function credentialKeys(): array
-            {
-                return ['conversions_api_key'];
-            }
-
-            public function host(array $settings): string
-            {
-                return 'bzr.openai.com';
-            }
-        };
         $id = $this->connect();
-        $run = $this->connections(['openai_ads' => $type])->setup(1, $id, ['event_types' => ['lead_created']], 1);
+        $run = $this->connections()->setup(1, $id, ['event_types' => ['lead_created']], 1);
 
         $steps = array_column($run['steps'], null, 'step');
         self::assertSame('created', $steps['destination']['outcome']);
-        $destination = (new DestinationStore(new Connection(self::$db), ['openai_ads' => $type]))->forSending(1, $steps['destination']['destination_id']);
-        self::assertSame(['pixel_id' => '134534901', 'event_type' => 'lead_created'], array_intersect_key($destination['settings'], array_flip(['pixel_id', 'event_type'])));
+        $destination = (new DestinationStore(new Connection(self::$db)))->forSending(1, $steps['destination']['destination_id']);
+        self::assertSame('openai_ads', $destination['type']);
+        self::assertSame(['pixel_id' => '134534901', 'event_type' => 'lead_created', 'scope' => 'oppref'], array_intersect_key($destination['settings'], array_flip(['pixel_id', 'event_type', 'scope'])));
         self::assertSame(['conversions_api_key' => self::CAPI_KEY], $destination['credentials']);
         self::assertSame($steps['destination']['destination_id'], $run['connection']['setup']['destination_id']);
+
+        $again = $this->connections()->setup(1, $id, [], 2);
+        self::assertSame('kept', array_column($again['steps'], 'outcome', 'step')['destination'], 'one destination, however often setup runs');
+        self::assertSame(1, (int) self::$db->query('SELECT COUNT(*) AS n FROM 202_destinations WHERE deleted_at IS NULL')->fetch_assoc()['n']);
+    }
+
+    public function testWithoutTheDestinationTypeTheStepSaysSoAndKeepsThePixelAndKey(): void
+    {
+        $id = $this->connect();
+        $run = $this->connections(['ga4' => new Ga4Destination()])->setup(1, $id, [], 1);
+
+        $steps = array_column($run['steps'], null, 'step');
+        self::assertSame('unavailable', $steps['destination']['outcome']);
+        self::assertSame(['advertiser_api_key' => true, 'conversions_api_key' => true], $run['connection']['credentials_set']);
     }
 
     public function testACheckMarksARefusedKeyAndLeavesTheStatusOnAnOutage(): void

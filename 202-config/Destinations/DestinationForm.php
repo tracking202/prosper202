@@ -25,7 +25,7 @@ final class DestinationForm
      */
     public static function patch(array $post, array $destination, DestinationType $type): array
     {
-        $str = static fn (string $key): string => is_string($post[$key] ?? null) ? trim($post[$key]) : '';
+        $str = static fn (string $key): string => self::text($post, $key);
         $settings = (array) $destination['settings'];
         unset($settings['settings_invalid']);
 
@@ -39,35 +39,10 @@ final class DestinationForm
             $settings['campaign_ids'] = $ids;
         }
         $settings['send_user_data'] = ($post['send_user_data'] ?? '') === '1';
-        $settings['consent'] = array_filter(['ad_user_data' => $str('ad_user_data'), 'ad_personalization' => $str('ad_personalization')], static fn (string $v): bool => $v !== '');
-
-        $pairs = self::pairs($post, ...($type instanceof GoogleAdsDestination
-            ? ['cca_campaign', 'cca_action', 'settings.campaign_conversion_actions', 'A per-campaign conversion action needs its campaign.']
-            : ['param_name', 'param_field', 'settings.params', 'An event parameter needs a name.']));
-        if ($type instanceof GoogleAdsDestination) {
-            $settings['customer_id'] = $str('customer_id');
-            $settings['login_customer_id'] = $str('login_customer_id');
-            $settings['conversion_action'] = $str('conversion_action');
-            $settings['campaign_conversion_actions'] = [];
-            foreach ($pairs as [$campaign, $action]) {
-                $id = PostedId::read($campaign) ?? throw new DestinationInputException('settings.campaign_conversion_actions', 'A per-campaign conversion action names a campaign from the list.');
-                if (isset($settings['campaign_conversion_actions'][$id])) {
-                    throw new DestinationInputException('settings.campaign_conversion_actions', 'Campaign ' . $id . ' has two conversion actions; keep one.');
-                }
-                $settings['campaign_conversion_actions'][$id] = $action;
-            }
-        } else {
-            foreach (['measurement_id', 'event_name', 'client_id_source', 'user_id_source'] as $key) {
-                $settings[$key] = $str($key);
-            }
-            $settings['params'] = [];
-            foreach ($pairs as [$name, $field]) {
-                if (isset($settings['params'][$name])) {
-                    throw new DestinationInputException('settings.params', 'Parameter "' . $name . '" is listed twice; keep one.');
-                }
-                $settings['params'][$name] = $field;
-            }
+        if ($type->takesConsent()) {
+            $settings['consent'] = array_filter(['ad_user_data' => $str('ad_user_data'), 'ad_personalization' => $str('ad_personalization')], static fn (string $v): bool => $v !== '');
         }
+        $settings = $type->formSettings($post, $settings);
 
         $patch = ['name' => $str('name'), 'settings' => $settings];
         $credentials = [];
@@ -90,7 +65,7 @@ final class DestinationForm
      * @param array<string, mixed> $post
      * @return list<array{0: string, 1: string}>
      */
-    private static function pairs(array $post, string $first, string $second, string $field, string $firstMissing): array
+    public static function pairs(array $post, string $first, string $second, string $field, string $firstMissing): array
     {
         $a = $post[$first] ?? [];
         $b = $post[$second] ?? [];
@@ -113,8 +88,14 @@ final class DestinationForm
         return $out;
     }
 
+    /** A posted text field, trimmed; '' when it is absent or not text. */
+    public static function text(array $post, string $key): string
+    {
+        return is_string($post[$key] ?? null) ? trim($post[$key]) : '';
+    }
+
     /** @return list<int> */
-    private static function ids(mixed $posted, string $field, string $name): array
+    public static function ids(mixed $posted, string $field, string $name): array
     {
         if (!is_array($posted) || !array_is_list($posted)) {
             throw new DestinationInputException($field, $name . ' could not be read; reload the page and try again.');

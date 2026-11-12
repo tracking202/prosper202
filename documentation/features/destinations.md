@@ -6,10 +6,12 @@ gateway that keeps the raw data where it is: the platform receives the
 conversion, its value and its ids, and at most a SHA-256 hash of the
 customer's email or phone, never the address or number itself.
 
-Two destinations exist: **Google Analytics 4**, through its Measurement
-Protocol, and **Google Ads**, as click conversions uploaded through the
+Three destinations exist: **Google Analytics 4**, through its Measurement
+Protocol; **Google Ads**, as click conversions uploaded through the
 Google Ads API with your own developer token and OAuth client (gclid, wbraid
-or gbraid, and optionally enhanced conversions for leads).
+or gbraid, and optionally enhanced conversions for leads); and **ChatGPT
+Ads**, through OpenAI's Conversions API with a pixel id and a Conversions
+API key.
 
 Set them up on **Setup › Destinations**, with `p202 destination`, or through
 `/api/v3/destinations`.
@@ -99,7 +101,9 @@ once.
   it cannot place counts as possibly European. Setup › Destinations says
   which setting is in force beside the consent fields, and warns under a
   destination that states both signals granted while the setting still
-  holds those visitors back.
+  holds those visitors back. ChatGPT Ads takes no consent signal, so a
+  visitor who may be in the EEA or UK is never sent to it, whatever the
+  setting.
 - **Your privacy setting** (Personal settings, the same setting that masks
   addresses and drops cookies) applies on top: `all` sends no visitor; `eu`
   (the default for new accounts) sends only visitors placed outside Europe
@@ -109,8 +113,13 @@ once.
   and phone* on, the conversion's LTV customer email is trimmed and
   lower-cased (for gmail.com, dots and a `+tag` are dropped, as Google
   does) and hashed with SHA-256 on your server; a phone number is hashed
-  only in E.164 form (`+` and the country code). The raw values are never
-  written to the queue, the log or an error.
+  only in E.164 form (`+` and the country code). For ChatGPT Ads the email
+  is only trimmed and lower-cased and the phone is hashed as its digits
+  without the `+`, as OpenAI hashes them, and the visitor's IP address is
+  sent too, only when the campaign captures identity, the visitor did not
+  refuse consent (`p202_consent`), and the click stored the address
+  unmasked (a masked address names a network, not the visitor). The raw values are never written to the queue,
+  the log or an error.
 - **Consent signals** (`ad_user_data`, `ad_personalization`) are what you
   state, per destination, from your consent banner: Prosper202 does not
   record a visitor's consent. Hashed data (and `user_id`) go only when
@@ -304,6 +313,51 @@ conversion appears there a few hours after its upload).
 Not yet: conversion adjustments and retractions (a refund does not reach
 Google Ads) and batching.
 
+## ChatGPT Ads
+
+You need the **pixel id** of your web pixel and a **Conversions API key**,
+both in ChatGPT Ads Manager › Conversions (Conversions API keys › Create).
+
+Each conversion is sent as one web event, `order_created` unless you pick
+another type (or `custom` with a name of your own), to
+`https://bzr.openai.com/v1/events`:
+
+- `id`: the conversion's transaction id, else `P202-<conversion id>`; a
+  conversion that replaced an earlier one goes under the first one's id.
+  The same id is the event id of a Meta Purchase pixel for that conversion.
+- `oppref`: OpenAI's click id from the click, as it arrived.
+- `source_url`: the click's landing page, or the tracking link the click
+  came through, without its query string or fragment (they carry what the
+  link put there). A click with neither stored is failed, not sent: OpenAI
+  needs the page of a web event.
+- `amount` and `currency`: the payout in the currency's smallest unit (USD
+  89.00 is 8900, JPY 8900 is 8900). A zero payout sends neither.
+
+Which conversions go is the **scope**: `oppref` (the default) sends only
+those whose click carries OpenAI's click id; `source` every conversion of
+one traffic source account; `all` every conversion, which OpenAI recommends
+so it can credit people who saw an ad without clicking it. The others are
+withheld, and say why in the log. A campaign can be sent as its own event
+type (`event_types`).
+
+What OpenAI does not take, and what that means here:
+
+- **Only the first event counts.** OpenAI keeps the first event it gets
+  under an id and takes no adjustment, retraction or refund. A conversion
+  that restates an earlier one is sent under the earlier one's id and
+  ignored; its log row says so. A refund does not reach ChatGPT Ads.
+- **7 days.** OpenAI refuses an event more than 7 days old, or more than
+  10 minutes ahead of its clock, so such a conversion fails unsent and a
+  backfill offers at most 7 days.
+- Answers: a refused event (400) fails at once with OpenAI's words; a
+  refused key (401, 403) fails with "the Conversions API key was refused";
+  a busy or unreachable endpoint (429, 5xx, no answer) is retried with
+  backoff.
+
+**Test it**: *send test* (or `p202 destination test <id>`) sends a made-up
+event with `validate_only`, which OpenAI checks and does not save. After a
+test, confirm the first real conversions in Ads Manager › Conversions.
+
 ## CLI
 
 ```bash
@@ -322,6 +376,13 @@ p202 destination create --type google_ads --name "Search campaigns" --customer-i
 p202 destination connect 2          # open the authorisation_url it prints
 p202 destination update 2 --campaign-conversion-action 12=987655   # sets campaign 12's, keeps the others; 12= removes it
 p202 destination test 2
+
+# ChatGPT Ads: key.txt holds the Conversions API key
+p202 destination create --type openai_ads --name "ChatGPT Ads" --pixel-id px_4821 \
+    --conversions-api-key-file key.txt
+p202 destination update 3 --scope all          # every conversion, for view-through
+p202 destination update 3 --campaign-event-type 12=trial_started
+p202 destination test 3
 ```
 
 ## API
@@ -361,6 +422,16 @@ POST /api/v3/destinations
   "name": "Search campaigns",
   "settings": {"customer_id": "123-456-7890", "conversion_action": "987654", "campaign_conversion_actions": {"12": "987655"}},
   "credentials": {"developer_token": "…", "oauth_client_id": "….apps.googleusercontent.com", "oauth_client_secret": "…"}
+}
+```
+
+```json
+POST /api/v3/destinations
+{
+  "type": "openai_ads",
+  "name": "ChatGPT Ads",
+  "settings": {"pixel_id": "px_4821", "event_type": "order_created", "scope": "oppref"},
+  "credentials": {"conversions_api_key": "…"}
 }
 ```
 

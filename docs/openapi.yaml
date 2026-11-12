@@ -5307,8 +5307,10 @@ paths:
         Measurement Protocol) or `google_ads` (Google Ads click conversions,
         with your own developer token and OAuth client; it is created with
         `status` `needs_authorisation`, and its conversions wait until you
-        connect it through `POST /destinations/{id}/oauth/start`). Unknown
-        keys in `settings` and `credentials` are refused. At most 25 per account.
+        connect it through `POST /destinations/{id}/oauth/start`), or
+        `openai_ads` (ChatGPT Ads through OpenAI's Conversions API, with a
+        pixel id and a Conversions API key). Unknown keys in `settings` and
+        `credentials` are refused. At most 25 per account.
       operationId: createDestination
       requestBody:
         required: true
@@ -5318,7 +5320,7 @@ paths:
               type: object
               required: [type, name, settings, credentials]
               properties:
-                type: {type: string, enum: [ga4, google_ads]}
+                type: {type: string, enum: [ga4, google_ads, openai_ads]}
                 name: {type: string, maxLength: 100}
                 settings:
                   $ref: "#/components/schemas/DestinationSettings"
@@ -5427,7 +5429,8 @@ paths:
         `validateOnly`, which records nothing: it mints an access token and
         checks the developer token, the customer and the conversion action;
         the made-up click id it carries is expected to be refused, so
-        `valid` is true when nothing else is.
+        `valid` is true when nothing else is. For ChatGPT Ads it is an event
+        with `validate_only`, which OpenAI checks and does not save.
       operationId: testDestination
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer}}
@@ -5547,8 +5550,8 @@ paths:
         campaigns take and its log has no delivery for (recorded before the
         destination existed, or while it was off), oldest first, 5,000 a call
         (`more` is true when others remain; call again). `days` is 1 to 3
-        for GA4, which refuses an event more than 72 hours old, and 1 to 90
-        for Google Ads. They are sent by the cron job like any other.
+        for GA4, which refuses an event more than 72 hours old, 1 to 7 for
+        ChatGPT Ads, and 1 to 90 for Google Ads. They are sent by the cron job like any other.
       operationId: backfillDestination
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer}}
@@ -15051,6 +15054,14 @@ components:
             Meta's click id (`?fbclid=`), as stored, cut to 1,000 characters
             (real ones run to about 200); null for none. Recorded since 1.9.79:
             clicks before it have none.
+        oppref:
+          type: string
+          nullable: true
+          maxLength: 1000
+          description: >-
+            OpenAI's click id on a ChatGPT ad's landing URL (`?oppref=`), as
+            stored, cut to 1,000 characters; null for none. Recorded since
+            1.9.80: clicks before it have none.
 
     ClickDetail:
       allOf:
@@ -15171,7 +15182,7 @@ components:
         How the conversion's click was found. click_id is the request naming
         it (a subid or sid, ClickBank's tracking code, the API's or an upload
         line's click id, an app install's token); ad_click_id an ad platform's
-        click id (gclid, gbraid, wbraid, ttclid, msclkid, fbclid) that a
+        click id (gclid, gbraid, wbraid, ttclid, msclkid, fbclid, oppref) that a
         global postback with no SubID sent back and a click carries (one
         visitor's latest click on one campaign); cookie a tracking cookie
         naming it; visitor_id the landing-page script's visitor id, on the
@@ -17358,7 +17369,7 @@ components:
             by the global postback when its SubID is empty or unfilled, and
             looked up among this account's clicks as every kind of ad click
             id (match_method ad_click_id). gclid, gbraid, wbraid, msclkid,
-            fbclid and ttclid are read under their own names without being
+            fbclid, ttclid and oppref are read under their own names without being
             listed, and are refused here, as are the parameters a postback
             already reads.
         user_pref_cloak_referer: {type: string, enum: [origin, never]}
@@ -19025,7 +19036,7 @@ components:
       description: An ad platform the account's conversions are sent to.
       properties:
         destination_id: {type: integer}
-        type: {type: string, enum: [ga4, google_ads]}
+        type: {type: string, enum: [ga4, google_ads, openai_ads]}
         name: {type: string}
         enabled: {type: boolean}
         settings:
@@ -19062,9 +19073,12 @@ components:
     DestinationSettings:
       type: object
       description: |
-        What is sent and when. Every type takes `campaign_ids`,
-        `send_user_data` and `consent`; GA4 takes `measurement_id` to
-        `params`, Google Ads `customer_id` to `campaign_conversion_actions`.
+        What is sent and when. Every type takes `campaign_ids` and
+        `send_user_data`; GA4 and Google Ads take `consent` (ChatGPT Ads
+        refuses it: OpenAI takes no consent signal, so a visitor who may be
+        in the EEA or UK is withheld from it). GA4 takes `measurement_id` to
+        `params`, Google Ads `customer_id` to `campaign_conversion_actions`,
+        ChatGPT Ads `pixel_id` to `ppc_account_id`.
       properties:
         campaign_ids:
           type: array
@@ -19077,6 +19091,11 @@ components:
             Send the conversion's LTV customer email and phone, normalised
             and SHA-256 hashed on this server; the raw values never leave it.
             Phone numbers are sent only in E.164 form (+ and country code).
+            Each platform's own normalisation is used: Google's folds Gmail
+            dots and +tags, OpenAI's only trims and lowercases. ChatGPT Ads
+            also sends the visitor's IP address when the campaign captures
+            identity, the visitor did not refuse consent, and the click
+            stored the address unmasked.
         consent:
           type: object
           description: |
@@ -19135,12 +19154,43 @@ components:
             Google Ads: the names Google gives the account and the conversion action, for display only,
             as `customer` and `conversion_action`, each `{id, name}`. Set by a pick. A label is kept only while
             its id is the setting it names, so changing customer_id or conversion_action drops the old name.
+        pixel_id:
+          type: string
+          description: ChatGPT Ads (openai_ads) web pixel id, from Ads Manager › Conversions.
+        event_type:
+          type: string
+          enum: [order_created, checkout_started, items_added, contents_viewed, lead_created, registration_completed, appointment_scheduled, page_viewed, subscription_created, trial_started, custom]
+          default: order_created
+          description: ChatGPT Ads event type every campaign's conversions are sent as.
+        custom_event_name:
+          type: string
+          description: >-
+            ChatGPT Ads, with event_type custom only: 1-64 lowercase letters, digits, - or _,
+            not a standard event type.
+        event_types:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [order_created, checkout_started, items_added, contents_viewed, lead_created, registration_completed, appointment_scheduled, page_viewed, subscription_created, trial_started]
+          description: ChatGPT Ads campaign id to the event type its conversions are sent as, instead of event_type.
+        scope:
+          type: string
+          enum: [oppref, source, all]
+          default: oppref
+          description: >-
+            ChatGPT Ads: which conversions are sent. oppref, only those whose click carries OpenAI's click id;
+            source, every conversion of the traffic source account ppc_account_id; all, every conversion
+            (OpenAI's recommendation, so it can credit views). The others are withheld.
+        ppc_account_id:
+          type: integer
+          description: ChatGPT Ads with scope source only, the traffic source account (one of yours) whose conversions are sent.
     DestinationCredentials:
       type: object
       description: |
         Write-only, encrypted at rest. GA4 takes api_secret; Google Ads takes
         developer_token, oauth_client_id and oauth_client_secret (its refresh
-        token is stored by the OAuth connection, never typed).
+        token is stored by the OAuth connection, never typed); ChatGPT Ads
+        takes conversions_api_key.
       properties:
         api_secret:
           type: string
@@ -19154,6 +19204,9 @@ components:
         oauth_client_secret:
           type: string
           description: That OAuth client's secret.
+        conversions_api_key:
+          type: string
+          description: ChatGPT Ads Conversions API key, from Ads Manager › Conversions › Conversions API keys.
     DestinationDelivery:
       type: object
       properties:

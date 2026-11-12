@@ -129,6 +129,14 @@ final class PurLinkPixels
                     ? (string) $conversion['transaction_id']
                     : (string) $conversion['dedupe_key'];
                 $tokens['payout'] = (string) $conversion['click_payout'];
+                $tokens = TrafficSourcePixels::withConversionEventId(
+                    $this->conn,
+                    $tokens,
+                    $claims['user_id'],
+                    $claims['click_id'],
+                    (int) $conversion['conv_id'],
+                    isset($conversion['transaction_id']) ? (string) $conversion['transaction_id'] : null
+                );
                 // Browser markup only: server postbacks went out with the conversion.
                 $markup .= TrafficSourcePixels::fire(
                     $this->conn,

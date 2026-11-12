@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Destinations;
 
 use Prosper202\Attribution\WebhookSender;
+use Prosper202\Http\PostedId;
 
 /**
  * Google Ads click conversions (ConversionUploadService.UploadClickConversions)
@@ -103,6 +104,52 @@ final class GoogleAdsDestination implements DestinationType, AuthorisedDestinati
     {
         return is_string($settings['customer_id'] ?? null) && $settings['customer_id'] !== ''
             && is_string($settings['conversion_action'] ?? null) && $settings['conversion_action'] !== '';
+    }
+
+    public function backfillDays(): int
+    {
+        return intdiv(self::CLICK_MAX_AGE, 86400);
+    }
+
+    public function takesConsent(): bool
+    {
+        return true;
+    }
+
+    public function hashEmail(?string $email): ?string
+    {
+        return PiiHash::email($email);
+    }
+
+    public function hashPhone(?string $phone): ?string
+    {
+        return PiiHash::phone($phone);
+    }
+
+    public function formSettings(array $post, array $settings): array
+    {
+        $settings['customer_id'] = DestinationForm::text($post, 'customer_id');
+        $settings['login_customer_id'] = DestinationForm::text($post, 'login_customer_id');
+        $settings['conversion_action'] = DestinationForm::text($post, 'conversion_action');
+        $settings['campaign_conversion_actions'] = [];
+        foreach (DestinationForm::pairs($post, 'cca_campaign', 'cca_action', 'settings.campaign_conversion_actions', 'A per-campaign conversion action needs its campaign.') as [$campaign, $action]) {
+            $id = PostedId::read($campaign) ?? throw new DestinationInputException('settings.campaign_conversion_actions', 'A per-campaign conversion action names a campaign from the list.');
+            if (isset($settings['campaign_conversion_actions'][$id])) {
+                throw new DestinationInputException('settings.campaign_conversion_actions', 'Campaign ' . $id . ' has two conversion actions; keep one.');
+            }
+            $settings['campaign_conversion_actions'][$id] = $action;
+        }
+
+        return $settings;
+    }
+
+    /** The account by the name picked with it, else its dashed id. */
+    public function label(array $settings): string
+    {
+        $id = is_string($settings['customer_id'] ?? null) ? GoogleAdsAccounts::dashed($settings['customer_id']) : '';
+        $name = $settings['labels']['customer']['name'] ?? null;
+
+        return 'Google Ads ' . (is_string($name) && $name !== '' ? $name . ' (' . $id . ')' : $id);
     }
 
     public function validate(array $settings, ?array $credentials): array

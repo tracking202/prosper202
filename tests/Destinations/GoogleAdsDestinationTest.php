@@ -271,6 +271,33 @@ final class GoogleAdsDestinationTest extends TestCase
         self::assertSame('customers/1234567890/conversionActions/111', $mapped['conversionAction']);
     }
 
+    public function testTheVisitorsAddressAgentAndPageChangeNothingGoogleAdsIsSent(): void
+    {
+        $plain = self::facts(emails: [hash('sha256', 'a@example.com')]);
+        $visitor = new ConversionFacts(
+            $plain->convId, $plain->clickId, $plain->campaignId, $plain->convTime, $plain->value, $plain->currency, $plain->transactionId,
+            $plain->click, $plain->customerId, $plain->emailHashes, $plain->phoneHashes, $plain->zone, $plain->clickTime,
+            '203.0.113.7', 'Mozilla/5.0 (Macintosh)', 'https://shop.example.com/checkout/done'
+        );
+        $raw = [];
+        foreach ([$plain, $visitor] as $facts) {
+            $this->sent = [];
+            $this->ads()->send($this->settings(), self::credentials(), $facts, false, self::NOW);
+            foreach ($this->sent as $options) {
+                if (str_contains((string) $options[CURLOPT_URL], 'googleads.googleapis.com')) {
+                    $raw[] = (string) $options[CURLOPT_POSTFIELDS];
+                }
+            }
+        }
+        self::assertSame(self::ADS_BODY, $raw[0], 'the body as it was before the facts carried the visitor');
+        self::assertSame($raw[0], $raw[1], 'byte for byte');
+    }
+
+    private const ADS_BODY = '{"conversions":[{"gclid":"Cj0KCQ-gclid","conversionAction":"customers/1234567890/conversionActions/987654",'
+        . '"conversionDateTime":"2026-05-28 16:16:40-04:00","conversionValue":19.9,"currencyCode":"USD","orderId":"ORD-1001",'
+        . '"consent":{"adUserData":"GRANTED","adPersonalization":"DENIED"},'
+        . '"userIdentifiers":[{"hashedEmail":"08168cd80dfd534ab0f10af10f1303fe00af2d43ab5c1432360d137f8197e17a"}]}],"partialFailure":true}';
+
     public function testTheTimeIsTheAccountsZoneWithTheOffsetOfThatDay(): void
     {
         self::assertSame('2026-05-28 16:16:40-04:00', GoogleAdsDestination::dateTime(self::NOW - 600, 'America/New_York'));
