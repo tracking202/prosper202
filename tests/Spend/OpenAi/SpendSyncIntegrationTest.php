@@ -345,4 +345,16 @@ final class SpendSyncIntegrationTest extends TestCase
         self::assertSame([1, 0], [$byAd['ad_501']['prosper202_conversions'], $byAd['ad_502']['prosper202_conversions']]);
         self::assertStringContainsString("conversion row(s) OpenAI sent were left out: row 2: ad ad_501: date is not a day", (string) $this->sync()->status(self::USER)[0]['last_note']);
     }
+
+    public function testConversionsOpenAiRefusesAreANoteAndTheSpendStands(): void
+    {
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $this->pages(self::NOW - self::NOW % 3600 - 7200);
+        $this->conversionAnswers[] = ['status' => 400, 'body' => (string) file_get_contents(dirname(__DIR__, 2) . '/fixtures/openai-ads/error-invalid-request.json')];
+        self::assertSame(1, $this->sync()->runDue(self::NOW + 60)['synced']);
+        $state = $this->sync()->status(self::USER)[0];
+        self::assertNull($state['last_error']);
+        self::assertStringContainsString('conversions not read: OpenAI answered 400: time_ranges must not be in the future', (string) $state['last_note']);
+        self::assertCount(3, self::ledger());
+    }
 }
