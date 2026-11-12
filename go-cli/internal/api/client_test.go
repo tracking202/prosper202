@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -618,5 +619,48 @@ func TestAppTokenRequestsCarryNoAPIKey(t *testing.T) {
 	}
 	if auth[2] != "Bearer test-api-key-1234" {
 		t.Errorf("an ordinary request lost its API key: Authorization = %q", auth[2])
+	}
+}
+
+// A 429 is its own category, and carries the wait: the body's
+// retry_after_seconds first, else a Retry-After header in seconds (a proxy
+// in front of the install sends no body), else nothing.
+func TestA429IsRateLimitedAndCarriesItsWait(t *testing.T) {
+	for _, tc := range []struct {
+		name, header, body string
+		want               int
+	}{
+		{"body", "60", `{"error":true,"status":429,"message":"slow down","retry_after_seconds":37}`, 37},
+		{"header only", "12", ``, 12},
+		{"a date is not read as seconds", "Wed, 21 Oct 2026 07:28:00 GMT", ``, 0},
+		{"neither", "", `{"error":true,"status":429,"message":"slow down"}`, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.header != "" {
+					w.Header().Set("Retry-After", tc.header)
+				}
+				w.WriteHeader(http.StatusTooManyRequests)
+				w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			_, err := newTestClient(srv.URL).Get("/campaigns", nil)
+			var apiErr *APIError
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("err = %v, want an APIError", err)
+			}
+			if ErrorCategory(err) != "rate_limited" || apiErr.RetryAfter != tc.want {
+				t.Errorf("category %q, RetryAfter %d; want rate_limited, %d", ErrorCategory(err), apiErr.RetryAfter, tc.want)
+			}
+			hint := HintFor(err)
+			wantWait := "Wait a minute"
+			if tc.want > 0 {
+				wantWait = fmt.Sprintf("Wait %d seconds", tc.want)
+			}
+			if !strings.Contains(hint, wantWait) || !strings.Contains(hint, "nothing in the request is wrong") {
+				t.Errorf("hint %q lacks %q", hint, wantWait)
+			}
+		})
 	}
 }

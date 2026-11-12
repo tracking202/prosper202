@@ -641,13 +641,21 @@ envelope, so an agent reads structured fields instead of parsing prose:
 
 | Field | Always | Meaning |
 | --- | --- | --- |
-| `category` | yes | `validation`, `auth`, `network`, `server`, `partial_failure`, or `licence` |
+| `category` | yes | `validation`, `auth`, `network`, `server`, `partial_failure`, `licence`, or `rate_limited` |
 | `message` | yes | What failed |
 | `exit_code` | yes | The process exit code (table below) |
 | `command` | yes | The command that ran, e.g. `p202 rotator create` |
 | `hint` | when known | The recovery step to take next |
 | `http_status` | API errors | The server's status code |
 | `field_errors` | 422 responses | Per-field messages from the server |
+| `retry_after_seconds` | 429 responses that say | Seconds to wait before running the same command again: the server's `retry_after_seconds`, else its `Retry-After` header |
+
+A 429 (`rate_limited`, exit 7) means nothing in the request is wrong: a
+limit's window is spent (sync and bulk-upsert per minute, Google Ads reads,
+landing page checks per key). Wait
+`retry_after_seconds` and run the same command again; do not change its
+flags. `sync --skip-errors` and `conversion import` stop at a 429 rather
+than send every later record into the same refusal.
 
 Lists of valid values (supported entities, the metrics a response did
 contain) sit in the message itself, so they are visible even when the hint
@@ -684,7 +692,7 @@ keeps the scope it was made with; and when it names a role permission
 such as `access_to_update_section` or `access_to_setup_section`, granting a
 role with `p202 user role assign`, and when it says `Admin access required.`, that the key's user needs
 the Admin or Super user role, with `p202 whoami` to see its roles; 404 use
-`list` for ids; 429 back off;
+`list` for ids; 429 wait the seconds the server names, then run the same command again;
 5xx retry then `p202 system health`, except a 503 saying the database needs an
 upgrade, which names `202-config/upgrade.php`; a 402 that is not the licence refusal,
 retry then check what serves the URL; network check the URL and `p202 config
@@ -756,6 +764,7 @@ those fields out of the bodies they build from another record.
 | 4 | Server error (5xx response, or a 402 that is not the install's licence refusal: a proxy, WAF or host in front of the install answered it) |
 | 5 | Partial failure (some items in bulk operation failed, or a check such as `system health` or `rotator check` found a problem; its rows stay on stdout) |
 | 6 | Licence: the install's ClickServer API key has no active Pro subscription, so the install refuses the Go CLI (HTTP 402, category `licence`); the hint links the Pro trial or subscription page. The install tells the Go CLI apart by its User-Agent, so this is a licensing prompt for the product, not an access control on the API: the same key keeps answering the PHP CLI, curl and the web app. The install remembers an allow for an hour and a refusal for five minutes (`GET /capabilities` reports the verdict as `cli`). When it cannot get an answer from Tracking202, it allows the CLI only if Tracking202 confirmed the Pro licence within the last 30 days; otherwise the refusal says the licence could not be checked, and its hint asks you to make sure the server can reach my.tracking202.com over HTTPS and names support. A user with no ClickServer API key on the install is refused. A key the install cannot read (its row missing, or the read failing) is the install's own error, not a missing answer from Tracking202, and the CLI is allowed. A run that aggregates several requests (a shell batch, a multi-profile report, `exec`) exits 6 only when every failure in it was the refusal; otherwise it is a generic failure (exit 1) and each item's own error says what it needs |
+| 7 | Rate limited: the server answered 429 (category `rate_limited`). Nothing in the request is wrong; wait `retry_after_seconds` (in the `--json` envelope, and in the hint) and run the same command again |
 
 ## Telemetry
 

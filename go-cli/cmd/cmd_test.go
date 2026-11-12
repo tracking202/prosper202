@@ -3709,7 +3709,8 @@ func TestSyncSkipErrorsStopsAtTheKeysFailure(t *testing.T) {
 	if !handleSyncRecordError("campaigns", "A", &api.APIError{Status: 422, Message: "invalid"}, true, &result) {
 		t.Error("a record's 422 under --skip-errors should go on")
 	}
-	for _, status := range []int{401, 403} {
+	// A 429 is the key's too: every later record is refused until its window passes.
+	for _, status := range []int{401, 403, 429} {
 		if handleSyncRecordError("campaigns", "A", &api.APIError{Status: status, Message: "key"}, true, &result) {
 			t.Errorf("a %d under --skip-errors should stop the sync", status)
 		}
@@ -3717,7 +3718,10 @@ func TestSyncSkipErrorsStopsAtTheKeysFailure(t *testing.T) {
 	if handleSyncRecordError("campaigns", "A", &api.APIError{Status: 422, Message: "invalid"}, false, &result) {
 		t.Error("without --skip-errors every failure stops the sync")
 	}
-	if result.Failed != 4 || len(result.Errors) != 4 {
+	if !abortsImport(&api.APIError{Status: 429, Message: "Rate limit exceeded"}) {
+		t.Error("a 429 stops a conversion import: every later row would be refused the same way")
+	}
+	if result.Failed != 5 || len(result.Errors) != 5 {
 		t.Errorf("every failure is counted and listed: %+v", result)
 	}
 }

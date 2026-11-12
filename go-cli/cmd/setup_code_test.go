@@ -408,8 +408,8 @@ func TestLandingPageCheckPastTheKeysLimitSaysWhenToTryAgain(t *testing.T) {
 	if err == nil {
 		t.Fatal("a refused check was reported as done")
 	}
-	if code := exitCodeForError(err); code != ExitValidation {
-		t.Errorf("exit %d, want %d", code, ExitValidation)
+	if code := exitCodeForError(err); code != ExitRateLimited {
+		t.Errorf("exit %d, want %d", code, ExitRateLimited)
 	}
 	hint := hintFor(err)
 	for _, want := range []string{"Wait 37 seconds", "`p202 landing-page check 12`", "10 pages every 60 seconds", "last 30 seconds"} {
@@ -417,7 +417,7 @@ func TestLandingPageCheckPastTheKeysLimitSaysWhenToTryAgain(t *testing.T) {
 			t.Errorf("hint %q lacks %q", hint, want)
 		}
 	}
-	if got := hintFor(&api.APIError{Status: 429, Raw: map[string]interface{}{"retry_after_seconds": float64(12)}}); !strings.Contains(got, "Wait 12 seconds") {
+	if got := hintFor(&api.APIError{Status: 429, RetryAfter: 12}); !strings.Contains(got, "Wait 12 seconds") {
 		t.Errorf("class-wide 429 hint = %q, want the server's wait", got)
 	}
 }

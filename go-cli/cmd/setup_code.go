@@ -57,8 +57,8 @@ func landingPageCheckLimitHint(err error, id string) string {
 		return ""
 	}
 	wait := "the seconds the message names"
-	if seconds, ok := apiErr.Raw["retry_after_seconds"].(float64); ok && seconds >= 1 {
-		wait = fmt.Sprintf("%d seconds", int(seconds))
+	if apiErr.RetryAfter > 0 {
+		wait = fmt.Sprintf("%d seconds", apiErr.RetryAfter)
 	}
 	limit := ""
 	if rate, ok := apiErr.Raw["rate_limit"].(map[string]interface{}); ok {

@@ -206,13 +206,14 @@ On failure nothing is written to stdout. With `--json` or `--ndjson`, and whenev
 
 | Field | Present | Use it for |
 |-------|---------|------------|
-| `category` | always | Branching: `validation`, `auth`, `network`, `server`, `partial_failure`, `licence` |
+| `category` | always | Branching: `validation`, `auth`, `network`, `server`, `partial_failure`, `licence`, `rate_limited` |
 | `message` | always | What failed (includes the API's own text when there is one) |
 | `hint` | when there is a next step | **Do this before retrying.** It names the command that produces the right value, the flag to change, or the order to follow |
 | `exit_code` | always | Same value the process exits with |
 | `command` | always | The command that ran, e.g. `p202 rotator create` |
 | `http_status` | API errors | The server's status code |
 | `field_errors` | 422 responses | `{field: message}` from the server; fix these fields and retry |
+| `retry_after_seconds` | 429 responses that say | Seconds to wait, then run the same command unchanged |
 
 In table mode (including `--table`, `--csv` and `-q`) the same information is two text lines: `Error [category]: message` and, when available, `Hint: ...`.
 
@@ -221,20 +222,22 @@ In table mode (including `--table`, `--csv` and `-q`) the same information is tw
 | Exit code | Category | Meaning | Typical hint |
 |-----------|----------|---------|--------------|
 | 0 | | Success | |
-| 1 | validation | Bad input, missing flags, invalid arguments, or a 4xx other than auth and 402 | Lists valid values, or `Run <command> --help` |
+| 1 | validation | Bad input, missing flags, invalid arguments, or a 4xx other than auth, 402 and 429 | Lists valid values, or `Run <command> --help` |
 | 2 | auth | Authentication or authorization failure (401/403) | Check the key with `p202 config show` / `p202 config set-key`. A 403 for a scope the key lacks names the scope and what grants it: a new key with that scope (`p202 user apikey create <user_id> --scope ...`; a key's scope cannot be changed), or for an AI app's connection, connecting the app again with the access the install names |
 | 3 | network | Connection timeout, DNS failure, unreachable server | Check the URL; `p202 config test` |
 | 4 | server | API returned a 5xx error, or a 402 that is not the install's licence refusal (a proxy, WAF or host in front of the install answered it) | Retry after a wait; `p202 system health` (for that 402, check what serves the URL in `p202 config show`) |
 | 5 | partial_failure | Bulk operation completed with some failures, or a check found a problem (`system health`, `system cron`, `rotator check`, `campaign check-urls`) | stderr lists the failed items; a check still prints its rows on stdout |
 | 6 | licence | The install's ClickServer API key has no active Pro subscription, so the install refuses the Go CLI (HTTP 402). The install recognises the Go CLI by its User-Agent; the API itself stays open to other clients with the same key, and `GET /capabilities` reports the verdict as `cli`. When the install cannot get an answer from Tracking202, it allows the Go CLI only if Tracking202 confirmed the Pro licence within the last 30 days; otherwise the message says the licence could not be checked. An install with no ClickServer API key is also refused. A key the install cannot read (a missing row or failed read) is the install's own error, not a missing answer from Tracking202, and the Go CLI is allowed. A run that aggregates several requests (a shell batch, a multi-profile report, `exec`) exits 6 only when every failure in it was the refusal; with any other failure among them it is a generic failure (exit 1), and each item's own error says what it needs | If no ClickServer key is stored, set the account owner's ClickServer API key on the install. If the message says the licence could not be checked, the server running Prosper202 must reach my.tracking202.com over HTTPS; retry once it can (support@tracking202.com or the support chat for help). Otherwise start the 7-day trial at the link in the hint, then retry (the install re-checks a refusal within five minutes). Keep the CLI's REST API key and URL unchanged |
+| 7 | rate_limited | The server answered 429: a limit's window is spent (sync or bulk-upsert per minute, Google Ads reads, landing page checks per key). Nothing in the request is wrong | Wait `retry_after_seconds` (the envelope's field; the hint names it too), then run the same command again, unchanged. `sync --skip-errors` and `conversion import` stop at a 429 |
 
 Decision procedure for an agent:
 
 1. Exit code 0: parse stdout as JSON.
 2. Otherwise read the envelope on stderr. If `hint` is present, it is the intended next action: follow it, then retry. Do not guess at flags.
 3. `category: auth`, `network` and `licence` are environment problems, not input problems; do not vary the command, fix what the hint names (for `licence`, set the account owner's ClickServer key on the install if none is stored, or activate Pro on the stored key; keep the CLI's REST API key and URL unchanged). An unreadable ClickServer key counts as no answer and allows the Go CLI.
-4. `category: server`: safe to retry read-only commands (list, get, report, forecast) after a short wait; do not retry creates blindly (see Idempotency).
-5. `field_errors`: change exactly those fields.
+4. `category: rate_limited`: wait `retry_after_seconds` (a minute when it is absent), then run the same command unchanged; do not vary flags or loop faster.
+5. `category: server`: safe to retry read-only commands (list, get, report, forecast) after a short wait; do not retry creates blindly (see Idempotency).
+6. `field_errors`: change exactly those fields.
 
 Exit codes are stable across error wrapping: a 401 surfaced as "fetching historical data: API error (401)" still exits 2.
 
