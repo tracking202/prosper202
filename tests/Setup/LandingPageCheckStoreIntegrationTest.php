@@ -6,7 +6,10 @@ namespace Tests\Setup;
 
 use Api\V3\Controllers\SetupCodeController;
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\TooManyRequestsException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\LandingPageCheckLimit;
+use Api\V3\Support\ServerStateStore;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Database\Connection;
@@ -41,6 +44,26 @@ final class LandingPageCheckStoreIntegrationTest extends TestCase
 
     /** @var list<string> the URLs fetched, in order */
     private array $fetched = [];
+
+    /** The limits' store, in a directory of this test's own. */
+    private string $state = '';
+
+    protected function tearDown(): void
+    {
+        if ($this->state !== '') {
+            exec('rm -rf ' . escapeshellarg($this->state));
+            $this->state = '';
+        }
+    }
+
+    private function limit(string $key = 'apikey:0123456789abcdef'): LandingPageCheckLimit
+    {
+        if ($this->state === '') {
+            $this->state = sys_get_temp_dir() . '/p202-lp-check-limit-' . bin2hex(random_bytes(6));
+        }
+
+        return new LandingPageCheckLimit(new ServerStateStore($this->state), $key);
+    }
 
     public static function setUpBeforeClass(): void
     {
@@ -230,19 +253,20 @@ final class LandingPageCheckStoreIntegrationTest extends TestCase
         $api = new SetupCodeController(self::$db, self::USER);
         $server = ['HTTP_HOST' => 'track.example.com', 'HTTPS' => 'on', 'SERVER_PORT' => '443'];
 
-        $found = $api->landingPageCheck($id, [], [], $server, $checker(
+        $found = $api->landingPageCheck($id, [], [], $this->limit(), $server, $checker(
             '<body><script src="https://track.example.com/tracking202/static/landing.php?lpip=' . $public . '"></script></body>'
-        ))['data'];
+        ), self::NOW)['data'];
         self::assertSame(['https://shop.example.com/spring?c='], $this->fetched, 'the saved URL is fetched without its placeholders');
         self::assertSame([$id, (int) $public, Result::PRESENT, true, []], [$found['landing_page_id'], $found['landing_page_id_public'], $found['status'], $found['found'], $found['other_landing_page_ids_public']]);
         self::assertSame(Result::PRESENT, (new LandingPageCheckStore(new Connection(self::$db)))->forPage(self::USER, $id)['status'] ?? null, 'the answer is kept for the list');
 
-        $elsewhere = $api->landingPageCheck($id, [], [], $server, $checker(
+        $elsewhere = $api->landingPageCheck($id, [], [], $this->limit(), $server, $checker(
             '<body><script src="https://other.example.org/tracking202/static/landing.php?lpip=' . $public . '"></script></body>'
-        ))['data'];
+        ), self::NOW + 60)['data'];
         self::assertSame([Result::OTHER_TRACKER, false], [$elsewhere['status'], $elsewhere['found']], 'the host is judged against the tracking domain');
 
-        $absent = $api->landingPageCheck($id, [], [], $server, $checker('<body></body>'))['data'];
+        $empty = $checker('<body></body>');
+        $absent = $api->landingPageCheck($id, [], [], $this->limit(), $server, $empty, self::NOW + 120)['data'];
         self::assertSame([Result::ABSENT, false], [$absent['status'], $absent['found']]);
         self::assertStringContainsString('GET /landing-pages/' . $id . '/code', $absent['message']);
         self::assertStringNotContainsString('the code above', $absent['message']);
@@ -250,19 +274,153 @@ final class LandingPageCheckStoreIntegrationTest extends TestCase
         $this->fetched = [];
         foreach ([[$theirs, [], []], [999999999, [], []]] as [$page, $query, $body]) {
             try {
-                $api->landingPageCheck($page, $query, $body, $server, $checker(''));
+                $api->landingPageCheck($page, $query, $body, $this->limit(), $server, $checker(''), self::NOW + 1000);
                 self::fail('checked a landing page that is not the caller\'s');
             } catch (NotFoundException) {
             }
         }
         foreach ([[['force' => '1'], []], [[], ['url' => 'https://internal.example/']]] as [$query, $body]) {
             try {
-                $api->landingPageCheck($id, $query, $body, $server, $checker(''));
+                $api->landingPageCheck($id, $query, $body, $this->limit(), $server, $checker(''), self::NOW + 1000);
                 self::fail('took a parameter it does not read');
             } catch (ValidationException) {
             }
         }
         self::assertSame([], $this->fetched, 'a refused request fetches nothing');
+    }
+
+    /**
+     * A page checked in the last COOLDOWN seconds is answered from that
+     * check, fetched and counted by nothing, even past the limit; a new URL,
+     * or the cooldown over, fetches again. Each key may have PER_KEY pages
+     * fetched a WINDOW, and the next is refused with when to try again.
+     */
+    public function testARepeatIsAnsweredFromTheLastCheckAndAKeyIsLimited(): void
+    {
+        $guard = new WebhookGuard(static fn (string $host): array => [self::PUBLIC], self::ALLOW);
+        $html = '<body>' . LandingPageCode::loader('//t.example/', '77')
+            . LandingPageCode::loader('//t.example/', '78') . '</body>';
+        $checker = new LandingPageCheck($guard, function (array $options) use ($html): array {
+            $this->fetched[] = (string) $options[CURLOPT_URL];
+
+            return ['status' => 200, 'error' => null, 'timed_out' => false, 'primary_ip' => self::PUBLIC,
+                'redirect_url' => null, 'body' => $html, 'truncated' => false];
+        });
+        $api = new SetupCodeController(self::$db, self::USER);
+        $now = time();
+        $cooldown = LandingPageCheckLimit::COOLDOWN;
+        $check = fn (int $id, int $at, ?LandingPageCheckLimit $limit = null): array
+            => $api->landingPageCheck($id, [], [], $limit ?? $this->limit(), [], $checker, $at)['data'];
+        $id = self::page(self::USER, 'https://shop.example.com/spring');
+
+        $first = $check($id, $now);
+        self::assertSame(
+            [true, $now, Result::WRONG_ID, ['77', '78']],
+            [$first['fetched'], $first['checked_at'], $first['status'], $first['other_landing_page_ids_public']]
+        );
+        self::assertArrayNotHasKey('note', $first);
+        $again = $check($id, $now + $cooldown - 1);
+        self::assertCount(1, $this->fetched, 'a repeat inside the cooldown fetches nothing');
+        self::assertSame([false, $now, 1], [$again['fetched'], $again['checked_at'], $again['fetch_again_in_seconds']]);
+        self::assertStringContainsString('checked ' . ($cooldown - 1) . ' seconds ago', $again['note']);
+        self::assertStringContainsString('Ask again in 1 second to', $again['note'], 'one second is said as one');
+        foreach (['status', 'found', 'message', 'other_landing_page_ids_public', 'landing_page_url'] as $field) {
+            self::assertSame($first[$field], $again[$field], "the stored answer gives the same $field");
+        }
+        self::assertTrue($check($id, $now + $cooldown)['fetched'], 'the cooldown over, the page is fetched');
+        self::q("UPDATE 202_landing_pages SET landing_page_url = 'https://shop.example.com/summer'"
+            . " WHERE landing_page_id = $id");
+        self::assertTrue($check($id, $now + $cooldown + 1)['fetched'], 'a new URL is fetched at once');
+        self::assertSame(3, count($this->fetched));
+
+        // One key, PER_KEY pages a window: the next is refused, and fetches nothing.
+        $perKey = LandingPageCheckLimit::PER_KEY;
+        $key = $this->limit('apikey:fedcba9876543210');
+        $pages = [];
+        for ($i = 0; $i <= $perKey; $i++) {
+            $pages[] = self::page(self::USER, 'https://shop.example.com/p' . $i);
+        }
+        $later = $now + 1000;
+        foreach (array_slice($pages, 0, $perKey) as $page) {
+            self::assertTrue($check($page, $later, $key)['fetched']);
+        }
+        $fetched = count($this->fetched);
+        try {
+            $check($pages[$perKey], $later, $key);
+            self::fail('a key past its limit had a page fetched');
+        } catch (TooManyRequestsException $e) {
+            self::assertSame(429, $e->getHttpStatus());
+            self::assertGreaterThanOrEqual(1, $e->retryAfter);
+            self::assertLessThanOrEqual(LandingPageCheckLimit::WINDOW, $e->retryAfter);
+            self::assertStringContainsString('Try again in ' . $e->retryAfter . ' seconds', $e->getMessage());
+            self::assertSame(
+                ['limit' => $perKey, 'window_seconds' => LandingPageCheckLimit::WINDOW, 'per' => 'api_key'],
+                $e->getDetails()['rate_limit']
+            );
+        }
+        self::assertSame($fetched, count($this->fetched), 'the refused check fetched nothing');
+        $answered = 'past the limit, a page just checked is still answered';
+        self::assertFalse($check($pages[0], $later + 1, $key)['fetched'], $answered);
+        $other = $this->limit('apikey:0000111122223333');
+        self::assertTrue($check($pages[$perKey], $later, $other)['fetched'], 'another key has its own count');
+    }
+
+    /**
+     * The limit fails closed: a count that cannot be written answers a 500
+     * and nothing is fetched, and a key with no name has no count at all.
+     */
+    public function testALimitThatCannotCountFetchesNothing(): void
+    {
+        if (function_exists('posix_geteuid') && posix_geteuid() === 0) {
+            self::markTestSkipped('root writes into a 0500 directory, so the count cannot be made unwritable');
+        }
+        $id = self::page(self::USER, 'https://shop.example.com/spring');
+        $limit = $this->limit();
+        $buckets = $this->state . '/rate_limits';
+        self::assertDirectoryExists($buckets, 'sanity: the store made its bucket directory');
+        chmod($buckets, 0500);
+        try {
+            $guard = new WebhookGuard(static fn (string $host): array => [self::PUBLIC], self::ALLOW);
+            $checker = new LandingPageCheck($guard, function (array $options): array {
+                $this->fetched[] = (string) $options[CURLOPT_URL];
+
+                return ['status' => 200, 'error' => null, 'timed_out' => false, 'primary_ip' => self::PUBLIC,
+                    'redirect_url' => null, 'body' => '<body></body>', 'truncated' => false];
+            });
+            $api = new SetupCodeController(self::$db, self::USER);
+            $api->landingPageCheck($id, [], [], $limit, [], $checker, self::NOW);
+            self::fail('a check was answered with no count of the key\'s fetches');
+        } catch (\Api\V3\Exception\DatabaseException $e) {
+            self::assertSame(500, $e->getHttpStatus());
+        } finally {
+            chmod($buckets, 0700);
+        }
+        self::assertSame([], $this->fetched, 'nothing was fetched');
+
+        $this->expectException(\LogicException::class);
+        new LandingPageCheckLimit(new ServerStateStore($this->state), '');
+    }
+
+    /**
+     * forPage() answers for the account's own live page only: a removed page,
+     * and a stored row whose account is not the page's, read as unchecked.
+     */
+    public function testAPagesStoredCheckIsTheAccountsLivePagesOnly(): void
+    {
+        $id = self::page(self::USER, 'https://shop.example.com/spring');
+        $store = $this->store('<html><body>no code</body></html>');
+        $store->run(self::USER, $id, 'track.example.com');
+        self::assertNotNull($store->forPage(self::USER, $id), 'sanity: the check is stored');
+
+        // A row naming another account for this page: not that account's check, nor this one's.
+        self::q('UPDATE 202_landing_page_checks SET user_id = ' . self::OTHER . " WHERE landing_page_id = $id");
+        self::assertNull($store->forPage(self::OTHER, $id), 'the page is not the other account\'s');
+        self::assertNull($store->forPage(self::USER, $id), 'the row is not this account\'s');
+        self::q('UPDATE 202_landing_page_checks SET user_id = ' . self::USER . " WHERE landing_page_id = $id");
+        self::assertNotNull($store->forPage(self::USER, $id));
+
+        self::q("UPDATE 202_landing_pages SET landing_page_deleted = 1 WHERE landing_page_id = $id");
+        self::assertNull($store->forPage(self::USER, $id), 'a removed page has no check to answer from');
     }
 
     public function testASavedTrackingDomainIsReadAsItsHost(): void
