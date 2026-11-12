@@ -478,6 +478,10 @@ const accepted = (status) => status === 200 || status === 202;
     const firstSimple = subidOf(await directHref(v.p, '#offer'));
     await settle(300);
     kept = await origCookies(ctx);
+    const keptPlain = await firstClickCookie(ctx);
+    // The visitor's first click on the site: the /orig-adv pageview this context began with.
+    check(!!keptPlain && keptPlain.value === firstClick,
+      't202UseSubidOrig keeps the first click with no element showing it: ' + (keptPlain ? keptPlain.value : 'none') + ', first ' + firstClick);
     check(kept.some((k) => k.name === '_t202SubidOrig_p' + LP_SIMPLE && k.value === firstSimple) && kept.length === 3, 'a simple page keeps its own, by page: ' + JSON.stringify(kept.map((k) => k.name)));
     v = await visit(ctx, origin + '/orig-simple?t202id=' + TRACKER);
     check(subidOf(await directHref(v.p, '#offer')) === firstSimple, 'and a later pageview carries it');
@@ -531,6 +535,10 @@ const accepted = (status) => status === 200 || status === 202;
     let plainStored = clickValues(plainVisit.id);
     check(plainStored.keyword === 'blue' && plainStored.c1 === '' && plainStored.c2 === 'zz', 'a page without settings records the URL\'s own values: ' + JSON.stringify(plainStored));
     check((await plainVisit.p.getAttribute('#tokens', 'href')) === 'http://partner.example/?kw=blue&c1=&c2=zz', 'and fills its links from them');
+    // It shows no first click and does not turn t202UseSubidOrig on: it keeps it all the same, as 1.9.56 did.
+    const entryCookie = await firstClickCookie(ctx);
+    check(!!entryCookie && entryCookie.value === plainVisit.id && (await plainVisit.p.evaluate(() => window.t202GetSubidOrig())) === plainVisit.id,
+      'a page that does not show the first click keeps it for the pages that do: ' + (entryCookie ? entryCookie.value : 'none'));
     await ctx.close();
 
     console.log('t202SubidOrig, t202SourceId and the 1.9.56 globals');
