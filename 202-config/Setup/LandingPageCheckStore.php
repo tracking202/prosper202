@@ -111,7 +111,25 @@ final class LandingPageCheckStore
      */
     public function forPage(int $userId, int $landingPageId): ?array
     {
-        return $this->forAccount($userId)[$landingPageId] ?? null;
+        // One row by its primary key: the API's cooldown asks this on every check.
+        $stmt = $this->conn->prepareRead(
+            'SELECT k.check_status, k.check_message, k.checked_at'
+            . ' FROM 202_landing_page_checks AS k'
+            . ' JOIN 202_landing_pages AS lp ON lp.landing_page_id = k.landing_page_id AND lp.user_id = k.user_id'
+            . ' WHERE k.landing_page_id = ? AND k.user_id = ? AND lp.landing_page_deleted = 0'
+            . ' AND k.checked_url = lp.landing_page_url'
+        );
+        $this->conn->bind($stmt, 'ii', [$landingPageId, $userId]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            return null;
+        }
+
+        return [
+            'status' => (string) $row['check_status'],
+            'message' => (string) $row['check_message'],
+            'checked_at' => (int) $row['checked_at'],
+        ];
     }
 
     /**

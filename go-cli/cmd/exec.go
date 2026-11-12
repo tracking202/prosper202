@@ -170,18 +170,32 @@ var execCmd = &cobra.Command{
 // failed child exited for it, so the contract the children honoured survives
 // the process boundary; the generic failure otherwise.
 func execFailure(results map[string]execResult) error {
-	failed, refused := 0, 0
+	failed, refused, limited := 0, 0, 0
+	var limitedProfiles []string
 	for _, r := range results {
 		if r.Err == nil && r.ExitCode == 0 {
 			continue
 		}
 		failed++
-		if r.ExitCode == ExitLicence {
+		switch r.ExitCode {
+		case ExitLicence:
 			refused++
+		case ExitRateLimited:
+			limited++
+			limitedProfiles = append(limitedProfiles, r.Profile)
 		}
 	}
 	if failed > 0 && refused == failed {
 		return licenceRefusalError(fmt.Sprintf("%d of %d selected profiles failed, each refused the CLI: its install's ClickServer API key needs an active Prosper202 ClickServer Pro licence", failed, len(results)))
+	}
+	if failed > 0 && limited == failed {
+		// Rate limits keep their exit code across the boundary too; running
+		// exec again would repeat what the other profiles already did.
+		sort.Strings(limitedProfiles)
+		return &CLIError{Category: "rate_limited", ExitCode: ExitRateLimited,
+			Message: fmt.Sprintf("%d of %d selected profiles failed, each rate limited by its install", failed, len(results)),
+			Hint: fmt.Sprintf("Nothing in the command is wrong. Wait the seconds each profile's error names, then run it for those profiles only: `p202 exec --profiles %s -- …`; the other profiles already ran it.",
+				strings.Join(limitedProfiles, ","))}
 	}
 	return fmt.Errorf("one or more profiles failed")
 }

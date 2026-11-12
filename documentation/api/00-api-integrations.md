@@ -527,6 +527,20 @@ A `403` for the key's scope adds `code`, `required_scope`, `key_scope`,
 
 - Sync operations: **30 requests per minute** (per user)
 - Bulk-upsert operations: **60 requests per minute** (per user)
+- Google Ads reads of a destination (`/destinations/{id}/google-ads/…`):
+  **10 requests per minute** (per user)
+- Landing page checks (`POST /landing-pages/{id}/check`): **10 pages fetched
+  per minute** (per API key, counted by the key the request authenticated
+  with). A page checked in the last 30 seconds is answered from that check
+  (`fetched: false`), which fetches nothing and is not counted
+  ([Setup](27-setup.md))
+
+Each is a fixed one-minute window that starts at the first request in it, so
+up to twice the number can pass across the end of one window and the start
+of the next. Past a limit the answer is a `429` with a `Retry-After` header
+and `retry_after_seconds` in the body; nothing was done, and the same
+request succeeds after that many seconds. The Go CLI exits 7
+(`rate_limited`) for it.
 
 ## Server-Side State
 

@@ -31,6 +31,7 @@ type convImportFake struct {
 	licencePost   map[int64]bool  // POST answers the install's 402 licence refusal
 	postNotFound  map[int64]bool  // POST answers 404 Click not found
 	dropPost      map[int64]bool  // POST closes the connection unanswered
+	limitPost     map[int64]bool  // POST answers 429 with retry_after_seconds 30
 	postReturns   map[int64]int64 // POST answers with this existing conversion
 	ledgerHidden  map[int64]bool  // GET shows no conversions for the click
 	getStatus     map[int64]int   // GET answers this status
@@ -70,7 +71,7 @@ func sameFakeAmount(posted interface{}, stored string) bool {
 
 func newConvImportFake(clicks ...int64) *convImportFake {
 	f := &convImportFake{clicks: map[int64]*fakeImportClick{}, nextConv: 1000, keys: map[string]map[string]interface{}{},
-		failPost: map[int64]bool{}, licencePost: map[int64]bool{}, postNotFound: map[int64]bool{}, dropPost: map[int64]bool{}, postReturns: map[int64]int64{},
+		failPost: map[int64]bool{}, licencePost: map[int64]bool{}, postNotFound: map[int64]bool{}, dropPost: map[int64]bool{}, limitPost: map[int64]bool{}, postReturns: map[int64]int64{},
 		ledgerHidden: map[int64]bool{}, getStatus: map[int64]int{}}
 	for _, c := range clicks {
 		f.clicks[c] = &fakeImportClick{}
@@ -174,6 +175,12 @@ func (f *convImportFake) server(t *testing.T) *httptest.Server {
 				if err == nil {
 					conn.Close()
 				}
+				return
+			}
+			if f.limitPost[click] {
+				w.Header().Set("Retry-After", "30")
+				w.WriteHeader(429)
+				w.Write([]byte(`{"error":true,"status":429,"message":"Rate limit exceeded","retry_after_seconds":30}`))
 				return
 			}
 			if f.licencePost[click] {
@@ -1025,6 +1032,30 @@ func TestConversionImportStopsAtAConnectionFailure(t *testing.T) {
 	for _, p := range f.posts {
 		if p.Body["click_id"] == float64(102) {
 			t.Error("a row after the connection failure was sent")
+		}
+	}
+}
+
+// A 429 stops the import (every later row would meet it) and says to wait,
+// not to check the connection: re-running sends only the rows not recorded.
+func TestConversionImportStopsAtARateLimitAndSaysToWait(t *testing.T) {
+	f := newConvImportFake(100, 101, 102)
+	f.limitPost[101] = true
+	setupConvImportFake(t, f)
+	file := writeImportFile(t, "export.csv", "subid,payout,transaction_id\n100,10,T1\n101,10,T2\n102,10,T3\n")
+	stdout, _, err := executeCommand("conversion", "import", file, "--force", "--json")
+	hint := hintFor(err)
+	if exitCodeForError(err) != ExitPartialFailure || !strings.Contains(hint, "Wait 30 seconds") || strings.Contains(hint, "config test") {
+		t.Fatalf("err = %v (exit %d), hint = %q", err, exitCodeForError(err), hint)
+	}
+	rows := importByRow(decodeImport(t, stdout))
+	if rows[2].Status != importCreated || rows[3].Status != importFailed ||
+		!strings.Contains(rows[4].Reason, "not sent: the import stopped at row 3 (rate_limited error)") {
+		t.Errorf("rows = %+v", rows)
+	}
+	for _, p := range f.posts {
+		if p.Body["click_id"] == float64(102) {
+			t.Error("a row after the 429 was sent")
 		}
 	}
 }

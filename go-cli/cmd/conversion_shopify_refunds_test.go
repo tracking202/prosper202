@@ -62,6 +62,7 @@ func TestShopifyRefundsRecordRefusesABadAmountOrIDBeforeSending(t *testing.T) {
 		{"9100001", "--amount", "0"},
 		{"9100001", "--amount", "12abc"},
 		{"9100001", "--amount", "-5"},
+		{"9100001", "--amount", "007"},
 		{"12abc", "--amount", "5"},
 		{"9100001", "--amount", "5", "--click-id", "x"},
 	} {
@@ -83,7 +84,7 @@ func TestShopifyRefundsRecordRefusesABadAmountOrIDBeforeSending(t *testing.T) {
 }
 
 func TestShopifyRefundsAnswersCarryTheNextStep(t *testing.T) {
-	for status, want := range map[int]string{403: "Update section", 404: "shopify-refunds list", 409: "shopify-refunds close"} {
+	for status, want := range map[int]string{403: "API Integrations", 404: "shopify-refunds list", 409: "shopify-refunds close"} {
 		goalServer(t, status, `{"error":true,"message":"refused","status":`+strconv.Itoa(status)+`}`)
 		_, _, err := executeCommand("conversion", "shopify-refunds", "record", "9100001", "--amount", "5")
 		if err == nil {

@@ -6,7 +6,12 @@ include_once(substr(__DIR__, 0, -18) . '/202-config/connect.php');
 
 AUTH::require_user();
 
-if (!$userObj->hasPermission('access_to_setup_section')) {
+// The log is Setup's; the Shopify refunds above it are also shown to the
+// role that runs the Shopify connection (RefundAccess), and to that role
+// alone they are the whole page.
+$hasPermission = static fn (string $permission): bool => $userObj->hasPermission($permission);
+$seesLog = $hasPermission('access_to_setup_section');
+if (!\Prosper202\PaymentNotification\Shopify\RefundAccess::maySee($hasPermission)) {
     header('location: ' . get_absolute_url() . 'tracking202/');
     die();
 }
@@ -21,6 +26,7 @@ use Prosper202\InboundLog\InboundLog;
 use Prosper202\InboundLog\InboundReplay;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\OutcomeKind;
+use Prosper202\PaymentNotification\Shopify\RefundAccess;
 use Prosper202\PaymentNotification\Shopify\RefundsToSettle;
 use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
 use Prosper202\PaymentNotification\Shopify\WebhookStatus;
@@ -33,15 +39,17 @@ use Prosper202\PaymentNotification\Shopify\WebhookStatus;
  * A refused postback or pixel can be recorded from its row (InboundReplay) by a
  * role that may also record conversions under Update.
  * Above it, the Shopify refunds that are not recorded while their order's
- * sale is (RefundsToSettle), each with a form to record or close it.
+ * sale is (RefundsToSettle), each with a form to record or close it for a
+ * role RefundAccess lets settle them, as the API asks.
  */
 
 $userId = (int) $_SESSION['user_id'];
 $base = get_absolute_url();
 $self = $base . 'tracking202/setup/inbound_log.php';
-$seesUnattributed = $userObj->hasPermission('add_users');
-// Recording writes a conversion: the Update section's permission, beside this page's.
-$mayRecord = $userObj->hasPermission('access_to_update_section');
+$shopifyCard = $base . '202-account/api-integrations.php#shopify';
+$seesUnattributed = $seesLog && $userObj->hasPermission('add_users');
+// Recording writes a conversion: the Update section's permission, beside this page's (Setup).
+$mayRecord = $seesLog && $userObj->hasPermission('access_to_update_section');
 $recorded = null;
 // "Record it now" names a row of the log (inbound_id) and answers on this page; the refunds desk below redirects.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && array_key_exists('inbound_id', $_POST)) {
@@ -57,13 +65,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && array_key_exists('inbound_id', $_PO
     }
 }
 
-// Recording a refund writes a conversion, so it asks what Update › Subids asks, as the API does.
-$canSettle = $userObj->hasPermission('access_to_update_section');
+$canSettle = RefundAccess::maySettle($hasPermission);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !array_key_exists('inbound_id', $_POST)) {
     $flash = ['bad', 'That form has expired. Reload the page and try again; nothing was changed.'];
     if (!$canSettle) {
-        $flash = ['bad', 'Your role cannot record or close a refund: that needs access to the Update section.'];
+        $flash = ['bad', 'Your role cannot record or close a refund: that needs Account › API Integrations,'
+            . ' or the Update section beside Setup. Nothing was changed.'];
     } elseif (AUTH::check_csrf_token()) {
         $action = is_string($_POST['action'] ?? null) ? $_POST['action'] : '';
         $refundId = PostedId::read($_POST['refund_id'] ?? null);
@@ -87,7 +95,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !array_key_exists('inbound_id', $_P
             } elseif ($refundId !== null && $action === 'close_refund') {
                 $flash = $desk->close($userId, (string) $refundId)
                     ? ['ok', 'Refund ' . $refundId . ' was closed with nothing recorded.']
-                    : ['bad', 'Refund ' . $refundId . ' was recorded or closed already; nothing was changed.'];
+                    : ['bad', $desk->closeRefusal($userId, (string) $refundId)
+                        ?? 'Refund ' . $refundId . ' was recorded or closed already; nothing was changed.'];
             }
         } catch (\Throwable $e) {
             error_log(p202UncaughtLogLine('Setup › Inbound Log: a Shopify refund could not be settled', $e));
@@ -107,16 +116,20 @@ $params = array_filter($params, static fn (mixed $v): bool => is_string($v) && $
 $rows = [];
 $errors = [];
 $limit = 100;
-try {
-    $filters = InboundLogController::filters($params);
-    // An account that stores a Shopify secret sees the webhooks no secret verified: one may be its own.
-    $storesSecret = ShopifyWebhookSecret::accountStores(new \Prosper202\Database\Connection($db), $userId);
-    $rows = (new InboundLog($db))->list($userId, $seesUnattributed, $filters, $limit, $storesSecret);
-} catch (ValidationException $e) {
-    $errors = $e->getFieldErrors();
-} catch (\Throwable $e) {
-    error_log(p202UncaughtLogLine('Setup › Inbound Log: the log could not be read', $e));
-    $errors['log'] = 'The log could not be read just now. If it keeps failing, the server\'s error log says why (an upgrade may be pending).';
+// A role that sees only the refunds is shown no log.
+if ($seesLog) {
+    try {
+        $filters = InboundLogController::filters($params);
+        // An account that stores a Shopify secret sees the webhooks no secret verified: one may be its own.
+        $storesSecret = ShopifyWebhookSecret::accountStores(new \Prosper202\Database\Connection($db), $userId);
+        $rows = (new InboundLog($db))->list($userId, $seesUnattributed, $filters, $limit, $storesSecret);
+    } catch (ValidationException $e) {
+        $errors = $e->getFieldErrors();
+    } catch (\Throwable $e) {
+        error_log(p202UncaughtLogLine('Setup › Inbound Log: the log could not be read', $e));
+        $errors['log'] = 'The log could not be read just now. If it keeps failing, the server\'s error log says why'
+            . ' (an upgrade may be pending).';
+    }
 }
 $toSettle = ['refunds' => [], 'more' => false, 'transaction_webhook_seen' => true, 'account_currency' => ''];
 try {
@@ -188,6 +201,17 @@ AUTH::set_timezone($_SESSION['user_timezone'] ?? date_default_timezone_get());
 template_top('Inbound Log');
 ?>
 
+<?php if (!$seesLog) { ?>
+<div class="p202-page-header">
+    <div class="p202-page-header__icon"><i class="bi bi-bag"></i></div>
+    <div class="p202-page-header__text">
+        <h1 class="p202-page-header__title">Shopify refunds</h1>
+        <p class="p202-page-header__desc">The Shopify refunds not recorded while their order’s sale is, from your
+            <a href="<?php echo p202_setup_e($shopifyCard); ?>">Shopify connection</a>.
+            The rest of the Inbound Log is in the Setup section.</p>
+    </div>
+</div>
+<?php } else { ?>
 <div class="p202-page-header">
     <div class="p202-page-header__icon"><i class="bi bi-inbox"></i></div>
     <div class="p202-page-header__text">
@@ -195,6 +219,7 @@ template_top('Inbound Log');
         <p class="p202-page-header__desc">Every postback, pixel and payment notification this install answered, and why one that recorded nothing was refused. The newest <?php echo number_format(InboundLog::KEEP_PER_ACCOUNT); ?> that recorded something are kept, and the newest <?php echo number_format(InboundLog::KEEP_REFUSED); ?> others; signatures, keys, addresses and buyers' details never are.</p>
     </div>
 </div>
+<?php } ?>
 
 <?php
 if ($recorded !== null) {
@@ -262,7 +287,8 @@ if ($seesUnattributed) {
                             } ?></td>
                         <td>
                             <?php if (!$canSettle) { ?>
-                                <span class="text-body-secondary">Recording needs access to the Update section.</span>
+                                <span class="text-body-secondary">Recording needs access to the Update section,
+                                    or to Account › API Integrations.</span>
                             <?php } else { ?>
                             <form method="post" action="<?php echo p202_setup_e($self); ?>" class="d-flex flex-wrap gap-2 align-items-center mb-2" id="<?php echo p202_setup_e($formId); ?>">
                                 <?php echo p202_setup_token_field($token); ?>
@@ -303,8 +329,19 @@ if ($seesUnattributed) {
         <p class="form-text mb-0">The amount is in the currency its sale was recorded in: your account’s<?php echo $toSettle['account_currency'] !== '' ? ' (' . p202_setup_e($toSettle['account_currency']) . ')' : ''; ?>, unless the sale was recorded before you changed it. It is taken from the order’s sale, at most what is left of it. Prosper202 does not convert a refund stated in another currency.</p>
     </div>
 </section>
+<?php } elseif (!$seesLog && !isset($errors['shopify_refunds'])) { ?>
+<div class="p202-empty" id="shopify-refunds">
+    <i class="bi bi-check-circle p202-empty__icon"></i>
+    <strong class="p202-empty__title">No Shopify refund is waiting to be recorded</strong>
+    <div>Each refund Shopify reports is recorded as it settles. One that cannot be is listed here to record or
+        close.</div>
+    <div class="p202-empty__action">
+        <a class="btn btn-outline-secondary btn-sm" href="<?php echo p202_setup_e($shopifyCard); ?>">Back to Shopify</a>
+    </div>
+</div>
 <?php } ?>
 
+<?php if ($seesLog) { ?>
 <section class="p202-panel">
     <div class="p202-panel__body">
         <form method="get" action="<?php echo p202_setup_e($self); ?>" class="row g-2 align-items-end mb-3">
@@ -384,7 +421,8 @@ if ($seesUnattributed) {
         <?php } ?>
     </div>
 </section>
+<?php } ?>
 
-<?php echo p202_click_breakdown_modal($base); ?>
+<?php echo $seesLog ? p202_click_breakdown_modal($base) : ''; ?>
 <?php echo p202_setup_script_tag($base); ?>
 <?php template_bottom();
