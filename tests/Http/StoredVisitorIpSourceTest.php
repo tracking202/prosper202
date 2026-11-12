@@ -51,6 +51,10 @@ final class StoredVisitorIpSourceTest extends TestCase
                 . ' JVZIPN, ClickBank\'s INS, Zaxaa\'s ZPN): the address is the provider\'s server, never a visitor\'s'
                 . ' (InboundRequest::fromGlobals()), and connect.php, the endpoints\' bootstrap, has no privacy state',
         ],
+        '202-config/InboundLog/InboundReplay.php' => [
+            'self::NO_VISITOR' => 'a refused server postback recorded from the inbound log: the sender was a network\'s'
+                . ' server, whose address the log never keeps, so the conversion is stored with none',
+        ],
         '202-config/functions-shared.php' => [
             '\Prosper202\Http\VisitorIp::fromServer($_SERVER)' => 'record_mysql_error() off the click path'
                 . ' (p202OnTheClickPath()), on connect.php\'s pages: the signed-in pages, the sign-in page and'

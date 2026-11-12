@@ -57,15 +57,52 @@ final class SystemControllerBehaviorTest extends TestCase
             }
         );
 
+        // The queue reading's prepared reads (OutboxBacklog): nothing overdue.
+        $db->method('prepare')->willReturnCallback(function (string $sql) {
+            $stmt = $this->createMock(\mysqli_stmt::class);
+            $stmt->method('bind_param')->willReturn(true);
+            $stmt->method('execute')->willReturn(true);
+            $stmt->method('get_result')->willReturn($this->createResultMock([
+                ...(str_contains($sql, '202_notification_pending') ? [] : [['last_execution_time' => '1700001234']]),
+            ]));
+
+            return $stmt;
+        });
+
         $controller = new SystemController($db);
         $result = $controller->cronStatus();
 
         $this->assertArrayHasKey('data', $result);
+        $this->assertSame(['stuck' => false, 'overdue' => 0, 'oldest_due_at' => null, 'warning' => null],
+            $result['data']['traffic_source_postbacks']);
         $this->assertSame(1, $result['data']['recent_logs'][0]['id']);
         $this->assertStringContainsString(
             'SELECT id, last_execution_time FROM 202_cronjob_logs',
             implode("\n", $queries)
         );
+    }
+
+    public function testCronStatusIsStillAnsweredWhenThePostbackQueueCannotBeRead(): void
+    {
+        /** @var \mysqli&\PHPUnit\Framework\MockObject\MockObject $db */
+        $db = $this->getMockBuilder(\mysqli::class)->disableOriginalConstructor()->getMock();
+        $db->method('query')->willReturnCallback(fn (string $sql) => $this->createResultMock(
+            str_contains($sql, 'FROM 202_cronjob_logs') ? [['id' => 1, 'last_execution_time' => '1700001234']] : []
+        ));
+        $db->method('prepare')->willReturn(false);
+        $log = (string) ini_get('error_log');
+        $scratch = (string) tempnam(sys_get_temp_dir(), 'p202-cron-status');
+        ini_set('error_log', $scratch);
+        try {
+            $result = (new SystemController($db))->cronStatus();
+        } finally {
+            ini_set('error_log', $log);
+        }
+
+        $this->assertSame(1, $result['data']['recent_logs'][0]['id']);
+        $this->assertNull($result['data']['traffic_source_postbacks'], 'not known is null, never "nothing waiting"');
+        $this->assertStringContainsString('postback queue could not be read', (string) file_get_contents($scratch));
+        @unlink($scratch);
     }
 
     public function testErrorsQueryUsesMysqlErrorTextAlias(): void

@@ -40,6 +40,12 @@ $mysql['user_id'] = $db->real_escape_string((string)$aff_campaign_row['user_id']
 p202ApplyOwnerPrivacy($aff_campaign_row['user_id'] ?? null);
 \Prosper202\InboundLog\RequestLog::current()?->account($aff_campaign_row['user_id'] ?? null);
 
+// The click the cookie names, kept on the log row so a refused request can be recorded from it.
+\Prosper202\InboundLog\RequestLog::current()?->matched(
+    p202ParseClickId((string) (getCookie202('tracking202subid') ?? '')),
+    \Prosper202\Conversion\Ledger\MatchMethod::COOKIE
+);
+
 // Postback authentication: the campaign's account's token or signature, before anything is written.
 p202RequirePostbackAuth($db, $aff_campaign_row['user_id'] ?? null, 'px');
 

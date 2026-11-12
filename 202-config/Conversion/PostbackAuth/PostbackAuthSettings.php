@@ -41,6 +41,22 @@ final class PostbackAuthSettings
         return new self($mode, null, null, null, null);
     }
 
+    /** These credentials under another mode: what a request would be answered if the account chose it. */
+    public function withMode(PostbackAuthMode $mode): self
+    {
+        return new self(
+            $mode,
+            $this->token,
+            $this->tokenCreatedAt,
+            $this->previousToken,
+            $this->previousTokenExpiresAt,
+            $this->secret,
+            $this->secretCreatedAt,
+            $this->previousSecret,
+            $this->previousSecretExpiresAt,
+        );
+    }
+
     /** @param list<PostbackCredential> $replaced */
     public function withRecovery(array $replaced, bool $keyRecreated): self
     {
