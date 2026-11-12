@@ -289,6 +289,11 @@ function RunHourlyCronJob()
         // recorded, as the GeoIP refresh is: these are outbound fetches.
         RecheckLandingPageCode();
 
+        // ChatGPT Ads spend, for the connections whose sync is on: the
+        // trailing 72 hours from OpenAI into the spend ledger. After the hour
+        // is recorded: these are outbound fetches.
+        SyncAdSpend();
+
         // The GeoIP database, refreshed with the operator's MaxMind account
         // when a refresh is due (weekly once one has succeeded). After the
         // hour is recorded: a download that outlasts this run's lock must not
@@ -507,6 +512,28 @@ function RecheckLandingPageCode(): void
         }
     } catch (\Throwable $error) {
         error_log('Landing page code checks failed: ' . $error->getMessage());
+    }
+}
+
+/**
+ * The ChatGPT Ads spend sync (Prosper202\Spend\OpenAi\SpendSync) for the
+ * connections whose sync is on, for up to two minutes. A connection's
+ * failure is recorded on it; anything else is logged and the tier goes on.
+ */
+function SyncAdSpend(): void
+{
+    try {
+        $conn = new \Prosper202\Database\Connection(getDatabaseConnection());
+        $done = (new \Prosper202\Spend\OpenAi\SpendSync(
+            $conn,
+            new \Prosper202\Spend\OpenAi\AdConnectionSpendConnections(new \Prosper202\AdPlatforms\AdConnectionStore($conn))
+        ))->runDue(time() + 120);
+        if ($done['synced'] + $done['failed'] > 0) {
+            echo 'ChatGPT Ads spend: ' . (int) $done['synced'] . ' connection(s) synced, ' . (int) $done['failed']
+                . ' failed, ' . (int) $done['rows'] . ' hour row(s) written<br>';
+        }
+    } catch (\Throwable $error) {
+        error_log('ChatGPT Ads spend sync failed: ' . $error->getMessage());
     }
 }
 

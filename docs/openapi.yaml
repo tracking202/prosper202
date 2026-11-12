@@ -3568,6 +3568,125 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /spend-ledger/sync:
+    get:
+      tags: [Spend Ledger]
+      summary: Each ChatGPT Ads connection's hourly spend pull, on or off, and its last run
+      description: >-
+        One entry per live ChatGPT Ads connection (`GET /ad-connections`):
+        `enabled` (off until turned on), `backfilled_at` (when the first
+        30-day pull finished; null until then), the last run, `last_error`
+        (a run that failed: another currency than the account's, a refused
+        key, OpenAI's answer) or `last_note` (what a run that got through
+        left out), and `retry_after` while a 429 is waited out (an hour,
+        doubling up to a day). Role permission `access_to_setup_section`.
+      operationId: listSpendSync
+      responses:
+        "200":
+          description: The connections' spend sync
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SpendSync"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /spend-ledger/sync/{id}:
+    put:
+      tags: [Spend Ledger]
+      summary: Turn a ChatGPT Ads connection's hourly spend pull on or off
+      description: >-
+        `{"enabled": true}` pulls what OpenAI billed per ad per hour
+        (`GET /ad_account/insights`, hourly, at ad level) into the spend
+        ledger every hour: the first run reads the 30 days OpenAI keeps
+        hourly, later runs the trailing 72 hours. `{"enabled": false}` stops
+        it; what the ledger holds stays. `id` is the ad connection's id.
+      operationId: setSpendSync
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              additionalProperties: false
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        "200":
+          description: The connection's spend sync
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SpendSync"
+        "404":
+          description: The account has no ChatGPT Ads connection by that id.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /spend-ledger/sync/{id}/run:
+    post:
+      tags: [Spend Ledger]
+      summary: Pull a ChatGPT Ads connection's spend now
+      description: >-
+        The hourly run for one connection, now. A `422` when its sync is
+        off. `data.run` is this run: `rows` written, the window (`from`,
+        `to`), and `error` or `note`.
+      operationId: runSpendSync
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The run and the connection's spend sync after it
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    allOf:
+                      - $ref: "#/components/schemas/SpendSync"
+                      - type: object
+                        properties:
+                          run:
+                            type: object
+                            properties:
+                              rows:
+                                type: integer
+                              from:
+                                type: integer
+                              to:
+                                type: integer
+                              error:
+                                type: string
+                                nullable: true
+                              note:
+                                type: string
+                                nullable: true
+        "404":
+          description: The account has no ChatGPT Ads connection by that id.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /conversions/subids:
     post:
       tags: [Update]
@@ -16900,6 +17019,36 @@ components:
               type: integer
             unchanged:
               type: integer
+
+    SpendSync:
+      type: object
+      properties:
+        connection_id:
+          type: integer
+        account_ref:
+          type: string
+        enabled:
+          type: boolean
+        backfilled_at:
+          type: integer
+          nullable: true
+        last_run_at:
+          type: integer
+          nullable: true
+        last_success_at:
+          type: integer
+          nullable: true
+        last_rows:
+          type: integer
+        last_error:
+          type: string
+          nullable: true
+        last_note:
+          type: string
+          nullable: true
+        retry_after:
+          type: integer
+          nullable: true
 
     SpendLedgerList:
       type: object

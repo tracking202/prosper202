@@ -1,0 +1,29 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Prosper202\Spend\OpenAi;
+
+/**
+ * Where the spend sync finds the ChatGPT Ads connections (the ad
+ * connections, 202_ad_connections). Only live connections of the
+ * `openai_ads` platform are answered, each only to its own account.
+ */
+interface SpendConnections
+{
+    /**
+     * The account's connection $connectionId with its key opened, or null
+     * when the account has no live ChatGPT Ads connection by that id.
+     *
+     * @throws \RuntimeException when the stored key cannot be opened
+     */
+    public function find(int $userId, int $connectionId): ?SpendConnection;
+
+    /**
+     * The account's live ChatGPT Ads connections: connection id => ad
+     * account id. No key is opened.
+     *
+     * @return array<int, string>
+     */
+    public function ofAccount(int $userId): array;
+}
