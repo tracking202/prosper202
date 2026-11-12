@@ -109,8 +109,9 @@ not answer or failed). A refused key is a `422` naming the connection.
 
 The same from the command line: `p202 ad-campaign list|get|pause|activate|set-template|attach-events|spend`,
 and, for an AI assistant on this computer (`p202 mcp`), the tools
-`ad_campaign_list`, `ad_campaign_pause`, `ad_campaign_activate`,
-`ad_campaign_spend` and `destination_list`.
+`ad_campaign_list`, `ad_campaign_pause`, `ad_campaign_activate` and
+`ad_campaign_spend`, with `ad_connection_list`, `ad_connection_check` and
+`destination_list`: they load on request through `get_more_tools`.
 
 A money-loss alert for spend without conversions names the ChatGPT Ads
 campaigns its clicks came from (the `campaign_id` the tracking template puts

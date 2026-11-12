@@ -48,6 +48,20 @@ var mcpDeferredToolSpecs = []mcpToolSpec{
 		Args:  []mcpArg{idArg("id", "Ad connection id (from ad_connection_list).", true)},
 		Note:  "Reads the ad account from OpenAI again: name, currency, time zone, and whether the key still works.",
 		Words: []string{"is my chatgpt ads key working", "check chatgpt ads connection", "chatgpt ads"}},
+	// ChatGPT Ads campaigns, live at OpenAI through an ad connection.
+	{Name: "ad_campaign_list", Command: []string{"ad-campaign", "list"}, Title: "ChatGPT Ads campaigns", Kind: mcpRead, NotHosted: true,
+		Args: []mcpArg{idArg("connection_id", "Ad connection id (from ad_connection_list).", true)}, Omit: []string{"after"},
+		Note:  "Status, budget, serving issues and tracking template; level ad-groups or ads for the rest.",
+		Words: []string{"chatgpt ads campaigns", "openai ads campaign status", "why is my chatgpt ad not serving", "chatgpt ads"}},
+	{Name: "ad_campaign_pause", Command: []string{"ad-campaign", "pause"}, Title: "Pause a ChatGPT Ads campaign", Kind: mcpUpdate, NotHosted: true, NotStaged: true,
+		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true), adObjectArg()}, Note: adWriteNote,
+		Words: []string{"pause chatgpt ads campaign", "stop a losing chatgpt campaign", "chatgpt ads"}},
+	{Name: "ad_campaign_activate", Command: []string{"ad-campaign", "activate"}, Title: "Activate a ChatGPT Ads campaign", Kind: mcpUpdate, NotHosted: true, NotStaged: true,
+		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true), adObjectArg()}, Note: adWriteNote,
+		Words: []string{"activate chatgpt ads campaign", "resume a chatgpt campaign", "chatgpt ads"}},
+	{Name: "ad_campaign_spend", Command: []string{"ad-campaign", "spend"}, Title: "ChatGPT Ads spend by campaign", Kind: mcpRead, NotHosted: true,
+		Args:  []mcpArg{idArg("connection_id", "Ad connection id.", true)},
+		Words: []string{"chatgpt ads spend", "what did chatgpt ads cost", "openai ads spend", "chatgpt ads"}},
 }
 
 // mcpAllToolSpecs is every tool `p202 mcp call` can run.

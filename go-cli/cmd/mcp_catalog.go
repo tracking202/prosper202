@@ -323,18 +323,6 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "change_apply", Command: []string{"change", "apply"}, Title: "Apply a proposed change", Kind: mcpUpdate, Args: []mcpArg{changeArg()}, NotStaged: true},
 	{Name: "change_discard", Command: []string{"change", "discard"}, Title: "Discard a proposed change", Kind: mcpDelete, Args: []mcpArg{changeArg()}, NotStaged: true},
 
-	// ChatGPT Ads, live at OpenAI through an ad connection; and where conversions go.
-	// The hosted server's keys do not reach ad-connections or destinations.
-	{Name: "ad_campaign_list", Command: []string{"ad-campaign", "list"}, Title: "List ChatGPT Ads campaigns", Kind: mcpRead, NotHosted: true,
-		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true)}, Omit: []string{"level", "campaign-id", "ad-group-id", "after"}},
-	{Name: "ad_campaign_pause", Command: []string{"ad-campaign", "pause"}, Title: "Pause a ChatGPT Ads campaign", Kind: mcpUpdate, NotHosted: true,
-		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true), adObjectArg()}, Omit: []string{"level"}, Note: adWriteNote, NotStaged: true},
-	{Name: "ad_campaign_activate", Command: []string{"ad-campaign", "activate"}, Title: "Activate a ChatGPT Ads campaign", Kind: mcpUpdate, NotHosted: true,
-		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true), adObjectArg()}, Omit: []string{"level"}, Note: adWriteNote, NotStaged: true},
-	{Name: "ad_campaign_spend", Command: []string{"ad-campaign", "spend"}, Title: "ChatGPT Ads spend by campaign", Kind: mcpRead, NotHosted: true,
-		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true)}},
-	{Name: "destination_list", Command: []string{"destination", "list"}, Title: "List destinations and their status", Kind: mcpRead, NotHosted: true},
-
 	// Account
 	{Name: "whoami", Command: []string{"whoami"}, Title: "Who this connection acts as", Kind: mcpRead},
 	{Name: "system_info", Command: []string{"system", "info"}, Title: "Install information", Kind: mcpRead, NotHosted: true},

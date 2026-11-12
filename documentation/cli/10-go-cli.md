@@ -585,7 +585,10 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   fire; the test fire is not offered with `--staged`), and `ad_connection_list`
   and `ad_connection_check` (Setup › Destinations › ChatGPT Ads: each
   connected ad account, and a fresh read of it from OpenAI; the check is not
-  offered with `--staged`).
+  offered with `--staged`), and `ad_campaign_list`, `ad_campaign_pause`,
+  `ad_campaign_activate` and `ad_campaign_spend` (its campaigns live at
+  OpenAI; pause and activate change them at once, so call them with
+  `dry_run: true` first, and they are not offered with `--staged`).
 - With `--staged`, a write returns a change id and changes nothing; you apply
   it with `p202 change apply <id>`. The assistant is not offered the apply and
   discard tools.
