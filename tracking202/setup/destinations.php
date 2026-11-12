@@ -47,8 +47,9 @@ $userId = (int) $_SESSION['user_id'];
 $conn = new \Prosper202\Database\Connection($db);
 $store = new DestinationStore($conn);
 $adStore = new AdConnectionStore($conn);
-$adCampaigns = static fn (): OpenAiAdsCampaigns => new OpenAiAdsCampaigns($adStore, AdvertiserApi::fromEnvironment());
-$adConnections = static fn (): OpenAiAdsConnections => new OpenAiAdsConnections($adStore, AdvertiserApi::fromEnvironment(), $store, \Prosper202\Database\InstallId::of($db));
+$advertiserApi = static fn (): AdvertiserApi => AdvertiserApi::fromEnvironment(\Api\V3\Support\ServerStateStore::forInstall($db));
+$adCampaigns = static fn (): OpenAiAdsCampaigns => new OpenAiAdsCampaigns($adStore, $advertiserApi());
+$adConnections = static fn (): OpenAiAdsConnections => new OpenAiAdsConnections($adStore, $advertiserApi(), $store, \Prosper202\Database\InstallId::of($db));
 $base = get_absolute_url();
 $self = $base . 'tracking202/setup/destinations.php';
 $redirectUri = GoogleAdsOAuth::redirectUri($_SERVER);
@@ -226,7 +227,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $errors['destination'] = 'That destination is not one of yours, or was deleted.';
             } elseif ($action === 'test_real') {
-                $real = (new OpenAiAdsTestEvent($conn, $adStore, $store, AdvertiserApi::fromEnvironment(), new OpenAiAdsDestination(AdvertiserApi::eventsSender())))->send($userId, $id, time());
+                $real = (new OpenAiAdsTestEvent($conn, $adStore, $store, $advertiserApi(), new OpenAiAdsDestination(AdvertiserApi::eventsSender())))->send($userId, $id, time());
                 if ($real === null) {
                     $errors['destination'] = 'That destination is not one of yours, or was deleted.';
                 } else {

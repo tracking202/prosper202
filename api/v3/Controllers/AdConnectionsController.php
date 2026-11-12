@@ -122,7 +122,7 @@ final class AdConnectionsController
 
     private function connections(): OpenAiAdsConnections
     {
-        return new OpenAiAdsConnections($this->store, $this->api ?? AdvertiserApi::fromEnvironment(), new DestinationStore($this->conn), InstallId::of($this->db));
+        return new OpenAiAdsConnections($this->store, $this->api ?? AdvertiserApi::fromEnvironment(\Api\V3\Support\ServerStateStore::forInstall($this->db)), new DestinationStore($this->conn), InstallId::of($this->db));
     }
 
     /** @param array<string, mixed> $payload */

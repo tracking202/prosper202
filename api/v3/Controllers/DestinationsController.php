@@ -127,7 +127,7 @@ final class DestinationsController
                     $this->conn,
                     new AdConnectionStore($this->conn),
                     $this->store,
-                    AdvertiserApi::fromEnvironment(),
+                    AdvertiserApi::fromEnvironment(\Api\V3\Support\ServerStateStore::forInstall($this->conn->writeConnection())),
                     new OpenAiAdsDestination(AdvertiserApi::eventsSender())
                 ))->send($this->userId, $id, time());
             } catch (AdConnectionInputException $e) {
