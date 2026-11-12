@@ -170,7 +170,8 @@ final class SpendSync
         } catch (InsightsFailure $e) {
             $error = $e->getMessage();
             $rateLimited = $e->rateLimited();
-        } catch (SpendSyncRefused $e) {
+        } catch (SpendSyncRefused | \Prosper202\Spend\SpendLedgerRefused $e) {
+            // A refused page wrote nothing; the pages before it stand.
             $error = $e->getMessage();
         }
         $this->record($connection, $now, $rows, $error, $note, $rateLimited, $backfill && $error === null, (int) ($state['rate_limited'] ?? 0));
