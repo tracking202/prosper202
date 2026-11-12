@@ -441,11 +441,12 @@ func TestAChatGptAdsDestinationIsCreatedWithItsKeyFromAFile(t *testing.T) {
 	}
 
 	refused := map[string][]string{
-		"a consent flag":           {"--ad-user-data", "granted"},
-		"a GA4 flag":               {"--measurement-id", "G-ABC123"},
-		"a custom type's name":     {"--event-type", "lead_created", "--custom-event-name", "demo"},
-		"an account without scope": {"--scope", "all", "--ppc-account-id", "70"},
-		"a custom per campaign":    {"--campaign-event-type", "12=custom"},
+		"a consent flag":             {"--ad-user-data", "granted"},
+		"a GA4 flag":                 {"--measurement-id", "G-ABC123"},
+		"a custom type's name":       {"--event-type", "lead_created", "--custom-event-name", "demo"},
+		"an account without scope":   {"--scope", "all", "--ppc-account-id", "70"},
+		"a custom per campaign":      {"--campaign-event-type", "12=custom"},
+		"source without its account": {"--scope", "source"},
 	}
 	for name, extra := range refused {
 		bodies = nil
