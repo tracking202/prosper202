@@ -61,7 +61,8 @@ final class ClickBreakdown
 
         $stmt = $this->conn->prepareRead(
             'SELECT conv_id, click_id, click_payout, payable, deleted, reverses_conv_id, source, source_ref,
-                    superseded_reason, superseded_by, transaction_id, event_name, conv_time, match_method
+                    superseded_reason, superseded_by, transaction_id, event_name, conv_time, match_method,
+                    ' . RowCurrency::COLUMNS . '
              FROM 202_conversion_logs WHERE click_id = ? ORDER BY conv_id'
         );
         $this->conn->bind($stmt, 'i', [$clickId]);
@@ -83,12 +84,17 @@ final class ClickBreakdown
 
         $rows = [];
         $counted = 0;
+        // The currencies of the rows that count: the click's value adds
+        // their numbers, so it is an amount in one currency only when they
+        // agree.
+        $countedCurrencies = [];
         foreach ($stored as $r) {
             $convId = (int) $r['conv_id'];
             $verdict = $explained['rows'][$convId];
             $supersededReason = $verdict['superseded_reason'];
             if ($verdict['counted']) {
                 $counted++;
+                $countedCurrencies[RowCurrency::read($r['currency'] ?? null)] = true;
             }
             $explanation = null;
             if ($verdict['reason'] === NotCountedReason::SUPERSEDED && $supersededReason !== null) {
@@ -102,6 +108,12 @@ final class ClickBreakdown
                 'conv_id' => $convId,
                 'click_id' => (int) $r['click_id'],
                 'amount' => Amount::fromUnits(Amount::toUnits((string) $r['click_payout'])),
+                // The currency the amount is in (null: not recorded), and
+                // what a postback sent when the amount is that, converted.
+                'currency' => RowCurrency::forAnswer($r['currency'] ?? null),
+                'stated_amount' => ($r['stated_amount'] ?? null) !== null
+                    ? Amount::fromUnits(Amount::toUnits((string) $r['stated_amount'])) : null,
+                'stated_currency' => RowCurrency::forAnswer($r['stated_currency'] ?? null),
                 'payable' => (int) $r['payable'] === 1,
                 'deleted' => (int) $r['deleted'] === 1,
                 'counted' => $verdict['counted'],
@@ -147,6 +159,11 @@ final class ClickBreakdown
                 'click_payout' => Amount::fromUnits($cachedUnits),
                 'ledger_state' => $preLedger ? 'pre_ledger' : 'ledger',
                 'ledger_value' => $value->lead ? Amount::fromUnits((int) $value->valueUnits) : null,
+                // The currency of the rows that count, when they share one;
+                // null when none was recorded or no row counts. With
+                // mixed_currencies the value adds amounts in more than one.
+                'value_currency' => count($countedCurrencies) === 1 ? RowCurrency::forAnswer((string) array_key_first($countedCurrencies)) : null,
+                'mixed_currencies' => count($countedCurrencies) > 1,
                 'matches_click' => $matches,
                 'rows' => count($rows),
                 'counted_rows' => $counted,

@@ -36,6 +36,8 @@ echo p202_spend_ledger_note($de->spendLedger(), \Prosper202\Report\CampaignDataM
 
 // Every row is on the page (this report is not paginated), so sorting in the
 // browser is honest.
+// Revenue of the period that is not in the account's currency is said above the figures (RevenueCurrencies).
+echo \Prosper202\Conversion\Ledger\RevenueCurrencies::notice($db, \Prosper202\DataEngine\DataScope::userId() ?? 0, (int) $time['from'], (int) $time['to']);
 echo p202_overview_metrics_table($data, [
     'id' => 'day-parting-table',
     'label' => 'Hour',

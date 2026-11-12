@@ -111,6 +111,13 @@ try {
             $request
         ),
         'supportedOrderTokens' => ReportDispatchRequest::supportedOrderTokens(),
+        // What the report's money is in, as every report says it (RevenueCurrencies).
+        'money' => \Prosper202\Conversion\Ledger\RevenueCurrencies::forExport(
+            $db,
+            \Prosper202\DataEngine\DataScope::userId() ?? 0,
+            (int) $time['from'],
+            (int) $time['to']
+        ),
     ] + ($ledgerNote === '' ? [] : ['spendLedgerNote' => $ledgerNote]));
 } catch (InvalidArgumentException $e) {
     $status = (int) $e->getCode();

@@ -109,8 +109,8 @@ func TestShopifyRefundsRecordSendsTheCurrencyAndExplainsARefusalOfIt(t *testing.
 	if err == nil || exitCodeForError(err) != ExitValidation || len(*seen) != 0 {
 		t.Fatalf("--currency dollars should be refused before sending, err=%v sent=%+v", err, *seen)
 	}
-	if !strings.Contains(hintFor(err), "account_currency") {
-		t.Errorf("hint = %q, want one naming account_currency", hintFor(err))
+	if !strings.Contains(hintFor(err), "amount_currency") {
+		t.Errorf("hint = %q, want one naming amount_currency", hintFor(err))
 	}
 
 	goalServer(t, 422, `{"error":true,"message":"Invalid currency","status":422,"field_errors":{"currency":"Shopify states this refund in EUR and this account counts in USD."}}`)

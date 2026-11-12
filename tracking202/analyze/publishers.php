@@ -141,6 +141,8 @@ template_top('Analyze Your Publishers');
         <?php echo $empty('bi-inbox', 'No clicks on a publisher link yet', 'Choose a publisher in Get Links to make their link. Every click on it is counted here.', 'Get a publisher link', $base . '/tracking202/setup/get_trackers.php'); ?>
     <?php } ?>
 <?php } else { ?>
+    <?php // The period's money in other currencies than the account's, said above the figures that add it. ?>
+    <?php echo \Prosper202\Conversion\Ledger\RevenueCurrencies::notice($db, $accountId, (int) $time['from'], (int) $time['to']); ?>
     <div class="p202-table-wrap">
         <table class="table table-hover p202-table" id="publisher-table">
             <caption class="visually-hidden">Publishers, each with their links and the campaign each link sent clicks to</caption>

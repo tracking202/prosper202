@@ -31,7 +31,8 @@ final class PublishersReport
 
     /**
      * @return array{publishers: list<array<string, mixed>>, uncredited: ?array<string, mixed>,
-     *   totals: array<string, mixed>, unrecorded_links: bool, currency: string, spend_ledger: ?array<string, mixed>}
+     *   totals: array<string, mixed>, unrecorded_links: bool, currency: string,
+     *   money: array{currency: string, others: string}, spend_ledger: ?array<string, mixed>}
      */
     public static function read(\mysqli $db, int $accountId, int $from, int $to): array
     {
@@ -42,8 +43,11 @@ final class PublishersReport
             'time_to' => (string) $to,
         ]);
 
+        // The figures add each click's value as it stands: the money of the
+        // period in other currencies is said with them (RevenueCurrencies).
         return self::shape($groups) + [
             'currency' => $reports->accountCurrency(),
+            'money' => \Prosper202\Conversion\Ledger\RevenueCurrencies::forExport($db, $accountId, $from, $to),
             'spend_ledger' => $groups['spend_ledger'] ?? null,
         ];
     }
@@ -92,19 +96,26 @@ final class PublishersReport
      * The download: tab-separated lines, a heading first, as the other
      * Analyze downloads are written.
      *
-     * @param array{publishers: list<array<string, mixed>>, uncredited: ?array<string, mixed>} $report
+     * Every row ends with the account's currency and the money of the
+     * period in others, as every report download does.
+     *
+     * @param array{publishers: list<array<string, mixed>>, uncredited: ?array<string, mixed>,
+     *   money?: array{currency: string, others: string}} $report
      * @return list<string>
      */
     public static function exportLines(array $report): array
     {
-        $lines = [implode("\t", ['Publisher', 'Link', 'Campaign', ...array_keys(self::METRICS)])];
-        $line = static function (string $publisher, string $link, string $campaign, array $row): string {
+        $money = $report['money'] ?? ['currency' => '', 'others' => ''];
+        $lines = [implode("\t", ['Publisher', 'Link', 'Campaign', ...array_keys(self::METRICS), 'Currency', 'Other currencies in period'])];
+        $line = static function (string $publisher, string $link, string $campaign, array $row) use ($money): string {
             $cells = [self::cell($publisher), self::cell($link), self::cell($campaign)];
             foreach (self::METRICS as $key) {
                 $cells[] = in_array($key, ['total_clicks', 'total_click_throughs', 'total_leads'], true)
                     ? (string) (int) $row[$key]
                     : number_format((float) $row[$key], 2, '.', '');
             }
+            $cells[] = self::cell($money['currency']);
+            $cells[] = self::cell($money['others']);
 
             return implode("\t", $cells);
         };
