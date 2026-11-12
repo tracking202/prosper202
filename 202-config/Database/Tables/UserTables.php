@@ -488,6 +488,7 @@ final class UserTables
                 `attempts` tinyint(3) unsigned NOT NULL DEFAULT '0',
                 `sent_by` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',
                 `delivery_note` text DEFAULT NULL,
+                `actions` text DEFAULT NULL,
                 PRIMARY KEY (`alert_id`),
                 UNIQUE KEY `incident` (`user_id`, `aff_campaign_id`, `alert_kind`, `incident_key`),
                 KEY `user_seen` (`user_id`, `last_seen_at`)

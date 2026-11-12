@@ -9,6 +9,7 @@ use Prosper202\AdPlatforms\OpenAiAds\ChatGptCampaignsOfCampaign;
 use Prosper202\Alerts\AccountActivity;
 use Prosper202\Alerts\AlertSettings;
 use Prosper202\Alerts\CampaignActivity;
+use Prosper202\Alerts\MysqlAlertStore;
 use Prosper202\Alerts\SpendWithoutConversionsDetector;
 use Tests\Apps\Android\AndroidDatabase;
 
@@ -90,5 +91,29 @@ final class ChatGptCampaignInAlertIntegrationTest extends TestCase
         $plain = (new SpendWithoutConversionsDetector())->detect($this->conn, $activity, new AlertSettings(dailyCostCap: '100.00'));
         self::assertStringEndsWith('or pause it.', $plain[0]->message, 'no connection: the alert as it was');
         self::assertArrayNotHasKey('chatgpt_campaign_ids', $plain[0]->facts);
+    }
+
+    public function testTheInAppAlertKeepsAPauseForEachCampaignAndOffersIt(): void
+    {
+        require_once dirname(__DIR__, 2) . '/202-config/functions-alerts-ui.php';
+        self::$db->query('DELETE FROM 202_alert_log WHERE user_id = 1');
+        $activity = new AccountActivity(1, self::NOW, 'UTC', self::NOW - 3600, 'USD', [
+            30 => new CampaignActivity(30, 'Spring sale', clicksToday: 3, costToday: 150.0),
+        ]);
+        $alert = (new SpendWithoutConversionsDetector())->detect($this->conn, $activity, new AlertSettings(dailyCostCap: '100.00'))[0];
+        $store = new MysqlAlertStore($this->conn);
+        $store->logSeen($alert, self::NOW);
+
+        $listed = $store->recent(1, self::NOW - 60, 10);
+        self::assertSame([
+            ['action' => 'chatgpt_pause', 'connection_id' => 3, 'campaign_id' => 'cmpn_101'],
+            ['action' => 'chatgpt_pause', 'connection_id' => 3, 'campaign_id' => 'cmpn_102'],
+        ], $listed[0]['actions']);
+        $html = p202_alerts_list($listed, 'https://track.example.com/', self::NOW);
+        self::assertStringContainsString('tracking202/setup/destinations.php?ad_campaigns=3&amp;preview_pause=cmpn_101#ad-campaigns', $html);
+        self::assertStringContainsString('Pause cmpn_102 in ChatGPT Ads', $html);
+
+        self::$db->query("UPDATE 202_alert_log SET actions = 'not json' WHERE user_id = 1");
+        self::assertSame([], $store->recent(1, self::NOW - 60, 10)[0]['actions'], 'unreadable actions: the alert is still shown, without buttons');
     }
 }

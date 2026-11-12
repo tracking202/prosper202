@@ -482,6 +482,14 @@ if ($adCampaignsConnection !== null) {
             return ['campaign' => $detailCampaign, 'groups' => $groups];
         });
     }
+    // A pause offered by a money-loss alert: previewed first (read from OpenAI, nothing changed), then confirmed.
+    $pausePreview = null;
+    $pausePreviewError = null;
+    $previewCampaign = is_string($_GET['preview_pause'] ?? null) ? $_GET['preview_pause'] : null;
+    if ($previewCampaign !== null) {
+        [$pausePreview, $pausePreviewError] = $live(static fn (): ?array => $service->setStatus($userId, $adCampaignsId, 'campaigns', $previewCampaign, 'pause', true));
+    }
+    echo p202_ad_campaigns_pause_preview($adCampaignsId, $pausePreview, $pausePreviewError, $self, (string) ($_SESSION['token'] ?? ''));
     echo p202_ad_campaigns_view($adCampaignsConnection, $campaignPage['data'] ?? null, $campaignError, $spend, $spendError, $detail, $detailError, $self, (string) ($_SESSION['token'] ?? ''));
     echo p202_setup_script_tag($base);
     template_bottom();

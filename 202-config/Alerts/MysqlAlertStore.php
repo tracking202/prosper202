@@ -255,11 +255,12 @@ final class MysqlAlertStore
     {
         $stmt = $this->conn->prepareWrite(
             'INSERT INTO 202_alert_log'
-            . ' (user_id, aff_campaign_id, alert_kind, incident_key, message, first_seen_at, last_seen_at)'
-            . ' VALUES (?, ?, ?, ?, ?, ?, ?)'
-            . ' ON DUPLICATE KEY UPDATE message = VALUES(message), last_seen_at = VALUES(last_seen_at)'
+            . ' (user_id, aff_campaign_id, alert_kind, incident_key, message, first_seen_at, last_seen_at, actions)'
+            . ' VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+            . ' ON DUPLICATE KEY UPDATE message = VALUES(message), last_seen_at = VALUES(last_seen_at), actions = VALUES(actions)'
         );
-        $this->conn->bind($stmt, 'iisisii', [
+        $actions = self::actionsOf($alert);
+        $this->conn->bind($stmt, 'iisisiis', [
             $alert->userId,
             $alert->campaignId,
             $alert->kind->stateKey(),
@@ -267,8 +268,33 @@ final class MysqlAlertStore
             $alert->message,
             $now,
             $now,
+            $actions === [] ? null : json_encode($actions, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
         ]);
         $this->conn->executeUpdate($stmt);
+    }
+
+    /**
+     * What the in-app alert offers to do about it: pause each ChatGPT Ads
+     * campaign its clicks came from (SpendWithoutConversionsDetector's
+     * facts), through the connection that reaches it.
+     *
+     * @return list<array{action: string, connection_id: int, campaign_id: string}>
+     */
+    public static function actionsOf(Alert $alert): array
+    {
+        $connection = $alert->facts['chatgpt_connection_id'] ?? null;
+        $campaigns = $alert->facts['chatgpt_campaign_ids'] ?? null;
+        if (!is_int($connection) || !is_string($campaigns) || $campaigns === '') {
+            return [];
+        }
+        $actions = [];
+        foreach (explode(',', $campaigns) as $campaign) {
+            if (preg_match('/\A[a-z]+_[A-Za-z0-9-]{1,64}\z/D', $campaign) === 1) {
+                $actions[] = ['action' => 'chatgpt_pause', 'connection_id' => $connection, 'campaign_id' => $campaign];
+            }
+        }
+
+        return $actions;
     }
 
     /**
@@ -305,13 +331,14 @@ final class MysqlAlertStore
      * The account's alerts last seen at or after $since, the latest first.
      *
      * @return list<array{kind: ?AlertKind, campaign_id: int, message: string, first_seen_at: int,
-     *     last_seen_at: int, delivery: int, attempts: int, sent_by: list<string>, delivery_note: string}>
+     *     last_seen_at: int, delivery: int, attempts: int, sent_by: list<string>, delivery_note: string,
+     *     actions: list<array{action: string, connection_id: int, campaign_id: string}>}>
      */
     public function recent(int $userId, int $since, int $limit): array
     {
         $stmt = $this->conn->prepareRead(
             'SELECT aff_campaign_id, alert_kind, message, first_seen_at, last_seen_at, delivery, attempts, sent_by,'
-            . ' delivery_note FROM 202_alert_log WHERE user_id = ? AND last_seen_at >= ?'
+            . ' delivery_note, actions FROM 202_alert_log WHERE user_id = ? AND last_seen_at >= ?'
             . ' ORDER BY last_seen_at DESC, alert_id DESC LIMIT ?'
         );
         $this->conn->bind($stmt, 'iii', [$userId, $since, $limit]);
@@ -328,6 +355,7 @@ final class MysqlAlertStore
                 'attempts' => (int) $row['attempts'],
                 'sent_by' => $row['sent_by'] === '' ? [] : explode(',', (string) $row['sent_by']),
                 'delivery_note' => (string) ($row['delivery_note'] ?? ''),
+                'actions' => self::storedActions($row['actions'] ?? null),
             ];
         }
 
@@ -396,5 +424,32 @@ final class MysqlAlertStore
         throw new \UnexpectedValueException(
             "Account $userId's alert setting $column could not be read: " . var_export($value, true)
         );
+    }
+
+    /**
+     * A row's stored actions; none when there are none, or when they cannot be read (an alert is shown either way).
+     *
+     * @return list<array{action: string, connection_id: int, campaign_id: string}>
+     */
+    private static function storedActions(mixed $json): array
+    {
+        if (!is_string($json) || $json === '') {
+            return [];
+        }
+        try {
+            $decoded = json_decode($json, true, 4, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            error_log('Money-loss alerts: an alert\'s stored actions cannot be read');
+
+            return [];
+        }
+        $actions = [];
+        foreach (is_array($decoded) ? $decoded : [] as $a) {
+            if (is_array($a) && ($a['action'] ?? null) === 'chatgpt_pause' && is_int($a['connection_id'] ?? null) && is_string($a['campaign_id'] ?? null)) {
+                $actions[] = ['action' => 'chatgpt_pause', 'connection_id' => $a['connection_id'], 'campaign_id' => $a['campaign_id']];
+            }
+        }
+
+        return $actions;
     }
 }

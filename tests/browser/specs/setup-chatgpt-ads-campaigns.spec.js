@@ -11,7 +11,7 @@
 const checks = require('../lib/checks');
 
 const PAGE = '/tracking202/setup/destinations.php';
-const KEY = 'sk-ads-live-demo-key-0001';
+const KEY = 'sk-ads-eval-key-0001';
 
 module.exports = {
   name: 'setup-chatgpt-ads-campaigns',
@@ -31,6 +31,34 @@ module.exports = {
   },
 
   scenarios: [
+    {
+      name: 'A money-loss alert offers the pause, previews it, then pauses on confirm',
+      async run(ctx) {
+        const { app, ui, db, expect, state, shot } = ctx;
+        const now = Math.floor(Date.now() / 1000);
+        db.write('DELETE FROM 202_alert_log WHERE user_id = 1');
+        db.write("INSERT INTO 202_alert_log (user_id, aff_campaign_id, alert_kind, incident_key, message, first_seen_at, last_seen_at, delivery, actions)"
+          + " VALUES (1, 1, 'spend_without_conversions', 1, 'Spring sale (campaign #1) has cost USD 150.00 today with no conversion.', "
+          + now + ', ' + now + ", 3, '[{\"action\":\"chatgpt_pause\",\"connection_id\":" + state.connection + ",\"campaign_id\":\"cmpn_101\"}]')");
+        await app.goto('/202-account/');
+        const button = '#money-loss-alerts a:has-text("Pause cmpn_101 in ChatGPT Ads")';
+        expect.ok(await ui.exists(button), 'the alert on Home offers the pause');
+        await checks.baseline(ctx);
+        await ui.clickThrough(button);
+        expect.ok(await ui.visible('#pause-preview'), 'the pause is previewed first');
+        expect.match(await ui.text('#pause-preview'), /At OpenAI now: active\. Pausing makes it paused[\s\S]*Nothing has been changed yet/, 'with what OpenAI says now');
+        expect.match(await ui.text('#c-cmpn_101'), /active/, 'and nothing changed');
+        await shot('pause-preview');
+        await app.confirmAnd('dismiss', '#pause-preview button:has-text("Pause it")');
+        expect.match(await ui.text('#c-cmpn_101'), /active/, 'saying no leaves it serving');
+        await app.confirmAnd('accept', '#pause-preview button:has-text("Pause it")');
+        expect.match(await app.messages(), /cmpn_101 is paused at OpenAI/, 'saying yes pauses it');
+        expect.match(await ui.text('#c-cmpn_101'), /paused/, 'read back paused');
+        await app.confirmAnd('accept', '#c-cmpn_101 button:has-text("activate")');
+        db.write('DELETE FROM 202_alert_log WHERE user_id = 1');
+      },
+    },
+
     {
       name: 'The campaigns view lists, pauses and pushes the template',
       async run(ctx) {

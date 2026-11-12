@@ -107,3 +107,36 @@ function p202_ad_campaigns_view(array $connection, ?array $campaigns, ?string $e
 
     return $out . '</div></section>';
 }
+
+/**
+ * The pause a money-loss alert offers, previewed: what OpenAI says of the
+ * campaign now and the status it would get, with a confirmed Pause it.
+ *
+ * @param array<string, mixed>|null $preview OpenAiAdsCampaigns::setStatus(..., dryRun: true)
+ */
+function p202_ad_campaigns_pause_preview(int $connectionId, ?array $preview, ?string $error, string $self, string $token): string
+{
+    if ($error !== null) {
+        return p202_flash('bad', 'The campaign to pause was not read: ' . $error);
+    }
+    if ($preview === null) {
+        return '';
+    }
+    $e = 'p202_setup_e';
+    $record = (array) $preview['record'];
+    $id = (string) ($record['id'] ?? '');
+    $change = (array) ($preview['change']['status'] ?? []);
+    if (($change['from'] ?? null) === ($change['to'] ?? null)) {
+        return p202_flash('info', ($record['name'] ?? $id) . ' (' . $id . ') is already paused at OpenAI.');
+    }
+
+    return '<section class="p202-panel mb-4" id="pause-preview"><div class="p202-panel__head"><h2 class="p202-panel__title">Pause '
+        . $e($record['name'] ?? $id) . '?</h2><span class="p202-panel__sub">' . $e($id) . '</span></div><div class="p202-panel__body">'
+        . '<div class="mb-3">At OpenAI now: ' . $e((string) ($change['from'] ?? '')) . '. Pausing makes it ' . $e((string) ($change['to'] ?? 'paused'))
+        . ': it stops serving and stops spending at once. Nothing has been changed yet.</div>'
+        . '<form method="post" action="' . $e($self . '?ad_campaigns=' . $connectionId) . '" data-p202-confirm="' . $e('Pause ' . $id . ' at OpenAI now?') . '">'
+        . p202_setup_token_field($token)
+        . '<input type="hidden" name="action" value="ad_campaign_pause"><input type="hidden" name="connection_id" value="' . $connectionId . '">'
+        . '<input type="hidden" name="level" value="campaigns"><input type="hidden" name="object_id" value="' . $e($id) . '">'
+        . '<button type="submit" class="btn btn-danger">Pause it</button></form></div></section>';
+}

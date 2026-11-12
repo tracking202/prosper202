@@ -204,7 +204,7 @@ function p202_alerts_list(array $alerts, string $base, int $now): string
             . '<td><span class="p202-pill' . ($active ? ' p202-pill--bad">Going on' : '">Earlier') . '</span> '
             . '<strong>' . $e($kind === null ? 'Alert' : $kind->title()) . '</strong><div>' . $e($alert['message'])
             . '</div>' . ($kind === null ? '' : '<div><a href="' . $e($base . $kind->page($alert['campaign_id']))
-                . '">' . $e($kind->pageLabel()) . '</a></div>') . '</td>'
+                . '">' . $e($kind->pageLabel()) . '</a></div>') . p202_alerts_actions($alert['actions'] ?? [], $base) . '</td>'
             . '<td' . ($alert['delivery'] === MysqlAlertStore::FAILED ? ' class="text-danger"' : '') . '>'
             . $e($delivery) . '</td></tr>';
     }
@@ -424,4 +424,26 @@ function p202_alerts_card(
             default => p202_alerts_list($recent, get_absolute_url(), time()),
         }
         . '</div></section>';
+}
+
+/**
+ * The alert's buttons: for each ChatGPT Ads campaign its clicks came from, a
+ * Pause that opens the campaigns view with that pause previewed (read from
+ * OpenAI, nothing changed); the pause itself is a confirmed button there.
+ *
+ * @param list<array{action: string, connection_id: int, campaign_id: string}> $actions
+ */
+function p202_alerts_actions(array $actions, string $base): string
+{
+    $out = '';
+    foreach ($actions as $a) {
+        if ($a['action'] !== 'chatgpt_pause') {
+            continue;
+        }
+        $href = $base . 'tracking202/setup/destinations.php?ad_campaigns=' . $a['connection_id'] . '&preview_pause=' . rawurlencode($a['campaign_id']) . '#ad-campaigns';
+        $out .= '<a class="btn btn-sm btn-outline-danger me-2 mt-2" href="' . htmlspecialchars($href, ENT_QUOTES, 'UTF-8') . '">Pause '
+            . htmlspecialchars($a['campaign_id'], ENT_QUOTES, 'UTF-8') . ' in ChatGPT Ads</a>';
+    }
+
+    return $out === '' ? '' : '<div>' . $out . '</div>';
 }
