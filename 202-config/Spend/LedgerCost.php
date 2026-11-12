@@ -39,8 +39,15 @@ final class LedgerCost
     public const string ALIAS = 'sl';
 
     /**
+     * At most this many ad-hours are read into memory at once (stage());
+     * LedgerCostIntegrationTest sets it to 1 to read each hour alone.
+     */
+    private static int $slicePairs = 50000;
+
+    /**
      * @param list<int|string> $binds the join's, which come before the report's own
      * @param array<string, int> $reachesByPlatform
+     * @param list<string> $tables the temporary tables $join reads, on $staging's connection (stage())
      */
     private function __construct(
         public readonly string $join,
@@ -51,6 +58,8 @@ final class LedgerCost
         public readonly string $unallocated,
         public readonly int $otherCurrencyRows,
         private readonly string $row = 'de',
+        private readonly ?Connection $staging = null,
+        private readonly array $tables = [],
     ) {
     }
 
@@ -92,34 +101,228 @@ final class LedgerCost
         $lo = max($lo, (int) $held['first_hour']);
         $hi = min($hi, (int) $held['last_hour']);
 
-        $plan = self::plan($conn, $userId, $currency, $lo, $hi);
-        if ($plan === null) {
+        $sets = self::sets($conn, $userId, $currency, $lo, $hi);
+        if ($sets === []) {
             // No click can carry a ledger ad: all of it is unallocated.
             return new self('', [], '', min($byPlatform), $byPlatform, (string) $held['spend'], $other, $row);
         }
-        [$stats, $statsBinds, $statsTypes] = $plan['stats'];
         $alias = self::ALIAS;
         if (preg_match('/^[a-z0-9_]+$/D', $row) !== 1) {
             throw new \InvalidArgumentException("Not a table alias: $row");
         }
-        $join = 'LEFT JOIN (' . $plan['sets'] . ") {$alias}m ON {$alias}m.set_no = CAST($row.variable_set_id AS UNSIGNED)"
-            . " AND {$alias}m.network_id = $row.ppc_network_id"
-            . " LEFT JOIN ($stats) $alias ON $alias.ad_no = {$alias}m.ad_no AND $alias.h = $row.click_time DIV 3600"
-            . " AND $alias.clicks > 0 AND $alias.ledger_rows > 0";
 
-        // Unallocated is what the window holds less what clicks carry, in
-        // DECIMAL so no cent is lost to a float.
-        $stmt = $conn->prepareRead(
-            'SELECT CAST(? AS DECIMAL(40,24)) - COALESCE(SUM(g.spend), 0) AS spend'
-            . " FROM ($stats) g WHERE g.clicks > 0 AND g.ledger_rows > 0"
-        );
-        $conn->bind($stmt, 's' . $statsTypes, [(string) $held['spend'], ...$statsBinds]);
-        $left = $conn->fetchOne($stmt);
-        if ($left === null) {
-            throw new \RuntimeException('Summing the unallocated spend of a report answered no row');
+        $staged = self::stage($conn, $userId, $currency, $lo, $hi, $sets);
+        if ($staged !== null) {
+            [$setsTable, $statsTable] = $staged;
+            $join = "LEFT JOIN `$setsTable` {$alias}m ON {$alias}m.set_no = CAST($row.variable_set_id AS UNSIGNED)"
+                . " AND {$alias}m.network_id = $row.ppc_network_id"
+                . " LEFT JOIN `$statsTable` $alias ON $alias.ad_no = {$alias}m.ad_no AND $alias.h = $row.click_time DIV 3600";
+            $statsSql = "SELECT spend FROM `$statsTable`";
+            $statsBinds = [];
+            $statsTypes = '';
+        } else {
+            $plan = self::plan($conn, $userId, $currency, $lo, $hi, $sets)
+                ?? throw new \LogicException('The spend ledger plan answered nothing for variable sets that carry its ads');
+            [$stats, $statsBinds, $statsTypes] = $plan['stats'];
+            $join = 'LEFT JOIN (' . $plan['sets'] . ") {$alias}m ON {$alias}m.set_no = CAST($row.variable_set_id AS UNSIGNED)"
+                . " AND {$alias}m.network_id = $row.ppc_network_id"
+                . " LEFT JOIN ($stats) $alias ON $alias.ad_no = {$alias}m.ad_no AND $alias.h = $row.click_time DIV 3600"
+                . " AND $alias.clicks > 0 AND $alias.ledger_rows > 0";
+            $statsSql = "SELECT g.spend FROM ($stats) g WHERE g.clicks > 0 AND g.ledger_rows > 0";
         }
 
-        return new self($join, $statsBinds, $statsTypes, min($byPlatform), $byPlatform, (string) $left['spend'], $other, $row);
+        try {
+            // Unallocated is what the window holds less what clicks carry, in
+            // DECIMAL so no cent is lost to a float.
+            $stmt = $conn->prepareRead(
+                'SELECT CAST(? AS DECIMAL(40,24)) - COALESCE(SUM(u.spend), 0) AS spend FROM (' . $statsSql . ') u'
+            );
+            $conn->bind($stmt, 's' . $statsTypes, [(string) $held['spend'], ...$statsBinds]);
+            $left = $conn->fetchOne($stmt);
+            if ($left === null) {
+                throw new \RuntimeException('Summing the unallocated spend of a report answered no row');
+            }
+        } catch (\Throwable $e) {
+            if ($staged !== null) {
+                self::dropStaged($conn, $staged);
+            }
+            throw $e;
+        }
+
+        return new self($join, $statsBinds, $statsTypes, min($byPlatform), $byPlatform, (string) $left['spend'], $other, $row, $staged === null ? null : $conn, $staged ?? []);
+    }
+
+    /**
+     * The per-ad, per-hour figures a report joins, written once into
+     * temporary tables of this connection keyed as the report reads them:
+     * the variable sets carrying a ledger ad (set_no, network_id -> ad_no),
+     * the ledger's ads (ad_ref -> ad_no) and, per ad and UTC hour that both
+     * the ledger and a click have, the hour's spend and the account's clicks
+     * carrying the ad (ad_no, h).
+     * A join of the report's clicks with derived tables of the same was read
+     * row by row, and each report computed it twice.
+     *
+     * The rows are read with plain reads and written by this process: an
+     * INSERT ... SELECT from 202_dataengine share-locks every click it reads
+     * (CLAUDE.md #36). They are read in slices of hours so no slice holds
+     * more than $slicePairs ad-hours in memory. The tables' names are
+     * random, they live as long as this object (or the connection), and
+     * they hold exactly what plan()'s `stats` answers, rows with no click or
+     * no ledger row left out.
+     *
+     * Null when this connection cannot create a temporary table (the
+     * privilege is missing, a read-only server): forReport() then joins
+     * plan()'s derived tables, which answer the same, slower.
+     *
+     * @param list<array{set_no: int, network_id: int, ad_ref: string}> $sets
+     * @return array{0: string, 1: string, 2: string}|null the sets table, the stats table and the ads table
+     */
+    private static function stage(Connection $conn, int $userId, string $currency, int $lo, int $hi, array $sets): ?array
+    {
+        $name = 'p202_ledger_' . bin2hex(random_bytes(8));
+        $tables = [$name . '_sets', $name . '_hours', $name . '_ads'];
+        $created = [];
+        try {
+            foreach (
+                [
+                    "CREATE TEMPORARY TABLE `{$tables[0]}` (set_no BIGINT UNSIGNED NOT NULL,"
+                    . ' network_id BIGINT UNSIGNED NOT NULL, ad_no INT UNSIGNED NOT NULL,'
+                    . ' PRIMARY KEY (set_no, network_id)) ENGINE=InnoDB',
+                    "CREATE TEMPORARY TABLE `{$tables[1]}` (ad_no INT UNSIGNED NOT NULL, h INT UNSIGNED NOT NULL,"
+                    . ' spend DECIMAL(40,24) NOT NULL, clicks BIGINT NOT NULL, ledger_rows BIGINT NOT NULL,'
+                    . ' PRIMARY KEY (ad_no, h)) ENGINE=InnoDB',
+                    "CREATE TEMPORARY TABLE `{$tables[2]}` (ad_ref VARCHAR(350) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,"
+                    . ' ad_no INT UNSIGNED NOT NULL, PRIMARY KEY (ad_ref)) ENGINE=InnoDB',
+                ] as $i => $ddl
+            ) {
+                $stmt = $conn->prepareRead($ddl);
+                $conn->execute($stmt);
+                $stmt->close();
+                $created[] = $tables[$i];
+            }
+        } catch (\Throwable $e) {
+            error_log('Spend ledger temporary tables unavailable, the report joins derived tables: ' . $e->getMessage());
+            self::dropStaged($conn, $created);
+
+            return null;
+        }
+
+        try {
+            $adNo = self::adNumbers($sets);
+            $rows = [];
+            foreach ($sets as $set) {
+                $rows[] = '(' . $set['set_no'] . ', ' . $set['network_id'] . ', ' . $adNo[$set['ad_ref']] . ')';
+            }
+            self::insertRows($conn, $tables[0], $rows);
+
+            // The ads by bound value: an ad id is the platform's text.
+            foreach (array_chunk($adNo, 500, true) as $chunk) {
+                $stmt = $conn->prepareRead("INSERT INTO `{$tables[2]}` VALUES " . implode(', ', array_fill(0, count($chunk), '(?, ?)')));
+                $binds = [];
+                foreach ($chunk as $ref => $no) {
+                    $binds[] = (string) $ref;
+                    $binds[] = $no;
+                }
+                $conn->bind($stmt, str_repeat('si', count($chunk)), $binds);
+                $conn->execute($stmt);
+                $stmt->close();
+            }
+            $ledgerSql = 'SELECT a.ad_no, l.hour_start DIV 3600 AS h,'
+                . ' CAST(SUM(l.spend) AS DECIMAL(40,24)) AS spend, COUNT(*) AS ledger_rows FROM 202_spend_ledger l'
+                . " JOIN `{$tables[2]}` a ON a.ad_ref = l.ad_ref"
+                . ' WHERE l.user_id = ? AND l.currency = ? AND l.hour_start >= ? AND l.hour_start <= ?'
+                . ' GROUP BY a.ad_no, h';
+            $clickSql = "SELECT m.ad_no, d.click_time DIV 3600 AS h, COUNT(*) AS clicks FROM 202_dataengine d"
+                . " JOIN `{$tables[0]}` m ON m.set_no = CAST(d.variable_set_id AS UNSIGNED) AND m.network_id = d.ppc_network_id"
+                . ' WHERE d.user_id = ? AND d.click_time >= ? AND d.click_time <= ?'
+                . ' GROUP BY m.ad_no, h';
+
+            // Slices of whole UTC hours; each reads the ledger rows and the
+            // clicks of its hours that the whole read would have.
+            $span = max(1, intdiv(self::$slicePairs, count($adNo)));
+            for ($first = intdiv($lo, 3600); $first <= intdiv($hi, 3600); $first += $span) {
+                $last = $first + $span - 1;
+                $stmt = $conn->prepareRead($ledgerSql);
+                $conn->bind($stmt, 'isii', [$userId, $currency, max($lo, $first * 3600), min($hi, $last * 3600 + 3599)]);
+                $spent = [];
+                foreach ($conn->fetchAll($stmt) as $l) {
+                    $spent[$l['ad_no'] . ':' . $l['h']] = $l;
+                }
+                if ($spent === []) {
+                    continue;
+                }
+                $stmt = $conn->prepareRead($clickSql);
+                $conn->bind($stmt, 'iii', [$userId, max($lo, $first * 3600), min($hi + 3599, $last * 3600 + 3599)]);
+                $rows = [];
+                foreach ($conn->fetchAll($stmt) as $c) {
+                    $l = $spent[$c['ad_no'] . ':' . $c['h']] ?? null;
+                    if ($l === null || (int) $c['clicks'] <= 0) {
+                        continue;
+                    }
+                    $spend = (string) $l['spend'];
+                    if (preg_match('/^-?\d+(\.\d+)?$/D', $spend) !== 1) {
+                        throw new \RuntimeException('The spend ledger summed an hour to a value that is not a number');
+                    }
+                    $rows[] = '(' . (int) $c['ad_no'] . ', ' . (int) $c['h'] . ', ' . $spend . ', '
+                        . (int) $c['clicks'] . ', ' . (int) $l['ledger_rows'] . ')';
+                }
+                self::insertRows($conn, $tables[1], $rows);
+            }
+        } catch (\Throwable $e) {
+            self::dropStaged($conn, $tables);
+            throw $e;
+        }
+
+        return $tables;
+    }
+
+    /**
+     * Each ad of $sets numbered from 1 in the order first seen.
+     *
+     * @param list<array{set_no: int, network_id: int, ad_ref: string}> $sets
+     * @return array<string, int>
+     */
+    private static function adNumbers(array $sets): array
+    {
+        $adNo = [];
+        foreach ($sets as $set) {
+            $adNo[$set['ad_ref']] ??= count($adNo) + 1;
+        }
+
+        return $adNo;
+    }
+
+    /** @param list<string> $rows each a VALUES tuple of numbers */
+    private static function insertRows(Connection $conn, string $table, array $rows): void
+    {
+        foreach (array_chunk($rows, 1000) as $chunk) {
+            $stmt = $conn->prepareRead("INSERT INTO `$table` VALUES " . implode(', ', $chunk));
+            $conn->execute($stmt);
+            $stmt->close();
+        }
+    }
+
+    /** @param list<string> $tables */
+    private static function dropStaged(Connection $conn, array $tables): void
+    {
+        foreach ($tables as $table) {
+            try {
+                $stmt = $conn->prepareRead("DROP TEMPORARY TABLE IF EXISTS `$table`");
+                $conn->execute($stmt);
+                $stmt->close();
+            } catch (\Throwable $e) {
+                // The connection's end drops it.
+                error_log('Dropping a spend ledger temporary table failed: ' . $e->getMessage());
+            }
+        }
+    }
+
+    /** The temporary tables go with the report that joined them. */
+    public function __destruct()
+    {
+        if ($this->staging !== null && $this->tables !== []) {
+            self::dropStaged($this->staging, $this->tables);
+        }
     }
 
     /** The cost of one row of 202_dataengine (the report's alias for it), for SUM(). */
@@ -190,20 +393,20 @@ final class LedgerCost
      *    binds;
      *  - `clicks`: ad_no, h, clicks, with its binds.
      *
+     * $sets, when given, is sets()'s answer for the same arguments.
+     *
+     * @param list<array{set_no: int, network_id: int, ad_ref: string}>|null $sets
      * @return array{sets: string, ads: array{0: string, 1: list<int|string>, 2: string},
      *     stats: array{0: string, 1: list<int|string>, 2: string},
      *     clicks: array{0: string, 1: list<int|string>, 2: string}}|null
      */
-    public static function plan(Connection $conn, int $userId, ?string $currency, int $lo, int $hi): ?array
+    public static function plan(Connection $conn, int $userId, ?string $currency, int $lo, int $hi, ?array $sets = null): ?array
     {
-        $sets = self::sets($conn, $userId, $currency, $lo, $hi);
+        $sets ??= self::sets($conn, $userId, $currency, $lo, $hi);
         if ($sets === []) {
             return null;
         }
-        $adNo = [];
-        foreach ($sets as $set) {
-            $adNo[$set['ad_ref']] ??= count($adNo) + 1;
-        }
+        $adNo = self::adNumbers($sets);
         $setRows = [];
         foreach ($sets as $set) {
             $setRows[] = 'SELECT ' . $set['set_no'] . ' AS set_no, ' . $set['network_id'] . ' AS network_id, '

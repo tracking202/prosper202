@@ -117,6 +117,9 @@ final class AccountScopedJoinTest extends TestCase
     private const AUTH_KEY = 'the comma join\'s WHERE ties it: `2u.user_id = 2a.user_id`, with `2a.user_id` the signed-in account';
     private const LEDGER_PARTS = 'the counted conversion rows of the report\'s own clicks: LedgerReportSql::partsTable() selects `lp.click_id IN (SELECT s.click_id FROM 202_dataengine s WHERE <the report\'s owner condition and window>)`, its goal join is tied, and a conversion is recorded only on its own account\'s click';
     private const DATA_SCOPE = 'ranks an install-wide region or ISP by the clicks the report reads: `2st.user_id = ` the integer DataScope::userId() returns, or every account\'s for the session that sees every campaign (DataScope); it names nothing an account owns';
+    private const LEDGER_STAGED = 'a temporary table of this connection that LedgerCost::stage() filled for one'
+        . ' account: the variable sets sets() tied to the account\'s own traffic sources, the ledger\'s ads of the'
+        . ' account, and the per-hour figures read with user_id = the account';
     private const LEDGER_CLICKS = '; $table is 202_dataengine or LedgerClicks::table(), one account\'s clicks';
     private const REPORT_AGGREGATE_SCOPE = 'ReportAggregation retains the caller-built account/date/filter WHERE; '
         . 'ReportIntegrationTest and LegacyReportAccountScopeIntegrationTest execute its account-scoped readers, '
@@ -177,6 +180,16 @@ final class AccountScopedJoinTest extends TestCase
                 . ' AS {$alias} {$where} {($groups === [] ? \'\' : \' GROUP BY \'.implode(\', \', $groups))}'
                 . ' ) AS {$resultAlias}'
                 => self::REPORT_AGGREGATE_SCOPE . self::LEDGER_CLICKS,
+        ],
+        '202-config/Spend/LedgerCost.php' => [
+            'table built at runtime | {$setsTable} | LEFT JOIN {{$setsTable}} {{$alias}} m ON {{$alias}} m.set_no = CAST ( {$row}'
+                => self::LEDGER_STAGED,
+            'table built at runtime | {$statsTable} | ppc_network_id LEFT JOIN {{$statsTable}} {$alias} ON {$alias}.ad_no = {{$alias}} m.ad_no'
+                => self::LEDGER_STAGED,
+            'table built at runtime | {{$tables[2]}} | 202_spend_ledger l JOIN {{{$tables[2]}}} a ON a.ad_ref = l.ad_ref WHERE'
+                => self::LEDGER_STAGED,
+            'table built at runtime | {{$tables[0]}} | 202_dataengine d JOIN {{{$tables[0]}}} m ON m.set_no = CAST ( d.'
+                => self::LEDGER_STAGED,
         ],
         '202-config/DataEngine/LedgerClicks.php' => [
             'subquery table built at runtime | self::TABLE | AS cost FROM {self::TABLE} AS de '

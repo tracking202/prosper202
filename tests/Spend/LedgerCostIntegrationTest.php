@@ -8,6 +8,7 @@ use Api\V3\Controllers\ReportsController;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Connection;
 use Prosper202\Database\SchemaInstaller;
+use Prosper202\Spend\LedgerCost;
 use Prosper202\Spend\SpendLedger;
 
 /**
@@ -264,6 +265,67 @@ final class LedgerCostIntegrationTest extends TestCase
         }
         self::assertEqualsWithDelta(5.0, $all['groups']['totals']['total_cost'], 1e-9);
         self::assertEqualsWithDelta(5.0, array_sum(array_column($all['groups']['data'], 'total_cost')), 1e-9);
+    }
+
+    /**
+     * The per-hour figures are written once into temporary tables
+     * (LedgerCost::stage()); a connection that may not create one joins
+     * derived tables instead, and every report answers the same.
+     */
+    public function testAConnectionWithoutTemporaryTablesAnswersTheSame(): void
+    {
+        self::write(self::USER, [self::ledgerRow('ad_A', self::$hour, '3.00'), self::ledgerRow('ad_B', self::$hour + 3600, '1.10'),
+            self::ledgerRow('ad_Z', self::$hour, '2.25')]);
+        $window = self::window(self::$hour, self::$hour + 7199);
+        $staged = LedgerCost::forReport(new Connection(self::$db), self::USER, self::$hour, self::$hour + 7199, 'USD');
+        self::assertNotNull($staged);
+        self::assertStringContainsString('`p202_ledger_', $staged->join);
+        $expected = self::reports(new ReportsController(self::$db, self::USER), $window);
+        self::assertEqualsWithDelta(1.5 + 1.5 + 1.1 + 0.2 + 0.3 + 0.4 + 0.6, json_decode($expected['summary'], true)['data']['total_cost'], 1e-9);
+        // Read one hour at a time, the staged figures are the same.
+        $slice = new \ReflectionProperty(LedgerCost::class, 'slicePairs');
+        $pairs = $slice->getValue();
+        $slice->setValue(null, 1);
+        try {
+            self::assertSame($expected, self::reports(new ReportsController(self::$db, self::USER), $window));
+            // A window starting mid-hour: its first hour is still the whole hour's share.
+            $late = self::window(self::$hour + 1000, self::$hour + 7199);
+            $lateSliced = self::reports(new ReportsController(self::$db, self::USER), $late);
+        } finally {
+            $slice->setValue(null, $pairs);
+        }
+        self::assertSame(self::reports(new ReportsController(self::$db, self::USER), $late), $lateSliced);
+
+        $name = (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202');
+        $user = 'p202_lc_notemp';
+        $pass = bin2hex(random_bytes(8));
+        try {
+            self::q("DROP USER IF EXISTS '$user'@'%'");
+            self::q("CREATE USER '$user'@'%' IDENTIFIED BY '$pass'");
+            self::q("GRANT SELECT, INSERT, UPDATE, DELETE ON `$name`.* TO '$user'@'%'");
+        } catch (\RuntimeException $e) {
+            self::markTestSkipped('The test database user cannot create a user: ' . $e->getMessage());
+        }
+        try {
+            $limited = mysqli_connect((string) getenv('P202_TEST_DB_HOST'), $user, $pass, $name, (int) (getenv('P202_TEST_DB_PORT') ?: 3306));
+            try {
+                $created = $limited->query('CREATE TEMPORARY TABLE p202_lc_probe (a INT)');
+                $errno = $limited->errno;
+            } catch (\mysqli_sql_exception $e) {
+                $created = false;
+                $errno = $e->getCode();
+            }
+            self::assertFalse($created, 'The limited user created a temporary table');
+            self::assertSame(1044, $errno, 'Refused for want of the privilege');
+            $fallback = LedgerCost::forReport(new Connection($limited), self::USER, self::$hour, self::$hour + 7199, 'USD');
+            self::assertNotNull($fallback);
+            self::assertStringNotContainsString('p202_ledger_', $fallback->join);
+            self::assertSame($staged->meta(self::ZONE), $fallback->meta(self::ZONE));
+            self::assertSame($expected, self::reports(new ReportsController($limited, self::USER), $window));
+            $limited->close();
+        } finally {
+            self::q("DROP USER IF EXISTS '$user'@'%'");
+        }
     }
 
     public function testARePullReplacesTheHourAndASecondWriteChangesNothing(): void
