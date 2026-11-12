@@ -12,7 +12,7 @@ use Prosper202\Goals\GoalSubject;
 /**
  * The click a server postback means when its SubID was not filled in: the
  * click that carries an ad click id the postback sends back (gclid,
- * gbraid, wbraid, ttclid, msclkid, fbclid: ClickRecord::AD_CLICK_IDS, each
+ * gbraid, wbraid, ttclid, msclkid, fbclid, oppref: ClickRecord::AD_CLICK_IDS, each
  * by its own parameter name), last visited in the last 30 days.
  *
  * An ad click id names one ad click. Several clicks carrying it are that

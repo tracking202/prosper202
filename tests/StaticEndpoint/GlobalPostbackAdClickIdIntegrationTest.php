@@ -594,6 +594,23 @@ final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
     }
 
     /** Clicks older than the 30 days are not counted against the limit of clicks told apart. */
+    /** A ChatGPT ad's click: OpenAI's oppref, sent back under its own name, finds it. */
+    public function testAnUnfilledSubidIsMatchedByTheOpprefSentBack(): void
+    {
+        $click = self::ADDED[0] + 28;
+        $oppref = 'op_Q2hhdEdQVC1kZW1vLXNob3A';
+        self::click($click, self::USER, self::$campaigns[self::USER][0], 0, ['oppref' => $oppref], [600]);
+
+        [$status, $body] = self::gpb(['subid' => '', 'amount' => '89.00', 'oppref' => $oppref]);
+
+        self::assertSame(200, $status, $body);
+        $recorded = 'SELECT click_id, click_payout, match_method FROM 202_conversion_logs WHERE click_id = ' . $click;
+        self::assertSame([[(string) $click, '89.00000', 'ad_click_id']], self::all($recorded));
+        [$status, $body] = self::gpb(['subid' => '', 'amount' => '1', 'oppref' => strtolower($oppref)]);
+        self::assertSame(404, $status, 'an oppref is compared exactly: ' . $body);
+        self::assertCount(1, self::all($recorded));
+    }
+
     public function testOldClicksCarryingTheIdDoNotHideARecentOne(): void
     {
         $old = range(self::ADDED[0] + 2, self::ADDED[0] + 25);

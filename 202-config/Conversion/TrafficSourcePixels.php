@@ -53,7 +53,7 @@ final class TrafficSourcePixels
     private const TOKENS = [
         'c1' => ['c1'], 'c2' => ['c2'], 'c3' => ['c3'], 'c4' => ['c4'],
         't202pubid' => ['t202pubid'], 'gclid' => ['gclid'], 'gbraid' => ['gbraid'], 'wbraid' => ['wbraid'],
-        'ttclid' => ['ttclid'], 'msclkid' => ['msclkid'], 'fbclid' => ['fbclid'],
+        'ttclid' => ['ttclid'], 'msclkid' => ['msclkid'], 'fbclid' => ['fbclid'], 'oppref' => ['oppref'],
         'utm_source' => ['utm_source'], 'utm_medium' => ['utm_medium'], 'utm_campaign' => ['utm_campaign'],
         'utm_term' => ['utm_term'], 'utm_content' => ['utm_content'],
         'subid' => ['subid'], 't202kw' => ['t202kw'], 'payout' => ['payout'], 'random' => ['random'],
@@ -479,6 +479,7 @@ final class TrafficSourcePixels
                 'ttclid' => $adClickIds['ttclid'],
                 'msclkid' => $adClickIds['msclkid'],
                 'fbclid' => $adClickIds['fbclid'],
+                'oppref' => $adClickIds['oppref'],
                 'utm_source' => (string) ($row['utm_source'] ?? ''),
                 'utm_medium' => (string) ($row['utm_medium'] ?? ''),
                 'utm_campaign' => (string) ($row['utm_campaign'] ?? ''),

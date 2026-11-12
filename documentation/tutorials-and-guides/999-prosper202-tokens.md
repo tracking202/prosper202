@@ -28,7 +28,9 @@ Here's a full list of Prosper202 Tokens
 
 **[[fbclid]]** - Meta's click id, which Facebook and Instagram add to outbound clicks: what Meta's `fbc` parameter is built from. Kept to 1,000 characters (real ones run to about 200). Meta says the id is case sensitive; it is kept and compared exactly as it came.
 
-The six click ids are recorded from direct links and from simple and advanced landing pages (the landing page script sends them on from the page's URL). The redirector records none of them, as it records no UTM values. A direct link or a redirector passes `gbraid`, `wbraid` and `ttclid` on to the offer under their own names, as it does every other parameter of the link, so an offer URL needs those tokens only to send them under another name (and a redirector's [[gbraid]], [[wbraid]] and [[ttclid]] are empty, since it records none). The gclid, msclkid and fbclid are not passed on: an offer URL that needs one names its token.
+**[[oppref]]** - OpenAI's click id, which ChatGPT ads add to the landing URL: what a conversion sent to ChatGPT Ads is credited by. Kept to 1,000 characters (OpenAI documents no length) and compared exactly as it came. Recorded from 1.9.80.
+
+The seven click ids are recorded from direct links and from simple and advanced landing pages (the landing page script sends them on from the page's URL). The redirector records none of them, as it records no UTM values. A direct link or a redirector passes `gbraid`, `wbraid` and `ttclid` on to the offer under their own names, as it does every other parameter of the link, so an offer URL needs those tokens only to send them under another name (and a redirector's [[gbraid]], [[wbraid]] and [[ttclid]] are empty, since it records none). The gclid, msclkid, fbclid and oppref are not passed on: an offer URL that needs one names its token.
 
 [[msclkid]] and [[fbclid]] filled with nothing before 1.9.79: no version since at least 1.9.55 kept either id, so a click recorded before 1.9.79 has none.
 

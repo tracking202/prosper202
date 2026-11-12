@@ -152,6 +152,7 @@ $tokens = [
     "ttclid" => $adClickIds['ttclid'],
     "msclkid" => $adClickIds['msclkid'],
     "fbclid" => $adClickIds['fbclid'],
+    "oppref" => $adClickIds['oppref'],
     "utm_source" => $mysql['utm_source'],
     "utm_medium" => $mysql['utm_medium'],
     "utm_campaign" => $mysql['utm_campaign'],

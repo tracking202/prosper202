@@ -12,7 +12,8 @@ use Prosper202\Database\Connection;
  * id's SHA-256, whatever kind of id it is. A global postback with no SubID
  * finds its click through it (ClickByAdClickId).
  *
- * 202_google has no key on its ids, and a key on each of the six made the
+ * 202_google has no key on its ids, and a key on each of the six (oppref,
+ * the seventh, came after) made the
  * table four times its size and every click's insert several times dearer
  * (measured on 4 million rows: +1,209 MB and 56 to 593 µs a click, against
  * +93 MB and 11 µs for these rows). The hash only narrows: the reader
@@ -83,7 +84,7 @@ final class AdClickIdIndex
     public static function backfillSql(int $from, int $to, int $since): string
     {
         $id = 'CASE k.n WHEN 1 THEN g.gclid WHEN 2 THEN g.gbraid WHEN 3 THEN g.wbraid WHEN 4 THEN g.ttclid'
-            . ' WHEN 5 THEN g.msclkid ELSE g.fbclid END';
+            . ' WHEN 5 THEN g.msclkid WHEN 6 THEN g.fbclid ELSE g.oppref END';
 
         return 'INSERT IGNORE INTO ' . self::TABLE . ' (click_id, id_hash)'
             . ' SELECT g.click_id, UNHEX(LEFT(SHA2(' . $id . ', 256), 16))'
@@ -91,7 +92,7 @@ final class AdClickIdIndex
             . ' AND c.click_time >= ' . $since . ') AS w'
             . ' JOIN 202_google AS g ON g.click_id = w.click_id'
             . ' JOIN (SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4'
-            . ' UNION ALL SELECT 5 UNION ALL SELECT 6) AS k'
+            . ' UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7) AS k'
             . ' WHERE ' . $id . " <> ''";
     }
 
