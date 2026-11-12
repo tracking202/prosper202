@@ -109,7 +109,7 @@ limit that user — a scope can narrow a key further, never past its role:
 | `/campaigns`, `/aff-networks`, `/ppc-networks`, `/ppc-accounts`, `/trackers`, `/landing-pages`, `/text-ads`, `/rotators` (and rotator rules): reads, `POST`/`PUT` and `bulk-upsert`; `GET /trackers/{id}/url`; the Mobile Apps reads (`GET /apps`, `/apps/{id}`, `/apps/skan-encodings…`, `/apps/{id}/store-link`, `/apps/{id}/integrity`) | `access_to_setup_section` | every Setup page (they are the only place these records are shown) |
 | `DELETE` of each of those | its own `remove_*` — `remove_campaign`, `remove_campaign_category`, `remove_traffic_source`, `remove_traffic_source_account`, `remove_tracker`, `remove_landing_page`, `remove_text_ad`, `remove_rotator`, `remove_rotator_rule` — and `access_to_setup_section` | the Setup pages' remove buttons, `delete_tracker.php` |
 | The Update routes (`/clicks/cpc`, `/conversions/subids…`, `/conversions/uploads`), and recording one conversion (`POST /conversions`) | `access_to_update_section`; deleting subids also `delete_individual_subids` | the Update section ([Update](26-update.md)) |
-| Writing the spend ledger (`POST /spend-ledger`) | `access_to_update_section` | Update › CPC, which it stands in for ([Spend Ledger](28-spend-ledger.md)) |
+| Writing the spend ledger (`POST /spend-ledger`) | `access_to_update_section` | Update › CPC, which it stands in for ([Spend Ledger](29-spend-ledger.md)) |
 | Removing one conversion (`DELETE /conversions/{id}`) | `delete_individual_subids` and `access_to_update_section` | Update › Delete Subids |
 | `/system/version`, `/db-stats`, `/cron`, `/errors`, `/dataengine`, `/metrics`, and the rest of Account › Settings (`/system/info`, `/login-log`, `/retention`, `/isp-lookup`), and `/system/traffic-source-owners` (its repair also asks for a user who may act on both users, as Account › Users does) | Admin, and `access_to_settings` | Account › Settings |
 | The Setup code and an account's pixels, reads included: `GET /landing-pages/{id}/code`, `POST /landing-pages/{id}/check`, `GET /conversions/postback-code`, `/ppc-accounts/{id}/pixels` | `access_to_setup_section` | Get LP Code, Postback / Pixel, Traffic Sources ([Setup](27-setup.md)) |
@@ -661,7 +661,7 @@ checked: put it where only the server's user can write.
 | Update | Past clicks' CPC, mark/delete/reset subids, revenue report upload (with `?dry_run=1`) | [Update](26-update.md) |
 | Setup | Landing-page code, conversion pixels and postback URLs, a traffic source's custom variables, an account's pixels | [Setup](27-setup.md) |
 | Reports | Summary, breakdown, timeseries, daypart, weekpart | [Reports](11-reports.md) |
-| Spend Ledger | What each ad platform billed per ad per hour: write (with `?dry_run=1`) and read | [Spend Ledger](28-spend-ledger.md) |
+| Spend Ledger | What each ad platform billed per ad per hour: write (with `?dry_run=1`) and read | [Spend Ledger](29-spend-ledger.md) |
 | Rotators | CRUD + nested rules, criteria, redirects | [Rotators](12-rotators.md) |
 | Attribution | Models, snapshots, exports | [Attribution](13-attribution.md) |
 | LTV | Customers, revenue, subscriptions, products, custom fields, companies, webhooks; LTV reads (summary, cohorts, MRR, predict, ABM) | [LTV](20-ltv.md) |
