@@ -45,6 +45,8 @@ final class DestinationsIntegrationTest extends TestCase
         foreach (['202_destinations', '202_destination_deliveries', '202_customers', '202_clicks_advance', '202_clicks_site', '202_site_urls', '202_ips', '202_ips_v6'] as $t) {
             self::$db->query('TRUNCATE TABLE ' . $t);
         }
+        // A currency change another suite left would put these rows in another currency (RowCurrency::inForceAt()).
+        self::fixture('DELETE FROM 202_currency_changes WHERE user_id IN (1, 2)');
         self::fixture('DELETE FROM 202_users WHERE user_id IN (1, 2)');
         self::fixture("INSERT INTO 202_users SET user_id=1, user_name='store-owner', user_email='owner@example.com', user_active=1, user_deleted=0");
         self::fixture("INSERT INTO 202_users SET user_id=2, user_name='saas-owner', user_email='saas@example.com', user_active=1, user_deleted=0");
