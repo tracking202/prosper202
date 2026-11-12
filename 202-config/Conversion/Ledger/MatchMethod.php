@@ -17,6 +17,11 @@ use Prosper202\Database\Connection;
  *  - click_id: the request named the click — a subid or sid parameter,
  *    ClickBank's tracking code, the click id of an API call or of an upload
  *    line, or an app install's signed token;
+ *  - ad_click_id: a server postback whose SubID was not filled in sent
+ *    back an ad platform's click id (gclid, gbraid, wbraid, ttclid,
+ *    msclkid, fbclid) that a click carries: one visitor's latest click on
+ *    one campaign
+ *    (Prosper202\Click\ClickByAdClickId);
  *  - cookie: a tracking cookie in the visitor's browser named it (the
  *    campaign's tracking202subid_a_<id>, or tracking202subid);
  *  - visitor_id: the landing-page script's own visitor id (p202lpid), on
@@ -31,6 +36,7 @@ use Prosper202\Database\Connection;
 enum MatchMethod: string
 {
     case CLICK_ID = 'click_id';
+    case AD_CLICK_ID = 'ad_click_id';
     case COOKIE = 'cookie';
     case VISITOR_ID = 'visitor_id';
     case SAME_IP = 'same_ip';
@@ -41,11 +47,32 @@ enum MatchMethod: string
     {
         return match ($this) {
             self::CLICK_ID => 'Click id',
+            self::AD_CLICK_ID => 'Ad click id',
             self::COOKIE => 'Cookie',
             self::VISITOR_ID => 'Visitor id',
             self::SAME_IP => 'Same IP',
             self::UNKNOWN => 'Unknown',
         };
+    }
+
+    /**
+     * Whether the conversion named its click rather than it being inferred:
+     * the only conversions sent to an ad platform (the offline files through
+     * LeftOut::forMatch(), the destinations), since a guess would teach the
+     * platform's bidding the wrong clicks. The one list of them.
+     */
+    public function namesTheClick(): bool
+    {
+        return match ($this) {
+            self::CLICK_ID, self::AD_CLICK_ID, self::COOKIE => true,
+            self::VISITOR_ID, self::SAME_IP, self::UNKNOWN => false,
+        };
+    }
+
+    /** @return list<self> the methods that name the click, in order */
+    public static function naming(): array
+    {
+        return array_values(array_filter(self::cases(), static fn (self $m): bool => $m->namesTheClick()));
     }
 
     /**

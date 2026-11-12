@@ -148,6 +148,85 @@ curl -H "Authorization: Bearer $KEY" \
   "https://your-domain.com/api/v3/conversions/postback-code?subid=%7Baff_sub%7D&amount=%7Bpayout%7D"
 ```
 
+## When the network does not send the SubID back
+
+Some networks leave the sub id macro unfilled, so the global postback arrives
+as `gpb.php?subid={aff_sub}&amount=49.00` with the macro itself where the
+click's id should be, or with `subid=` empty. Until 1.9.80 that conversion was
+answered `SubID not found` and lost. Now `gpb.php` looks for the click by an
+**ad click id** the postback sends back instead: the `gclid`, `gbraid` or
+`wbraid` Google put on the ad click, Microsoft's `msclkid`, Meta's `fbclid`
+or TikTok's `ttclid`, which every click keeps.
+
+A SubID that is there is read exactly as before. The ad click id is asked
+only when `subid` (and `sid`) is empty or is one unfilled macro and nothing
+else: `[[subid]]`, `{aff_sub}`, `{{name}}`, `${name}`, `[name]`, `[=SID=]`,
+`#s2#`, `%subid1%` or `<name>`. A SubID that holds anything else and names no
+click is still refused, whatever else the postback sends.
+
+**Setting it up**, for a store, Northwind Outdoor, advertising on Google
+through a network whose postbacks drop the sub id:
+
+1. Hand the network the ad click id when you send it the visitor. In the
+   campaign's URL put the token in one of the network's sub id slots, e.g.
+   `https://network.example/offer/812?aff_sub={aff_sub}&aff_sub3=[[gclid]]`
+   (`[[msclkid]]`, `[[fbclid]]`, `[[ttclid]]`, `[[gbraid]]` and `[[wbraid]]`
+   work the same way).
+2. Have the network send it back. Either name it for what it is in the
+   postback URL you give the network:
+
+   ```
+   https://track.northwind.example/tracking202/static/gpb.php?subid={aff_sub}&amount={payout}&gclid={aff_sub3}&p202_token=<your token>
+   ```
+
+   or, when the network's postback is fixed and returns it under its own
+   name (`...&aff_sub3=Cj0KCQiA...`), tell Prosper202 that name: Personal
+   settings › Advanced › **Match conversions by ad click id**, `aff_sub3`
+   (`user_pref_click_id_params` on
+   [`PUT /users/{id}/preferences`](14-users.md#ad-click-id-parameters-user_pref_click_id_params),
+   `p202 user prefs update <id> --user-pref-click-id-params aff_sub3`). You
+   need not say which platform's id it carries: the value is tried as each
+   kind.
+
+What it will and will not match:
+
+- **One visitor's click.** An ad click id names one ad click, so several
+  clicks carrying it are that visitor recorded more than once (a reloaded
+  landing URL makes two). The conversion goes to the latest of them, by the
+  time of its last visit. A retry of a sale stays where the sale is: when one
+  of those clicks already holds the order number or event the postback
+  sends (or, for a postback with neither, already converted), that click
+  is taken, and the retry is answered as the duplicate it is.
+- **Never a choice a report would show.** When the clicks carrying the ids
+  sent are on more than one campaign, from more than one traffic source
+  account, or of more than one account, nothing says which converted: the
+  postback is answered `409` and nothing is recorded; when the clicks are
+  all your account's, your Setup › Inbound Log says which of those it was.
+  Send the SubID to settle those.
+- **An id, not a placeholder.** A value no platform issues, written where
+  the id was meant to go (`undefined`, `null`, `(not set)`, an unfilled
+  `__GCLID__`), is not looked up: every visitor whose page wrote it shares
+  it.
+- **Exactly.** An id's case is part of it: `Cj0KCQ...` and `cj0kcq...` are
+  different ids.
+- **The last 30 days.** The click must have been visited in the last 30 days.
+- **After the upgrade.** Until the 1.9.80 database upgrade has run, a
+  postback that needs this lookup is answered `503` (with `Retry-After`),
+  which a network that retries sends again; the upgrade fills the lookup
+  for the clicks of the last 30 days.
+- **Your own clicks.** A parameter you name in Personal settings is looked up
+  among your account's clicks only. Whichever way the click is found, the
+  postback must still pass that click's account's
+  [postback authentication](#postback-authentication).
+
+A conversion found this way is recorded with `match_method` `ad_click_id`
+([Conversions](10-conversions.md#how-each-conversions-click-was-found)), so
+`GET /conversions?match_method=ad_click_id` lists them, and Setup › Inbound
+Log says which parameter found the click and how many clicks carry it, or
+why none was found. Only
+`gpb.php` does this; the pixels and `pb.php` read the SubID and cookies as
+before.
+
 ## Postback authentication
 
 Click ids count up. Without authentication, anyone who can guess one can send

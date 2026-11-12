@@ -29,7 +29,7 @@ use Prosper202\Report\AccountZone;
  * ledger, so no secret and no identifier is ever stored in a row.
  *
  * Before a send (owner, 2026-11-04): a conversion whose click was guessed
- * (not named by click id or cookie) is withheld; so is every visitor under
+ * (not named: MatchMethod::namesTheClick()) is withheld; so is every visitor under
  * privacy 'all', and a visitor who may be in the EEA or UK (EuropeanVisitor)
  * unless the setting is 'disabled' and the destination states both consent
  * signals granted. Withheld rows are never retried by the worker; the
@@ -441,7 +441,7 @@ final class DestinationQueue
         $ip = (string) ($conv['ip_address'] ?? '');
         // Only a click the conversion named: a guess would teach the platform the wrong clicks.
         $method = MatchMethod::tryFrom((string) ($conv['match_method'] ?? '')) ?? MatchMethod::UNKNOWN;
-        if ($method !== MatchMethod::CLICK_ID && $method !== MatchMethod::COOKIE) {
+        if (!$method->namesTheClick()) {
             return ['withheld', new SendResult(false, false, null, 'withheld: the click was found by ' . $method->label() . ', not named by the conversion')];
         }
         $setting = PrivacySetting::forAccount($this->conn, $userId);

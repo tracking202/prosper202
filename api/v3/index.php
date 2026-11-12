@@ -329,6 +329,10 @@ try {
     } elseif (str_contains($path, '/bulk-upsert')) {
         $limit = 60;
         $bucketKey .= ':bulk-upsert';
+    } elseif (str_contains($path, '/google-ads/')) {
+        // Each of these reads Google with the account's own grant and quota.
+        $limit = 10;
+        $bucketKey .= ':google-ads';
     }
     if ($limit !== null) {
         $rate = $stateStore->consumeRateLimit($bucketKey, $limit, $windowSeconds);
@@ -591,8 +595,15 @@ try {
             $r->get('/inbound-log', fn() => (new \Api\V3\Controllers\InboundLogController(
                 $db,
                 $actorUserId,
-                $auth->hasPermission($db, 'add_users')
+                $auth->hasPermission($db, 'add_users'),
+                \Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret::accountStores(
+                    new \Prosper202\Database\Connection($db),
+                    $actorUserId
+                )
             ))->list($queryParams));
+            // The Shopify refunds Setup › Inbound Log lists above the log. Before /{id}.
+            $r->get('/shopify-refunds', fn() => (new \Api\V3\Controllers\ShopifyRefundsController($db, $actorUserId))
+                ->list($queryParams));
         }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'access_to_setup_section'); }]);
         // "Record it now": a refused postback's conversion, recorded from the log. It writes a
         // conversion, so it asks what POST /conversions asks beside the log's own permission.
@@ -600,6 +611,19 @@ try {
             $r->post('/inbound-log/{id}/record', fn($ctx) => (new \Api\V3\Controllers\InboundLogController($db, $actorUserId, false))
                 ->recordNow(PathId::of($ctx)));
         }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'access_to_setup_section'); }, $updateSection]);
+        // Recording a refund writes a conversion, so it asks what recording one asks too, as the page does.
+        $router->group('/conversions', function (Router $r) use ($db, $actorUserId, $payload) {
+            $cls = \Api\V3\Controllers\ShopifyRefundsController::class;
+            $r->post('/shopify-refunds/{id}/record', fn($ctx) => (new $cls($db, $actorUserId))
+                ->takeBack(PathId::of($ctx), $payload));
+            $r->post('/shopify-refunds/{id}/close', fn($ctx) => (new $cls($db, $actorUserId))
+                ->close(PathId::of($ctx), $payload));
+        }, [
+            static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_setup_section');
+            },
+            $updateSection,
+        ]);
         $router->group('/conversions', function (Router $r) use ($crud, $queryParams, $campaignFigures, $recordMoney, $matchFigures) {
             $cls = \Api\V3\Controllers\ConversionsController::class;
             $r->get('',        fn() => $campaignFigures($crud($cls)->list($queryParams), $recordMoney));
@@ -781,6 +805,11 @@ try {
         }, [$setupSection]);
         $router->group('/destinations', function (Router $r) use ($crud, $queryParams) {
             $cls = \Api\V3\Controllers\DestinationsController::class;
+            $r->get('/{id}/google-ads/accounts', fn($ctx) => $crud($cls)->googleAdsAccounts(PathId::of($ctx)));
+            $r->get('/{id}/google-ads/conversion-actions', fn($ctx) => $crud($cls)->googleAdsConversionActions(PathId::of($ctx), $queryParams));
+        }, [$setupSection]);
+        $router->group('/destinations', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\DestinationsController::class;
             $r->get('/{id}/deliveries', fn($ctx) => $crud($cls)->deliveries(PathId::of($ctx), $queryParams));
         }, [$setupSection, static function () use ($auth, $db): void {
             $auth->requirePermission($db, 'access_to_campaign_data');
@@ -792,6 +821,7 @@ try {
             $r->delete('/{id}',     fn($ctx) => tap($crud($cls), fn($c) => $c->delete(PathId::of($ctx))));
             $r->post('/{id}/test',  fn($ctx) => $crud($cls)->test(PathId::of($ctx)));
             $r->post('/{id}/oauth/start', fn($ctx) => $crud($cls)->oauthStart(PathId::of($ctx), $_SERVER));
+            $r->post('/{id}/google-ads/pick', fn($ctx) => $crud($cls)->googleAdsPick(PathId::of($ctx), $payload));
             $r->post('/{id}/deliveries/resend', fn($ctx) => $crud($cls)->resend(PathId::of($ctx), $payload));
             $r->post('/{id}/backfill', fn($ctx) => $crud($cls)->backfill(PathId::of($ctx), $payload));
         }, [$setupSection]);
@@ -1411,7 +1441,7 @@ try {
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
                 'apps'          => '/apps/{id|skan-encodings|postbacks|report|notifications|verify|schema|installs}[/installs|/install-token|/store-link|/integrity|/integrity-credential]',
                 'goals'         => '/goals/{id|validate|evaluate}',
-                'destinations'  => '/destinations[/{id}][/test|/deliveries[/resend]|/backfill|/oauth/start]',
+                'destinations'  => '/destinations[/{id}][/test|/deliveries[/resend]|/backfill|/oauth/start|/google-ads/accounts|/google-ads/conversion-actions|/google-ads/pick]',
                 'events'        => '/events',
                 'users'         => '/users',
                 'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations|integrations/record-held|traffic-source-owners|traffic-source-owners/repair|traffic-source-owners/split}',

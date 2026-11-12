@@ -111,6 +111,9 @@ final class InboundReplay
             return 'This pixel request was logged without the click its visitor\'s browser named, so the log cannot say'
                 . ' which click converted.';
         }
+        if ($kept && MatchMethod::tryFrom((string) $row['match_method']) === null) {
+            return 'The log does not say how this request\'s click was found, so recording it could credit another click.';
+        }
         if (!$kind['browser'] && ($row['method'] ?? '') !== 'GET' && !$kept) {
             return 'It was sent as a form post, and this row was logged with only what its URL carried.';
         }
@@ -268,7 +271,8 @@ final class InboundReplay
         $endpoint = (string) $row['endpoint'];
         $kind = self::KINDS[$endpoint];
         $refused = static fn (string $why): array => ['status' => 'refused', 'message' => 'Nothing was recorded. ' . $why, 'conversion_id' => null];
-        $matchedBy = $kind['browser'] ? MatchMethod::from((string) $row['match_method']) : MatchMethod::CLICK_ID;
+        // How the endpoint found the click, as it said; a server postback logged before it said is its subid's.
+        $matchedBy = MatchMethod::tryFrom((string) ($row['match_method'] ?? '')) ?? MatchMethod::CLICK_ID;
 
         $campaignId = null;
         if ($kind['acip']) {

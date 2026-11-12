@@ -11,6 +11,8 @@ use Prosper202\Database\Connection;
 use Prosper202\Destinations\DestinationInputException;
 use Prosper202\Destinations\DestinationQueue;
 use Prosper202\Destinations\DestinationStore;
+use Prosper202\Destinations\GoogleAdsAccounts;
+use Prosper202\Destinations\GoogleAdsPicker;
 use Prosper202\Destinations\GoogleAdsOAuth;
 
 /**
@@ -23,7 +25,7 @@ final class DestinationsController
     private readonly Connection $conn;
     private readonly DestinationStore $store;
 
-    public function __construct(\mysqli $db, private readonly int $userId)
+    public function __construct(\mysqli $db, private readonly int $userId, private readonly ?GoogleAdsAccounts $google = null)
     {
         $this->conn = new Connection($db);
         $this->store = new DestinationStore($this->conn);
@@ -163,6 +165,67 @@ final class DestinationsController
     public function oauthStart(int $id, array $server): array
     {
         return ['data' => $this->refusing(fn (): ?array => GoogleAdsOAuth::start($this->store, $this->userId, $id, GoogleAdsOAuth::redirectUri($server), time())) ?? throw self::notFound($id)];
+    }
+
+    /**
+     * The Google Ads accounts a connected destination's Google user can
+     * send conversions to, read from Google now.
+     */
+    public function googleAdsAccounts(int $id): array
+    {
+        return ['data' => $this->refusing(fn (): ?array => $this->picker()->accounts($this->userId, $id)) ?? throw self::notFound($id)];
+    }
+
+    /**
+     * An account's conversion actions that take uploaded clicks: the
+     * destination's own account, or the one customer_id names.
+     *
+     * @param array<string, mixed> $params
+     */
+    public function googleAdsConversionActions(int $id, array $params): array
+    {
+        $unknown = array_diff(array_keys($params), ['customer_id', 'login_customer_id']);
+        if ($unknown !== []) {
+            throw new ValidationException('Unknown parameter', [(string) reset($unknown) => 'Not a parameter of this list. Valid: customer_id, login_customer_id']);
+        }
+        $ids = [];
+        foreach (['customer_id', 'login_customer_id'] as $key) {
+            $value = $params[$key] ?? null;
+            if ($value !== null && (!is_string($value) || $value === '')) {
+                throw new ValidationException('Invalid parameter', [$key => 'A Google Ads customer ID, 10 digits (123-456-7890).']);
+            }
+            $ids[$key] = $value;
+        }
+
+        return ['data' => $this->refusing(fn (): ?array => $this->picker()->conversionActions($this->userId, $id, $ids['customer_id'], $ids['login_customer_id']))
+            ?? throw self::notFound($id)];
+    }
+
+    /**
+     * Set the destination's account and conversion action by name or ID,
+     * from Google's lists.
+     *
+     * @param array<string, mixed> $payload
+     */
+    public function googleAdsPick(int $id, array $payload): array
+    {
+        PayloadKeys::refuseUnknown($payload, ['account', 'conversion_action'], 'a Google Ads pick');
+        $choice = [];
+        foreach (['account', 'conversion_action'] as $key) {
+            $value = $payload[$key] ?? null;
+            if ($value !== null && (!is_string($value) || trim($value) === '')) {
+                throw new ValidationException('Validation failed', [$key => 'A name or an ID, as text; leave it out to keep or take the only one.']);
+            }
+            $choice[$key] = $value;
+        }
+
+        return ['data' => $this->refusing(fn (): ?array => $this->picker()->pick($this->userId, $id, $choice['account'], $choice['conversion_action'], time()))
+            ?? throw self::notFound($id)];
+    }
+
+    private function picker(): GoogleAdsPicker
+    {
+        return new GoogleAdsPicker($this->store, $this->google ?? new GoogleAdsAccounts());
     }
 
     /** @param array<string, mixed> $params */

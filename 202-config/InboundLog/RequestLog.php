@@ -28,6 +28,7 @@ final class RequestLog
     private ?string $matchMethod = null;
     /** @var array<array-key, mixed>|null the request as the endpoint read it, when that is more than its query */
     private ?array $request = null;
+    private string $clickFoundBy = '';
 
     /**
      * @param array<array-key, mixed> $fields
@@ -110,6 +111,12 @@ final class RequestLog
         }
     }
 
+    /** How the click was found, or why none was, when no SubID named it: a sentence added to the reason. */
+    public function clickFoundBy(string $how): void
+    {
+        $this->clickFoundBy = $how;
+    }
+
     /** What the conversion writer did: recorded, duplicate, or why it recorded nothing. */
     public function converted(string $outcome, ?int $conversionId = null, ?string $transactionId = null, string $reason = ''): void
     {
@@ -186,7 +193,7 @@ final class RequestLog
             $this->method,
             $status,
             $outcome,
-            $reason,
+            trim($reason . ' ' . $this->clickFoundBy),
             $this->userId,
             $this->clickId,
             $this->conversionId,

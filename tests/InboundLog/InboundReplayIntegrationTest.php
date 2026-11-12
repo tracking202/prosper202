@@ -344,6 +344,9 @@ final class InboundReplayIntegrationTest extends TestCase
             'the global pixel, by its cookie' => ['gpx', ['amount' => '7.25', 'txid' => 'NW-3001'], 'cookie', 1, 'pixel', 7.25, 'NW-3001', 0],
             'the global pixel, guessed from the address' => ['gpx', [], 'same_ip', 1, 'pixel', 30.0, null, 0],
             'the universal pixel, by its subid' => ['upx', ['subid' => $click, 'amount' => '9'], 'click_id', 3, 'universal_pixel', 9.0, null, 1],
+            // A global postback whose SubID was unfilled, its click found by the ad click id it sent back.
+            'the global postback, by its ad click id' => ['gpb', ['subid' => '', 'gclid' => 'Cj0KCQ-demo', 'amount' => '4', 'txid' => 'NW-3003'],
+                'ad_click_id', 2, 'postback', 4.0, 'NW-3003', 1],
             // px.php reads neither an amount nor a transaction id.
             'the campaign pixel' => ['px', ['acip' => (string) self::CAMPAIGN_PUBLIC, 'amount' => '99', 'txid' => 'NW-3002'],
                 'cookie', 1, 'legacy_pixel', 30.0, null, 0],
@@ -628,6 +631,8 @@ final class InboundReplayIntegrationTest extends TestCase
         // Another account's campaign and click name nothing here; the subid is what there is to go by.
         $store->append($bare('pb', ['acip' => (string) self::OTHER_PUBLIC, 'subid' => '4410']), self::ARRIVED);
         $store->append($bare('gpb', ['subid' => (string) self::OTHER_CLICK]), self::ARRIVED);
+        // An unfilled SubID macro names nothing to go by.
+        $store->append($bare('gpb', ['subid' => '']), self::ARRIVED);
         $told = [];
         foreach ($readiness->forAccount(self::ACCOUNT, $now)['senders'] as $sender) {
             $told[$sender['endpoint'] . ':' . ($sender['campaign_name'] ?? '-')] = $sender['subids'];

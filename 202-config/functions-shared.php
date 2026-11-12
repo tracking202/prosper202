@@ -724,8 +724,8 @@ function record_mysql_error(mixed $dbOrSql, mixed $sql = null, ?string $error = 
         $p202Admin
     );
     if (!$clickPath) {
-        // Without the footer's reads (the dash email, the cron ping's
-        // tracking domain): they would ask the database that has just failed.
+        // Without the footer's read (the cron ping's tracking domain): it
+        // would ask the database that has just failed.
         template_bottom(false);
     }
     die();

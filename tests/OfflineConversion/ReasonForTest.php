@@ -6,6 +6,7 @@ namespace Tests\OfflineConversion;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\AdClickIdColumns;
+use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\OfflineConversion\ExportOptions;
 use Prosper202\OfflineConversion\Format;
 use Prosper202\OfflineConversion\LeftOut;
@@ -50,6 +51,7 @@ final class ReasonForTest extends TestCase
             self::assertNull(self::reason([], $format), $format->value);
         }
         self::assertNull(self::reason(['match_method' => 'cookie']), 'a tracking cookie names its click');
+        self::assertNull(self::reason(['match_method' => 'ad_click_id']), 'so does an ad click id sent back');
         self::assertNull(self::reason(['counted_amount' => '0.00000']), 'a conversion that counts for 0 is one');
     }
 
@@ -110,6 +112,27 @@ final class ReasonForTest extends TestCase
         foreach (LeftOut::cases() as $reason) {
             self::assertStringEndsWith('.', $reason->explanation(), $reason->value);
         }
+    }
+
+    /**
+     * The row's reason and the read's "is the click the account's" ask of one
+     * list, so a method that names its click is never answered "another
+     * account's" for want of the question (CLAUDE.md #21).
+     */
+    public function testTheReasonAndTheReadNameTheSameMethods(): void
+    {
+        [$sql] = OfflineExport::query(new ExportOptions(Format::GOOGLE, 7, self::NOW), 5);
+        self::assertSame(1, preg_match('/CASE WHEN cl\.match_method IN \(([^)]*)\) AND/', $sql, $m), $sql);
+        $asked = array_map(static fn (string $v): string => trim($v, " '"), explode(',', $m[1]));
+        $passed = [];
+        foreach (MatchMethod::cases() as $method) {
+            self::assertSame($method->namesTheClick(), LeftOut::forMatch($method) === null, $method->value);
+            if (LeftOut::forMatch($method) === null) {
+                $passed[] = $method->value;
+            }
+        }
+        self::assertSame(['click_id', 'ad_click_id', 'cookie'], $passed);
+        self::assertSame($passed, $asked);
     }
 
     public function testTheIdsAreTheLayoutsInItsOrderWithoutTheEmptyOnes(): void

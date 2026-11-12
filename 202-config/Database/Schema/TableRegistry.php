@@ -66,6 +66,7 @@ final class TableRegistry
     public const string RECLICK_BACKFILL = '202_reclick_backfill';
     public const string CLICKS_FILTER_REASON = '202_clicks_filter_reason';
     public const string CLICKS_PUBLISHER = '202_clicks_publisher';
+    public const string CLICKS_AD_IDS = '202_clicks_ad_ids';
 
     // Tracking tables
     public const string TRACKING_C1 = '202_tracking_c1';
@@ -120,6 +121,7 @@ final class TableRegistry
     public const string NOTIFICATION_CORRECTION_URLS = '202_notification_correction_urls';
     public const string OFFLINE_CONVERSION_FEEDS = '202_offline_conversion_feeds';
     public const string OFFLINE_CONVERSION_NAMES = '202_offline_conversion_names';
+    public const string LEGACY_GOOGLE_FEED_FETCHES = '202_legacy_google_feed_fetches';
     public const string POSTBACK_AUTH = '202_postback_auth';
     public const string DESTINATIONS = '202_destinations';
     public const string DESTINATION_DELIVERIES = '202_destination_deliveries';

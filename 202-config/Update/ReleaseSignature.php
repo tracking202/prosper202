@@ -22,6 +22,27 @@ final class ReleaseSignature
     private const string NO_KEY =
         'This install has no release signing key to check the download with. Upgrade by hand.';
     private const string ONLY_HOST = 'updates come only from https://' . self::HOST . '.';
+    private const string EMPTY = 'The download was empty, so nothing was installed.';
+    private const string TIMED_OUT = 'The download timed out.';
+    private const string NO_ANSWER = 'The update server did not answer.';
+    private const string ANSWERED = 'The update server answered HTTP ';
+
+    /**
+     * Whether trying again can change $problem, an answer of download() or
+     * problem(): the server was slow, silent, busy (429) or failing (5xx).
+     */
+    public static function worthRetrying(string $problem): bool
+    {
+        if (in_array($problem, [self::EMPTY, self::TIMED_OUT, self::NO_ANSWER], true)) {
+            return true;
+        }
+        if (!str_starts_with($problem, self::ANSWERED)) {
+            return false;
+        }
+        $status = (int) substr($problem, strlen(self::ANSWERED), 3);
+
+        return $status === 429 || $status >= 500;
+    }
 
     /**
      * Why $zip may not be installed, or null when $signature (base64) is a
@@ -45,7 +66,7 @@ final class ReleaseSignature
             return 'The release signature is malformed, so the release was not installed.';
         }
         if ($zip === '') {
-            return 'The download was empty, so nothing was installed.';
+            return self::EMPTY;
         }
         try {
             $valid = sodium_crypto_sign_verify_detached($sig, $zip, $key);
@@ -166,11 +187,11 @@ final class ReleaseSignature
             }
             $remaining = (int)ceil($deadline - microtime(true));
             if ($remaining <= 0) {
-                return ['body' => null, 'error' => 'The download timed out.'];
+                return ['body' => null, 'error' => self::TIMED_OUT];
             }
             $answer = $hop($allowed, $remaining);
             if ($answer === null) {
-                return ['body' => null, 'error' => 'The update server did not answer.'];
+                return ['body' => null, 'error' => self::NO_ANSWER];
             }
             [$status, $body, $redirect] = $answer;
             if (in_array($status, [301, 302, 303, 307, 308], true)) {
@@ -185,7 +206,7 @@ final class ReleaseSignature
                 continue;
             }
             if ($status !== 200) {
-                return ['body' => null, 'error' => 'The update server answered HTTP ' . $status . self::reason($body)];
+                return ['body' => null, 'error' => self::ANSWERED . $status . self::reason($body)];
             }
             return ['body' => $body, 'error' => null];
         }

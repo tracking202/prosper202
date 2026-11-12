@@ -276,6 +276,42 @@
         "p202 user prefs update 1 --shopify-webhook-secret '' --json >/dev/null"
       ],
       "notes": "Account › API integrations › Shopify (PUT /users/{id}/preferences shopify_webhook_secret; GET /system/integrations shopify). The secret is never served back, and a webhook no stored secret verifies is refused 403."
+    },
+    {
+      "id": "admin-008-a-waiting-shopify-refund-is-found-and-recorded",
+      "priority": "medium",
+      "state": "seeded fixture; the key is the installer's (Super user, user 1); the setup stores a Shopify webhook secret and delivers a paid order of 59.00 on a seeded click, then a refund of 12.50 whose transaction is still pending",
+      "setup": [
+        "p202 user prefs update 1 --shopify-webhook-secret 'demo-eval-shopify-REFUND-0002' --json >/dev/null",
+        "url=$(p202 config show --json | jq -r .url); click=$(p202 click list --limit 1 --json | jq -r '.data[0].click_id'); n=$(date +%s); send() { sig=$(printf '%s' \"$2\" | openssl dgst -sha256 -hmac 'demo-eval-shopify-REFUND-0002' -binary | base64); curl -fsS -o /dev/null -X POST -H 'Content-Type: application/json' -H \"X-Shopify-Topic: $1\" -H \"X-Shopify-Hmac-Sha256: $sig\" --data-binary \"$2\" \"${url%/}/tracking202/static/shopify.php\"; }; send orders/paid \"{\\\"id\\\":7${n},\\\"financial_status\\\":\\\"paid\\\",\\\"test\\\":false,\\\"currency\\\":\\\"USD\\\",\\\"total_price\\\":\\\"59.00\\\",\\\"line_items\\\":[{\\\"id\\\":1,\\\"title\\\":\\\"Coffee beans, 1 kg\\\",\\\"quantity\\\":1,\\\"price\\\":\\\"59.00\\\",\\\"properties\\\":[{\\\"name\\\":\\\"_t202subid\\\",\\\"value\\\":\\\"${click}\\\"}]}]}\" && send refunds/create \"{\\\"id\\\":8${n},\\\"order_id\\\":7${n},\\\"refund_line_items\\\":[],\\\"transactions\\\":[{\\\"id\\\":9${n},\\\"kind\\\":\\\"refund\\\",\\\"status\\\":\\\"pending\\\",\\\"amount\\\":\\\"12.50\\\",\\\"currency\\\":\\\"USD\\\"}]}\""
+      ],
+      "ask": "Our Shopify revenue looks too high and I think a refund never got recorded. Find any Shopify refund that is not recorded yet and record it for the amount it states.",
+      "expected": {
+        "runs_one_of": [
+          "conversion shopify-refunds list",
+          "conversion shopify-refunds record"
+        ],
+        "never_runs": [
+          "shopify-refunds close"
+        ],
+        "checks": [
+          {
+            "run": "p202 conversion shopify-refunds list --json | jq -c '{left: (.data | length)}'",
+            "includes": [
+              "{\"left\":0}"
+            ]
+          },
+          {
+            "run": "p202 conversion inbound-log --endpoint shopify --limit 20 --json | jq -r '.data[] | select(.method==\"HAND\") | \"\\(.outcome) \\(.reason)\"'",
+            "includes": [
+              "reversed",
+              "by 12.5"
+            ]
+          }
+        ],
+        "rubric": "PASS if the agent listed the refunds with `p202 conversion shopify-refunds list`, recorded the waiting one with `p202 conversion shopify-refunds record <refund-id> --amount 12.5` (12.50 is the same), and reports that the order's sale was reversed by 12.50. FAIL if it closed the refund, recorded another amount, recorded a reversal by hand with `conversion create` instead, or reports a refund it never read."
+      },
+      "notes": "The panel above Setup › Inbound Log (tracking202/setup/inbound_log.php; GET /conversions/shopify-refunds, POST /conversions/shopify-refunds/{id}/record). A refund whose transaction is pending is saved until Shopify's Transaction creation webhook settles it, and stays counted in the sale meanwhile. The checks read the list (empty once recorded) and the inbound log's by-hand line, which names the amount taken back."
     }
   ]
 }

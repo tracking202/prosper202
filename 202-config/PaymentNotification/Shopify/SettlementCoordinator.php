@@ -69,6 +69,7 @@ final class SettlementCoordinator
      */
     public function afterSale(Outcome $sale, string $orderId, InboundRequest $request): Outcome
     {
+        $this->store->orderOnFile((int) $sale->accountId, $orderId);
         $settled = $this->reconcile((int) $sale->accountId, $orderId, $request);
         if ($settled === null) {
             return $sale;
@@ -116,9 +117,17 @@ final class SettlementCoordinator
     public function reconcile(int $account, string $orderId, InboundRequest $request): ?Outcome
     {
         $shown = null;
-        foreach ($this->store->forOrder($account, $orderId) as $refund) {
+        $refunds = $this->store->forOrder($account, $orderId);
+        if ($refunds === []) {
+            return null;
+        }
+        $clicks = $this->clicksOf($account, $orderId);
+        if ($clicks !== []) {
+            $this->store->orderOnFile($account, $orderId);
+        }
+        foreach ($refunds as $refund) {
             if ($refund['refused'] !== null) {
-                $this->store->complete($account, $refund['refund_id'], time());
+                $this->store->complete($account, $refund['refund_id'], time(), $refund['refused']);
                 $message = 'Pending Shopify refund ' . $refund['refund_id'] . ' of order ' . $orderId
                     . ' was not recorded and will not be tried again: ' . $refund['refused'] . self::BY_HAND;
                 $shown = self::worse($shown, new Outcome(OutcomeKind::CONFLICT, $message, null, $account));
@@ -131,31 +140,26 @@ final class SettlementCoordinator
                 $this->store->complete($account, $refund['refund_id'], time());
                 continue;
             }
-            $stmt = $this->conn->prepareWrite(
-                'SELECT DISTINCT click_id FROM 202_conversion_logs WHERE user_id = ? AND transaction_id = ?'
-                . ' AND source = ? AND reverses_conv_id IS NULL AND deleted = 0'
-            );
-            $this->conn->bind($stmt, 'iss', [$account, $orderId, ConversionSource::SHOPIFY->value]);
-            $clicks = $this->conn->fetchAll($stmt);
             if ($clicks === []) {
                 continue;
             }
             if (count($clicks) !== 1) {
-                $this->store->complete($account, $refund['refund_id'], time());
+                $why = 'the order is on more than one click.';
+                $this->store->complete($account, $refund['refund_id'], time(), $why);
                 $message = 'Pending Shopify refund ' . $refund['refund_id'] . ' of order ' . $orderId
-                    . ' was not recorded and will not be tried again: the order is on more than one click.'
-                    . self::BY_HAND;
+                    . ' was not recorded and will not be tried again: ' . $why . self::BY_HAND;
                 $shown = self::worse($shown, new Outcome(OutcomeKind::CONFLICT, $message, null, $account));
                 continue;
             }
             $notification = new Notification(NotificationKind::REFUND, 'refunds/create', $refund['refund_id'],
-                $orderId, $refund['amount'], $refund['currency'], (int) $clicks[0]['click_id'],
+                $orderId, $refund['amount'], $refund['currency'], $clicks[0],
                 $refund['occurred_at'] ?: null);
             $outcome = (new Processor($this->db))->process($notification, new Verification([$account => 0]),
                 $this->provider, $request);
             // A failure a retry can mend leaves the refund open for the retry.
             if (self::rank($outcome->kind) !== 2) {
-                $this->store->complete($account, $refund['refund_id'], time());
+                $refusal = self::rank($outcome->kind) === 1 ? $outcome->message : null;
+                $this->store->complete($account, $refund['refund_id'], time(), $refusal);
             }
             if ($outcome->kind !== OutcomeKind::DUPLICATE) {
                 $shown = self::worse($shown, $outcome);
@@ -166,13 +170,48 @@ final class SettlementCoordinator
     }
 
     /**
-     * By hand works only for a sale's first reversal: the API reverses a
-     * sale once (run against a Shopify sale with and without a refund).
+     * Keeps a refund that was refused outright (none of its transactions was
+     * pending) where Setup › Inbound Log lists it, when no retry can mend it.
+     *
+     * @param array{id: string, order_id: string, occurred_at: int, amount: string, currency: ?string} $refund
      */
-    private const BY_HAND = ' Its amount stays counted in the sale. Check the refund in Shopify; if the order has no'
-        . ' refund recorded here yet, it can be recorded by hand (p202 conversion create --click-id, --transaction-id'
-        . ' with the order id, --payout with the amount, --status reversed). An order that already has one cannot'
-        . ' take another by hand.';
+    public function keepRefused(array $refund, Outcome $outcome): void
+    {
+        if ($outcome->accountId === null || self::rank($outcome->kind) !== 1) {
+            return;
+        }
+        $account = $outcome->accountId;
+        $this->store->refuse(
+            $account,
+            $refund['id'],
+            $refund['order_id'],
+            $refund['occurred_at'],
+            $refund['amount'],
+            $refund['currency'],
+            $outcome->message,
+            $this->clicksOf($account, $refund['order_id']) !== [],
+            time()
+        );
+    }
+
+    /**
+     * The clicks the order's Shopify sale is recorded on, for the account.
+     *
+     * @return list<int>
+     */
+    public function clicksOf(int $account, string $orderId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT DISTINCT click_id FROM 202_conversion_logs WHERE user_id = ? AND transaction_id = ?'
+            . ' AND source = ? AND reverses_conv_id IS NULL AND deleted = 0 ORDER BY click_id'
+        );
+        $this->conn->bind($stmt, 'iss', [$account, $orderId, ConversionSource::SHOPIFY->value]);
+
+        return array_map(static fn (array $row): int => (int) $row['click_id'], $this->conn->fetchAll($stmt));
+    }
+
+    private const BY_HAND = ' Its amount stays counted in the sale. Check the refund in Shopify, then record or close'
+        . ' it under Setup › Inbound Log, which lists it.';
 
     /** 2: a retry can mend it. 1: refused for good. 0: recorded. */
     private static function rank(OutcomeKind $kind): int

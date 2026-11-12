@@ -13,6 +13,9 @@ List, inspect, manually create, and delete conversions.
 | `GET` | `/conversions/offline-export/summary` | What that file holds, and why each other conversion is left out |
 | `GET` | `/conversions/inbound-log` | The postbacks, pixels and payment notifications received, and why each was refused ([below](#inbound-log)) |
 | `POST` | `/conversions/inbound-log/{id}/record` | Record the conversion of a refused postback from the log ([below](#inbound-log)) |
+| `GET` | `/conversions/shopify-refunds` | The Shopify refunds not recorded while their order's sale is ([below](#shopify-refunds-left-to-settle)) |
+| `POST` | `/conversions/shopify-refunds/{id}/record` | Record one as a reversal of its order's sale |
+| `POST` | `/conversions/shopify-refunds/{id}/close` | Close one with nothing recorded |
 | `GET` | `/offline-conversions/{key}` | A fetch URL made on Setup › Offline Conversions: the file, with no API key |
 | `POST` | `/conversions` | Manually log a conversion |
 | `DELETE` | `/conversions/{id}` | Delete a conversion |
@@ -36,7 +39,7 @@ uploading a revenue report — the UI's Update section — are in the
 | `time_to` | string | — | End, inclusive: the same forms; a date runs through its last second |
 | `click_id` | integer | — | Only this click's conversions |
 | `source` | string | — | Only conversions this source produced (`pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `paykickstart`, `jvzoo`, `shopify`, `app_install`, `goal`, `legacy_baseline`) |
-| `match_method` | string | — | Only conversions whose click was found this way (`click_id`, `cookie`, `visitor_id`, `same_ip`, `unknown`; [below](#how-each-conversions-click-was-found)) |
+| `match_method` | string | — | Only conversions whose click was found this way (`click_id`, `ad_click_id`, `cookie`, `visitor_id`, `same_ip`, `unknown`; [below](#how-each-conversions-click-was-found)) |
 | `goal` | integer | — | Only this goal's outcomes, under every version of it |
 
 A filter value that cannot be read — `click_id=7x`, an unknown `source` or `match_method`, a
@@ -63,6 +66,7 @@ conversion stores one:
 | `match_method` | The click was found by | Paths |
 | -------------- | ---------------------- | ----- |
 | `click_id` | the request naming it | a `subid`/`sid` on `gpx.php`, `upx.php`, `gpb.php` and `pb.php`; ClickBank's tracking code (`cb202.php`); `POST /conversions` and `POST /events`; a line of Update Subids or of a revenue upload; an app install's signed token, and the goals its events reach |
+| `ad_click_id` | an ad platform's click id the postback sent back (`gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid` or `fbclid`), carried by a click visited in the last 30 days (the latest of one visitor's clicks on one campaign) | `gpb.php` when its `subid` is empty or arrives as the network's unfilled macro |
 | `cookie` | a tracking cookie in the visitor's browser | `gpx.php` and `upx.php` with no subid (the campaign's `tracking202subid_a_<cid>` cookie, then `tracking202subid`); `px.php` |
 | `visitor_id` | the landing-page script's own visitor id (`p202lpid`), on the click it was last seen on | `p202.track()` events (`event.php`) |
 | `same_ip` | nothing naming a click: the account's latest click from the visitor's address in the last 30 days, a guess, made only for an account with the [same-IP fallback](14-users.md#same-ip-fallback-user_pref_same_ip_fallback) on and a visitor the privacy setting does not hold back | `gpx.php`, `upx.php` and `px.php` with neither a subid nor a cookie |
@@ -97,7 +101,7 @@ label. `GET /conversions/match-methods` counts them per campaign:
     {"match_method": "click_id", "match_method_label": "Click id", "conversions": 40, "counted": 38, "income": 190.0},
     {"match_method": "cookie", "match_method_label": "Cookie", "conversions": 0, "counted": 0, "income": 0.0}
   ],
-  "match_methods": ["click_id", "cookie", "visitor_id", "same_ip", "unknown"]
+  "match_methods": ["click_id", "ad_click_id", "cookie", "visitor_id", "same_ip", "unknown"]
 }
 ```
 
@@ -111,6 +115,64 @@ to campaign data gets the three figures as `null` and `masked: true`. Group
 Overview's **Match method** level shows the same split by click time, with
 each group's clicks and cost.
 
+## Shopify refunds left to settle
+
+A Shopify refund that is waiting for its transaction to settle, or that was
+refused for good, is still counted in its order's sale. `GET
+/conversions/shopify-refunds` lists them, oldest first (at most 200; `more`
+says when others are left): the list above the log on Setup › Inbound Log.
+It needs the role's access to the Setup section and takes no parameter.
+
+```json
+{
+  "data": [
+    {
+      "refund_id": "9100001",
+      "order_id": "5550001234567",
+      "refunded_at": 1793714401,
+      "state": "waiting",
+      "stale": true,
+      "reason": null,
+      "amount": 12.5,
+      "currency": "USD",
+      "other_currency": false,
+      "click_ids": [4821]
+    }
+  ],
+  "more": false,
+  "transaction_webhook_seen": false,
+  "account_currency": "USD"
+}
+```
+
+`state` is `waiting` or `refused` (`reason` says why). `stale` is a refund
+that has waited more than a day. `amount` is what the refund returns as far
+as is known: its transactions added up, less every one Shopify reported as
+failed. `transaction_webhook_seen` is false when Shopify's Transaction
+creation webhook has never arrived for the account, without which a waiting
+refund is never settled by itself.
+
+`POST /conversions/shopify-refunds/{id}/record` with `{"amount": 12.5}`
+takes that amount, in the account's currency, back from the order's sale, at
+most what is left of it, and closes the refund. When the order is recorded
+on more than one click (`click_ids`), send `click_id` too; without it the
+answer is a `422` naming the clicks. It answers `200` with `outcome`
+(`reversed`, or `duplicate` when the refund was on file already) and the
+reversal's `conversion_id`. Nothing converts money: when Shopify states the
+refund in another currency than the account's (`other_currency` is true;
+`currency` is Shopify's, `account_currency` the account's), the list's
+`amount` is not what to record. Send what the refund returned in the
+account's currency, with `"currency"` naming that currency; without it, or
+with any other currency, the answer is a `422` on `currency` and nothing is
+recorded. The refund is recorded once under its id, so
+Shopify settling it later records nothing more. `POST
+/conversions/shopify-refunds/{id}/close` removes a refund from the list with
+nothing recorded, for one that returned no money. Both need the role's
+access to the Setup and Update sections, answer `404` for a refund that is
+not listed for the account, and write a line to the inbound log. Recording
+answers `409` with the reason when the sale is gone or the refund is on
+file at another amount.
+
 ## Inbound log
 
 `GET /conversions/inbound-log` lists the requests the postback (`pb`,
@@ -119,7 +181,10 @@ each group's clicks and cost.
 the sender got and why: the same list as Setup › Inbound Log. It needs the
 role's access to the Setup section. An admin also gets the requests no
 account could be found for (an unknown campaign, a signature no stored key
-verifies), with `user_id` null. Each account's newest 5,000 accepted
+verifies), with `user_id` null. An account that stores a Shopify webhook
+secret also gets the Shopify webhooks no stored secret verified, with
+`user_id`, `fields` and `transaction_id` null: one may be its own, and
+nothing proves whose it is. Each account's newest 5,000 accepted
 requests are kept, and apart from them its newest 5,000 refused ones, so a
 flood of refusals cannot push out a recorded conversion; and the newest 1,000
 no account was found for. A request no account
@@ -206,7 +271,7 @@ under the first that does not:
 1. it counts now: not deleted, not refunded in full, not replaced by a later
    conversion on its click, payable (`not_counted`); a partial refund is
    netted from its value;
-2. its click was named: `match_method` `click_id` or `cookie`. A click found
+2. its click was named: `match_method` `click_id`, `ad_click_id` or `cookie`. A click found
    by the landing page's visitor id (`visitor_id`), guessed from the visitor's
    address (`same_ip`) or recorded before 1.9.79 (`match_unknown`) would teach
    the platform's bidding clicks the conversion may not have come from;

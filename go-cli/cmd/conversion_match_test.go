@@ -14,7 +14,7 @@ const matchMethodsJSON = `{"data":[
  {"match_method":"visitor_id","match_method_label":"Visitor id","conversions":0,"counted":0,"income":0},
  {"match_method":"same_ip","match_method_label":"Same IP","conversions":1,"counted":1,"income":4.5},
  {"match_method":"unknown","match_method_label":"Unknown","conversions":0,"counted":0,"income":0}
-],"match_methods":["click_id","cookie","visitor_id","same_ip","unknown"]}`
+],"match_methods":["click_id","ad_click_id","cookie","visitor_id","same_ip","unknown"]}`
 
 func TestConversionMatchMethodsSendsTheFiltersAndShowsEveryMethodsTotals(t *testing.T) {
 	_, seen := goalServer(t, 200, matchMethodsJSON)
@@ -67,7 +67,7 @@ func TestMatchMethodFlagsRefuseBadValuesBeforeAnyRequest(t *testing.T) {
 		want string
 		hint string
 	}{
-		{[]string{"conversion", "list", "--match-method", "ip"}, "--match-method must be one of: click_id, cookie, visitor_id, same_ip, unknown", ""},
+		{[]string{"conversion", "list", "--match-method", "ip"}, "--match-method must be one of: click_id, ad_click_id, cookie, visitor_id, same_ip, unknown", ""},
 		{[]string{"conversion", "list", "--match-method", ""}, "--match-method", "Omit --match-method"},
 		{[]string{"conversion", "match-methods", "--aff-campaign-id", "3x"}, "--aff-campaign-id must be a positive integer", "p202 campaign list"},
 		{[]string{"conversion", "match-methods", "--period", "last7d"}, "--period must be one of", ""},

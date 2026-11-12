@@ -23,11 +23,12 @@ use Prosper202\Report\AccountZone;
  *    for (CountedAmount: net of partial refunds; a conversion refunded in
  *    full, deleted, replaced on its click or not payable is left out), in
  *    the account's currency, which is what the ledger records amounts in;
- *  - only when the conversion named its click (MatchMethod CLICK_ID: the
- *    postback, pixel, API call or upload named it; COOKIE: a tracking
- *    cookie in the converting browser did). A click found by a visitor id or
- *    guessed from an address would teach the platform's bidding the wrong
- *    clicks, so those are counted and left out;
+ *  - only when the conversion named its click (MatchMethod::namesTheClick():
+ *    CLICK_ID, the postback, pixel, API call or upload named it; AD_CLICK_ID,
+ *    a postback sent back the ad click id the click carries; COOKIE, a
+ *    tracking cookie in the converting browser did). A click found by a
+ *    visitor id or guessed from an address would teach the platform's
+ *    bidding the wrong clicks, so those are counted and left out;
  *  - only a click this account recorded, with an id the platform issued,
  *    no more than 90 days old and at least 6 hours old (the platforms
  *    import nothing older, and may not have processed a newer one yet).
@@ -181,7 +182,11 @@ final class OfflineExport
         foreach (['gclid', 'gbraid', 'wbraid', 'msclkid'] as $id) {
             $ids .= ' COALESCE(' . AdClickIdColumns::sql($id, 'cl.click_id') . ", '') AS $id,";
         }
-        $named = "'" . MatchMethod::CLICK_ID->value . "', '" . MatchMethod::COOKIE->value . "'";
+        // The methods reasonFor() lets through (LeftOut::forMatch()), from the same list.
+        $named = implode(', ', array_map(
+            static fn (MatchMethod $m): string => "'" . $m->value . "'",
+            MatchMethod::naming()
+        ));
         // Whose click: any visit's row answers (a click's visits share its
         // user_id). 202_clicks is partitioned by click_time, and a probe by
         // click_id alone reads every partition, the future weeks' too (19 s

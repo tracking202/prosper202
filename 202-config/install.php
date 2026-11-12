@@ -205,7 +205,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$retryable = false;
 				$error['general'] = '<div class="error">We couldn\'t finish creating your account. You can '
 					. '<a href="' . get_absolute_url() . '202-config/setup-config.php">re-check your database settings</a> '
-					. 'or follow the <a href="http://support.tracking202.com/" target="_blank" rel="noopener noreferrer">manual install guide</a>, then try again.</div>';
+					. 'or follow the <a href="https://support.tracking202.com/" target="_blank" rel="noopener noreferrer">manual install guide</a>, then try again.</div>';
 			}
 		}
 
@@ -440,7 +440,7 @@ if (!$success) {
 			</div>
 
 			<button class="btn btn-primary btn-lg w-100" type="submit">Install Prosper202 ClickServer</button>
-			<p class="small text-secondary mt-3 mb-0">Need help? Read the <a href="http://support.tracking202.com/" target="_blank" rel="noopener noreferrer">install guide</a>.</p>
+			<p class="small text-secondary mt-3 mb-0">Need help? Read the <a href="https://support.tracking202.com/" target="_blank" rel="noopener noreferrer">install guide</a>.</p>
 			<script type="text/javascript">
 			(function () {
 				var BASE = <?php echo json_encode(get_absolute_url()) ?: '""'; ?>;
@@ -566,7 +566,7 @@ if (!$success) {
 						setHtml('install-general-error', flash('danger', 'bi-x-circle', 'We\'re having trouble reaching the server. '
 							+ 'Check your connection and try again. If it keeps happening you can '
 							+ '<a href="' + BASE + '202-config/setup-config.php">re-check your database settings</a> '
-							+ 'or follow the <a href="http://support.tracking202.com/" target="_blank" rel="noopener noreferrer">manual install guide</a>.'));
+							+ 'or follow the <a href="https://support.tracking202.com/" target="_blank" rel="noopener noreferrer">manual install guide</a>.'));
 					});
 				}
 

@@ -739,7 +739,7 @@ value (and the reason when it does not: `deleted`, `unpaid`, `superseded
 (replace|batch|pre_ledger|replay|reevaluation)`, `not_netted`), its source,
 what that is (a goal and version, an upload, the sale a reversal nets, the API
 key that wrote it), how its click was found (`matched_by`: `click_id`,
-`cookie`, `visitor_id`, `same_ip`, `unknown`), its transaction id and event. The table ends with the
+`ad_click_id`, `cookie`, `visitor_id`, `same_ip`, `unknown`), its transaction id and event. The table ends with the
 click's value and says so if the counted rows do not add up to it. `--json`
 prints the API's answer unchanged (`GET /clicks/{id}/conversions`). The PHP
 CLI's `click:conversions <id>` prints the same.
@@ -786,7 +786,7 @@ p202 conversion list --all
 | `--time-to`     |         | End, inclusive: the same forms |
 | `--click-id`    |         | Only this click's conversions |
 | `--source`      |         | Only this source's: `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `paykickstart`, `jvzoo`, `zaxaa`, `app_install`, `goal`, `legacy_baseline` |
-| `--match-method` |        | Only conversions whose click was found this way: `click_id`, `cookie`, `visitor_id`, `same_ip`, `unknown` |
+| `--match-method` |        | Only conversions whose click was found this way: `click_id`, `ad_click_id`, `cookie`, `visitor_id`, `same_ip`, `unknown` |
 | `--goal`        |         | Only this goal's outcomes (every version) |
 | `--all`         | false   | Fetch all rows across pages |
 
@@ -804,7 +804,9 @@ p202 conversion match-methods --aff-campaign-id 3 --time-from 2026-10-01
 
 Each campaign's conversions by `match_method`, how the click they credit was
 found: `click_id` (the postback, pixel, API call, upload or app install named
-it), `cookie` (a tracking cookie did), `visitor_id` (a landing page's
+it), `ad_click_id` (a global postback with no SubID sent back an ad click id,
+such as a gclid, that a click carries), `cookie` (a tracking cookie did),
+`visitor_id` (a landing page's
 `p202.track()` visitor id), `same_ip` (nothing named a click, so the latest
 click from the visitor's address: a guess) or `unknown` (recorded before
 1.9.79). `conversions` leaves out reversals, `counted` is how many count
@@ -867,6 +869,31 @@ refused for its token or signature, or by an error on the server. A request
 that carries an event is handed to the click's goals. The click must be your
 account's, a transaction id already on file is a duplicate, and without one
 a click converts once, so running it twice records once.
+
+### Shopify refunds left to settle
+
+```bash
+p202 conversion shopify-refunds list
+p202 conversion shopify-refunds record 9100001 --amount 12.50
+p202 conversion shopify-refunds record 9100001 --amount 12.50 --click-id 4821
+p202 conversion shopify-refunds close 9100001 --force
+```
+
+A Shopify refund that is waiting for its transaction to settle, or that was
+refused for good, is still counted in its order's sale. `list` shows them,
+oldest first, with the amount each returns (less any transaction Shopify
+reported as failed), whether it has waited more than a day, and the clicks
+the order's sale is on; it says so when Shopify's Transaction creation
+webhook has never arrived. `record` takes `--amount`, in the account's
+currency, back from the order's sale, at most what is left of it, and closes
+the refund; an order on more than one click needs `--click-id`. Nothing
+converts money: for a refund Shopify states in another currency
+(`other_currency` in `list --json`), pass the amount converted and
+`--currency` with the account's currency. `close`
+removes a refund with nothing recorded and asks first (`--force` skips the
+question). These are the panel above Setup › Inbound Log; `list` needs a role
+with access to the Setup section, `record` and `close` the Update section
+too.
 
 ### Offline conversion files for Google Ads and Microsoft Advertising
 
@@ -1863,6 +1890,7 @@ request. A free-text flag given `""` clears it.
 | `--user-account-currency` | 3-letter code; re-prices every campaign's payout into it |
 | `--user-keyword-searched-or-bidded`, `--user-pref-referer-data`, `--user-pref-dynamic-bid`, `--user-pref-privacy`, `--user-pref-cloak-referer`, `--user-pref-ad-settings` | Personal settings' choices |
 | `--user-pref-same-ip-fallback` | `1`: a pixel that names no click credits your latest click from the visitor's IP address (a guess, `same_ip`); `0`: none. New accounts start at `0` |
+| `--user-pref-click-id-params` | The postback parameters your networks send an ad click id back in, comma-separated (`aff_sub3`): read when a global postback's SubID is empty or unfilled, and matched among your clicks (`ad_click_id`). `""` for none |
 | `--user-pref-time-predefined`, `--user-pref-limit`, `--user-cpc-or-cpv`, `--chart-time-range` | report and chart defaults |
 | `--user-slack-incoming-webhook`, `--ipqs-api-key`, `--cb-key`, `--zaxaa-api-signature`, `--jvzoo-ipn-secret-key` | Integrations (a value here stays in shell history) |
 | `--paykickstart-ipn-secret-keys` | PayKickstart's IPN secret keys, one for each PayKickstart campaign, separated by commas. The list replaces every stored key, so send them all; `""` removes them. `user prefs get` shows only whether any is stored (`{"stored": true}`) and `system integrations` how many, never the keys |

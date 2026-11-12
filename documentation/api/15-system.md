@@ -558,7 +558,9 @@ A listed source's `auto_split` says whether the next hourly run splits it,
 and `auto_split_blocked_by` why not:
 
 - `may_be_theirs`: a user whose accounts name it saved one of them before the
-  source was last saved. That is what a source taken by a rename looks like,
+  source was last saved, or removed one (removing an account on Setup stamps
+  it with the time of the removal, so its time no longer says when it came to
+  name the source). That is what a source taken by a rename looks like,
   and moving it back may be what you want, which a copy would put out of
   reach: the source would leave this report. It waits for your move or split;
 - `same_name`: a user who would get a copy already has a live traffic source

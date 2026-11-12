@@ -93,6 +93,16 @@ final class InboundLogUpgradeIntegrationTest extends TestCase
         [$out, $err] = self::upgrade();
         self::assertSame('RETURNED true', $out, $err);
         self::assertFalse(SettlementSchema::needsRepair($db));
+        // A table made before it kept why a refund was refused gains the columns.
+        self::q('ALTER TABLE 202_shopify_pending_refunds DROP COLUMN refused_reason, DROP COLUMN order_on_file');
+        self::assertTrue(SettlementSchema::needsRepair($db));
+        [$out, $err] = self::upgrade();
+        self::assertSame('RETURNED true', $out, $err);
+        self::assertFalse(SettlementSchema::needsRepair($db));
+        $columns = $db->query('SHOW COLUMNS FROM 202_shopify_pending_refunds'
+            . " WHERE Field IN ('refused_reason', 'order_on_file')");
+        self::assertInstanceOf(\mysqli_result::class, $columns);
+        self::assertSame(2, $columns->num_rows);
     }
 
     private static function version(string $version): void

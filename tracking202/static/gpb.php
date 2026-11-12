@@ -33,6 +33,10 @@ $request = p202PostbackRequest($_GET, $signedQuery ? [] : $_POST);
 // subid of 0 fell back to "the last click from this IP" — for a
 // server-to-server postback, the network's own server.
 $parsedClickId = p202ParseClickId($request['subid'] ?? null) ?? p202ParseClickId($request['sid'] ?? null);
+// The subid named the click, unless p202ClickByAdClickId() finds it below.
+$matchedBy = \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID;
+// The accounts a click found by a parameter an account lists may belong to; null for any.
+$adClickOwners = null;
 $legacyPurLink = null;
 $signedPurLink = null;
 $signedPurLinkValue = null;
@@ -67,14 +71,22 @@ if ($parsedClickId === null) {
         }
     }
     if ($legacyPurLink === null) {
-        p202RespondJsonError(404, 'SubID not found');
+        // No SubID at all (empty, or the network's unfilled macro): the one click carrying an ad click id sent back.
+        $adClick = p202ClickByAdClickId($db, $request, 'gpb');
+        if ($adClick === null) {
+            p202RespondJsonError(404, 'SubID not found');
+        }
+        $parsedClickId = $adClick['click_id'];
+        $adClickOwners = $adClick['owners'];
+        $matchedBy = \Prosper202\Conversion\Ledger\MatchMethod::AD_CLICK_ID;
+    } else {
+        $parsedClickId = $legacyPurLink['click_id'];
     }
-    $parsedClickId = $legacyPurLink['click_id'];
 }
 $mysql['click_id'] = (string) $parsedClickId;
 if ($signedPurLink === null && $legacyPurLink === null) {
-    // A plain subid: kept with how it was found, so a refused request can be recorded from the log.
-    \Prosper202\InboundLog\RequestLog::current()?->matched($parsedClickId, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
+    // The click and how it was found (its subid, or an ad click id sent back), kept so a refused request can be recorded from the log.
+    \Prosper202\InboundLog\RequestLog::current()?->matched($parsedClickId, $matchedBy);
 }
 
 // The click's latest visit, which the conversion credits (p202PostbackClickSql()).
@@ -84,7 +96,12 @@ if ($cvar_sql_result === false) {
     record_mysql_error($db, $cvar_sql);
 }
 $cvar_sql_row = p202FetchRow($cvar_sql_result, $cvar_sql);
-if (!$cvar_sql_row || ($signedPurLink !== null && (int) $cvar_sql_row['user_id'] !== $signedPurLink['user_id'])) {
+// A click found by a parameter an account lists is that account's.
+$notTheListingAccounts = $cvar_sql_row && $adClickOwners !== null
+    && !in_array((int) $cvar_sql_row['user_id'], $adClickOwners, true);
+$notThePurLinksAccount = $cvar_sql_row && $signedPurLink !== null
+    && (int) $cvar_sql_row['user_id'] !== $signedPurLink['user_id'];
+if (!$cvar_sql_row || $notTheListingAccounts || $notThePurLinksAccount) {
 	p202RespondJsonError(404, 'Click data not found');
 }
 
@@ -182,7 +199,7 @@ $mysql['conv_time'] = $conv_time;
 try {
     $webEvent = $signedPurLinkValue !== null
         ? p202RecordPurLinkWebEvent($db, $signedPurLinkValue, $purLinkKey, $request)
-        : p202RecordWebEvent($db, (int) $mysql['click_id'], $request, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, [
+        : p202RecordWebEvent($db, (int) $mysql['click_id'], $request, $matchedBy, [
             'browser' => false,
             'expected_campaign_id' => $legacyPurLink['campaign_id'] ?? null,
         ]);
@@ -222,8 +239,7 @@ try {
             // in its transaction, and sent below; see after the record.
             'notify_traffic_source' => true,
 		],
-		// The subid named the click.
-		\Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID,
+		$matchedBy,
 		(string) ($cvar_sql_row['click_cpa'] ?? ''),
 		$mysql['use_pixel_payout'] == 1,
 		($mysql['use_pixel_payout'] == 1) ? (string) ($request['amount'] ?? '') : '',

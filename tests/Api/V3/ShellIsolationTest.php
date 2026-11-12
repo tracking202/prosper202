@@ -69,7 +69,6 @@ final class ShellIsolationTest extends TestCase
      * are out of its scope.
      */
     private const EXTERNAL_SERVICE_LOADERS = [
-        'https://dna8twue3dlxq.cloudfront.net/js/profitwell.js' => 'ProfitWell, loaded by template_bottom()',
         '//www.googletagservices.com/tag/js/gpt.js' => 'Google Publisher Tag on the sign-in page (info_top([\'ads\' => true]))',
         'https://connect.facebook.net/en_US/fbevents.js' => 'Meta Pixel base code, loaded on an advertiser\'s landing page by the Bot202 Facebook Pixel Assistant (202-js/p202-fb-pixel-assistant.js), never by the app shell',
     ];
@@ -296,7 +295,6 @@ final class ShellIsolationTest extends TestCase
             $_SERVER['REQUEST_URI'] = '/202-account/';
             $_SERVER['SCRIPT_NAME'] = '/202-account/index.php';
             if (!function_exists('get_absolute_url')) { function get_absolute_url() { return '/'; } }
-            if (!function_exists('getDashEmail')) { function getDashEmail() { return ''; } }
             if (!function_exists('getTrackingDomain')) { function getTrackingDomain() { return 'example.test'; } }
             require $argv[1] . '/202-config/template.php';
             $navigation = ['', '202-account'];

@@ -1155,8 +1155,8 @@ paths:
         back, and each of those users is given a copy while nothing is taken
         from its user. It leaves the rest listed, and `auto_split_blocked_by`
         says why: `may_be_theirs` (an account was saved before the source
-        was, so the source may have been that user's and a move back may be
-        wanted), `same_name` (a user who would get a copy already has a live
+        was, or was removed, which keeps no saved time, so the source may
+        have been that user's and a move back may be wanted), `same_name` (a user who would get a copy already has a live
         source of that name), `no_such_user`, `deleted_user`. `splits` lists
         the splits of the last 30 days, the cron job's (`automatic: true`)
         and users'.
@@ -2740,8 +2740,9 @@ paths:
         The account's live conversions grouped by campaign and by
         `match_method`, how each one's click was found: `click_id` (the
         request named it: a subid, ClickBank's tracking code, the API or an
-        upload line, an app install's token), `cookie` (a tracking cookie
-        named it), `visitor_id` (the landing-page script's visitor id),
+        upload line, an app install's token), `ad_click_id` (a global
+        postback with no SubID sent back an ad platform's click id that a
+        click carries), `cookie` (a tracking cookie named it), `visitor_id` (the landing-page script's visitor id),
         `same_ip` (nothing named a click: the latest click from the
         visitor's address) or `unknown` (recorded before 1.9.79).
 
@@ -2803,7 +2804,10 @@ paths:
         status the sender got, the outcome and the reason: the same list as
         Setup › Inbound Log, asked with the role's access to the Setup
         section. An admin also gets the requests no account could be found
-        for, with `user_id` null. The newest 5,000 per account are kept.
+        for, with `user_id` null. An account that stores a Shopify webhook
+        secret also gets the Shopify webhooks no stored secret verified,
+        with `user_id`, `fields` and `transaction_id` null, since nothing
+        proves whose they are. The newest 5,000 per account are kept.
         `fields` holds every field's name, and its value only for the
         fields the endpoint is known to send and only when it holds no
         email or IP address; every other value is `[redacted]`. `search`
@@ -3012,6 +3016,207 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /conversions/shopify-refunds:
+    get:
+      tags: [Conversions]
+      summary: Shopify refunds that are not recorded while their order's sale is
+      description: |
+        The account's Shopify refunds still counted in a sale: the ones
+        waiting for Shopify to say a transaction settled, and the ones
+        refused for good, oldest first (at most 200). The same list as the
+        panel above Setup › Inbound Log, asked with the role's access to
+        the Setup section. `amount` is what the refund returns as far as
+        is known, less every transaction Shopify reported as failed.
+      operationId: listShopifyRefunds
+      responses:
+        "200":
+          description: The refunds, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        refund_id:
+                          type: string
+                          description: Shopify's id of the refund
+                        order_id:
+                          type: string
+                          description: Shopify's id of the order, the sale's transaction id
+                        refunded_at:
+                          type: integer
+                          nullable: true
+                          description: Unix time Shopify says the refund happened
+                        state:
+                          type: string
+                          enum: [waiting, refused]
+                        stale:
+                          type: boolean
+                          description: Waiting for more than a day
+                        reason:
+                          type: string
+                          nullable: true
+                          description: Why a refused refund was not recorded
+                        amount:
+                          type: number
+                        currency:
+                          type: string
+                          nullable: true
+                          description: The currency Shopify states the refund in
+                        other_currency:
+                          type: boolean
+                          description: >-
+                            The refund is stated in another currency than the
+                            account's, so amount is not what to record.
+                        click_ids:
+                          type: array
+                          description: >-
+                            The clicks the order's sale is recorded on. With
+                            more than one, recording names which.
+                          items:
+                            type: integer
+                  more:
+                    type: boolean
+                    description: More than the 200 listed are left
+                  transaction_webhook_seen:
+                    type: boolean
+                    description: >-
+                      Whether Shopify's Transaction creation webhook has ever
+                      arrived for the account. Without it a waiting refund is
+                      never settled by itself.
+                  account_currency:
+                    type: string
+                    description: The currency the account counts in, which a recorded amount is stated in
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /conversions/shopify-refunds/{id}/record:
+    post:
+      tags: [Conversions]
+      summary: Record a listed Shopify refund as a reversal of its order's sale
+      description: |
+        Takes `amount` back from the sale of the refund's order, at most
+        what is left of it, and closes the refund, as Record refund does
+        under Setup › Inbound Log. It is recorded once under the refund's
+        id, so Shopify settling the refund later records nothing more.
+        Nothing converts money: for a refund Shopify states in another
+        currency than the account's (`other_currency`), send the amount
+        converted with `currency` naming the account's, or the answer is a
+        422 on `currency`. Asks for the role's access to the Setup and
+        Update sections.
+      operationId: recordShopifyRefund
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The refund's refund_id
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              additionalProperties: false
+              properties:
+                amount:
+                  type: number
+                  description: >-
+                    What the refund returned, in the account's currency. More
+                    than 0; a decimal string is read too.
+                currency:
+                  type: string
+                  description: >-
+                    The currency amount is stated in, which must be the
+                    account's (account_currency). Required for a refund
+                    Shopify states in another currency.
+                click_id:
+                  type: integer
+                  description: >-
+                    The click the refund takes back from. Needed only when
+                    the order is recorded on more than one (click_ids).
+      responses:
+        "200":
+          description: The reversal
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      refund_id:
+                        type: string
+                      outcome:
+                        type: string
+                        enum: [reversed, duplicate]
+                        description: duplicate when the refund was recorded already
+                      conversion_id:
+                        type: integer
+                        nullable: true
+                      message:
+                        type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            The refund cannot be taken from the sale (no sale on file any
+            more, or one recorded at another amount); the message says which.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /conversions/shopify-refunds/{id}/close:
+    post:
+      tags: [Conversions]
+      summary: Close a listed Shopify refund with nothing recorded
+      description: |
+        Removes the refund from the list without a reversal, for one that
+        returned no money. Its amount stays counted in the sale. Asks for
+        the role's access to the Setup and Update sections.
+      operationId: closeShopifyRefund
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The refund's refund_id
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Closed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      refund_id:
+                        type: string
+                      closed:
+                        type: boolean
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
   /conversions/offline-export:
     get:
       tags: [Conversions]
@@ -5131,6 +5336,144 @@ paths:
                     properties:
                       queued: {type: integer}
                       more: {type: boolean}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /destinations/{id}/google-ads/accounts:
+    get:
+      tags: [Destinations]
+      summary: The Google Ads accounts a connected destination can send to
+      description: >-
+        Read from Google now, with the destination's own credentials, and
+        not stored. Every account the connected Google user can open that
+        runs ads. `login_customer_id` is the manager it is reached through,
+        or null when the user opens it directly. 422 when the destination is
+        not Google Ads, is not connected yet, or Google refused (the message
+        is Google's answer).
+      operationId: listDestinationGoogleAdsAccounts
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        "200":
+          description: The accounts, by name
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      accounts:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            customer_id: {type: string}
+                            login_customer_id: {type: string, nullable: true}
+                            name: {type: string}
+                            currency: {type: string}
+                            via: {type: string, nullable: true, description: The manager's name}
+                      notes:
+                        type: array
+                        items: {type: string}
+                        description: What the list left out, if anything
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /destinations/{id}/google-ads/conversion-actions:
+    get:
+      tags: [Destinations]
+      summary: An account's conversion actions that take uploaded clicks
+      description: >-
+        Read from Google now. The enabled conversion actions of type
+        UPLOAD_CLICKS of the destination's own account, or of `customer_id`.
+        `value` is what `conversion_action` is set to. `others` counts the
+        account's enabled actions of another kind, which cannot take an
+        upload. 422 as for the accounts, or when the destination has no
+        account and none is given.
+      operationId: listDestinationGoogleAdsConversionActions
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: customer_id, in: query, schema: {type: string}, description: "The account, 10 digits. Default the destination's own."}
+        - {name: login_customer_id, in: query, schema: {type: string}, description: "The manager customer_id is reached through, if any. Only with customer_id."}
+      responses:
+        "200":
+          description: The actions, by name
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      customer_id: {type: string}
+                      login_customer_id: {type: string, nullable: true}
+                      actions:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            value: {type: string}
+                            id: {type: string}
+                            name: {type: string}
+                            owner: {type: string, nullable: true, description: The manager account that owns it}
+                      others: {type: integer}
+                      notes: {type: array, items: {type: string}}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /destinations/{id}/google-ads/pick:
+    post:
+      tags: [Destinations]
+      summary: Set a Google Ads destination's account and conversion action by name
+      description: >-
+        Chooses from Google's lists, so no ID has to be known. `account` and
+        `conversion_action` are each a name (matched whole, case ignored) or
+        an ID. Without `account` the destination keeps its account, or takes
+        the only one the Google user reaches. Without `conversion_action` it
+        keeps its action for the same account, or takes the account's only
+        one. Several to choose from, or no match, is a 422 listing the
+        choices, and nothing is saved. The manager an account is reached
+        through is stored as `login_customer_id`, the names as
+        `settings.labels`. Another account takes none of the old one's
+        conversion actions with it. No `dry_run`.
+      operationId: pickDestinationGoogleAds
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                account: {type: string}
+                conversion_action: {type: string}
+      responses:
+        "200":
+          description: The destination as saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Destination"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
@@ -14589,13 +14932,16 @@ components:
       description: >-
         How the conversion's click was found. click_id is the request naming
         it (a subid or sid, ClickBank's tracking code, the API's or an upload
-        line's click id, an app install's token); cookie a tracking cookie
+        line's click id, an app install's token); ad_click_id an ad platform's
+        click id (gclid, gbraid, wbraid, ttclid, msclkid, fbclid) that a
+        global postback with no SubID sent back and a click carries (one
+        visitor's latest click on one campaign); cookie a tracking cookie
         naming it; visitor_id the landing-page script's visitor id, on the
         click it was last seen on; same_ip the latest click from the
         visitor's address when nothing named one; unknown a conversion
         recorded before 1.9.79, the value carried in from before the ledger,
         or a goal reached by an event stored before then.
-      enum: [click_id, cookie, visitor_id, same_ip, unknown]
+      enum: [click_id, ad_click_id, cookie, visitor_id, same_ip, unknown]
 
     ConversionMatchMethodRow:
       type: object
@@ -14721,7 +15067,7 @@ components:
           $ref: "#/components/schemas/MatchMethod"
         match_method_label:
           type: string
-          description: The method in words (Click id, Cookie, Visitor id, Same IP, Unknown).
+          description: The method in words (Click id, Ad click id, Cookie, Visitor id, Same IP, Unknown).
         linked_to:
           type: object
           nullable: true
@@ -16696,6 +17042,9 @@ components:
           type: integer
           enum: [0, 1]
           description: Whether a pixel that names no click may credit the latest click from the visitor's IP address.
+        user_pref_click_id_params:
+          type: string
+          description: The postback parameters the account's networks send an ad click id back in, comma-separated; empty for none.
         user_daily_email:
           type: string
           description: >-
@@ -16762,6 +17111,18 @@ components:
             made from 1.9.79 on starts at 0, one from before the upgrade at 1.
             Never made for a visitor given no p202vid cookie (the privacy
             setting, a p202_consent other than 1, a campaign's identity_signals 0).
+        user_pref_click_id_params:
+          type: string
+          maxLength: 255
+          description: >-
+            The postback parameters the account's networks send an ad click id
+            back in, comma-separated (aff_sub3), at most 5; "" for none. Read
+            by the global postback when its SubID is empty or unfilled, and
+            looked up among this account's clicks as every kind of ad click
+            id (match_method ad_click_id). gclid, gbraid, wbraid, msclkid,
+            fbclid and ttclid are read under their own names without being
+            listed, and are refused here, as are the parameters a postback
+            already reads.
         user_pref_cloak_referer: {type: string, enum: [origin, never]}
         user_pref_ad_settings: {type: string, enum: [show_all, hide_login, hide_all]}
         user_account_currency:
@@ -18406,11 +18767,15 @@ components:
           description: Whether credentials are stored. They are never served.
         status:
           type: string
-          enum: [ready, needs_authorisation, credentials_unreadable]
+          enum: [ready, needs_authorisation, needs_account, credentials_unreadable]
           description: |
             needs_authorisation: a Google Ads destination not yet connected
             to Google (POST /destinations/{id}/oauth/start); its conversions
-            wait, pending, and are sent once it is.
+            wait, pending, and are sent once it is. needs_account: a
+            connected Google Ads destination with no customer_id or
+            conversion_action yet; its conversions wait the same way until
+            both are set, by an update or by picking them on Setup ›
+            Destinations.
         waiting:
           type: object
           nullable: true
@@ -18479,7 +18844,10 @@ components:
           description: GA4 event parameter name to the click field it carries.
         customer_id:
           type: string
-          description: Google Ads customer ID the conversions are uploaded to, 10 digits (dashes are stripped).
+          description: >-
+            Google Ads customer ID the conversions are uploaded to, 10 digits (dashes are stripped).
+            May be left out with conversion_action when the destination is made,
+            to pick both on Setup › Destinations after connecting (status needs_account until then).
         login_customer_id:
           type: string
           description: The manager account the access goes through, when it is not the customer itself (10 digits).
@@ -18493,6 +18861,12 @@ components:
           type: object
           additionalProperties: {type: string}
           description: Campaign id to the conversion action its conversions are uploaded as, instead of conversion_action.
+        labels:
+          type: object
+          description: >-
+            Google Ads: the names Google gives the account and the conversion action, for display only,
+            as `customer` and `conversion_action`, each `{id, name}`. Set by a pick. A label is kept only while
+            its id is the setting it names, so changing customer_id or conversion_action drops the old name.
     DestinationCredentials:
       type: object
       description: |

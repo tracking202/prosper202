@@ -19,6 +19,7 @@ use Prosper202\OfflineConversion\ExportOptions;
 use Prosper202\OfflineConversion\FeedStore;
 use Prosper202\OfflineConversion\Format;
 use Prosper202\OfflineConversion\LeftOut;
+use Prosper202\OfflineConversion\LegacyGoogleFeedFetches;
 use Prosper202\OfflineConversion\OfflineExport;
 use Prosper202\OfflineConversion\OfflineFile;
 
@@ -36,6 +37,8 @@ use Prosper202\OfflineConversion\OfflineFile;
  * - Fetch URLs: a URL a platform fetches the file from on a schedule. Its
  *   key is shown once, when it is made or replaced (kept in the session for
  *   the one page that shows it), and never again: only its hash is stored.
+ * - Your old Google Ads feed: the schedules still fetching paid 1.9.56's
+ *   retired feed (LegacyGoogleFeedFetches), each moved over with one button.
  *
  * A role without campaign data reads no conversion value anywhere, and every
  * file carries values, so such a role gets the names and nothing else.
@@ -48,6 +51,7 @@ $self = $base . 'tracking202/setup/offline_conversions.php';
 $canExport = $userObj->hasPermission('access_to_campaign_data');
 $now = time();
 $feedStore = new FeedStore($conn);
+$legacyFetches = new LegacyGoogleFeedFetches($conn);
 $names = new ConversionNames($conn);
 $errors = [];
 $tokenRefused = false;
@@ -141,6 +145,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             die();
         }
         $errors['feeds'] = 'That fetch URL is not one of yours, or was deleted.';
+    } elseif ($action === 'move_legacy_feed' || $action === 'hide_legacy_feed') {
+        $fetchId = \Prosper202\Http\PostedId::read($_POST['fetch_id'] ?? null) ?? 0;
+        $gone = 'That schedule is no longer listed. Reload the page.';
+        if ($action === 'hide_legacy_feed') {
+            if ($fetchId > 0 && $legacyFetches->dismiss($userId, $fetchId, $now)) {
+                header('location: ' . $self . '?done=hidden');
+                die();
+            }
+            $errors['old_feed'] = $gone;
+        } else {
+            try {
+                $moved = $fetchId > 0 ? $legacyFetches->move($userId, $fetchId, $now) : null;
+                if ($moved === null) {
+                    $errors['old_feed'] = $gone;
+                } elseif ($moved['key'] === null) {
+                    header('location: ' . $self . '?done=moved_name#old-feed');
+                    die();
+                } else {
+                    $_SESSION['p202_offline_feed_url'] = ['feed_id' => $moved['feed']->feedId, 'url' => FeedStore::url(p202TrackingBaseUrl(), $moved['key'])];
+                    header('location: ' . $self . '?done=moved#old-feed');
+                    die();
+                }
+            } catch (\OverflowException $e) {
+                $errors['old_feed'] = $e->getMessage() . ' The conversion name is saved; make room under Fetch URLs and move it again.';
+            }
+        }
     } else {
         $errors['action'] = 'The form did not say what to do; nothing was changed.';
     }
@@ -155,6 +185,8 @@ if (isset($_SESSION['p202_offline_feed_url']) && is_array($_SESSION['p202_offlin
 
 $stored = $names->read($userId);
 $feeds = $canExport ? $feedStore->list($userId) : [];
+// The schedules Google Ads still fetches paid 1.9.56's retired feed for.
+$oldFetches = $canExport ? $legacyFetches->forAccount($userId, $now) : [];
 $summary = null;
 if ($canExport && $downloadOptions !== null) {
     try {
@@ -182,6 +214,18 @@ $nameValue = static function (string $platform, int $campaignId) use ($posted, $
 $feedValue = static fn (string $key, string $default = ''): string => is_string($posted[$key] ?? null) && ($posted['action'] ?? '') === 'create_feed' ? (string) $posted[$key] : $default;
 $consentLabel = static fn (?Consent $c): string => $c === null ? 'not stated' : $c->cell();
 $when = static fn (int $ts): string => date('Y-m-d H:i', $ts);
+$ago = static function (int $ts) use ($now): string {
+    $seconds = max(0, $now - $ts);
+    foreach ([[86400, 'day'], [3600, 'hour'], [60, 'minute']] as [$unit, $word]) {
+        if ($seconds >= $unit) {
+            $n = intdiv($seconds, $unit);
+
+            return $n . ' ' . $word . ($n === 1 ? '' : 's') . ' ago';
+        }
+    }
+
+    return 'a moment ago';
+};
 $formatChoices = [];
 foreach (Format::cases() as $format) {
     $formatChoices[$format->value] = $format->label();
@@ -205,6 +249,8 @@ $done = is_string($_GET['done'] ?? null) ? $_GET['done'] : '';
 $doneText = [
     'names' => 'Conversion names saved.',
     'deleted' => 'Fetch URL deleted. It answers nothing from now on.',
+    'hidden' => 'Schedule hidden. It is listed again if Google Ads fetches the old address again.',
+    'moved_name' => 'Conversion name saved. The fetch URL for it was already there: paste it into the schedule in Google Ads, or replace it under Fetch URLs if you did not keep it.',
 ][$done] ?? null;
 if ($doneText !== null) {
     echo p202_flash('ok', $doneText);
@@ -215,7 +261,7 @@ if ($tokenRefused) {
 echo p202_setup_error_flashes($errors, array_values(array_filter(array_keys($errors), static fn (string $k): bool => str_starts_with($k, 'names_') || in_array($k, ['format', 'days', 'conversion_name', 'ad_user_data', 'ad_personalization'], true))));
 if ($newUrl !== null) { ?>
     <div class="alert alert-success p202-flash" role="status"><i class="bi bi-check-circle"></i><div class="p202-flash__body">
-        <strong><?php echo $done === 'key' ? 'New URL made. The old one answers nothing from now on.' : 'Fetch URL made.'; ?></strong>
+        <strong><?php echo ['key' => 'New URL made. The old one answers nothing from now on.', 'moved' => 'Moved: the conversion name is saved and its fetch URL is made. In Google Ads, Goals › Conversions › Uploads › Schedules, put this URL in place of the old address; enter anything for the user name and password.'][$done] ?? 'Fetch URL made.'; ?></strong>
         Copy it now: it is shown this once, and Prosper202 keeps only a fingerprint of it. A lost URL is replaced, not shown again.
         <?php echo p202_setup_code_box((string) $newUrl['url'], ['id' => 'new-feed-url']); ?>
     </div></div>
@@ -224,6 +270,61 @@ if (!$canExport) {
     echo p202_flash('warn', 'Your role does not include campaign data. Every file carries each conversion\'s value, so downloads and fetch URLs are not offered to it. You can still set conversion names.');
 }
 ?>
+
+<?php if ($oldFetches !== []) { ?>
+<section class="p202-panel mb-4" id="old-feed">
+    <div class="p202-panel__head">
+        <h2 class="p202-panel__title">Your old Google Ads feed</h2>
+        <span class="p202-pill p202-pill--accent">still being fetched</span>
+        <span class="p202-panel__sub">it uploads nothing since 1.9.80</span>
+    </div>
+    <div class="p202-panel__body">
+        <p>Google Ads is still fetching the scheduled feed of paid Prosper202 1.9.56 (…/tracking202/static/feeds/google/offlineconversions/). That address answers 410 Gone now, so those schedules upload no conversions. Each is listed as its address names it; move one over and paste the URL it makes into the schedule in Google Ads.</p>
+        <ul class="p202-list">
+            <?php foreach ($oldFetches as $fetch) {
+                $state = $fetch['state'];
+                $campaignLabel = $fetch['campaign_id'] === 0 ? 'every campaign' : (string) $fetch['campaign_name'];
+                $tried = 'Google Ads last tried the old address ' . $ago($fetch['last_fetched_at']) . ' (' . number_format($fetch['fetches']) . ($fetch['fetches'] === 1 ? ' try' : ' tries') . ' since ' . $when($fetch['first_fetched_at']) . ').';
+                $replaces = $state === LegacyGoogleFeedFetches::READY && $fetch['stored_name'] !== null && $fetch['stored_name'] !== $fetch['conversion_name'];
+                ?>
+            <li class="p202-list__item">
+                <span class="p202-list__name"><?php echo p202_setup_e($fetch['conversion_name']); ?></span>
+                <span class="p202-pill"><?php echo p202_setup_e($campaignLabel); ?></span>
+                <?php if ($state === LegacyGoogleFeedFetches::MOVED) {
+                    ?><span class="p202-pill p202-pill--accent">moved: paste its URL into Google Ads</span><?php
+                } elseif ($state === LegacyGoogleFeedFetches::GONE) {
+                    ?><span class="p202-pill">campaign deleted</span><?php
+                } ?>
+                <span class="p202-list__actions">
+                    <?php if ($state === LegacyGoogleFeedFetches::READY) { ?>
+                    <form method="post" action="<?php echo p202_setup_e($self); ?>#old-feed" class="d-inline"<?php echo $replaces ? ' data-p202-confirm="' . p202_setup_e('This campaign\'s conversions are sent to Google as "' . $fetch['stored_name'] . '" now. Moving the schedule sends them as "' . $fetch['conversion_name'] . '", the name the old address carries.') . '"' : ''; ?>>
+                        <?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>
+                        <input type="hidden" name="action" value="move_legacy_feed"><input type="hidden" name="fetch_id" value="<?php echo (int) $fetch['fetch_id']; ?>">
+                        <button type="submit" class="btn btn-primary btn-sm">Move it over</button>
+                    </form>
+                    <?php } ?>
+                    <form method="post" action="<?php echo p202_setup_e($self); ?>" class="d-inline">
+                        <?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>
+                        <input type="hidden" name="action" value="hide_legacy_feed"><input type="hidden" name="fetch_id" value="<?php echo (int) $fetch['fetch_id']; ?>">
+                        <button type="submit" class="p202-list__action">hide</button>
+                    </form>
+                </span>
+                <span class="p202-list__meta"><?php
+                    echo p202_setup_e($tried) . ' ';
+                if ($state === LegacyGoogleFeedFetches::READY) {
+                    echo 'Moving it sends ' . ($fetch['campaign_id'] === 0 ? 'every campaign without a name of its own' : p202_setup_e($campaignLabel)) . ' to Google as ' . p202_setup_e($fetch['conversion_name']) . ' and makes a fetch URL for that name in the Uploads template, last ' . LegacyGoogleFeedFetches::DAYS . ' days.';
+                } elseif ($state === LegacyGoogleFeedFetches::MOVED) {
+                    $feed = $fetch['feed'];
+                    echo 'Its fetch URL was made ' . p202_setup_e($when($feed->keyCreatedAt)) . ' and ' . ($feed->lastFetchedAt === null ? 'has not been fetched yet' : 'was last fetched ' . p202_setup_e($when($feed->lastFetchedAt))) . '. Put that URL in place of the old address in Google Ads, Goals › Conversions › Uploads › Schedules; if you did not keep it, use replace URL under Fetch URLs.';
+                } else {
+                    echo 'Nothing replaces it: delete the schedule in Google Ads.';
+                } ?></span>
+            </li>
+            <?php } ?>
+        </ul>
+    </div>
+</section>
+<?php } ?>
 
 <div class="row g-4">
     <?php if ($canExport) { ?>
@@ -354,8 +455,8 @@ if (!$canExport) {
                 } ?>
                 <p class="mb-2"><strong>Google Ads:</strong> Goals › Conversions › Uploads, then Schedules, a new schedule from HTTPS; or Data Manager's HTTPS source for the Data Manager file. <strong>Microsoft Advertising:</strong> Conversions › Offline conversions › Schedules › Schedule, HTTPS. Paste the URL; both ask for a user name and password, which Prosper202 does not read (the key is in the URL), so enter anything. Schedule a daily fetch.</p>
                 <p class="form-text">Upgraded from paid Prosper202? Its Google Ads schedule URL,
-                    …/tracking202/static/feeds/google/offlineconversions/?cn=…, answers 410 Gone since 1.9.80:
-                    make a URL here and paste it into that schedule instead.</p>
+                    …/tracking202/static/feeds/google/offlineconversions/?cn=…, answers 410 Gone since 1.9.80.
+                    When Google Ads next fetches it, the schedule is listed at the top of this page to move over with one button.</p>
                 <?php if ($feeds === []) { ?>
                 <div class="p202-empty">
                     <i class="bi bi-link-45deg p202-empty__icon"></i>

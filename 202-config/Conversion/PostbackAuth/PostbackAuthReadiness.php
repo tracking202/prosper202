@@ -93,7 +93,9 @@ final class PostbackAuthReadiness
                 'acip' => in_array($row['endpoint'], ['pb', 'px'], true) ? ClickId::parse($fields['acip'] ?? null) : null,
                 'click_id' => $row['click_id'] !== null ? (int) $row['click_id']
                     : (ClickId::parse($fields['subid'] ?? null) ?? ClickId::parse($fields['sid'] ?? null)),
-                'subid' => is_string($fields['subid'] ?? null) && $fields['subid'] !== Redactor::REDACTED ? $fields['subid'] : null,
+                // A blank subid (an unfilled macro) names nothing to go by.
+                'subid' => is_string($fields['subid'] ?? null) && trim($fields['subid']) !== '' && $fields['subid'] !== Redactor::REDACTED
+                    ? $fields['subid'] : null,
             ];
         }
 

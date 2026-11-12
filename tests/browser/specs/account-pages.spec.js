@@ -7,7 +7,8 @@
  * What is here is what only a browser can answer: every page's baseline at a
  * desktop and a phone width and in both themes (lib/checks.js ACCOUNT_PAGES),
  * native validation letting through what the server then refuses in its own
- * words, the Advanced disclosures that remember, a new API key shown once with Copy,
+ * words, the Advanced disclosures that remember, the ad click id parameters
+ * refused and shown back, a new API key shown once with Copy,
  * and every confirmation — saying no must change nothing, saying yes must do
  * what the dialog said.
  *
@@ -149,6 +150,69 @@ module.exports = {
         expect.match(await app.messages(), /Your settings are saved\./, 'it says it saved');
         expect.eq(db.value('SELECT user_daily_email FROM 202_users_pref WHERE user_id=' + state.owner), '05', 'and leaves the stored daily email hour as it was');
         db.write("UPDATE 202_users_pref SET user_daily_email='" + before + "' WHERE user_id=" + state.owner);
+      },
+    },
+
+    {
+      name: 'Personal settings: Match conversions by ad click id is under Advanced, says why it refuses a macro where the page lands, and shows what it saved',
+      async run(ctx) {
+        const { withSession, db, expect, state, config } = ctx;
+        const field = '#user_pref_click_id_params';
+        const advanced = 'details[data-p202-remember="account-profile-advanced"]';
+        const stored = () => db.value('SELECT user_pref_click_id_params FROM 202_users_pref WHERE user_id=' + state.owner);
+        const before = stored();
+        // A desktop that scrolls and a phone: where the refusal shows has to be measured where it could be missed.
+        for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+          await withSession({ viewport }, async (at) => {
+            const { app, ui } = at;
+            const size = viewport.width + 'px';
+            db.write("UPDATE 202_users_pref SET user_pref_click_id_params='' WHERE user_id=" + state.owner);
+            await app.goto('/202-account/account.php');
+            await ui.page.evaluate(() => { try { localStorage.clear(); } catch (e) { /* ignore */ } });
+            await ui.page.reload({ waitUntil: 'load' });
+            await ui.ready();
+            expect.eq(await app.disclosureOpen(advanced), false, size + ': Advanced starts closed');
+            expect.notOk(await ui.visible(field), size + ': the field is hidden until Advanced is opened');
+            await checks.baseline({ ...ctx, ...at });
+
+            await app.openDisclosure(advanced);
+            expect.ok(await ui.visible(field), size + ': opening Advanced shows it');
+            expect.eq(await ui.text('label[for="user_pref_click_id_params"]'), 'Match conversions by ad click id', size + ': its label');
+            expect.eq(await ui.horizontalOverflow(), 0, size + ': nothing overflows with Advanced open');
+            const box = await ui.box(field);
+            expect.ok(box.width >= 200 && box.x >= 0 && box.x + box.width <= viewport.width, size + ': the field fits the page (' + Math.round(box.width) + 'px wide)');
+            await checks.baseline({ ...ctx, ...at });
+            await at.page.screenshot({ path: require('path').join(config.shots, 'account-pages-click-id-params-' + viewport.width + '.png'), fullPage: true });
+
+            // The network's macro, braces and all: what someone pasting from a postback URL types.
+            await ui.fill({ [field]: '{aff_sub3}' });
+            await app.submit('#profile button[type="submit"]');
+            expect.eq(await app.disclosureOpen(advanced), true, size + ': a refusal inside Advanced opens it');
+            const refusal = field + ' ~ .invalid-feedback';
+            expect.match(await ui.text(refusal), /is not a parameter name/, size + ': the server says why under the field');
+            expect.eq(await ui.value(field), '{aff_sub3}', size + ': what was typed is kept');
+            expect.eq(stored(), '', size + ': and nothing was saved');
+            // The box is far below the fold, so the reason is also in the message the page lands on.
+            const landed = await ui.page.evaluate(() => {
+              const flash = document.querySelector('[data-p202-flashes] .p202-flash__body');
+              const r = flash ? flash.getBoundingClientRect() : null;
+              return { text: flash ? flash.textContent : '', seen: !!r && r.height > 0 && r.top >= 0 && r.bottom <= window.innerHeight };
+            });
+            expect.match(landed.text, /Match conversions by ad click id, under Advanced: .*is not a parameter name/, size + ': the message at the top names the field and why');
+            expect.ok(landed.seen, size + ': and it is on screen where the page lands');
+            await at.page.screenshot({ path: require('path').join(config.shots, 'account-pages-click-id-params-refused-' + viewport.width + '.png') });
+
+            await ui.fill({ [field]: ' Aff_Sub3, sub5 ' });
+            await app.submit('#profile button[type="submit"]');
+            expect.match(await app.messages(), /Your settings are saved\./, size + ': it says it saved');
+            expect.eq(stored(), 'aff_sub3,sub5', size + ': the names are stored as a postback\'s are read');
+            if (!(await app.disclosureOpen(advanced))) {
+              await app.openDisclosure(advanced);
+            }
+            expect.eq(await ui.value(field), 'aff_sub3,sub5', size + ': and shown back');
+          });
+        }
+        db.write("UPDATE 202_users_pref SET user_pref_click_id_params='" + before + "' WHERE user_id=" + state.owner);
       },
     },
 

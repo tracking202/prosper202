@@ -194,6 +194,7 @@ but unchanged keys is `422` (`No valid fields to update`).
 | `user_pref_dynamic_bid` | `0` (cost from the tracker), `1` (from the `t202b` parameter: a bid from 0 to 99.99, or the tracker's CPC for any other) | Personal settings |
 | `user_pref_privacy` | `disabled`, `eu`, `all` (see [Privacy](#privacy-user_pref_privacy) below) | Personal settings |
 | `user_pref_same_ip_fallback` | `1` (a pixel that names no click credits your latest click from the visitor's IP address), `0` (it credits none); see [Same-IP fallback](#same-ip-fallback-user_pref_same_ip_fallback) below | Personal settings |
+| `user_pref_click_id_params` | the postback parameters your networks send an ad click id back in, comma-separated (`aff_sub3`), or `""` for none; see [Ad click id parameters](#ad-click-id-parameters-user_pref_click_id_params) below | Personal settings |
 | `user_pref_cloak_referer` | `origin`, `never` | Personal settings |
 | `user_pref_ad_settings` | `show_all`, `hide_login`, `hide_all` | Personal settings |
 | `user_account_currency` | a supported 3-letter code | Personal settings: **re-prices every campaign's payout** into it through the exchange-rate service, in the same transaction as the rest of the request; `502` and nothing written when the service gives no rate |
@@ -278,6 +279,21 @@ conversion pixel makes no guess by address for a visitor held back (the
 pass the subid in the pixel to credit every one. Rate limits on the public
 endpoints key on the connection's address as it arrived and are not
 affected.
+
+### Ad click id parameters (`user_pref_click_id_params`)
+
+Personal settings › Advanced › **Match conversions by ad click id**. When a
+global postback (`gpb.php`) arrives with its SubID empty or unfilled, it finds
+the click by an ad click id the postback sends back
+([Setup](27-setup.md#when-the-network-does-not-send-the-subid-back)). A
+postback that sends the id as `gclid`, `gbraid`, `wbraid`, `msclkid`,
+`fbclid` or `ttclid` needs nothing here. This setting is for a network that
+returns it under its own parameter name: list the names, separated by commas
+(`aff_sub3` or `aff_sub3,sub5`), at most 5, each letters, digits, `_` and `-`
+as it appears in the postback URL. The value of a listed parameter is tried
+as every kind of ad click id, among this account's clicks only. `""` lists
+none, the default. The six names above and the parameters a postback already
+reads (`subid`, `amount`, `txid`, `p202_token` and the like) are refused.
 
 ### Same-IP fallback (`user_pref_same_ip_fallback`)
 

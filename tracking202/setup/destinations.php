@@ -12,6 +12,7 @@ if (!$userObj->hasPermission('access_to_setup_section')) {
 }
 
 require_once __DIR__ . '/_includes/setup_ui.php';
+require_once __DIR__ . '/_includes/google_ads_picker.php';
 require_once __DIR__ . '/_includes/destination_panels.php';
 
 use Prosper202\Destinations\DestinationForm;
@@ -19,6 +20,7 @@ use Prosper202\Destinations\DestinationInputException;
 use Prosper202\Destinations\DestinationQueue;
 use Prosper202\Destinations\DestinationStore;
 use Prosper202\Destinations\Ga4Destination;
+use Prosper202\Destinations\GoogleAdsAccounts;
 use Prosper202\Destinations\GoogleAdsDestination;
 use Prosper202\Destinations\GoogleAdsOAuth;
 
@@ -28,7 +30,8 @@ use Prosper202\Destinations\GoogleAdsOAuth;
  * as /api/v3/destinations: GA4 and Google Ads. Secrets are taken and never
  * shown. A Google Ads destination is connected to the operator's Google
  * account through Google's consent screen; destination-oauth.php is where
- * Google sends the browser back.
+ * Google sends the browser back. Its account and conversion action are then
+ * picked from what Google lists (_includes/google_ads_picker.php).
  */
 
 $userId = (int) $_SESSION['user_id'];
@@ -46,6 +49,7 @@ $logQuery = $logId === null ? '' : '?log=' . $logId . ($logStatus !== null ? '&s
 $errors = [];
 $tokenRefused = false;
 $posted = null;
+$choose = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = is_string($_POST['action'] ?? null) ? $_POST['action'] : '';
@@ -69,10 +73,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 die();
             } elseif ($action === 'create_google_ads') {
                 $str = static fn (string $k): string => is_string($_POST[$k] ?? null) ? trim($_POST[$k]) : '';
-                $settings = [
+                // The IDs are optional: left out, they are picked from Google's lists once connected.
+                $settings = array_filter([
                     'customer_id' => $str('gads_customer_id'),
                     'login_customer_id' => $str('gads_login_customer_id'),
                     'conversion_action' => $str('gads_conversion_action'),
+                ], static fn (string $v): bool => $v !== '') + [
                     'send_user_data' => ($_POST['gads_send_user_data'] ?? '') === '1',
                     'consent' => array_filter(['ad_user_data' => $str('gads_ad_user_data'), 'ad_personalization' => $str('gads_ad_personalization')], static fn (string $v): bool => $v !== ''),
                 ];
@@ -82,8 +88,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'oauth_client_secret' => $str('gads_oauth_client_secret'),
                 ];
                 $created = $store->create($userId, GoogleAdsDestination::TYPE, $str('gads_name'), $settings, $credentials, time());
-                header('location: ' . $self . '?done=created_google_ads&id=' . (int) $created['destination_id'] . '#d' . (int) $created['destination_id']);
+                // Straight on to Google's consent screen; the destination's Connect button is there if that fails.
+                $next = $self . '?done=created_google_ads&id=' . (int) $created['destination_id'] . '#d' . (int) $created['destination_id'];
+                try {
+                    $next = GoogleAdsOAuth::start($store, $userId, (int) $created['destination_id'], $redirectUri, time())['authorisation_url'] ?? $next;
+                } catch (\Throwable $e) {
+                    error_log(p202UncaughtLogLine('Setup › Destinations: the new destination was not sent on to Google', $e));
+                }
+                header('location: ' . $next);
                 die();
+            } elseif ($action === 'pick_google_ads') {
+                try {
+                    $picked = p202_gads_pick($store, $userId, $id, $_POST, time());
+                } catch (DestinationInputException $e) {
+                    // The picker's form has no field of the add forms' to say it under.
+                    $picked = false;
+                    $errors['pick'] = $e->getMessage();
+                }
+                if (isset($errors['pick'])) {
+                    $choose = $id;
+                } elseif ($picked === null) {
+                    $errors['destination'] = 'That destination is not one of yours, or was deleted.';
+                } else {
+                    header('location: ' . $self . ($picked ? '?done=picked' : '?choose=' . $id) . '#d' . $id);
+                    die();
+                }
             } elseif ($action === 'connect') {
                 $start = GoogleAdsOAuth::start($store, $userId, $id, $redirectUri, time());
                 if ($start === null) {
@@ -181,6 +210,9 @@ if (isset($_SESSION['p202_destination_queued']) && is_array($_SESSION['p202_dest
     unset($_SESSION['p202_destination_queued']);
 }
 $destinations = $store->list($userId);
+// The destination whose account or conversion action is being changed.
+$choose ??= \Prosper202\Http\PostedId::read($_GET['choose'] ?? null) ?? 0;
+$googleAccounts = new GoogleAdsAccounts();
 $now = time();
 $queue = new DestinationQueue($conn, $store);
 $health = $queue->health($userId, array_map(static fn (array $d): int => (int) $d['destination_id'], $destinations), $now - 7 * 86400, $now);
@@ -228,12 +260,15 @@ $gaFields = [
 ];
 $gadsFields = [
     ['gads_name', 'name', 'Name', 'text', 'Search campaigns', ''],
-    ['gads_customer_id', 'settings.customer_id', 'Customer ID', 'text', '123-456-7890', 'The Google Ads account the conversions go to, shown at the top of Google Ads.'],
-    ['gads_login_customer_id', 'settings.login_customer_id', 'Manager account ID (optional)', 'text', '', 'Only when your access to that account is through a manager account.'],
-    ['gads_conversion_action', 'settings.conversion_action', 'Conversion action ID', 'text', '', 'Goals › Conversions › your action (source Import, clicks): the number after ctId= in its address. Per-campaign actions: p202 destination update --campaign-conversion-action.'],
     ['gads_developer_token', 'credentials.developer_token', 'Developer token', 'password', '', 'Your manager account\'s API Center. Stored encrypted, never shown again.'],
     ['gads_oauth_client_id', 'credentials.oauth_client_id', 'OAuth client ID', 'text', '….apps.googleusercontent.com', 'Google Cloud Console › Credentials › your OAuth client (Web application).'],
     ['gads_oauth_client_secret', 'credentials.oauth_client_secret', 'OAuth client secret', 'password', '', 'Stored encrypted, never shown again.'],
+];
+// Only for typing the IDs by hand: they are picked from Google's lists after connecting.
+$gadsIdFields = [
+    ['gads_customer_id', 'settings.customer_id', 'Customer ID', '123-456-7890', 'The Google Ads account the conversions go to, shown at the top of Google Ads.'],
+    ['gads_login_customer_id', 'settings.login_customer_id', 'Manager account ID', '', 'Only when your access to that account is through a manager account.'],
+    ['gads_conversion_action', 'settings.conversion_action', 'Conversion action ID', '', 'Goals › Conversions › your action (source Import, clicks): the number after ctId= in its address.'],
 ];
 $formFields = ['name', 'settings.measurement_id', 'settings.event_name', 'settings.client_id_source', 'credentials.api_secret', 'settings.consent.ad_user_data', 'settings.consent.ad_personalization',
     'settings.customer_id', 'settings.login_customer_id', 'settings.conversion_action', 'credentials.developer_token', 'credentials.oauth_client_id', 'credentials.oauth_client_secret'];
@@ -254,7 +289,8 @@ template_top('Destinations');
 $doneText = [
     'created' => 'Destination added. Send a test to check it.',
     'created_google_ads' => 'Destination added. Press Connect Google Ads to authorise it; until then its conversions wait.',
-    'connected' => 'Google Ads connected. Conversions waiting for it go out with the next run; send a test to check it.',
+    'connected' => 'Google Ads connected. Once its account and conversion action are set, conversions waiting for it go out with the next run; send a test to check it.',
+    'picked' => 'Account and conversion action saved. Conversions waiting for this destination go out with the next run; send a test to check it.',
     'enabled' => 'Destination on: new conversions are queued for it.',
     'disabled' => 'Destination off: it queues nothing, and what it queued waits.',
     'deleted' => 'Destination deleted. What it had not sent is cancelled.',
@@ -309,10 +345,10 @@ if ($logDestination !== null) {
                     <div class="p202-list__item">
                         <span class="p202-list__name"><?php echo p202_setup_e($d['name']); ?></span>
                         <?php $isAds = $d['type'] === GoogleAdsDestination::TYPE; ?>
-                        <span class="p202-pill"><?php echo $isAds ? 'Google Ads ' . p202_setup_e((string) ($settings['customer_id'] ?? '')) : p202_setup_e(strtoupper($d['type'])) . ' ' . p202_setup_e((string) ($settings['measurement_id'] ?? '')); ?></span>
+                        <span class="p202-pill"><?php echo $isAds ? 'Google Ads ' . p202_setup_e(p202_gads_named($settings, 'customer', 'customer_id')) : p202_setup_e(strtoupper($d['type'])) . ' ' . p202_setup_e((string) ($settings['measurement_id'] ?? '')); ?></span>
                         <span class="p202-pill<?php echo $d['enabled'] ? ' p202-pill--accent' : ''; ?>"><?php echo $d['enabled'] ? 'on' : 'off'; ?></span>
                         <?php if (($d['status'] ?? 'ready') !== 'ready') { ?>
-                        <span class="p202-pill"><?php echo $d['status'] === 'needs_authorisation' ? 'not connected' : 'credentials unreadable'; ?></span>
+                        <span class="p202-pill"><?php echo ['needs_authorisation' => 'not connected', 'needs_account' => 'pick its account'][$d['status']] ?? 'credentials unreadable'; ?></span>
                         <?php } ?>
                         <span class="p202-list__actions">
                             <?php $acts = ($isAds ? ['connect' => ($d['status'] ?? '') === 'ready' ? 'reconnect Google' : 'Connect Google Ads'] : []) + ['test' => 'send test', $d['enabled'] ? 'disable' : 'enable' => $d['enabled'] ? 'turn off' : 'turn on', 'delete' => 'delete']; ?>
@@ -323,13 +359,20 @@ if ($logDestination !== null) {
                                 <button type="submit" class="p202-list__action<?php echo $act === 'delete' ? ' p202-list__action--danger' : ''; ?>"><?php echo $label; ?></button>
                             </form>
                             <?php } ?>
+                            <?php if ($isAds && ($d['status'] ?? '') === 'ready' && $choose !== $id) { ?>
+                            <a class="p202-list__action" href="<?php echo p202_setup_e($self . '?choose=' . $id . '#d' . $id); ?>">change account or action</a>
+                            <?php } ?>
                         </span>
                         <?php $typeMeta = $isAds
-                            ? 'conversion action ' . p202_setup_e((string) ($settings['conversion_action'] ?? ''))
+                            ? 'conversion action ' . p202_setup_e(isset($settings['conversion_action']) ? p202_gads_named($settings, 'conversion_action', 'conversion_action') : 'not picked yet')
                                 . (empty($settings['campaign_conversion_actions']) ? '' : ' (+' . count((array) $settings['campaign_conversion_actions']) . ' per campaign)')
                             : 'event ' . p202_setup_e((string) ($settings['event_name'] ?? '')) . ' · client id from ' . p202_setup_e((string) ($settings['client_id_source'] ?? '')); ?>
                         <span class="p202-list__meta"><?php echo $typeMeta; ?> · <?php echo empty($settings['campaign_ids']) ? 'every campaign' : count($settings['campaign_ids']) . ' campaign(s)'; ?> · hashed user data <?php echo !empty($settings['send_user_data']) ? 'on' : 'off'; ?></span>
                     </div>
+                    <?php if ($isAds && !isset($settings['settings_invalid']) && (($d['status'] ?? '') === 'needs_account' || ($choose === $id && ($d['status'] ?? '') === 'ready'))) {
+                        // Read from Google for this one destination, now.
+                        echo p202_gads_picker_html($self, (string) ($_SESSION['token'] ?? ''), $id, p202_gads_picker($store, $googleAccounts, $userId, $id, $settings, $choose === $id && isset($_GET['account'])), ($d['status'] ?? '') === 'ready');
+                    } ?>
                     <?php if (is_array($d['waiting'] ?? null)) {
                         echo p202_flash('bad', 'Conversions are waiting for you, using none of their tries: ' . rtrim((string) $d['waiting']['reason'], '. ')
                             . '. They are tried again at ' . $when((int) $d['waiting']['until']) . ', or at once when you connect it again or save its settings or credentials (Edit, below).');
@@ -422,7 +465,7 @@ if ($logDestination !== null) {
                 <span class="p202-panel__sub">Click conversions, your own developer token</span>
             </div>
             <div class="p202-panel__body">
-                <div class="form-text mb-3">Add your OAuth client's authorised redirect URI first, exactly: <code><?php echo p202_setup_e($redirectUri); ?></code>. The setup guide (Destinations in the documentation) walks through the developer token and the OAuth client.</div>
+                <div class="form-text mb-3">Add your OAuth client's authorised redirect URI first, exactly: <code><?php echo p202_setup_e($redirectUri); ?></code>. Adding the destination takes you to Google to connect it; you then pick the account and conversion action from your Google Ads account. The setup guide (Destinations in the documentation) walks through the developer token and the OAuth client.</div>
                 <?php foreach ($gadsFields as [$field, $key, $label, $type, $placeholder, $help]) { ?>
                 <div class="mb-3">
                     <label class="form-label" for="<?php echo $field; ?>"><?php echo p202_setup_e($label); ?></label>
@@ -446,8 +489,22 @@ if ($logDestination !== null) {
                 </div>
                 <?php } ?>
                 <div class="form-text mb-3"><?php echo p202_setup_e(p202_destination_privacy_sentence($privacy)); ?> A conversion is sent with the click's gclid (or wbraid, gbraid), or with hashed email and phone when you turn that on; one with neither is withheld.</div>
+                <details class="p202-disclosure mb-3" data-p202-remember="setup-destinations-gads-ids"<?php echo array_intersect_key($gadsErrors, array_flip(array_column($gadsIdFields, 1))) !== [] ? ' open' : ''; ?>>
+                    <summary>Advanced <span class="p202-disclosure__hint">type the account and conversion action IDs instead of picking them</span></summary>
+                    <div class="p202-disclosure__body">
+                        <?php foreach ($gadsIdFields as [$field, $key, $label, $placeholder, $help]) { ?>
+                        <div class="mb-3">
+                            <label class="form-label" for="<?php echo $field; ?>"><?php echo p202_setup_e($label); ?></label>
+                            <input type="text" class="form-control<?php echo p202_setup_invalid($gadsErrors, $key); ?>" id="<?php echo $field; ?>" name="<?php echo $field; ?>" placeholder="<?php echo p202_setup_e($placeholder); ?>" value="<?php echo $postedAction !== 'create_google_ads' ? '' : p202_setup_e($value($field)); ?>">
+                            <?php echo p202_setup_feedback($gadsErrors, $key); ?>
+                            <div class="form-text"><?php echo p202_setup_e($help); ?></div>
+                        </div>
+                        <?php } ?>
+                        <div class="form-text">Left empty, they are picked after you connect. A conversion action for one campaign is set after adding, by editing the destination or with <code>p202 destination update --campaign-conversion-action</code>.</div>
+                    </div>
+                </details>
                 <div class="p202-form-actions">
-                    <button type="submit" class="btn btn-primary">Add destination</button>
+                    <button type="submit" class="btn btn-primary">Add and connect Google Ads</button>
                 </div>
             </div>
         </form>

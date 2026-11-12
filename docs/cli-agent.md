@@ -892,7 +892,7 @@ starts names the one it meant, the same block twice is a 409 naming the entry.
 p202 conversion list   [--limit 50] [--offset 0] [--campaign-id N] [--all]
                        [--time-from T] [--time-to T] [--click-id N]
                        [--source pixel|postback|universal_pixel|api|subid_upload|revenue_upload|legacy_pixel|clickbank|paykickstart|jvzoo|zaxaa|app_install|goal|legacy_baseline]
-                       [--match-method click_id|cookie|visitor_id|same_ip|unknown]   # how the click was found; same_ip = a guess
+                       [--match-method click_id|ad_click_id|cookie|visitor_id|same_ip|unknown]   # how the click was found; same_ip = a guess
                        [--goal N] [--json]
 p202 conversion match-methods [--aff-campaign-id N] [--period P] [--time-from T] [--time-to T] [--json]
                        # each campaign's conversions, counted ones and income by how their click was found
@@ -912,6 +912,13 @@ p202 conversion inbound-log [--outcome refused|accepted|<outcome>] [--endpoint p
 p202 conversion inbound-log record <inbound_id> [--json]
                        # record a refused postback's or pixel's conversion or event from the log (rows with can_record);
                        # run twice, it records once
+p202 conversion shopify-refunds list [--json]
+                       # Shopify refunds still counted in a sale: waiting to settle or refused (Setup › Inbound Log)
+p202 conversion shopify-refunds record <refund-id> --amount F [--click-id N] [--currency CODE] [--json]
+                       # reverse the order's sale by the refund, at most what is left; --click-id when the order is on several clicks;
+                       # a refund in another currency (other_currency): convert --amount yourself and pass --currency <account_currency>
+p202 conversion shopify-refunds close <refund-id> [--force] [--json]
+                       # close one with nothing recorded (no money was returned)
 p202 conversion get    <id> [--json]
 p202 conversion create --click-id N [--payout F] [--transaction-id S] [--conv-time T] [--idempotency-key S]
                        [--status reversed [--reversal-id S]]      # a reversal of the sale with --transaction-id
@@ -950,6 +957,9 @@ p202 destination create --type google_ads --name S --customer-id 123-456-7890 --
                        # a flag of the other type (e.g. --credentials-file without --type google_ads) is a validation error, never ignored
                        # update: --campaign-conversion-action merges with the stored map; N= removes campaign N's
 p202 destination connect <id> [--json]                  # Google Ads: authorisation_url for a human's browser (same user, 10 min)
+p202 destination accounts <id> [--json]                 # Google Ads, connected: the accounts it can send to, read from Google
+p202 destination conversion-actions <id> [--customer-id N [--login-customer-id N]] [--json]   # the account's click-upload actions
+p202 destination pick <id> [--account NAME|ID] [--action NAME|ID] [--json]   # sets both from Google's lists; several to choose from is a 422 listing them
 p202 destination update <id> [--enable|--disable] [--name S] [any create flag]   # only the flags given change
 p202 destination test <id> [--json]                     # made-up conversion to GA4's /debug/mp/collect: valid + messages
 p202 destination deliveries <id> [--status pending|sent|failed|withheld|cancelled] [--kind conversion|test]
@@ -966,7 +976,9 @@ both consent signals stated `granted` (`last_error` says which); `destination re
 `failed` with `last_error` says why (GA4's answer, an event over 72 hours old, an address never called); it stays
 failed until `destination resend` after the cause is fixed.
 A Google Ads destination with `status` `needs_authorisation` holds its conversions `pending` (no tries used)
-until a person opens `connect`'s `authorisation_url`; an agent cannot complete that step. A click under 6 hours
+until a person opens `connect`'s `authorisation_url`; an agent cannot complete that step. `needs_account` is one
+connected with no account picked yet: `destination pick <id>` sets it by name from Google's lists (`--customer-id`/`--conversion-action` on `update` still work).
+`destination create --type google_ads` needs only `--name` and `--credentials-file`; the IDs are optional. A click under 6 hours
 old also waits; one with no gclid/wbraid/gbraid and no hashed data is `withheld`. While conversions wait on
 something only a person can fix (a developer token Google has not approved, lost access, a wrong customer ID or
 conversion action), `destination get` shows `waiting` (`reason`, `status_code`, `until`); report the `reason`,
@@ -1273,6 +1285,7 @@ p202 user prefs get    <user_id> [--json]               # a secret only as {"sto
 p202 user prefs update <user_id> [--user-tracking-domain S]
                        [--user-account-currency CODE] [--user-pref-time-predefined R] [--user-pref-limit N]
                        [--user-pref-privacy disabled|eu|all] [--user-pref-same-ip-fallback 0|1]
+                       [--user-pref-click-id-params aff_sub3]   # postback parameters carrying an ad click id; "" for none
                        [--cb-key S] [--user-ltv-score-weights S] ... [--json]
                        # every settings-page preference; --help lists each with its values; "" clears free text
 ```

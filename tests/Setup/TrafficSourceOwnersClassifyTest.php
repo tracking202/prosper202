@@ -203,7 +203,8 @@ final class TrafficSourceOwnersClassifyTest extends TestCase
     /**
      * What the cron job splits by itself: a source every account of another
      * user was saved at or after. One account saved before it (the source
-     * may have been that user's), a user with no record and a deleted user
+     * may have been that user's), a removed one (its time may be the
+     * removal's), a user with no record and a deleted user
      * each leave it to the operator, whatever the move's own marks say.
      *
      * @dataProvider automaticSplits
@@ -241,6 +242,18 @@ final class TrafficSourceOwnersClassifyTest extends TestCase
         ];
         yield 'a removed account saved before counts' => [
             [self::account(2, self::OWNER, $after), self::account(3, self::OWNER, $before, 1)], ['may_be_theirs'],
+        ];
+        yield 'its only account removed after it was saved: the time may be the removal\'s' => [
+            [self::account(2, self::OWNER, $after, 1)], ['may_be_theirs'],
+        ];
+        yield 'a removed account beside one put on it after' => [
+            [self::account(2, self::OWNER, $after), self::account(3, self::OWNER, $after, 1)], ['may_be_theirs'],
+        ];
+        yield 'another user\'s removed account' => [
+            [self::account(2, self::OWNER, $after), self::account(3, self::OFF, $after, 1)], ['may_be_theirs'],
+        ];
+        yield 'its own user\'s removed account blocks nothing' => [
+            [self::account(1, self::TAKER, $after, 1), self::account(2, self::OWNER, $after)], [],
         ];
         yield 'a deleted user' => [[self::account(2, self::THIRD, $after)], ['deleted_user']];
         yield 'a user with no record' => [[self::account(2, 99, $after)], ['no_such_user']];
