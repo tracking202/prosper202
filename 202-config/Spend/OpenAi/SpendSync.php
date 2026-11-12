@@ -330,12 +330,29 @@ final class SpendSync
                 'hour_start' => $start,
                 'impressions' => $row['impressions'] ?? null,
                 'clicks' => $row['clicks'] ?? null,
-                'spend' => $row['spend'] ?? null,
+                'spend' => self::spendOf($row['spend'] ?? null),
                 'currency' => $currency,
             ];
         }
 
         return [$out, $refused];
+    }
+
+    /**
+     * OpenAI's spend, a JSON number in major units, as the ledger reads it.
+     * A double carries binary noise (12.340000000000002 for 12.34): one
+     * within a billionth of a six-decimal amount is that amount, as text, so
+     * the noise does not cost the row. Anything further from one is passed
+     * on as sent, and the ledger refuses it by name.
+     */
+    public static function spendOf(mixed $spend): mixed
+    {
+        if (!is_float($spend) || !is_finite($spend)) {
+            return $spend;
+        }
+        $fixed = round($spend, 6);
+
+        return abs($fixed - $spend) < 1e-9 ? sprintf('%.6F', $fixed) : $spend;
     }
 
     /**
