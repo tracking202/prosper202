@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\AdPlatforms\OpenAiAds;
 
+use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 
 /**
@@ -42,7 +43,7 @@ final class ChatGptCampaignsOfCampaign
             . ' JOIN 202_custom_variables cv ON cv.custom_variable_id = vs.variables'
             . ' JOIN 202_ppc_network_variables pv ON pv.ppc_variable_id = cv.ppc_variable_id AND pv.ppc_network_id = pn.ppc_network_id'
             . '   AND pv.parameter = ?'
-            . ' WHERE c.user_id = ? AND c.aff_campaign_id = ? AND c.click_time >= ?'
+            . ' WHERE c.user_id = ? AND c.aff_campaign_id = ? AND c.click_time >= ? AND ' . LatestVisit::isLatest('c')
             . ' GROUP BY ac.connection_id, cv.variable ORDER BY clicks DESC, ac.connection_id, cv.variable LIMIT 20'
         );
         $conn->bind($stmt, 'siii', [self::PARAMETER, $userId, $affCampaignId, $since]);
