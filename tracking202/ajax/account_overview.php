@@ -186,6 +186,8 @@ try {
 
 $empty = p202_overview_empty($base);
 
+// The chart and the tables read one window, so one note covers both.
+echo p202_spend_ledger_note($de->spendLedger(), $masked);
 echo '<h3 class="p202-section__title">Direct links and landing pages</h3>';
 echo p202_overview_metrics_table($lpsData, [
 	'id' => 'overview-landing-pages',

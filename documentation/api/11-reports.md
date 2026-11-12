@@ -297,8 +297,11 @@ click of the account carries in that hour. It is in no row or total, and is
 not narrowed by the report's filters. Rows in a currency other than the
 account's are not counted (`other_currency_rows` says how many). With no
 ledger row in the window, a report has no `spend_ledger` and is exactly what
-it was before the ledger existed. The report pages in the browser still show
-CPC cost.
+it was before the ledger existed. The report pages in the browser cost
+clicks the same way (Overview's tables and chart, Group Overview, Breakdown,
+Day and Week Parting, every Analyze report and Custom Variables) and say how
+far the spend data reaches above their figures. A page reading every
+account's clicks at once costs them at CPC, as the ledger is an account's.
 
 ## A click a redirector link re-clicked
 

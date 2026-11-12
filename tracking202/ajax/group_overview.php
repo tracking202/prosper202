@@ -102,6 +102,7 @@ foreach (['clicks' => 'Clicks', 'click_out' => 'Click throughs', 'ctr' => 'LP CT
 	$columns[] = ['key' => $key, 'label' => $label, 'num' => true];
 }
 
+echo p202_spend_ledger_note($summary_form->getSpendLedger(), $masked);
 echo '<p class="text-secondary small mb-2">' . $e('Report for ' . date('m/d/Y', strtotime($summary_form->getStartDate())) . ' to ' . date('m/d/Y', strtotime($summary_form->getEndDate())) . ' · ' . $summary_form->getRanOn()) . '</p>';
 echo p202_data_table($columns, $rows, [
 	'id' => 'group-overview-table',

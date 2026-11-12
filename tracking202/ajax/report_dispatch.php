@@ -93,6 +93,8 @@ try {
         ]);
     }
 
+    // How far the spend data reaches, beside figures costed from the ledger.
+    $ledgerNote = p202_spend_ledger_text($dataEngine->spendLedger(), \Prosper202\Report\CampaignDataMask::hidden());
     tracking202ReportDispatchRespondJson(200, [
         'ok' => true,
         'transportVersion' => 1,
@@ -109,7 +111,7 @@ try {
             $request
         ),
         'supportedOrderTokens' => ReportDispatchRequest::supportedOrderTokens(),
-    ]);
+    ] + ($ledgerNote === '' ? [] : ['spendLedgerNote' => $ledgerNote]));
 } catch (InvalidArgumentException $e) {
     $status = (int) $e->getCode();
     if ($status < 400 || $status > 499) {

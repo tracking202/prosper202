@@ -32,6 +32,7 @@ $time = grab_timeframe();
 
 $de = new DataEngine();
 $data = $de->getReportData('weekly', (string) $time['from'], (string) $time['to'], $cpv);
+echo p202_spend_ledger_note($de->spendLedger(), \Prosper202\Report\CampaignDataMask::hidden());
 
 // Every row is on the page (this report is not paginated), so sorting in the
 // browser is honest.

@@ -31,7 +31,7 @@ final class PublishersReport
 
     /**
      * @return array{publishers: list<array<string, mixed>>, uncredited: ?array<string, mixed>,
-     *   totals: array<string, mixed>, unrecorded_links: bool, currency: string}
+     *   totals: array<string, mixed>, unrecorded_links: bool, currency: string, spend_ledger: ?array<string, mixed>}
      */
     public static function read(\mysqli $db, int $accountId, int $from, int $to): array
     {
@@ -42,7 +42,10 @@ final class PublishersReport
             'time_to' => (string) $to,
         ]);
 
-        return self::shape($groups) + ['currency' => $reports->accountCurrency()];
+        return self::shape($groups) + [
+            'currency' => $reports->accountCurrency(),
+            'spend_ledger' => $groups['spend_ledger'] ?? null,
+        ];
     }
 
     /**

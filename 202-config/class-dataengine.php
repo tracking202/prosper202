@@ -8,6 +8,7 @@ use Prosper202\DataEngine\ClickRollupSql;
 use Prosper202\DataEngine\GroupedReportDefinition;
 use Prosper202\DataEngine\GroupedReportRegistry;
 use Prosper202\DataEngine\HtmlReportFormatter;
+use Prosper202\DataEngine\LedgerClicks;
 use Prosper202\DataEngine\ReportView;
 use Prosper202\DataEngine\MetricsSql;
 use Prosper202\DataEngine\ReportTotals;
@@ -48,6 +49,10 @@ class DataEngine
     private ?mysqli $overviewDb = null;
     /** @var array{int, int}|null */
     private ?array $overviewWindow = null;
+
+    /** @var array<string, ?LedgerClicks> the spend ledger's part in each window read, by "from-to" */
+    private array $ledgers = [];
+    private ?LedgerClicks $ledgerShown = null;
 
     public function isDatabaseConnected(): bool
     {
@@ -95,6 +100,38 @@ class DataEngine
         // connection's zone is not the engine's to set.
     }
 
+    /**
+     * What this request's reports read in place of 202_dataengine over
+     * [$from, $to]: the table itself, or its clicks costed from the spend
+     * ledger (LedgerClicks), as the REST reports cost them.
+     */
+    private function clickTable(int|string $from, int|string $to): string
+    {
+        $from = (int) $from;
+        $to = (int) $to;
+        $key = $from . '-' . $to;
+        if (!array_key_exists($key, $this->ledgers)) {
+            $this->ledgers[$key] = self::$db instanceof mysqli
+                ? LedgerClicks::forPage(self::$db, \Prosper202\DataEngine\DataScope::userId(), $from, $to)
+                : null;
+        }
+        $this->ledgerShown = $this->ledgers[$key] ?? $this->ledgerShown;
+
+        return LedgerClicks::table($this->ledgers[$key]);
+    }
+
+    /**
+     * What a page says beside figures this request costed from the spend
+     * ledger (LedgerCost::meta(), in the page's zone); null when no report
+     * read it.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function spendLedger(): ?array
+    {
+        return $this->ledgerShown?->meta(date_default_timezone_get());
+    }
+
     public function setDownload(): void
     {
         $this->forDownload = 1;
@@ -126,7 +163,7 @@ class DataEngine
             . ' SUM(2st.clicks) AS clicks, SUM(2st.click_out) AS click_out,'
             . ' SUM(2st.click_lead) AS click_lead, SUM(2st.leads) AS leads,'
             . ' SUM(2st.income) AS income, SUM(2st.cost) AS cost'
-            . ' FROM 202_dataengine AS 2st ' . $this->mysql['user_id_query']
+            . ' FROM ' . $this->clickTable($from, $to) . ' AS 2st ' . $this->mysql['user_id_query']
             . ' AND 2st.click_time >= ' . $from . ' AND 2st.click_time <= ' . $to
             . ' GROUP BY 2st.user_id, 2st.aff_campaign_id, 2st.landing_page_id, 2st.ppc_account_id,'
             . ' 2st.click_filtered, 2st.click_bot, 2st.click_lead';
@@ -171,7 +208,7 @@ class DataEngine
             return " FROM (SELECT * FROM `{$this->overviewTable}` AS 2st " . $where . ') AS 2st ';
         }
 
-        return ReportAggregation::byDimensions('2st', $dimensions, $where);
+        return ReportAggregation::byDimensions('2st', $dimensions, $where, table: $this->clickTable($from, $to));
     }
 
     public function foundRows(): int
@@ -242,12 +279,13 @@ class DataEngine
             . ' AND click_time >= ' . $from
             . ' AND click_time <= ' . $to
             . $filters['filter'];
+        $clicks = $this->clickTable($from, $to);
         if ($definition->aggregateBy !== [] && $filters['join'] === '') {
-            return ReportAggregation::byDimensions('2st', $definition->aggregateBy, $where)
+            return ReportAggregation::byDimensions('2st', $definition->aggregateBy, $where, table: $clicks)
                 . $definition->joins;
         }
 
-        return ' FROM 202_dataengine as 2st '
+        return ' FROM ' . $clicks . ' as 2st '
             . ($definition->includeFilterJoin ? $filters['join'] : '')
             . $definition->joins . $where;
     }
@@ -657,9 +695,10 @@ ORDER BY lp.landing_page_id ASC";
         $filters = $this->getFilters();
         $where = $this->mysql['user_id_query']
             . " AND click_time >= " . $clickFrom . " AND click_time <= " . $clickTo . $filters['filter'];
+        $clicks = $this->clickTable($clickFrom, $clickTo);
         $source = $filters['join'] === ''
-            ? ReportAggregation::byHour($where, date_default_timezone_get())
-            : ' FROM 202_dataengine AS 2st ' . $filters['join'] . $where;
+            ? ReportAggregation::byHour($where, date_default_timezone_get(), [], $clicks)
+            : ' FROM ' . $clicks . ' AS 2st ' . $filters['join'] . $where;
 
         $sql = "SELECT DATE_FORMAT(" . self::localClickTime() . ", '" . $label . "') as click_time_from_disp," . MetricsSql::GROUPED_SELECT
             . $source
@@ -676,9 +715,10 @@ ORDER BY lp.landing_page_id ASC";
         $local = self::localClickTime();
         $where = $this->mysql['user_id_query']
             . ' AND click_time >= ' . $clickFrom . ' AND click_time <= ' . $clickTo . $filters['filter'];
+        $clicks = $this->clickTable($clickFrom, $clickTo);
         $source = $filters['join'] === ''
-            ? ReportAggregation::byHour($where, date_default_timezone_get())
-            : ' FROM 202_dataengine AS 2st ' . $filters['join'] . $where;
+            ? ReportAggregation::byHour($where, date_default_timezone_get(), [], $clicks)
+            : ' FROM ' . $clicks . ' AS 2st ' . $filters['join'] . $where;
         $sql = "SELECT HOUR(" . $local . ") as hour_of_day, DATE_FORMAT(" . $local . ",'%l %p') as click_time_from_disp, DATE_FORMAT(" . $local . ",'%p') as ampm,"
             . MetricsSql::GROUPED_SELECT
             . $source
@@ -694,9 +734,10 @@ ORDER BY lp.landing_page_id ASC";
         $local = self::localClickTime();
         $where = $this->mysql['user_id_query']
             . ' AND click_time >= ' . $clickFrom . ' AND click_time <= ' . $clickTo . $filters['filter'];
+        $clicks = $this->clickTable($clickFrom, $clickTo);
         $source = $filters['join'] === ''
-            ? ReportAggregation::byHour($where, date_default_timezone_get())
-            : ' FROM 202_dataengine AS 2st ' . $filters['join'] . $where;
+            ? ReportAggregation::byHour($where, date_default_timezone_get(), [], $clicks)
+            : ' FROM ' . $clicks . ' AS 2st ' . $filters['join'] . $where;
         $sql = "SELECT DATE_FORMAT(" . $local . ",'%a') as click_time_from_disp, DATE_FORMAT(" . $local . ",'%w') as click_time_from_sort,"
             . MetricsSql::GROUPED_SELECT
             . $source
@@ -711,9 +752,10 @@ ORDER BY lp.landing_page_id ASC";
         $data = [];
         $where = $this->mysql['user_id_query'] . ' AND 2st.variable_set_id != 0 AND click_time >= ' . $clickFrom
             . ' AND click_time <= ' . $clickTo . $filters['filter'];
+        $clicks = $this->clickTable($clickFrom, $clickTo);
         $source = $filters['join'] === ''
-            ? ReportAggregation::byDimensions('2st', ['user_id', 'ppc_network_id'], $where)
-            : ' FROM 202_dataengine AS 2st ' . $filters['join'] . $where;
+            ? ReportAggregation::byDimensions('2st', ['user_id', 'ppc_network_id'], $where, table: $clicks)
+            : ' FROM ' . $clicks . ' AS 2st ' . $filters['join'] . $where;
 
         // Fix #1: include $filters['join'] so keyword filter's 2k alias resolves.
         // Fix #3a: replace inline metric columns with MetricsSql::GROUPED_SELECT.
@@ -742,13 +784,14 @@ ORDER BY lp.landing_page_id ASC";
         // per-click variable-set ID when the dictionary is very large.
         // This chooses a query plan; it never limits the reported values.
         $mappingProbe = $this->reportQuery('SELECT variable_set_id FROM 202_variable_sets2 LIMIT 10000,1');
-        $variableSource = ' FROM 202_dataengine AS 2st ';
+        $variableSource = ' FROM ' . $clicks . ' AS 2st ';
         if ($mappingProbe->num_rows === 0 && $filters['join'] === '') {
             $variableSource = ReportAggregation::byDimensions(
                 '2st',
                 ['user_id', 'ppc_network_id', 'variable_set_id'],
                 $where . ' AND EXISTS (SELECT 1 FROM 202_variable_sets2 AS mapped'
-                    . ' WHERE mapped.variable_set_id = 2st.variable_set_id)'
+                    . ' WHERE mapped.variable_set_id = 2st.variable_set_id)',
+                table: $clicks
             );
         }
 
@@ -1267,7 +1310,8 @@ ORDER BY 2st.ppc_network_id, name,
             $source = ReportAggregation::byHour(
                 $where,
                 date_default_timezone_get(),
-                $campaign != '0' ? ['user_id', 'aff_campaign_id'] : []
+                $campaign != '0' ? ['user_id', 'aff_campaign_id'] : [],
+                $this->clickTable($from, $to)
             );
             $sqlObj = 'SELECT' . $sqlSelectObj . $rangeFormat . $source;
             if ($campaign != '0') {
