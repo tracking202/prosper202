@@ -246,7 +246,7 @@ var p202SettingParams = {t202kw: 't202kw', t202c1: 'c1', t202c2: 'c2', t202c3: '
     t202utm_source: 'utm_source', t202utm_medium: 'utm_medium', t202utm_term: 'utm_term',
     t202utm_content: 'utm_content', t202utm_campaign: 'utm_campaign', t202pubid: 't202pubid',
     t202gclid: 'gclid', t202gbraid: 'gbraid', t202wbraid: 'wbraid', t202ttclid: 'ttclid',
-    t202msclkid: 'msclkid', t202fbclid: 'fbclid'};
+    t202msclkid: 'msclkid', t202fbclid: 'fbclid', t202oppref: 'oppref'};
 // Settings of their own, and what only the tracker knows.
 var p202SettingNotAValue = /^t202(urlvars|usesubidorig|expiresubidorig|subid|subidorig|sourceid|ip)$/i;
 var p202SettingValues = {};
@@ -534,6 +534,7 @@ function p202ConfigurePurLinks(pageview) {
             utm_term: utm_term, utm_content: utm_content, t202pubid: p202Var('t202pubid'),
             gclid: p202Var('gclid'), gbraid: p202Var('gbraid'), wbraid: p202Var('wbraid'),
             ttclid: p202Var('ttclid'), msclkid: p202Var('msclkid'), fbclid: p202Var('fbclid'),
+            oppref: p202Var('oppref'),
             referer: document.referrer || null, referrer: document.referrer || null,
             random: String(Math.floor(Math.random() * 1000000000)),
             // Filled from dcs.t202DataObj.t202SourceId once the click is known.
@@ -680,6 +681,7 @@ function p202SendBeacon() {
         "ttclid=" + t202Enc(p202Var('ttclid')),
         "msclkid=" + t202Enc(p202Var('msclkid')),
         "fbclid=" + t202Enc(p202Var('fbclid')),
+        "oppref=" + t202Enc(p202Var('oppref')),
 		"target_passthrough=" + t202Enc(t202GetVar('target_passthrough')),
 		"keyword=" + t202Enc(t202GetVar('keyword')),
 		"utm_source=" + t202Enc(utm_source),
@@ -871,8 +873,8 @@ if (document.readyState === 'loading') {
 		data.t202Id = t202GetVar('t202id');
 		data.t202Kw = t202kw;
 		data.t202C1 = c1; data.t202C2 = c2; data.t202C3 = c3; data.t202C4 = c4;
-		// 1.9.56's three ad click ids, and those 1.9.79 added.
-		var adClickIds = {t202GCLID: 'gclid', t202GBRAID: 'gbraid', t202WBRAID: 'wbraid', t202TTCLID: 'ttclid', t202FBCLID: 'fbclid', t202MSCLKID: 'msclkid'};
+		// 1.9.56's three ad click ids, and those 1.9.79 and 1.9.80 added.
+		var adClickIds = {t202GCLID: 'gclid', t202GBRAID: 'gbraid', t202WBRAID: 'wbraid', t202TTCLID: 'ttclid', t202FBCLID: 'fbclid', t202MSCLKID: 'msclkid', t202OPPREF: 'oppref'};
         for (key in adClickIds) { if (own(adClickIds, key)) { data[key] = p202Var(adClickIds[key]); } }
 		data.t202Utm_source = utm_source; data.t202Utm_medium = utm_medium; data.t202Utm_term = utm_term;
 		data.t202Utm_content = utm_content; data.t202Utm_campaign = utm_campaign;

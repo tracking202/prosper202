@@ -149,7 +149,8 @@ final class TrackingTables
      * came in 1.9.79: at the end, where an upgrade adds a column to a table
      * this size without copying it (ALGORITHM=INSTANT on MariaDB 10.11,
      * measured; MySQL 8 says the same of the last position), and compared
-     * byte for byte, since an id's case is part of it. '' is none. The
+     * byte for byte, since an id's case is part of it; OpenAI's oppref came
+     * in 1.9.80 after them, the same way. '' is none. The
      * msclkid and fbclid are kept here, not in 202_bing and 202_facebook,
      * which no version in this repository's history wrote. The ids have no
      * key here: a click is found by one through 202_clicks_ad_ids
@@ -172,6 +173,7 @@ final class TrackingTables
                 `ttclid` varchar(1000) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
                 `msclkid` varchar(150) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
                 `fbclid` varchar(1000) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
+                `oppref` varchar(1000) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
                 PRIMARY KEY (`click_id`,`gclid`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );

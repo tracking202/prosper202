@@ -59,6 +59,7 @@ final class SpendLedger
         $parsed = [];
         $errors = [];
         $seen = [];
+        $adOwner = [];
         foreach ($rows as $i => $entry) {
             if (!is_array($entry) || ($entry !== [] && array_is_list($entry))) {
                 $errors["rows.$i"] = 'must be an object (fields: ' . implode(', ', SpendRow::FIELDS) . ')';
@@ -79,10 +80,60 @@ final class SpendLedger
                 continue;
             }
             $seen[$row->key()] = $i;
+            $owner = $row->platform . "\0" . $row->accountRef;
+            if (isset($adOwner[$row->adRef]) && $adOwner[$row->adRef][0] !== $owner) {
+                $errors["rows.$i.ad_ref"] = 'names ad ' . $row->adRef . ' under another platform or ad account than rows.'
+                    . $adOwner[$row->adRef][1] . '; an ad id names one ad, whose clicks carry it';
+                continue;
+            }
+            $adOwner[$row->adRef] ??= [$owner, $i];
             $parsed[] = $row;
+        }
+        if ($errors === []) {
+            $errors = $this->ownerErrors($userId, $parsed, false);
         }
 
         return [$errors === [] ? $parsed : [], $errors];
+    }
+
+    /**
+     * The rows whose ad the ledger already holds under another platform or
+     * ad account. Clicks are matched to the ledger by the ad id alone (they
+     * carry no platform), so one id must name one ad, or its clicks would
+     * be costed at two platforms' spend. $lock reads with FOR UPDATE, inside
+     * write()'s transaction, so two writers cannot both pass.
+     *
+     * @param array<int, SpendRow> $rows keyed by their position in the request
+     * @return array<string, string>
+     */
+    private function ownerErrors(int $userId, array $rows, bool $lock): array
+    {
+        $refs = [];
+        foreach ($rows as $i => $row) {
+            $refs[$row->adRef] ??= [$row->platform, $row->accountRef, $i];
+        }
+        $errors = [];
+        foreach (array_chunk(array_keys($refs), 500, false) as $chunk) {
+            $chunk = array_map('strval', $chunk);
+            // Locking, the rows themselves (and the gaps of their ad index, so
+            // no other writer adds the ad meanwhile); otherwise one per owner.
+            $stmt = $this->conn->prepareWrite(
+                ($lock ? 'SELECT ad_ref, platform, account_ref' : 'SELECT DISTINCT ad_ref, platform, account_ref')
+                . ' FROM 202_spend_ledger WHERE user_id = ? AND ad_ref IN ('
+                . implode(', ', array_fill(0, count($chunk), '?')) . ')' . ($lock ? ' FOR UPDATE' : '')
+            );
+            $this->conn->bind($stmt, 'i' . str_repeat('s', count($chunk)), [$userId, ...$chunk]);
+            foreach ($this->conn->fetchAll($stmt) as $held) {
+                [$platform, $account, $i] = $refs[(string) $held['ad_ref']] ?? [null, null, null];
+                if ($i === null || ($platform === (string) $held['platform'] && $account === (string) $held['account_ref'])) {
+                    continue;
+                }
+                $errors["rows.$i.ad_ref"] = 'ad ' . $held['ad_ref'] . ' is already recorded for ' . $held['platform']
+                    . ' ad account ' . $held['account_ref'] . '; an ad id names one ad, whose clicks carry it';
+            }
+        }
+
+        return $errors;
     }
 
     /**
@@ -97,7 +148,16 @@ final class SpendLedger
     {
         $now = $this->now();
 
+        // In key order, whatever order they were sent in: two writers of
+        // overlapping hours then lock rows in one order and cannot deadlock
+        // (CLAUDE.md #34).
+        uasort($rows, static fn (SpendRow $a, SpendRow $b): int => strcmp($a->key(), $b->key()));
+
         return $this->conn->transaction(function () use ($userId, $rows, $now): array {
+            $errors = $this->ownerErrors($userId, $rows, true);
+            if ($errors !== []) {
+                throw new SpendLedgerRefused($errors);
+            }
             $counts = ['inserted' => 0, 'replaced' => 0, 'unchanged' => 0];
             foreach ($rows as $row) {
                 // updated_at is assigned first, so its IF reads the stored
@@ -164,19 +224,36 @@ final class SpendLedger
     }
 
     /**
-     * The end of the latest hour the account's ledger holds (unix seconds,
-     * exclusive), or null when it holds none: how far its spend data reaches.
+     * How far the account's spend data reaches: the end of the latest hour
+     * (unix seconds, exclusive) of the platform that reaches least, so a
+     * current platform does not hide a lagging one; null when the ledger
+     * holds none.
      */
     public function reaches(int $userId): ?int
     {
-        $stmt = $this->conn->prepareRead('SELECT MAX(hour_start) AS latest FROM 202_spend_ledger WHERE user_id = ?');
+        $byPlatform = $this->reachesByPlatform($userId);
+
+        return $byPlatform === [] ? null : min($byPlatform);
+    }
+
+    /**
+     * The end of the latest hour each platform's rows reach: platform =>
+     * unix seconds (exclusive).
+     *
+     * @return array<string, int>
+     */
+    public function reachesByPlatform(int $userId): array
+    {
+        $stmt = $this->conn->prepareRead(
+            'SELECT platform, MAX(hour_start) AS latest FROM 202_spend_ledger WHERE user_id = ? GROUP BY platform ORDER BY platform'
+        );
         $this->conn->bind($stmt, 'i', [$userId]);
-        $row = $this->conn->fetchOne($stmt);
-        if ($row === null) {
-            throw new \RuntimeException('Reading how far the spend ledger reaches answered no row');
+        $out = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $out[(string) $row['platform']] = (int) $row['latest'] + 3600;
         }
 
-        return $row['latest'] === null ? null : (int) $row['latest'] + 3600;
+        return $out;
     }
 
     /**
@@ -194,11 +271,24 @@ final class SpendLedger
     {
         $local = LocalTime::datetimeSql('s.hour_start', $timezone);
         $period = match ($interval) {
-            'hour' => "DATE_FORMAT($local, '%Y-%m-%d %H:00')",
+            // %i: an hour starts at :30 in a half-hour zone.
+            'hour' => "DATE_FORMAT($local, '%Y-%m-%d %H:%i')",
             'day' => "DATE_FORMAT($local, '%Y-%m-%d')",
             default => throw new \InvalidArgumentException("No spend interval named $interval"),
         };
         [$lo, $hi] = LedgerCost::hours($from, $to);
+        // The clicks are read only over the hours the ledger holds.
+        $stmt = $this->conn->prepareRead('SELECT MIN(hour_start) AS lo, MAX(hour_start) AS hi FROM 202_spend_ledger'
+            . ' WHERE user_id = ? AND hour_start >= ? AND hour_start <= ?');
+        $this->conn->bind($stmt, 'iii', [$userId, $lo, $hi]);
+        $extent = $this->conn->fetchOne($stmt);
+        if ($extent === null) {
+            throw new \RuntimeException('Reading the spend ledger\'s hours answered no row');
+        }
+        if ($extent['lo'] === null) {
+            return ['rows' => [], 'truncated' => false];
+        }
+        $plan = LedgerCost::plan($this->conn, $userId, null, (int) $extent['lo'], (int) $extent['hi']);
         $where = 's.user_id = ? AND s.hour_start >= ? AND s.hour_start <= ?';
         $binds = [$userId, $lo, $hi];
         $types = 'iii';
@@ -207,20 +297,33 @@ final class SpendLedger
             $binds[] = $platform;
             $types .= 's';
         }
+        // Each row reaches the clicks carrying its ad in its hour through
+        // the ad's number and the hour's (LedgerCost::plan()).
+        $matched = '0';
+        $join = '';
+        $joinBinds = [];
+        $joinTypes = '';
+        if ($plan !== null) {
+            [$ads, $adBinds, $adTypes] = $plan['ads'];
+            [$clicks, $clickBinds, $clickTypes] = $plan['clicks'];
+            $join = " LEFT JOIN ($ads) a ON a.ad_ref = s.ad_ref"
+                . " LEFT JOIN ($clicks) m ON m.ad_no = a.ad_no AND m.h = s.hour_start DIV 3600";
+            $joinBinds = [...$adBinds, ...$clickBinds];
+            $joinTypes = $adTypes . $clickTypes;
+            $matched = 'm.clicks';
+        }
         $sql = "SELECT $period AS period, s.platform, s.account_ref, s.campaign_ref, s.ad_group_ref, s.ad_ref, s.currency,"
             . ' SUM(s.impressions) AS impressions, SUM(s.platform_clicks) AS platform_clicks, SUM(s.spend) AS spend,'
-            . ' COALESCE(SUM(m.clicks), 0) AS matched_clicks,'
-            . ' SUM(CASE WHEN m.clicks IS NULL THEN s.spend ELSE 0 END) AS unallocated_spend,'
+            . " COALESCE(SUM($matched), 0) AS matched_clicks,"
+            . " SUM(CASE WHEN COALESCE($matched, 0) = 0 THEN s.spend ELSE 0 END) AS unallocated_spend,"
             . ' MAX(s.updated_at) AS updated_at'
-            . ' FROM 202_spend_ledger s'
-            . ' LEFT JOIN (SELECT c.ad_ref, c.hour_start, COUNT(*) AS clicks FROM (' . LedgerCost::clicksSql() . ') c'
-            . ' GROUP BY c.ad_ref, c.hour_start) m ON m.ad_ref = s.ad_ref AND m.hour_start = s.hour_start'
+            . ' FROM 202_spend_ledger s' . $join
             . " WHERE $where"
             . ' GROUP BY period, s.platform, s.account_ref, s.campaign_ref, s.ad_group_ref, s.ad_ref, s.currency'
             . ' ORDER BY period DESC, s.platform, s.account_ref, s.ad_ref'
             . ' LIMIT ?';
         $stmt = $this->conn->prepareRead($sql);
-        $this->conn->bind($stmt, 'iii' . $types . 'i', [$userId, $lo, $hi + 3599, ...$binds, $limit + 1]);
+        $this->conn->bind($stmt, $joinTypes . $types . 'i', [...$joinBinds, ...$binds, $limit + 1]);
         $rows = [];
         foreach ($this->conn->fetchAll($stmt) as $row) {
             $rows[] = [

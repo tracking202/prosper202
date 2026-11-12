@@ -8,7 +8,8 @@ use Prosper202\Database\Connection;
 
 /**
  * The click ids the 1.9.79 upgrade adds to 202_google: gbraid, wbraid,
- * ttclid, msclkid and fbclid (ClickRecord). An install's files are replaced
+ * ttclid, msclkid and fbclid (ClickRecord), and the oppref the 1.9.80
+ * upgrade adds after them. An install's files are replaced
  * first and the upgrade run after, and in between a statement that names
  * one is the server's 1054. The click path and the postbacks have nobody to
  * answer, so there a click is recorded without its ids, and the tokens they
@@ -19,7 +20,13 @@ use Prosper202\Database\Connection;
 final class AdClickIdColumns
 {
     /** In the order the table has them. */
-    public const ADDED = ['gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid'];
+    public const ADDED = ['gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid', 'oppref'];
+
+    /**
+     * The ones the 1.9.80 upgrade adds: a database the 1.9.79 upgrade has
+     * reached keeps the others while it waits for this one.
+     */
+    public const ADDED_IN_1_9_80 = ['oppref'];
 
     private function __construct()
     {
@@ -30,22 +37,26 @@ final class AdClickIdColumns
      * for a click its caller has already read as the account's. On the write
      * handle, which sees a click its caller's transaction has just written.
      *
-     * @return array{gbraid: string, wbraid: string, ttclid: string, msclkid: string, fbclid: string}
+     * @return array{gbraid: string, wbraid: string, ttclid: string, msclkid: string, fbclid: string, oppref: string}
      */
     public static function of(Connection $conn, int $clickId): array
     {
         try {
-            $stmt = $conn->prepareWrite(
-                'SELECT MAX(gbraid) AS gbraid, MAX(wbraid) AS wbraid, MAX(ttclid) AS ttclid,'
-                    . ' MAX(msclkid) AS msclkid, MAX(fbclid) AS fbclid FROM 202_google WHERE click_id = ?'
-            );
-            $conn->bind($stmt, 'i', [$clickId]);
-            $row = $conn->fetchOne($stmt) ?? [];
+            $row = self::read($conn, $clickId, self::ADDED);
         } catch (\RuntimeException $e) {
             if (!self::missing($e)) {
                 throw $e;
             }
             $row = [];
+            if (self::missingSince1980($e)) {
+                try {
+                    $row = self::read($conn, $clickId, array_values(array_diff(self::ADDED, self::ADDED_IN_1_9_80)));
+                } catch (\RuntimeException $before) {
+                    if (!self::missing($before)) {
+                        throw $before;
+                    }
+                }
+            }
         }
 
         return [
@@ -54,7 +65,23 @@ final class AdClickIdColumns
             'ttclid' => (string) ($row['ttclid'] ?? ''),
             'msclkid' => (string) ($row['msclkid'] ?? ''),
             'fbclid' => (string) ($row['fbclid'] ?? ''),
+            'oppref' => (string) ($row['oppref'] ?? ''),
         ];
+    }
+
+    /**
+     * @param list<string> $names
+     * @return array<string, mixed>
+     */
+    private static function read(Connection $conn, int $clickId, array $names): array
+    {
+        $stmt = $conn->prepareWrite(
+            'SELECT ' . implode(', ', array_map(static fn (string $n): string => "MAX($n) AS $n", $names))
+                . ' FROM 202_google WHERE click_id = ?'
+        );
+        $conn->bind($stmt, 'i', [$clickId]);
+
+        return $conn->fetchOne($stmt) ?? [];
     }
 
     /**
@@ -93,8 +120,20 @@ final class AdClickIdColumns
     /** Whether $e, or one it wraps, is the server's 1054 for one of them. */
     public static function missing(\Throwable $e): bool
     {
+        return self::missingOneOf($e, self::ADDED);
+    }
+
+    /** Whether $e, or one it wraps, is the server's 1054 for one the 1.9.80 upgrade adds. */
+    public static function missingSince1980(\Throwable $e): bool
+    {
+        return self::missingOneOf($e, self::ADDED_IN_1_9_80);
+    }
+
+    /** @param list<string> $names */
+    private static function missingOneOf(\Throwable $e, array $names): bool
+    {
         for ($current = $e; $current !== null; $current = $current->getPrevious()) {
-            if (Connection::isMysqlError($current, 1054, '') && self::namesOne($current->getMessage())) {
+            if (Connection::isMysqlError($current, 1054, '') && self::namesOne($current->getMessage(), $names)) {
                 return true;
             }
         }
@@ -106,9 +145,11 @@ final class AdClickIdColumns
      * "Unknown column 'gbraid' in 'field list'", or '2g.gbraid' when the
      * statement names it so. The quoted name, not the words, which follow
      * the server's lc_messages.
+     *
+     * @param list<string> $names
      */
-    private static function namesOne(string $message): bool
+    private static function namesOne(string $message, array $names): bool
     {
-        return preg_match("/'(?:[0-9A-Za-z_]+\\.)?(?:" . implode('|', self::ADDED) . ")'/", $message) === 1;
+        return preg_match("/'(?:[0-9A-Za-z_]+\\.)?(?:" . implode('|', $names) . ")'/", $message) === 1;
     }
 }

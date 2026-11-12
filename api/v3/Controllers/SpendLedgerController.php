@@ -12,6 +12,7 @@ use Api\V3\Support\ReportFilter;
 use Api\V3\Support\StatementHelpers;
 use Prosper202\Database\Connection;
 use Prosper202\Spend\SpendLedger;
+use Prosper202\Spend\SpendLedgerRefused;
 use Prosper202\Spend\SpendRow;
 
 /**
@@ -20,7 +21,8 @@ use Prosper202\Spend\SpendRow;
  * read by the reports as cost where present.
  *
  * POST replaces each hour it names, so sending the same rows again changes
- * nothing and a retry is safe; `?dry_run=1` answers what it would do.
+ * nothing, so retrying a write that may have failed is safe (the last write
+ * of an hour wins); `?dry_run=1` answers what it would do.
  */
 final class SpendLedgerController
 {
@@ -57,7 +59,14 @@ final class SpendLedgerController
         [$rows, $errors] = $this->ledger->parse($this->userId, $payload['rows']);
         PayloadKeys::refuse($errors);
 
-        $counts = $dryRun ? $this->ledger->preview($this->userId, $rows) : $this->ledger->write($this->userId, $rows);
+        try {
+            $counts = $dryRun ? $this->ledger->preview($this->userId, $rows) : $this->ledger->write($this->userId, $rows);
+        } catch (SpendLedgerRefused $e) {
+            // Another writer recorded one of these ads elsewhere meanwhile;
+            // nothing was written.
+            PayloadKeys::refuse($e->errors);
+            throw $e;
+        }
 
         return ['data' => ['dry_run' => $dryRun, 'received' => count($rows)] + $counts];
     }

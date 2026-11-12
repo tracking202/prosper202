@@ -308,4 +308,81 @@ final class LedgerCostIntegrationTest extends TestCase
         self::assertNull($byAd['ad_A']['ad_group_ref']);
         self::assertFalse($read['truncated']);
     }
+
+    public function testOneAdIdNamesOneAdAcrossPlatformsAndAdAccounts(): void
+    {
+        self::write(self::USER, [self::ledgerRow('ad_A', self::$hour, '1.00')]);
+        $ledger = new SpendLedger(new Connection(self::$db));
+        $other = ['platform' => 'other_ads'] + self::ledgerRow('ad_A', self::$hour, '5.00');
+        [$parsed, $errors] = $ledger->parse(self::USER, [$other]);
+        self::assertSame([], $parsed);
+        self::assertStringContainsString('ad ad_A is already recorded for openai_ads ad account adacct_demo', $errors['rows.0.ad_ref']);
+        $account = ['account_ref' => 'adacct_two'] + self::ledgerRow('ad_B', self::$hour, '1.00');
+        [, $errors] = $ledger->parse(self::USER, [self::ledgerRow('ad_B', self::$hour - 3600, '1.00'), $account]);
+        self::assertStringContainsString('under another platform or ad account than rows.0', $errors['rows.1.ad_ref']);
+        // Another account's ad of that id is its own.
+        self::assertSame(['inserted' => 1, 'replaced' => 0, 'unchanged' => 0], self::write(self::OTHER, [$other]));
+    }
+
+    public function testAnAdIdOnAVariableNamedOtherwiseIsNotTheAd(): void
+    {
+        // AD_ID is another URL parameter than ad_id.
+        self::q('UPDATE 202_ppc_network_variables SET parameter = \'AD_ID\' WHERE ppc_variable_id = ' . self::NETWORK);
+        self::write(self::USER, [self::ledgerRow('ad_A', self::$hour, '9.00')]);
+        $summary = (new ReportsController(self::$db, self::USER))->summary(self::window(self::$hour, self::$hour + 7199));
+        self::assertEqualsWithDelta(2.2, $summary['data']['total_cost'], 1e-9, 'every click at its CPC');
+        self::assertEqualsWithDelta(9.0, $summary['spend_ledger']['unallocated']['total_cost'], 1e-9);
+    }
+
+    public function testAnHourShowsExactlyWhatItBilledAcrossItsClicks(): void
+    {
+        // A third click of ad A in its hour: 1.00 over three clicks.
+        self::q('INSERT INTO 202_dataengine SET user_id = ' . self::USER . ', click_id = 630009, click_time = ' . (self::$hour + 900)
+            . ', ppc_network_id = ' . self::NETWORK . ", ppc_account_id = 1, aff_campaign_id = 1, landing_page_id = 0,"
+            . " keyword_id = 0, variable_set_id = '630101', clicks = 1, click_out = 1, leads = 0,"
+            . ' click_lead = 0, click_filtered = 0, click_bot = 0, payout = 0, income = 0, cost = 0.10000');
+        self::write(self::USER, [self::ledgerRow('ad_A', self::$hour, '1.00')]);
+        $summary = (new ReportsController(self::$db, self::USER))->summary(self::window(self::$hour, self::$hour + 7199));
+        // 1.00 exactly, plus the other clicks' CPCs: 0.5 + 0.2 + 0.3 + 0.4 + 0.6.
+        self::assertSame(3.0, $summary['data']['total_cost']);
+    }
+
+    public function testAChangedRowIsReplacedWhenTheClockHasMoved(): void
+    {
+        $t = self::$hour + 7200;
+        $ledger = new SpendLedger(new Connection(self::$db), static function () use (&$t): int {
+            return $t;
+        });
+        [$rows] = $ledger->parse(self::USER, [self::ledgerRow('ad_A', self::$hour, '3.00')]);
+        self::assertSame(['inserted' => 1, 'replaced' => 0, 'unchanged' => 0], $ledger->write(self::USER, $rows));
+        $t += 3600;
+        self::assertSame(['inserted' => 0, 'replaced' => 0, 'unchanged' => 1], $ledger->write(self::USER, $rows), 'a later identical pull changes nothing');
+        $stamp = self::$db->query('SELECT updated_at FROM 202_spend_ledger WHERE user_id = ' . self::USER)->fetch_assoc()['updated_at'];
+        self::assertSame((string) (self::$hour + 7200), $stamp);
+        $t += 3600;
+        [$rows] = $ledger->parse(self::USER, [self::ledgerRow('ad_A', self::$hour, '3.50')]);
+        self::assertSame(['inserted' => 0, 'replaced' => 1, 'unchanged' => 0], $ledger->write(self::USER, $rows));
+    }
+
+    public function testAWriteTakesAtMostTwoThousandRows(): void
+    {
+        $rows = [];
+        for ($i = 0; $i <= 2000; $i++) {
+            $rows[] = self::ledgerRow('ad_' . $i, self::$hour, '1');
+        }
+        [$parsed, $errors] = (new SpendLedger(new Connection(self::$db)))->parse(self::USER, $rows);
+        self::assertSame([], $parsed);
+        self::assertSame('holds 2001 rows; send at most 2000 per request', $errors['rows']);
+        [$parsed] = (new SpendLedger(new Connection(self::$db)))->parse(self::USER, array_slice($rows, 0, 2000));
+        self::assertCount(2000, $parsed);
+    }
+
+    public function testTheNoteNamesThePlatformThatReachesLeast(): void
+    {
+        self::write(self::USER, [self::ledgerRow('ad_A', self::$hour, '1.00'), ['platform' => 'other_ads'] + self::ledgerRow('ad_Z', self::$hour + 3600, '1.00')]);
+        $meta = (new ReportsController(self::$db, self::USER))->summary(self::window(self::$hour, self::$hour + 7199))['spend_ledger'];
+        self::assertSame(['openai_ads' => self::$hour + 3600, 'other_ads' => self::$hour + 7200], $meta['reaches_by_platform']);
+        self::assertSame(self::$hour + 3600, $meta['reaches']);
+        self::assertStringContainsString('for every platform', $meta['note']);
+    }
 }

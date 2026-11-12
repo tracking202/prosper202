@@ -49,7 +49,13 @@ final class SpendRowTest extends TestCase
         yield 'spend as a string with seven decimals' => [['spend' => '0.1234567'], 'spend'];
         yield 'negative spend' => [['spend' => -1], 'spend'];
         yield 'spend in minor units text' => [['spend' => '1,25'], 'spend'];
-        yield 'hour not on the hour' => [['hour_start' => self::HOUR + 60], 'hour_start'];
+        // An hour that has started, off the hour: only the on-the-hour check refuses it.
+        yield 'hour not on the hour' => [['hour_start' => self::HOUR - 3600 + 60], 'hour_start'];
+        yield 'hour 0' => [['hour_start' => 0], 'hour_start'];
+        yield 'hour before 2000' => [['hour_start' => 946681200], 'hour_start'];
+        yield 'ad with a trailing space' => [['ad_ref' => 'ad_1 '], 'ad_ref'];
+        yield 'account with a leading space' => [['account_ref' => ' adacct'], 'account_ref'];
+        yield 'campaign with a trailing space' => [['campaign_ref' => 'cmp '], 'campaign_ref'];
         yield 'hour not started' => [['hour_start' => self::HOUR + 3600], 'hour_start'];
         yield 'hour as a float' => [['hour_start' => 1794297600.0], 'hour_start'];
         yield 'clicks as 12abc' => [['clicks' => '12abc'], 'clicks'];
@@ -67,6 +73,16 @@ final class SpendRowTest extends TestCase
         [$row, $errors] = SpendRow::parse(self::row($over), 'rows.4.', self::NOW);
         self::assertNull($row);
         self::assertArrayHasKey('rows.4.' . $field, $errors);
+    }
+
+    public function testTheHourChecksSayWhichRuleRefused(): void
+    {
+        [, $errors] = SpendRow::parse(self::row(['hour_start' => self::HOUR - 3600 + 60]), '', self::NOW);
+        self::assertStringContainsString('a multiple of 3600', $errors['hour_start']);
+        [, $errors] = SpendRow::parse(self::row(['hour_start' => self::HOUR + 3600]), '', self::NOW);
+        self::assertSame('is an hour that has not started yet', $errors['hour_start']);
+        [, $errors] = SpendRow::parse(self::row(['hour_start' => 0]), '', self::NOW);
+        self::assertStringContainsString('before 2000-01-01', $errors['hour_start']);
     }
 
     public function testAMissingRequiredFieldIsNamed(): void
