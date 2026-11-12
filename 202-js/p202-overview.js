@@ -249,6 +249,7 @@
             .done(function (data) {
                 var config = JSON.parse(chart.getAttribute('data-p202-chart') || '{}');
                 config.title = { text: data.title };
+                config.subtitle = { text: data.subtitle || '' };
                 config.xAxis = { categories: data.categories };
                 config.series = data.json.series;
                 chart.setAttribute('data-p202-chart', JSON.stringify(config));

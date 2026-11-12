@@ -478,8 +478,10 @@ class ClicksController
         // The ledger's amounts are exact decimal strings (Amount); the API
         // answers numbers, as GET /clicks does for the same click's figures.
         $rows = array_map(static function (array $row): array {
-            if (isset($row['amount']) && is_numeric($row['amount'])) {
-                $row['amount'] = (float) $row['amount'];
+            foreach (['amount', 'stated_amount'] as $money) {
+                if (isset($row[$money]) && is_numeric($row[$money])) {
+                    $row[$money] = (float) $row[$money];
+                }
             }
 
             return $row;

@@ -282,7 +282,7 @@ if ($seesUnattributed) {
                         <td class="num"><?php echo p202_setup_e(trim($refund['amount'] . ' ' . $refund['currency'])); ?></td>
                         <td><?php echo p202_setup_e($refund['waiting'] ? 'Waiting for Shopify to say its transaction settled.' : $refund['reason']); ?><?php
                             if ($refund['other_currency']) {
-                                echo ' <strong>' . p202_setup_e('Stated in ' . $refund['currency'] . ': enter what it returned in ' . $toSettle['account_currency'] . '.') . '</strong>';
+                                echo ' <strong>' . p202_setup_e('Stated in ' . $refund['currency'] . ': enter what it returned in ' . $refund['amount_currency'] . '.') . '</strong>';
                             } ?></td>
                         <td>
                             <?php if (!$canSettle) { ?>
@@ -294,12 +294,12 @@ if ($seesUnattributed) {
                                 <input type="hidden" name="action" value="record_refund">
                                 <input type="hidden" name="refund_id" value="<?php echo p202_setup_e($refund['refund_id']); ?>">
                                 <input type="text" inputmode="decimal" class="form-control form-control-sm w-auto" name="amount" size="9" required
-                                    aria-label="Amount refunded, in your account’s currency" title="Amount refunded, in your account’s currency"
+                                    aria-label="Amount refunded, in <?php echo p202_setup_e($refund['amount_currency']); ?>" title="Amount refunded, in <?php echo p202_setup_e($refund['amount_currency']); ?>"
                                     value="<?php echo p202_setup_e($refund['amount'] === '0' || $refund['other_currency'] ? '' : $refund['amount']); ?>">
-                                <span class="text-body-secondary"><?php echo p202_setup_e($toSettle['account_currency']); ?></span>
+                                <span class="text-body-secondary"><?php echo p202_setup_e($refund['amount_currency']); ?></span>
                                 <?php if ($refund['other_currency']) { ?>
                                     <?php // The amount typed is the operator's own conversion, never Shopify's figure. ?>
-                                    <input type="hidden" name="currency" value="<?php echo p202_setup_e($toSettle['account_currency']); ?>">
+                                    <input type="hidden" name="currency" value="<?php echo p202_setup_e($refund['amount_currency']); ?>">
                                 <?php } ?>
                                 <?php if (count($refund['clicks']) > 1) { ?>
                                     <select class="form-select form-select-sm w-auto" name="click_id" required aria-label="The click this refund takes back from">
@@ -325,7 +325,7 @@ if ($seesUnattributed) {
                 </tbody>
             </table>
         </div>
-        <p class="form-text mb-0">The amount is in your account’s currency<?php echo $toSettle['account_currency'] !== '' ? ' (' . p202_setup_e($toSettle['account_currency']) . ')' : ''; ?> and is taken from the order’s sale, at most what is left of it. Prosper202 does not convert a refund stated in another currency.</p>
+        <p class="form-text mb-0">The amount is in the currency its sale was recorded in: your account’s<?php echo $toSettle['account_currency'] !== '' ? ' (' . p202_setup_e($toSettle['account_currency']) . ')' : ''; ?>, unless the sale was recorded before you changed it. It is taken from the order’s sale, at most what is left of it. Prosper202 does not convert a refund stated in another currency.</p>
     </div>
 </section>
 <?php } elseif (!$seesLog && !isset($errors['shopify_refunds'])) { ?>

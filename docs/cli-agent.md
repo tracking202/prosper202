@@ -921,7 +921,7 @@ p202 conversion shopify-refunds list [--json]
                        # Setup or Account › API Integrations lists them; Setup+Update or API Integrations records and closes
 p202 conversion shopify-refunds record <refund-id> --amount F [--click-id N] [--currency CODE] [--json]
                        # reverse the order's sale by the refund, at most what is left; --click-id when the order is on several clicks;
-                       # a refund in another currency (other_currency): convert --amount yourself and pass --currency <account_currency>
+                       # a refund in another currency (other_currency): convert --amount yourself and pass --currency <amount_currency>
 p202 conversion shopify-refunds close <refund-id> [--force] [--json]
                        # close one with nothing recorded (no money was returned)
 p202 conversion get    <id> [--json]
