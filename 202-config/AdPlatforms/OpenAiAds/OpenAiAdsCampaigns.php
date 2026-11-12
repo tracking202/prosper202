@@ -170,7 +170,7 @@ final class OpenAiAdsCampaigns
         $merged = array_values(array_unique([...$had, ...$ids]));
         $change = ['conversion_event_setting_ids' => ['from' => $had, 'to' => $merged]];
         if ($dryRun || $merged === $had) {
-            return self::preview('attach-event-settings', 'campaigns', $current, $change) + ($dryRun ? [] : ['dry_run' => false, 'unchanged' => true]);
+            return array_replace(self::preview('attach-event-settings', 'campaigns', $current, $change), $dryRun ? [] : ['dry_run' => false, 'unchanged' => true]);
         }
         $done = $this->called($this->api->post($key, 'campaigns/' . $campaignId, ['conversion_event_setting_ids' => $merged]), 'attach event settings to ' . $campaignId);
 

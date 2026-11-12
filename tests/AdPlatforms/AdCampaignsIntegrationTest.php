@@ -169,6 +169,7 @@ final class AdCampaignsIntegrationTest extends TestCase
 
         $same = $this->campaigns()->attachEventSettings(1, $id, 'cmpn_101', ['ces_100'], false);
         self::assertTrue($same['unchanged']);
+        self::assertFalse($same['dry_run'], 'nothing to send is not a dry run');
         self::assertCount(1, $this->writes(), 'nothing to add: nothing sent');
 
         try {

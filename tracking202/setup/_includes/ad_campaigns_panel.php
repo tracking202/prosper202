@@ -29,6 +29,7 @@ function p202_ad_campaigns_view(array $connection, ?array $campaigns, ?string $e
         $spentBy[(string) $row['campaign_id']] = $row;
     }
     $default = TrackingTemplate::default();
+    $issues = static fn (array $codes): string => $codes === [] ? 'none' : str_replace('_', ' ', implode(', ', $codes));
     $form = static function (string $action, string $level, string $objectId, string $label, string $confirm = '') use ($e, $self, $id, $token): string {
         return '<form method="post" action="' . $e($self . '?ad_campaigns=' . $id) . '" class="d-inline"' . ($confirm !== '' ? ' data-p202-confirm="' . $e($confirm) . '"' : '') . '>'
             . p202_setup_token_field($token)
@@ -67,7 +68,7 @@ function p202_ad_campaigns_view(array $connection, ?array $campaigns, ?string $e
             $template = $c['query_string_template'];
             $out .= '<tr id="c-' . $e($cid) . '"><td><a href="' . $e($base . '&campaign=' . rawurlencode($cid) . '#c-' . $cid) . '">' . $e($c['name'] ?? $cid) . '</a><div class="form-text">' . $e($cid) . '</div></td>'
                 . '<td><span class="p202-pill' . (($c['status'] ?? '') === 'active' ? ' p202-pill--accent' : '') . '">' . $e((string) ($c['status'] ?? '')) . '</span></td>'
-                . '<td>' . $e($c['serving_issues'] === [] ? 'none' : implode(', ', array_map(static fn (string $code): string => str_replace('_', ' ', $code), $c['serving_issues']))) . '</td>'
+                . '<td>' . $e($issues($c['serving_issues'])) . '</td>'
                 . '<td class="num">' . $e($money($c['budget']['daily_spend_limit_micros'] ?? null)) . '</td>'
                 . '<td class="num">' . $e(isset($spentBy[$cid]) ? $currency . ' ' . number_format((float) $spentBy[$cid]['spend'], 2) : '—') . '</td>'
                 . '<td>' . $e($template === null ? 'not set' : ($template === $default ? 'the Get Links one' : 'its own')) . '</td>'
@@ -90,13 +91,13 @@ function p202_ad_campaigns_view(array $connection, ?array $campaigns, ?string $e
             $g = $entry['group'];
             $out .= '<div class="p202-list__item mt-3"><span class="p202-list__name">' . $e($g['name'] ?? $g['id']) . '</span><span class="p202-pill">' . $e((string) $g['status']) . '</span>'
                 . '<span class="p202-list__actions">' . $statusActions('ad-groups', $g) . '</span>'
-                . '<span class="p202-list__meta">' . $e($g['id'] . ' · serving issues: ' . ($g['serving_issues'] === [] ? 'none' : implode(', ', $g['serving_issues']))) . '</span></div>';
+                . '<span class="p202-list__meta">' . $e($g['id'] . ' · serving issues: ' . $issues($g['serving_issues'])) . '</span></div>';
             if ($entry['ads'] !== []) {
                 $out .= '<div class="p202-table-wrap"><table class="table p202-table"><thead><tr><th>Ad</th><th>Status</th><th>Review</th><th>Serving issues</th><th></th></tr></thead><tbody>';
                 foreach ($entry['ads'] as $ad) {
                     $out .= '<tr><td>' . $e($ad['name'] ?? $ad['id']) . '<div class="form-text">' . $e((string) $ad['id']) . '</div></td><td>' . $e((string) $ad['status']) . '</td>'
                         . '<td>' . $e(trim((string) ($ad['review_status'] ?? '') . ' ' . str_replace('_', ' ', (string) ($ad['review_reason'] ?? '')))) . '</td>'
-                        . '<td>' . $e($ad['serving_issues'] === [] ? 'none' : implode(', ', $ad['serving_issues'])) . '</td>'
+                        . '<td>' . $e($issues($ad['serving_issues'])) . '</td>'
                         . '<td class="text-nowrap">' . $statusActions('ads', $ad) . '</td></tr>';
                 }
                 $out .= '</tbody></table></div>';
