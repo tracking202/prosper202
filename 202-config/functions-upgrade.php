@@ -429,13 +429,20 @@ if (!function_exists('_upgrade_campaign_currency_notice')) {
         // in the account's, as its amounts were recorded before.
         $supported = "'" . implode("', '", \Api\V3\Controllers\UsersController::SUPPORTED_CURRENCIES) . "'";
         $accountSql = "CASE WHEN UPPER(TRIM(p.`user_account_currency`)) IN ($supported) THEN UPPER(TRIM(p.`user_account_currency`)) ELSE 'USD' END";
-        // DISTINCT makes the server keep the derived table apart, so the
-        // statement may read the table it updates.
+        $changed = _upgrade_query('SELECT DISTINCT `user_id` FROM `202_aff_campaigns` WHERE `aff_campaign_foreign_payout` <> 0');
+        if (!$changed instanceof \mysqli_result) {
+            _upgrade_note('could not read which accounts changed their currency; the campaign currency step will retry.');
+            return false;
+        }
+        $shows = [];
+        while (($row = $changed->fetch_row()) !== null && $row !== false) {
+            $shows[] = (int) $row[0];
+        }
+        $changed->free();
+        // Every such campaign, but one paid by its postbacks' amounts on an account that shows a change.
+        $kept = $shows === [] ? '' : ' AND (c.`aff_campaign_payout` <> 0 OR c.`user_id` NOT IN (' . implode(', ', $shows) . '))';
         if (_upgrade_query('UPDATE `202_aff_campaigns` c JOIN `202_users_pref` p ON p.`user_id` = c.`user_id`'
-            . ' LEFT JOIN (SELECT DISTINCT `user_id` FROM `202_aff_campaigns` WHERE `aff_campaign_foreign_payout` <> 0) s'
-            . ' ON s.`user_id` = c.`user_id`'
-            . " SET c.`aff_campaign_currency` = $accountSql WHERE c.`aff_campaign_foreign_payout` = 0"
-            . ' AND (c.`aff_campaign_payout` <> 0 OR s.`user_id` IS NULL)') === false) {
+            . " SET c.`aff_campaign_currency` = $accountSql WHERE c.`aff_campaign_foreign_payout` = 0" . $kept) === false) {
             _upgrade_note('failed to give the campaigns in the account\'s currency that currency; the campaign currency step will retry.');
             return false;
         }
