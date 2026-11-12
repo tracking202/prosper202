@@ -228,7 +228,10 @@ final class WebEvents
     /**
      * Whether a click on this campaign evaluates goals for an event received
      * at $at: some goal of the campaign (its own, or one it pays for) is
-     * live then. A campaign without one records `event=` hits as it always
+     * live then and has a version in force then, as the evaluator asks
+     * (GoalEvaluator::versionFor()), so an event recorded later for a time
+     * before its goal existed is the plain conversion it was when it arrived.
+     * A campaign without one records `event=` hits as it always
      * has — one plain conversion — so no existing setup changes behaviour
      * until goals are added (plan §2.2: goals are opt-in per campaign).
      */
@@ -238,8 +241,13 @@ final class WebEvents
             return false;
         }
         foreach ((new MysqlGoalRepository($this->conn))->specsForCampaign($userId, $campaignId) as $spec) {
-            if ($spec->startsAt <= $at && ($spec->endsAt === null || $at < $spec->endsAt)) {
-                return true;
+            if ($spec->startsAt > $at || ($spec->endsAt !== null && $at >= $spec->endsAt)) {
+                continue;
+            }
+            foreach ($spec->versions as $version) {
+                if ((int) $version['effective_at'] <= $at) {
+                    return true;
+                }
             }
         }
 

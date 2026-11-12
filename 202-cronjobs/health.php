@@ -100,6 +100,21 @@ try {
     // (Account › Settings shows the path and the reader's error to admins).
     $geoip = \Prosper202\GeoIp\CityDatabase::status();
 
+    // Traffic-source postbacks queued with their conversions and left unsent: every account's
+    // for a role that manages users, the signed-in account's own for any other.
+    $seesEveryAccount = isset($userObj) && $userObj instanceof \User && $userObj->hasPermission('add_users');
+    // The cron's own health is still answered when this reading fails: null says it is not known.
+    $postbackQueue = null;
+    try {
+        $postbackQueue = \Prosper202\Notifications\OutboxBacklog::read(
+            new \Prosper202\Database\Connection($db),
+            time(),
+            $seesEveryAccount ? null : (int) ($_SESSION['user_own_id'] ?? $_SESSION['user_id'] ?? 0)
+        );
+    } catch (\Throwable $queueError) {
+        error_log('health.php: the traffic-source postback queue could not be read: ' . $queueError->getMessage());
+    }
+
     // Build response
     $response = [
         'status' => $status,
@@ -110,6 +125,11 @@ try {
         'isLocked' => $isLocked,
         'dataEngine' => $dataEngineStatus,
         'geoipDatabase' => $geoip->healthFields(),
+        'trafficSourcePostbacks' => $postbackQueue === null ? null : [
+            'stuck' => $postbackQueue['stuck'],
+            'overdue' => $postbackQueue['overdue'],
+            'oldestDueTimestamp' => $postbackQueue['oldest_due_at'],
+        ],
         'serverTime' => date('Y-m-d H:i:s'),
         'serverTimestamp' => time()
     ];
@@ -121,6 +141,10 @@ try {
         $response['recommendations'][] = 'Cron jobs have not run recently. Check AutoCron or set up server cron.';
     }
     
+    if ($postbackQueue !== null && $postbackQueue['warning'] !== null) {
+        $response['recommendations'][] = $postbackQueue['warning'];
+    }
+
     if ($isLocked === null) {
         $response['recommendations'][] = 'The cron lock file (202-cronjobs/' . \Prosper202\Cron\CronLock::FILE
             . ') could not be opened or locked here, so a cron run the web server makes cannot take it either:'

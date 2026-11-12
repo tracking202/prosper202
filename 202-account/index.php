@@ -74,6 +74,7 @@ template_top('Prosper202 ClickServer');  ?>
 require_once __DIR__ . '/../202-config/functions-alerts-ui.php';
 echo p202_alerts_home_panel($db, (int) ($_SESSION['user_id'] ?? 0), $base, time());
 ?>
+<?php echo p202_postback_queue_notice($db, $gs_user_id, $base); ?>
 
 <?php echo p202_old_google_feed_notice(
     $db,
