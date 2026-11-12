@@ -38,6 +38,9 @@ final class ConversionPixelsCarryTheEventIdTest extends TestCase
             'after the fire' => '<?php p202FireTrafficSourcePixels($db, 3, $tokens, null); $tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId($c, $tokens, 1, 2, (int) $conversionId, "t");',
             'reassigned between' => '<?php $tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId($c, $tokens, 1, 2, (int) $conversionId, "t"); $tokens = []; p202FireTrafficSourcePixels($db, 3, $tokens, null);',
             'another conversion' => '<?php $tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId($c, $tokens, 1, 2, 7, "t"); p202FireTrafficSourcePixels($db, 3, $tokens, null);',
+            'an entry unset between' => '<?php $tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId($c, $tokens, 1, 2, (int) $conversionId, "t"); unset($tokens["p202_event_id"]); p202FireTrafficSourcePixels($db, 3, $tokens, null);',
+            'an entry written between' => '<?php $tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId($c, $tokens, 1, 2, (int) $conversionId, "t"); $tokens["p202_event_id"] = "x"; p202FireTrafficSourcePixels($db, 3, $tokens, null);',
+            'stamped in one branch' => '<?php if ($a) { $tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId($c, $tokens, 1, 2, (int) $conversionId, "t"); } p202FireTrafficSourcePixels($db, 3, $tokens, null);',
             'other tokens fired' => '<?php $tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId($c, $tokens, 1, 2, (int) $conversionId, "t"); p202FireTrafficSourcePixels($db, 3, $other, null);',
         ];
         foreach ($planted as $why => $code) {
@@ -87,6 +90,25 @@ final class ConversionPixelsCarryTheEventIdTest extends TestCase
             }
             if (!str_contains(self::argument($tokens, $stamped, 4, $text), '$conversionId')) {
                 $out[] = 'withConversionEventId() is not asked for the recorded conversion ($conversionId)';
+            }
+            // Between the stamp and the fire: nothing writes into $tokens, and no block the stamp is in closes.
+            $depth = 0;
+            for ($i = $stamped; $i < $fire; $i++) {
+                $t = $text($tokens[$i]);
+                if ($t === '{') {
+                    $depth++;
+                } elseif ($t === '}' && --$depth < 0) {
+                    $out[] = 'the stamp is inside a block that ends before the pixels are fired';
+                    break;
+                }
+                if ($t === '$tokens' && $i > $stamped) {
+                    $before = $text($tokens[$i - 1] ?? '');
+                    $after = $text($tokens[$i + 1] ?? '');
+                    if (($before === '(' && strtolower($text($tokens[$i - 2] ?? '')) === 'unset') || $after === '[' || in_array($after, ['=', '+=', '.='], true)) {
+                        $out[] = 'something writes into $tokens between the stamp and the fire';
+                        break;
+                    }
+                }
             }
         }
 
