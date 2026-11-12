@@ -32,13 +32,6 @@ DEFAULT_ANSWER = frozenset([
     "reporting-001-summary-grounded",
 ])
 
-# Cases merged before this check whose answer is in an open pull request
-# (#487 for setup-source-003). They pass with or without one; the line goes
-# once the answer has landed.
-KNOWN_MISSING = frozenset([
-    "setup-source-003-chatgpt-ads-is-one-step",
-])
-
 STUB = """#!/bin/sh
 printf '%s\\n' "$*" >> "$P202_STUB_LOG"
 printf '{"data":[]}\\n'
@@ -64,12 +57,12 @@ def main() -> int:
     if not listed:
         sys.exit(f"no cases found under {CASES}")
     ids = {case_id for _, case_id, _ in listed}
-    stale = (DEFAULT_ANSWER | KNOWN_MISSING) - ids
+    stale = DEFAULT_ANSWER - ids
     if stale:
-        print(f"DEFAULT_ANSWER or KNOWN_MISSING names cases that do not exist: {sorted(stale)}")
+        print(f"DEFAULT_ANSWER names cases that do not exist: {sorted(stale)}")
         return 1
 
-    missing, wrongly_answered, answered_now = [], [], []
+    missing, wrongly_answered = [], []
     with tempfile.TemporaryDirectory() as tmp:
         bin_dir = Path(tmp, "bin")
         bin_dir.mkdir()
@@ -94,16 +87,11 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 pass
             fell_through = marker.exists()
-            if case_id in KNOWN_MISSING:
-                if not fell_through:
-                    answered_now.append(case_id)
-            elif fell_through and case_id not in DEFAULT_ANSWER:
+            if fell_through and case_id not in DEFAULT_ANSWER:
                 missing.append(f"{file_name}: {case_id}")
             elif not fell_through and case_id in DEFAULT_ANSWER:
                 wrongly_answered.append(f"{file_name}: {case_id}")
 
-    for case_id in answered_now:
-        print(f"note: {case_id} has an answer now; remove it from KNOWN_MISSING.")
     if missing:
         print("These eval cases have no answer in tests/fixtures/agent-eval/reference-agent.sh;"
               " their ask falls through to the default `report summary`, and Agent Evals fails"
@@ -118,8 +106,7 @@ def main() -> int:
     if missing or wrongly_answered:
         return 1
     print(f"{len(listed)} eval cases: each ask has its own reference answer"
-          f" ({len(DEFAULT_ANSWER)} answered by the default summary on purpose,"
-          f" {len(KNOWN_MISSING)} listed as known missing).")
+          f" ({len(DEFAULT_ANSWER)} answered by the default summary on purpose).")
     return 0
 
 
