@@ -24,6 +24,9 @@ final class SpendRow
     /** The most rows one write takes (OpenAI's insights page is 2000). */
     public const int MAX_ROWS = 2000;
 
+    /** No ad platform billed before this hour (2000-01-01 00:00 UTC); 0 is a missing value. */
+    public const int EARLIEST_HOUR = 946684800;
+
     /** The columns' widths, in characters. */
     public const int PLATFORM_WIDTH = 32;
     public const int ACCOUNT_WIDTH = 64;
@@ -76,6 +79,9 @@ final class SpendRow
         $hour = self::count($row, 'hour_start', $prefix, $errors);
         if ($hour !== null && $hour % 3600 !== 0) {
             $errors[$prefix . 'hour_start'] = 'must be the unix second an hour starts at, in UTC (a multiple of 3600); ' . $hour . ' is not';
+            $hour = null;
+        } elseif ($hour !== null && $hour < self::EARLIEST_HOUR) {
+            $errors[$prefix . 'hour_start'] = 'is before 2000-01-01; send the unix second the hour starts at';
             $hour = null;
         } elseif ($hour !== null && $hour > $now - $now % 3600) {
             $errors[$prefix . 'hour_start'] = 'is an hour that has not started yet';
@@ -145,6 +151,13 @@ final class SpendRow
         }
         if (mb_check_encoding($value, 'UTF-8') === false || preg_match('/[\x00-\x1F\x7F]/', $value) === 1) {
             $errors[$prefix . $field] = 'must be printable UTF-8 text';
+            return '';
+        }
+        // The key columns compare with trailing spaces ignored (PAD SPACE),
+        // so `ad1 ` would overwrite `ad1`: an id is sent as the platform
+        // gives it, with no space around it.
+        if ($value !== '' && preg_match('/^\s|\s$/u', $value) === 1) {
+            $errors[$prefix . $field] = 'must not start or end with a space';
             return '';
         }
         if (mb_strlen($value) > $width) {

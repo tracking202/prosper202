@@ -3500,7 +3500,10 @@ paths:
         Each row is one UTC hour of one external ad. A row is stored under its
         platform, ad account, ad and hour, so sending an hour again replaces
         it (spend settles after the clicks; re-send the trailing hours) and
-        sending the same rows twice changes nothing: a retry is safe. All
+        sending the same rows twice changes nothing, so retrying a write that
+        may have failed is safe; the last write of an hour wins. An ad id names
+        one ad: one the account already holds under another platform or ad
+        account is refused. All
         rows are written in one transaction, or none. Refused by field name
         (`rows.3.spend`), with nothing written: an unknown field, a value
         that is not exact (a spend with more than six decimals, an hour that

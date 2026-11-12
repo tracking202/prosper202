@@ -1,7 +1,7 @@
 # Spend Ledger
 
 What each ad platform billed, per external ad per hour. A platform's puller
-(ChatGPT Ads is the first) or any client writes it; the [reports](11-reports.md#cost-from-the-spend-ledger)
+or any client writes it; the [reports](11-reports.md#cost-from-the-spend-ledger)
 read it as cost.
 
 | Method | Path | Scope | Role permission |
@@ -31,7 +31,12 @@ POST /api/v3/spend-ledger
   platform names none. `clicks` is the platform's own count.
 - A row is stored under its platform, ad account, ad and hour. Sending an
   hour again replaces it (re-send the trailing hours while spend settles);
-  sending the same rows again changes nothing, so a retry is safe.
+  sending the same rows again changes nothing, so retrying a write that
+  may have failed is safe. The last write of an hour wins: send hours in the
+  order you read them from the platform.
+- An ad id names one ad: a row whose `ad_ref` the account already holds under
+  another platform or ad account is refused, since clicks carry only the ad id.
+- An id must not start or end with a space, and `hour_start` is from 2000 on.
 - Up to 2000 rows per request, written in one transaction. Any refused row
   (an unknown field, a value that is not exact, one key twice) is a `422`
   naming it (`rows.3.spend`), and nothing is written.
