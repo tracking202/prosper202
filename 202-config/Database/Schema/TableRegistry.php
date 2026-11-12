@@ -243,6 +243,7 @@ final class TableRegistry
 
     // Spend ledger: what each ad platform billed, per ad per hour
     public const string SPEND_LEDGER = '202_spend_ledger';
+    public const string AD_SPEND_SYNC = '202_ad_spend_sync';
 
     // DNI tables
     public const string DNI_NETWORKS = '202_dni_networks';

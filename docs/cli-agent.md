@@ -1004,6 +1004,21 @@ feature off for the account; report the `detail` and ask the person for the pixe
 Conversions API key from Ads Manager. `currency_matches_account` false means the ad account bills in another
 currency than the Prosper202 account; spend is not converted. `--staged` is refused.
 
+### Ad spend (the spend ledger)
+
+```
+p202 ad-spend [--period P | --time-from T --time-to T] [--interval day|hour] [--platform openai_ads] [--limit N] [--json]
+p202 ad-spend sync list [--json]              # each ChatGPT Ads connection: enabled, backfilled_at, last run, last_error / last_note
+p202 ad-spend sync enable <connection-id>     # off until enabled; first run reads 30 days, later runs the trailing 72 hours
+p202 ad-spend sync disable <connection-id>    # what the ledger holds stays
+p202 ad-spend sync run <connection-id>        # the hourly pull now (sync must be on)
+```
+
+`p202 ad-spend` answers what the platform billed per ad per day (account zone) or hour, with `matched_clicks`
+(clicks carrying the ad through their `ad_id` variable) and `unallocated_spend`. `p202 report …` costs those
+clicks at their share of each hour's spend and carries `spend_ledger.reaches`; say how far spend data reaches
+when you quote ROI from it. An ad account in another currency is refused by name (`last_error`).
+
 ### Reports
 
 ```

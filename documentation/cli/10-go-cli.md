@@ -523,6 +523,21 @@ The writes take `--idempotency-key` (create) and `--staged`; the deletes take
 `--dry-run`, `--force` and `--ids`. Under `--json` each command prints the
 API's answer as sent.
 
+## Ad Spend
+
+`p202 ad-spend` reads the spend ledger: what ChatGPT Ads (or any platform writing
+it) billed per ad, by day in your time zone or by hour, with how many of your
+clicks carried each ad and the spend no click carried. `p202 ad-spend sync`
+turns the hourly ChatGPT Ads pull on or off for a connection made with
+`p202 ad-connection create`; it is off until you enable it.
+
+```
+p202 ad-spend --period yesterday
+p202 ad-spend sync list
+p202 ad-spend sync enable 1
+p202 ad-spend sync run 1
+```
+
 ## Config Defaults
 
 Set per-profile defaults for frequently used flags.

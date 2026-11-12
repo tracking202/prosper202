@@ -45,6 +45,7 @@ final class MiscTables
             self::charts(),
             // Spend ledger
             self::spendLedger(),
+            self::adSpendSync(),
             // Export tables
             self::exportAdgroups(),
             self::exportCampaigns(),
@@ -344,6 +345,36 @@ final class MiscTables
                 PRIMARY KEY (`user_id`,`platform`,`account_ref`,`ad_ref`,`hour_start`),
                 KEY `user_hour` (`user_id`,`hour_start`),
                 KEY `user_ad_hour` (`user_id`,`ad_ref`,`hour_start`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * Each ad connection's spend sync (Prosper202\Spend\OpenAi\SpendSync),
+     * from 1.9.80 on: whether the operator turned it on (no row is off), when
+     * the first 30-day backfill finished (null: not yet), the last run, its
+     * failure (last_error) or what a run that got through left out
+     * (last_note), and how long a rate-limited platform is left alone.
+     */
+    public static function adSpendSync(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::AD_SPEND_SYNC,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::AD_SPEND_SYNC . "` (
+                `connection_id` int(10) unsigned NOT NULL,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `enabled` tinyint(1) NOT NULL DEFAULT '0',
+                `backfilled_at` int(10) unsigned DEFAULT NULL,
+                `last_run_at` int(10) unsigned DEFAULT NULL,
+                `last_success_at` int(10) unsigned DEFAULT NULL,
+                `last_rows` int(10) unsigned NOT NULL DEFAULT '0',
+                `last_error` text DEFAULT NULL,
+                `last_note` text DEFAULT NULL,
+                `rate_limited` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `retry_after` int(10) unsigned NOT NULL DEFAULT '0',
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`connection_id`),
+                KEY `user_id` (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

@@ -1,0 +1,34 @@
+{
+  "object": "list",
+  "timezone": "America/Los_Angeles",
+  "data": [
+    {
+      "id": "start=@H1@:end=@H2@:entity_id=ad_501",
+      "start_time": @H1@,
+      "end_time": @H2@,
+      "readable_time": "hour 1",
+      "campaign_id": "cmpn_101",
+      "ad_group_id": "adgrp_201",
+      "ad_id": "ad_501",
+      "impressions": 640,
+      "clicks": 19,
+      "spend": 9.875
+    },
+    {
+      "id": "start=@H1@:end=@H2@:entity_id=ad_503",
+      "start_time": @H1@,
+      "end_time": @H2@,
+      "readable_time": "hour 1",
+      "campaign_id": "cmpn_102",
+      "ad_group_id": null,
+      "ad_id": "ad_503",
+      "impressions": 90,
+      "clicks": 1,
+      "spend": 0.1234567
+    }
+  ],
+  "count": 2,
+  "first_id": "start=@H1@:end=@H2@:entity_id=ad_501",
+  "last_id": "start=@H1@:end=@H2@:entity_id=ad_503",
+  "has_more": false
+}

@@ -5262,6 +5262,8 @@ class UPGRADE
                 // What each ad platform billed per ad per hour, which the
                 // reports read as cost where present (Prosper202\Spend).
                 \Prosper202\Database\Tables\MiscTables::spendLedger(),
+                // Each ad connection's spend sync: on or off, and its last run.
+                \Prosper202\Database\Tables\MiscTables::adSpendSync(),
             ], [], [], true) && $paid_ok;
             if ($step_ok) {
                 _upgrade_seed_bot202_facebook_pixel_lookups();

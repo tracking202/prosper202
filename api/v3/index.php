@@ -665,6 +665,14 @@ try {
             $r->post('', fn() => $crud(\Api\V3\Controllers\SpendLedgerController::class)->write($payload, writeDryRunRequested($queryParams)));
         }, [$updateSection]);
         $router->get('/spend-ledger', fn() => $campaignFigures($crud(\Api\V3\Controllers\SpendLedgerController::class)->read($queryParams), $spendFigures));
+        // Each ChatGPT Ads connection's hourly spend pull (off until turned
+        // on): Setup's, like the connections themselves.
+        $router->group('/spend-ledger/sync', function (Router $r) use ($crud, $payload) {
+            $cls = \Api\V3\Controllers\SpendSyncController::class;
+            $r->get('',                    fn() => $crud($cls)->list());
+            $r->put('/{id}',               fn($ctx) => $crud($cls)->update(PathId::of($ctx), $payload));
+            $r->post('/{id}/run',          fn($ctx) => $crud($cls)->run(PathId::of($ctx)));
+        }, [$setupSection]);
         $router->group('/conversions', function (Router $r) use ($crud, $payload, $queryParams, $auth, $db) {
             $cls = \Api\V3\Controllers\UpdateController::class;
             $r->post('/subids',        fn() => $crud($cls)->markSubids($payload, writeDryRunRequested($queryParams)));
@@ -1459,7 +1467,7 @@ try {
                 'conversions'   => '/conversions',
                 'update'        => '/clicks/cpc, /conversions/{subids|subids/delete|subids/reset|uploads}',
                 'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart|groups}',
-                'spend_ledger'  => '/spend-ledger',
+                'spend_ledger'  => '/spend-ledger[/sync[/{id}[/run]]]',
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}[/{id}][/deliveries]',
                 'rotators'      => '/rotators[/{id}/rules|/{id}/stats]',
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
