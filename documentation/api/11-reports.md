@@ -281,7 +281,7 @@ exception: it divides the same sums in floating point, unrounded
 
 ## Cost from the spend ledger
 
-Where the [spend ledger](28-spend-ledger.md) has an ad's spend for an hour,
+Where the [spend ledger](29-spend-ledger.md) has an ad's spend for an hour,
 the clicks that carry that ad in that hour are costed at an equal share of
 it instead of their CPC. A click carries an ad when its traffic source has
 a variable with the parameter `ad_id` (the ChatGPT Ads tracking template
