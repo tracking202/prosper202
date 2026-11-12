@@ -116,8 +116,9 @@ once.
   only in E.164 form (`+` and the country code). For ChatGPT Ads the email
   is only trimmed and lower-cased and the phone is hashed as its digits
   without the `+`, as OpenAI hashes them, and the visitor's IP address is
-  sent too, unless the click stored it masked (a masked address names a
-  network, not the visitor). The raw values are never written to the queue,
+  sent too, only when the campaign captures identity, the visitor did not
+  refuse consent (`p202_consent`), and the click stored the address
+  unmasked (a masked address names a network, not the visitor). The raw values are never written to the queue,
   the log or an error.
 - **Consent signals** (`ad_user_data`, `ad_personalization`) are what you
   state, per destination, from your consent banner: Prosper202 does not
@@ -326,7 +327,8 @@ another type (or `custom` with a name of your own), to
   The same id is the event id of a Meta Purchase pixel for that conversion.
 - `oppref`: OpenAI's click id from the click, as it arrived.
 - `source_url`: the click's landing page, or the tracking link the click
-  came through. A click with neither stored is failed, not sent: OpenAI
+  came through, without its query string or fragment (they carry what the
+  link put there). A click with neither stored is failed, not sent: OpenAI
   needs the page of a web event.
 - `amount` and `currency`: the payout in the currency's smallest unit (USD
   89.00 is 8900, JPY 8900 is 8900). A zero payout sends neither.

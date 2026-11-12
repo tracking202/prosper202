@@ -18835,8 +18835,9 @@ components:
             Phone numbers are sent only in E.164 form (+ and country code).
             Each platform's own normalisation is used: Google's folds Gmail
             dots and +tags, OpenAI's only trims and lowercases. ChatGPT Ads
-            also sends the visitor's IP address when the click stored it
-            unmasked.
+            also sends the visitor's IP address when the campaign captures
+            identity, the visitor did not refuse consent, and the click
+            stored the address unmasked.
         consent:
           type: object
           description: |
