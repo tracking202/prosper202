@@ -145,7 +145,7 @@ var adSpendSyncRunCmd = &cobra.Command{
 		}
 		data, err := c.Post("spend-ledger/sync/"+args[0]+"/run", map[string]interface{}{})
 		if err != nil {
-			return withHint(err, "%s", "Turn the sync on first: `p202 ad-spend sync enable "+args[0]+"`.")
+			return withHint(err, "%s", "`p202 ad-spend sync list` shows the connection's last error and retry_after; if the sync is off, `p202 ad-spend sync enable "+args[0]+"` first.")
 		}
 		render(data)
 		return nil

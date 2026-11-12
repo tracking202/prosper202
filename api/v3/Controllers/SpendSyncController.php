@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Exception\NotFoundException;
+use Api\V3\HttpException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\PayloadKeys;
 use Prosper202\AdPlatforms\AdConnectionStore;
@@ -67,6 +68,19 @@ final class SpendSyncController
             throw new NotFoundException('No ChatGPT Ads connection ' . $connectionId . ' (GET /ad-connections lists them)');
         }
         $result = $this->sync->run($connection);
+        // A failed run is answered as one (CLAUDE.md #1): refused here (the
+        // currency) is a 422, the account's to change; OpenAI's refusal, its
+        // 429 or its silence is a 424 (failed dependency) with OpenAI's words,
+        // which a 5xx would hide. The run is recorded either way, and GET
+        // /spend-ledger/sync shows it (retry_after after a 429).
+        if ($result['error'] !== null) {
+            if ($result['refused']) {
+                throw new ValidationException('Spend sync refused', ['connection' => $result['error']]);
+            }
+            throw new HttpException('Spend sync run failed: ' . $result['error']
+                . ($result['rate_limited'] ? ' (the next run waits; GET /spend-ledger/sync says until when)' : ''), 424);
+        }
+        unset($result['refused'], $result['rate_limited']);
 
         return ['data' => ['run' => $result] + $this->one($connectionId)];
     }

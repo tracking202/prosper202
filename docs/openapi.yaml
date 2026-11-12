@@ -3715,8 +3715,12 @@ paths:
       summary: Pull a ChatGPT Ads connection's spend now
       description: >-
         The hourly run for one connection, now. A `422` when its sync is
-        off. `data.run` is this run: `rows` written, the window (`from`,
-        `to`), and `error` or `note`.
+        off or the run is refused here (an ad account in another currency),
+        a `424` naming OpenAI's answer when OpenAI refused, rate-limited or
+        did not answer; either way the run is recorded (GET
+        /spend-ledger/sync). On success `data.run` is this run: `rows`
+        written, the window (`from`, `to`), and a `note` naming what was
+        left out.
       operationId: runSpendSync
       parameters:
         - name: id
@@ -3756,6 +3760,8 @@ paths:
           description: The account has no ChatGPT Ads connection by that id.
         "422":
           $ref: "#/components/responses/ValidationError"
+        "424":
+          description: OpenAI refused the request, answered 429 or did not answer; the message names which.
 
   /conversions/subids:
     post:
