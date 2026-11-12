@@ -840,6 +840,31 @@ try {
             $r->post('/{id}/setup', fn($ctx) => $crud($cls)->setup(PathId::of($ctx), $payload));
         }, [$setupSection]);
 
+        // A ChatGPT Ads connection's campaigns, ad groups and ads, read from
+        // and changed at OpenAI (AdCampaignsController). {objectId} is
+        // OpenAI's own id, checked against its shape before it goes into a
+        // request path. Every write previews with ?dry_run=1.
+        $router->group('/ad-connections', function (Router $r) use ($crud, $payload, $queryParams) {
+            $cls = \Api\V3\Controllers\AdCampaignsController::class;
+            $r->get('/{id}/spend', fn($ctx) => $crud($cls)->spend(PathId::of($ctx), $queryParams));
+            $r->get('/{id}/campaigns', fn($ctx) => $crud($cls)->list(PathId::of($ctx), 'campaigns', $queryParams));
+            $r->get('/{id}/ad-groups', fn($ctx) => $crud($cls)->list(PathId::of($ctx), 'ad-groups', $queryParams));
+            $r->get('/{id}/ads', fn($ctx) => $crud($cls)->list(PathId::of($ctx), 'ads', $queryParams));
+            $r->get('/{id}/campaigns/{objectId}', fn($ctx) => $crud($cls)->get(PathId::of($ctx), 'campaigns', (string) $ctx['objectId']));
+            $r->get('/{id}/ad-groups/{objectId}', fn($ctx) => $crud($cls)->get(PathId::of($ctx), 'ad-groups', (string) $ctx['objectId']));
+            $r->get('/{id}/ads/{objectId}', fn($ctx) => $crud($cls)->get(PathId::of($ctx), 'ads', (string) $ctx['objectId']));
+            $r->post('/{id}/campaigns/{objectId}/pause', fn($ctx) => $crud($cls)->setStatus(PathId::of($ctx), 'campaigns', (string) $ctx['objectId'], 'pause', $payload, writeDryRunRequested($queryParams)));
+            $r->post('/{id}/campaigns/{objectId}/activate', fn($ctx) => $crud($cls)->setStatus(PathId::of($ctx), 'campaigns', (string) $ctx['objectId'], 'activate', $payload, writeDryRunRequested($queryParams)));
+            $r->post('/{id}/ad-groups/{objectId}/pause', fn($ctx) => $crud($cls)->setStatus(PathId::of($ctx), 'ad-groups', (string) $ctx['objectId'], 'pause', $payload, writeDryRunRequested($queryParams)));
+            $r->post('/{id}/ad-groups/{objectId}/activate', fn($ctx) => $crud($cls)->setStatus(PathId::of($ctx), 'ad-groups', (string) $ctx['objectId'], 'activate', $payload, writeDryRunRequested($queryParams)));
+            $r->post('/{id}/ads/{objectId}/pause', fn($ctx) => $crud($cls)->setStatus(PathId::of($ctx), 'ads', (string) $ctx['objectId'], 'pause', $payload, writeDryRunRequested($queryParams)));
+            $r->post('/{id}/ads/{objectId}/activate', fn($ctx) => $crud($cls)->setStatus(PathId::of($ctx), 'ads', (string) $ctx['objectId'], 'activate', $payload, writeDryRunRequested($queryParams)));
+            $r->post('/{id}/campaigns/{objectId}/template', fn($ctx) => $crud($cls)->setTemplate(PathId::of($ctx), 'campaigns', (string) $ctx['objectId'], $payload, writeDryRunRequested($queryParams)));
+            $r->post('/{id}/ad-groups/{objectId}/template', fn($ctx) => $crud($cls)->setTemplate(PathId::of($ctx), 'ad-groups', (string) $ctx['objectId'], $payload, writeDryRunRequested($queryParams)));
+            $r->post('/{id}/ads/{objectId}/template', fn($ctx) => $crud($cls)->setTemplate(PathId::of($ctx), 'ads', (string) $ctx['objectId'], $payload, writeDryRunRequested($queryParams)));
+            $r->post('/{id}/campaigns/{objectId}/event-settings', fn($ctx) => $crud($cls)->attachEventSettings(PathId::of($ctx), (string) $ctx['objectId'], $payload, writeDryRunRequested($queryParams)));
+        }, [$setupSection]);
+
         // ── API capabilities ────────────────────────────────────────────
         // The principal is who the key acts as and what it may do: the probe
         // an agent makes first, and the only way a key holder learns its own
@@ -1456,7 +1481,7 @@ try {
                 'apps'          => '/apps/{id|skan-encodings|postbacks|report|notifications|verify|schema|installs}[/installs|/install-token|/store-link|/integrity|/integrity-credential]',
                 'goals'         => '/goals/{id|validate|evaluate}',
                 'destinations'  => '/destinations[/{id}][/test|/deliveries[/resend]|/backfill|/oauth/start|/google-ads/accounts|/google-ads/conversion-actions|/google-ads/pick]',
-                'ad_connections' => '/ad-connections[/{id}][/check|/setup]',
+                'ad_connections' => '/ad-connections[/{id}][/check|/setup|/spend|/campaigns|/ad-groups|/ads[/{id}[/pause|/activate|/template|/event-settings]]]',
                 'events'        => '/events',
                 'users'         => '/users',
                 'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations|integrations/record-held|traffic-source-owners|traffic-source-owners/repair|traffic-source-owners/split}',
@@ -1595,6 +1620,18 @@ try {
     });
     $writePreviewRouter->post('/system/retention/delete-before', $writePreview);
     $writePreviewRouter->put('/rotators/{id}/rules', $writePreview);
+    $writePreviewRouter->group('/ad-connections/{id}', function (Router $r) use ($writePreview) {
+        $r->post('/campaigns/{objectId}/pause', $writePreview);
+        $r->post('/campaigns/{objectId}/activate', $writePreview);
+        $r->post('/campaigns/{objectId}/template', $writePreview);
+        $r->post('/ad-groups/{objectId}/pause', $writePreview);
+        $r->post('/ad-groups/{objectId}/activate', $writePreview);
+        $r->post('/ad-groups/{objectId}/template', $writePreview);
+        $r->post('/ads/{objectId}/pause', $writePreview);
+        $r->post('/ads/{objectId}/activate', $writePreview);
+        $r->post('/ads/{objectId}/template', $writePreview);
+        $r->post('/campaigns/{objectId}/event-settings', $writePreview);
+    });
     // ── Staged writes ───────────────────────────────────────────────
     // `?staged=1` on an operator-surface write records it as a proposal
     // (server-issued change id) instead of executing it; a person applies
@@ -1960,6 +1997,8 @@ try {
     Bootstrap::errorResponse($e->getMessage(), 422, $e->getFieldErrors() ? ['field_errors' => $e->getFieldErrors()] : []);
 } catch (ConflictException $e) {
     Bootstrap::errorResponse($e->getMessage(), 409, $e->getDetails() ? ['details' => $e->getDetails()] : []);
+} catch (\Api\V3\Exception\UpstreamException $e) {
+    Bootstrap::errorResponse($e->getMessage(), 502);
 } catch (WriteCommittedException $e) {
     error_log(p202UncaughtLogLine('API v3 write committed, then failed', $e));
     Bootstrap::errorResponse($e->getMessage(), $e->getHttpStatus());

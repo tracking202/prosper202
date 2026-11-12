@@ -118,6 +118,14 @@ func idArg(name, description string, required bool) mcpArg {
 	return mcpArg{Name: name, Description: description, Required: required, Pattern: mcpNumericID, Form: "a numeric id"}
 }
 
+// adObjectArg is a ChatGPT Ads id, which goes into the request's path.
+func adObjectArg() mcpArg {
+	return mcpArg{Name: "id", Description: "Campaign id (cmpn_…, from ad_campaign_list).", Required: true, Pattern: adObjectIDPattern, Form: "a ChatGPT Ads id such as cmpn_101"}
+}
+
+// adWriteNote: the change is made at OpenAI at once.
+const adWriteNote = "Changes it at OpenAI: dry_run: true first, and show the user."
+
 func changeArg() mcpArg {
 	return mcpArg{Name: "change_id", Description: "Change id (chg_..., from change_list).", Required: true, Pattern: mcpChangeID, Form: "a change id such as chg_1a2b3c"}
 }
@@ -139,7 +147,8 @@ type mcpToolSpec struct {
 	// NotStaged: the tool acts on proposed changes themselves, so a server
 	// that only proposes (--staged) does not offer it. Applying a proposal
 	// is a person's decision; a model that could stage a write and then
-	// apply it would make --staged mean nothing (CLAUDE.md #14).
+	// apply it would make --staged mean nothing (CLAUDE.md #14). Also a write
+	// made elsewhere at once (a ChatGPT Ads pause), which has nothing to propose.
 	NotStaged bool
 	// NotHosted: the tool reads an area the keys made for the hosted MCP
 	// server do not cover (AiConnect::READ_AREAS in api/v3), so that server
@@ -310,6 +319,18 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "change_show", Command: []string{"change", "show"}, Title: "Show a proposed change", Kind: mcpRead, Args: []mcpArg{changeArg()}},
 	{Name: "change_apply", Command: []string{"change", "apply"}, Title: "Apply a proposed change", Kind: mcpUpdate, Args: []mcpArg{changeArg()}, NotStaged: true},
 	{Name: "change_discard", Command: []string{"change", "discard"}, Title: "Discard a proposed change", Kind: mcpDelete, Args: []mcpArg{changeArg()}, NotStaged: true},
+
+	// ChatGPT Ads, live at OpenAI through an ad connection; and where conversions go.
+	// The hosted server's keys do not reach ad-connections or destinations.
+	{Name: "ad_campaign_list", Command: []string{"ad-campaign", "list"}, Title: "List ChatGPT Ads campaigns", Kind: mcpRead, NotHosted: true,
+		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true)}, Omit: []string{"level", "campaign-id", "ad-group-id", "after"}},
+	{Name: "ad_campaign_pause", Command: []string{"ad-campaign", "pause"}, Title: "Pause a ChatGPT Ads campaign", Kind: mcpUpdate, NotHosted: true,
+		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true), adObjectArg()}, Omit: []string{"level"}, Note: adWriteNote, NotStaged: true},
+	{Name: "ad_campaign_activate", Command: []string{"ad-campaign", "activate"}, Title: "Activate a ChatGPT Ads campaign", Kind: mcpUpdate, NotHosted: true,
+		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true), adObjectArg()}, Omit: []string{"level"}, Note: adWriteNote, NotStaged: true},
+	{Name: "ad_campaign_spend", Command: []string{"ad-campaign", "spend"}, Title: "ChatGPT Ads spend by campaign", Kind: mcpRead, NotHosted: true,
+		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true)}},
+	{Name: "destination_list", Command: []string{"destination", "list"}, Title: "List destinations and their status", Kind: mcpRead, NotHosted: true},
 
 	// Account
 	{Name: "whoami", Command: []string{"whoami"}, Title: "Who this connection acts as", Kind: mcpRead},

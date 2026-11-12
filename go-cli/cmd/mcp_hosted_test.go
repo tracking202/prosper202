@@ -33,6 +33,8 @@ var mcpWriteToolInput = map[string]map[string]interface{}{
 	"ppc_network_create":      {"ppc_network_name": "N"},
 	"ppc_account_create":      {"ppc_account_name": "A", "ppc_network_id": "1"},
 	"aff_network_create":      {"aff_network_name": "C"},
+	"ad_campaign_pause":       {"id": "cmpn_1"},
+	"ad_campaign_activate":    {"id": "cmpn_1"},
 	"text_ad_create":          {"text_ad_name": "T", "text_ad_headline": "H", "text_ad_description": "D", "text_ad_display_url": "example.com", "aff_campaign_id": "1"},
 	"text_ad_update":          {"text_ad_headline": "I"},
 	"rotator_create":          {"name": "R", "default_url": "https://example.com/d"},
@@ -190,8 +192,9 @@ func TestMCPCatalogListsWhatTheHostedServerLeavesOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The click filter and the settings are /users, which no hosted key reaches.
-	want := "click_filter_get,click_filter_update,click_filter_test,click_filter_list_add,click_filter_list_remove,system_info,settings_get"
+	// The click filter and the settings are /users, and the ChatGPT Ads tools and
+	// destinations /ad-connections and /destinations, which no hosted key reaches.
+	want := "click_filter_get,click_filter_update,click_filter_test,click_filter_list_add,click_filter_list_remove,ad_campaign_list,ad_campaign_pause,ad_campaign_activate,ad_campaign_spend,destination_list,system_info,settings_get"
 	if strings.Join(cat.HostedExcludes, ",") != want {
 		t.Fatalf("hosted_excludes = %q, want %s", cat.HostedExcludes, want)
 	}

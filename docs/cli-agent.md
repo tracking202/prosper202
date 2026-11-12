@@ -1004,6 +1004,23 @@ feature off for the account; report the `detail` and ask the person for the pixe
 Conversions API key from Ads Manager. `currency_matches_account` false means the ad account bills in another
 currency than the Prosper202 account; spend is not converted. `--staged` is refused.
 
+### ChatGPT Ads campaigns (live at OpenAI, through an ad connection)
+
+```
+p202 ad-campaign list <conn> [--level campaigns|ad-groups|ads] [--campaign-id cmpn_…] [--ad-group-id adgrp_…] [--limit N] [--after CURSOR]
+p202 ad-campaign get <conn> <id> [--level …]            # status, serving_issues, query_string_template; budget (campaigns); review_status (ads)
+p202 ad-campaign pause|activate <conn> <id> [--level …] [--dry-run]
+p202 ad-campaign set-template <conn> <id> [--level …] [--template QS] [--dry-run]   # default: the Get Links ChatGPT template
+p202 ad-campaign attach-events <conn> <cmpn_…> [--event-setting-id ces_…]... [--dry-run]   # default: the ones setup made
+p202 ad-campaign spend <conn> [--since YYYY-MM-DD --until YYYY-MM-DD]   # by campaign; default yesterday in the ad account's zone
+```
+
+Every write changes the campaign at OpenAI at once: run it with `--dry-run` first, which answers `change` (from, to)
+and sends nothing. `--staged` is refused. `attach-events` reads, merges and writes the campaign's list (OpenAI
+replaces it whole); `unchanged: true` means nothing was sent. A 404 is an id this ad account does not have, a 429
+OpenAI's rate limit and a 502 OpenAI not answering; the message is OpenAI's. Spend is as OpenAI reports it now:
+the last days can still change.
+
 ### Reports
 
 ```

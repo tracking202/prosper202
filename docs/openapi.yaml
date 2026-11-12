@@ -5274,6 +5274,617 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /ad-connections/{id}/campaigns:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Ad Connections]
+      summary: List a ChatGPT Ads connection's campaigns
+      description: |
+        Read from OpenAI now, one page at a time: status, serving issues and
+        the tracking template, budget and the conversion event settings it counts.
+      operationId: listAdConnectionCampaigns
+      parameters:
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 500, default: 100}}
+        - {name: after, in: query, required: false, schema: {type: string}, description: "meta.after of the previous page"}
+      responses:
+        "200":
+          description: One page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AdPlatformObject"
+                  meta:
+                    type: object
+                    properties:
+                      has_more: {type: boolean}
+                      after: {type: string, nullable: true}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "502":
+          description: OpenAI did not answer or failed; the message is its own
+
+  /ad-connections/{id}/campaigns/{objectId}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: objectId, in: path, required: true, schema: {type: string}, description: "The ad platform's own id: cmpn_…, adgrp_…, ad_…"}
+    get:
+      tags: [Ad Connections]
+      summary: One of a ChatGPT Ads connection's campaigns
+      operationId: getAdConnectionCampaign
+      responses:
+        "200":
+          description: The object as OpenAI describes it now
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdPlatformObject"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: OpenAI's rate limit; try again in a minute
+        "502":
+          description: OpenAI did not answer or failed; the message is its own
+
+  /ad-connections/{id}/campaigns/{objectId}/pause:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: objectId, in: path, required: true, schema: {type: string}, description: "The ad platform's own id: cmpn_…, adgrp_…, ad_…"}
+    post:
+      tags: [Ad Connections]
+      summary: Pause one of the campaigns at OpenAI
+      description: With `?dry_run=1`, answers its status now and the one it would get, and sends nothing.
+      operationId: pauseAdConnectionCampaign
+      parameters:
+        - {name: dry_run, in: query, required: false, schema: {type: string, enum: ["1"]}, description: "Read the object and answer what would change; nothing is sent"}
+      responses:
+        "200":
+          description: What was done (or, with dry_run, would be)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdPlatformChange"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: OpenAI's rate limit; try again in a minute
+        "502":
+          description: OpenAI did not answer or failed; the message is its own
+
+  /ad-connections/{id}/campaigns/{objectId}/activate:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: objectId, in: path, required: true, schema: {type: string}, description: "The ad platform's own id: cmpn_…, adgrp_…, ad_…"}
+    post:
+      tags: [Ad Connections]
+      summary: Activate one of the campaigns at OpenAI
+      description: With `?dry_run=1`, answers its status now and the one it would get, and sends nothing.
+      operationId: activateAdConnectionCampaign
+      parameters:
+        - {name: dry_run, in: query, required: false, schema: {type: string, enum: ["1"]}, description: "Read the object and answer what would change; nothing is sent"}
+      responses:
+        "200":
+          description: What was done (or, with dry_run, would be)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdPlatformChange"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: OpenAI's rate limit; try again in a minute
+        "502":
+          description: OpenAI did not answer or failed; the message is its own
+
+  /ad-connections/{id}/campaigns/{objectId}/template:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: objectId, in: path, required: true, schema: {type: string}, description: "The ad platform's own id: cmpn_…, adgrp_…, ad_…"}
+    post:
+      tags: [Ad Connections]
+      summary: Set the tracking template OpenAI appends to the ad's destination URL
+      description: |
+        Sets `landing_page_configuration.query_string_template` (at most
+        2048 characters; the lowest level set wins: account < campaign < ad
+        group < ad). Without `template`, the ChatGPT Ads template Get Links
+        gives. `?dry_run=1` answers the template now and the one it would get.
+      operationId: setAdConnectionCampaignTemplate
+      parameters:
+        - {name: dry_run, in: query, required: false, schema: {type: string, enum: ["1"]}, description: "Read the object and answer what would change; nothing is sent"}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                template: {type: string, maxLength: 2048}
+      responses:
+        "200":
+          description: What was done (or, with dry_run, would be)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdPlatformChange"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: OpenAI's rate limit; try again in a minute
+        "502":
+          description: OpenAI did not answer or failed; the message is its own
+
+  /ad-connections/{id}/ad-groups:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Ad Connections]
+      summary: List a ChatGPT Ads connection's ad groups
+      description: |
+        Read from OpenAI now, one page at a time: status, serving issues and
+        the tracking template.
+      operationId: listAdConnectionAdGroups
+      parameters:
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 500, default: 100}}
+        - {name: after, in: query, required: false, schema: {type: string}, description: "meta.after of the previous page"}
+        - {name: campaign_id, in: query, required: false, schema: {type: string}, description: "Only this campaign's"}
+      responses:
+        "200":
+          description: One page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AdPlatformObject"
+                  meta:
+                    type: object
+                    properties:
+                      has_more: {type: boolean}
+                      after: {type: string, nullable: true}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "502":
+          description: OpenAI did not answer or failed; the message is its own
+
+  /ad-connections/{id}/ad-groups/{objectId}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: objectId, in: path, required: true, schema: {type: string}, description: "The ad platform's own id: cmpn_…, adgrp_…, ad_…"}
+    get:
+      tags: [Ad Connections]
+      summary: One of a ChatGPT Ads connection's ad groups
+      operationId: getAdConnectionAdGroup
+      responses:
+        "200":
+          description: The object as OpenAI describes it now
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdPlatformObject"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: OpenAI's rate limit; try again in a minute
+        "502":
+          description: OpenAI did not answer or failed; the message is its own
+
+  /ad-connections/{id}/ad-groups/{objectId}/pause:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: objectId, in: path, required: true, schema: {type: string}, description: "The ad platform's own id: cmpn_…, adgrp_…, ad_…"}
+    post:
+      tags: [Ad Connections]
+      summary: Pause one of the ad groups at OpenAI
+      description: With `?dry_run=1`, answers its status now and the one it would get, and sends nothing.
+      operationId: pauseAdConnectionAdGroup
+      parameters:
+        - {name: dry_run, in: query, required: false, schema: {type: string, enum: ["1"]}, description: "Read the object and answer what would change; nothing is sent"}
+      responses:
+        "200":
+          description: What was done (or, with dry_run, would be)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdPlatformChange"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: OpenAI's rate limit; try again in a minute
+        "502":
+          description: OpenAI did not answer or failed; the message is its own
+
+  /ad-connections/{id}/ad-groups/{objectId}/activate:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: objectId, in: path, required: true, schema: {type: string}, description: "The ad platform's own id: cmpn_…, adgrp_…, ad_…"}
+    post:
+      tags: [Ad Connections]
+      summary: Activate one of the ad groups at OpenAI
+      description: With `?dry_run=1`, answers its status now and the one it would get, and sends nothing.
+      operationId: activateAdConnectionAdGroup
+      parameters:
+        - {name: dry_run, in: query, required: false, schema: {type: string, enum: ["1"]}, description: "Read the object and answer what would change; nothing is sent"}
+      responses:
+        "200":
+          description: What was done (or, with dry_run, would be)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdPlatformChange"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: OpenAI's rate limit; try again in a minute
+        "502":
+          description: OpenAI did not answer or failed; the message is its own
+
+  /ad-connections/{id}/ad-groups/{objectId}/template:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: objectId, in: path, required: true, schema: {type: string}, description: "The ad platform's own id: cmpn_…, adgrp_…, ad_…"}
+    post:
+      tags: [Ad Connections]
+      summary: Set the tracking template OpenAI appends to the ad's destination URL
+      description: |
+        Sets `landing_page_configuration.query_string_template` (at most
+        2048 characters; the lowest level set wins: account < campaign < ad
+        group < ad). Without `template`, the ChatGPT Ads template Get Links
+        gives. `?dry_run=1` answers the template now and the one it would get.
+      operationId: setAdConnectionAdGroupTemplate
+      parameters:
+        - {name: dry_run, in: query, required: false, schema: {type: string, enum: ["1"]}, description: "Read the object and answer what would change; nothing is sent"}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                template: {type: string, maxLength: 2048}
+      responses:
+        "200":
+          description: What was done (or, with dry_run, would be)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdPlatformChange"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: OpenAI's rate limit; try again in a minute
+        "502":
+          description: OpenAI did not answer or failed; the message is its own
+
+  /ad-connections/{id}/ads:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Ad Connections]
+      summary: List a ChatGPT Ads connection's ads
+      description: |
+        Read from OpenAI now, one page at a time: status, serving issues and
+        the tracking template, review status and reason.
+      operationId: listAdConnectionAds
+      parameters:
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 500, default: 100}}
+        - {name: after, in: query, required: false, schema: {type: string}, description: "meta.after of the previous page"}
+        - {name: ad_group_id, in: query, required: false, schema: {type: string}, description: "Only this ad group's"}
+      responses:
+        "200":
+          description: One page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AdPlatformObject"
+                  meta:
+                    type: object
+                    properties:
+                      has_more: {type: boolean}
+                      after: {type: string, nullable: true}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "502":
+          description: OpenAI did not answer or failed; the message is its own
+
+  /ad-connections/{id}/ads/{objectId}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: objectId, in: path, required: true, schema: {type: string}, description: "The ad platform's own id: cmpn_…, adgrp_…, ad_…"}
+    get:
+      tags: [Ad Connections]
+      summary: One of a ChatGPT Ads connection's ads
+      operationId: getAdConnectionAd
+      responses:
+        "200":
+          description: The object as OpenAI describes it now
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdPlatformObject"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: OpenAI's rate limit; try again in a minute
+        "502":
+          description: OpenAI did not answer or failed; the message is its own
+
+  /ad-connections/{id}/ads/{objectId}/pause:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: objectId, in: path, required: true, schema: {type: string}, description: "The ad platform's own id: cmpn_…, adgrp_…, ad_…"}
+    post:
+      tags: [Ad Connections]
+      summary: Pause one of the ads at OpenAI
+      description: With `?dry_run=1`, answers its status now and the one it would get, and sends nothing.
+      operationId: pauseAdConnectionAd
+      parameters:
+        - {name: dry_run, in: query, required: false, schema: {type: string, enum: ["1"]}, description: "Read the object and answer what would change; nothing is sent"}
+      responses:
+        "200":
+          description: What was done (or, with dry_run, would be)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdPlatformChange"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: OpenAI's rate limit; try again in a minute
+        "502":
+          description: OpenAI did not answer or failed; the message is its own
+
+  /ad-connections/{id}/ads/{objectId}/activate:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: objectId, in: path, required: true, schema: {type: string}, description: "The ad platform's own id: cmpn_…, adgrp_…, ad_…"}
+    post:
+      tags: [Ad Connections]
+      summary: Activate one of the ads at OpenAI
+      description: With `?dry_run=1`, answers its status now and the one it would get, and sends nothing.
+      operationId: activateAdConnectionAd
+      parameters:
+        - {name: dry_run, in: query, required: false, schema: {type: string, enum: ["1"]}, description: "Read the object and answer what would change; nothing is sent"}
+      responses:
+        "200":
+          description: What was done (or, with dry_run, would be)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdPlatformChange"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: OpenAI's rate limit; try again in a minute
+        "502":
+          description: OpenAI did not answer or failed; the message is its own
+
+  /ad-connections/{id}/ads/{objectId}/template:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: objectId, in: path, required: true, schema: {type: string}, description: "The ad platform's own id: cmpn_…, adgrp_…, ad_…"}
+    post:
+      tags: [Ad Connections]
+      summary: Set the tracking template OpenAI appends to the ad's destination URL
+      description: |
+        Sets `landing_page_configuration.query_string_template` (at most
+        2048 characters; the lowest level set wins: account < campaign < ad
+        group < ad). Without `template`, the ChatGPT Ads template Get Links
+        gives. `?dry_run=1` answers the template now and the one it would get.
+      operationId: setAdConnectionAdTemplate
+      parameters:
+        - {name: dry_run, in: query, required: false, schema: {type: string, enum: ["1"]}, description: "Read the object and answer what would change; nothing is sent"}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                template: {type: string, maxLength: 2048}
+      responses:
+        "200":
+          description: What was done (or, with dry_run, would be)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdPlatformChange"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: OpenAI's rate limit; try again in a minute
+        "502":
+          description: OpenAI did not answer or failed; the message is its own
+
+  /ad-connections/{id}/campaigns/{objectId}/event-settings:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: objectId, in: path, required: true, schema: {type: string}, description: "The ad platform's own id: cmpn_…, adgrp_…, ad_…"}
+    post:
+      tags: [Ad Connections]
+      summary: Add conversion event settings to a campaign
+      description: |
+        OpenAI's `conversion_event_setting_ids` replaces the list, so the
+        campaign is read, the ids are added to the ones it has, and the
+        list is written back (one changed in Ads Manager between the read
+        and the write is lost). Without `event_setting_ids`, the ones setup
+        made. `?dry_run=1` answers both lists and sends nothing.
+      operationId: attachAdConnectionCampaignEventSettings
+      parameters:
+        - {name: dry_run, in: query, required: false, schema: {type: string, enum: ["1"]}, description: "Read the object and answer what would change; nothing is sent"}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                event_setting_ids:
+                  type: array
+                  maxItems: 50
+                  items: {type: string}
+      responses:
+        "200":
+          description: What was done (or, with dry_run, would be)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdPlatformChange"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: OpenAI's rate limit; try again in a minute
+        "502":
+          description: OpenAI did not answer or failed; the message is its own
+
+  /ad-connections/{id}/spend:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Ad Connections]
+      summary: Spend, impressions and clicks by campaign, from OpenAI
+      description: |
+        Whole days in the ad account's time zone, `since` to `until` both
+        included (at most 365 days); yesterday there without either. As
+        OpenAI reports it now: spend settles later than clicks. In the ad
+        account's currency (`currency_matches_account` false means not this
+        account's).
+      operationId: getAdConnectionSpend
+      parameters:
+        - {name: since, in: query, required: false, schema: {type: string, format: date}}
+        - {name: until, in: query, required: false, schema: {type: string, format: date}}
+      responses:
+        "200":
+          description: Spend by campaign
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdPlatformSpend"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: OpenAI's rate limit; try again in a minute
+        "502":
+          description: OpenAI did not answer or failed; the message is its own
+
   /destinations:
     get:
       tags: [Destinations]
@@ -18990,6 +19601,65 @@ components:
             revenue:
               type: number
 
+    AdPlatformObject:
+      type: object
+      description: A ChatGPT Ads campaign, ad group or ad as OpenAI describes it now
+      properties:
+        id: {type: string, example: cmpn_101}
+        name: {type: string, nullable: true}
+        status: {type: string, nullable: true, example: active}
+        serving_issues: {type: array, items: {type: string}, example: [campaign_budget_exhausted]}
+        query_string_template: {type: string, nullable: true}
+        budget:
+          type: object
+          description: Campaigns only, in micros of the ad account's currency
+          properties:
+            daily_spend_limit_micros: {type: integer, nullable: true}
+            lifetime_spend_limit_micros: {type: integer, nullable: true}
+        bidding_type: {type: string, nullable: true}
+        start_time: {type: integer, nullable: true}
+        end_time: {type: integer, nullable: true}
+        conversion_event_setting_ids: {type: array, items: {type: string}}
+        review_status: {type: string, nullable: true, description: Ads only, enum: [in_review, rejected, approved]}
+        review_reason: {type: string, nullable: true}
+    AdPlatformChange:
+      type: object
+      properties:
+        dry_run: {type: boolean}
+        unchanged: {type: boolean, description: Nothing needed changing, so nothing was sent}
+        action: {type: string, enum: [pause, activate, set-template, attach-event-settings]}
+        level: {type: string, enum: [campaigns, ad-groups, ads]}
+        record:
+          $ref: "#/components/schemas/AdPlatformObject"
+        change:
+          type: object
+          description: With dry_run, each field that would change, from and to
+          additionalProperties: true
+    AdPlatformSpend:
+      type: object
+      properties:
+        since: {type: string, format: date}
+        until: {type: string, format: date}
+        timezone: {type: string}
+        currency: {type: string}
+        currency_matches_account: {type: boolean}
+        total:
+          type: object
+          properties:
+            impressions: {type: integer}
+            clicks: {type: integer}
+            spend: {type: number}
+        campaigns:
+          type: array
+          items:
+            type: object
+            properties:
+              campaign_id: {type: string}
+              name: {type: string}
+              impressions: {type: integer}
+              clicks: {type: integer}
+              spend: {type: number}
+        note: {type: string}
     AdConnection:
       type: object
       description: An ad platform account reached through its own API. Keys are never served.

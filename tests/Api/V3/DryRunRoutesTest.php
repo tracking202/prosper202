@@ -60,6 +60,16 @@ final class DryRunRoutesTest extends TestCase
     {
         [$reads, $listed] = $this->sides(self::indexSource());
         self::assertSame([
+            'POST /ad-connections/{id}/ad-groups/{objectId}/activate',
+            'POST /ad-connections/{id}/ad-groups/{objectId}/pause',
+            'POST /ad-connections/{id}/ad-groups/{objectId}/template',
+            'POST /ad-connections/{id}/ads/{objectId}/activate',
+            'POST /ad-connections/{id}/ads/{objectId}/pause',
+            'POST /ad-connections/{id}/ads/{objectId}/template',
+            'POST /ad-connections/{id}/campaigns/{objectId}/activate',
+            'POST /ad-connections/{id}/campaigns/{objectId}/event-settings',
+            'POST /ad-connections/{id}/campaigns/{objectId}/pause',
+            'POST /ad-connections/{id}/campaigns/{objectId}/template',
             'POST /clicks/cpc',
             'POST /conversions/subids',
             'POST /conversions/subids/delete',

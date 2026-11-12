@@ -80,8 +80,10 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 	// click filter's five tools (user_id and ids left out, no entry update) and
 	// settings_get add about 5,100; the publisher dimension and its filter
 	// (on report_summary, report_breakdown and click_list) about 800;
-	// landing_page_check about 700.
-	const budget = 100500
+	// landing_page_check about 700. The ChatGPT Ads tools (list, pause, activate,
+	// spend; campaigns only, no level or paging flags) and destination_list add
+	// about 3,400, with the catalogue already within 100 of the old 100,500.
+	const budget = 104000
 	if len(body) > budget {
 		t.Fatalf("the tool list is %d characters, over its %d budget; trim notes or omit flags", len(body), budget)
 	}
@@ -490,7 +492,8 @@ func TestMCPStagedCatalogLeavesOutApplying(t *testing.T) {
 		t.Errorf("a staged server's instructions do not say it only proposes: %q", cat.Instructions)
 	}
 	full, _ := buildMCPCatalog(rootCmd, false, false)
-	if strings.Join(full.StagedExcludes, ",") != "change_apply,change_discard" {
+	// And the ChatGPT Ads writes: they change the platform at once, with nothing to propose.
+	if strings.Join(full.StagedExcludes, ",") != "change_apply,change_discard,ad_campaign_pause,ad_campaign_activate" {
 		t.Errorf("staged_excludes = %q", full.StagedExcludes)
 	}
 }

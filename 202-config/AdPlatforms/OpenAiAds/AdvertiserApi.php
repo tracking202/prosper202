@@ -43,12 +43,25 @@ final class AdvertiserApi
         $this->clock = $clock ?? static fn (): float => microtime(true);
     }
 
-    /** @param array<string, scalar> $query */
+    /** @param array<string, scalar|list<scalar>> $query a list is sent as name[]=a&name[]=b, as OpenAI reads it */
     public function get(#[\SensitiveParameter] string $key, string $path, array $query = []): AdvertiserAnswer
     {
-        $url = self::BASE . ltrim($path, '/') . ($query === [] ? '' : '?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986));
+        $url = self::BASE . ltrim($path, '/') . ($query === [] ? '' : '?' . self::query($query));
 
         return $this->call($key, 'GET', $path, $url, null, null);
+    }
+
+    /** @param array<string, scalar|list<scalar>> $query */
+    public static function query(array $query): string
+    {
+        $pairs = [];
+        foreach ($query as $name => $value) {
+            foreach (is_array($value) ? $value : [$value] as $item) {
+                $pairs[] = rawurlencode($name) . (is_array($value) ? '[]' : '') . '=' . rawurlencode(is_bool($item) ? ($item ? 'true' : 'false') : (string) $item);
+            }
+        }
+
+        return implode('&', $pairs);
     }
 
     /**

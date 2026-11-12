@@ -4,10 +4,14 @@ declare(strict_types=1);
 
 namespace Prosper202\AdPlatforms;
 
-/** A connection request refused for one field, named, with what would be accepted. */
+/**
+ * A connection request refused for one field, named, with what would be
+ * accepted. $platform is the AdvertiserAnswer kind when the platform's answer
+ * is the reason (so the API can say 404, 429 or 502), '' when the request is.
+ */
 final class AdConnectionInputException extends \RuntimeException
 {
-    public function __construct(public readonly string $field, string $message)
+    public function __construct(public readonly string $field, string $message, public readonly string $platform = '')
     {
         parent::__construct($message);
     }
