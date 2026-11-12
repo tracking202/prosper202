@@ -314,11 +314,12 @@ function p202_account_save_currency(\Prosper202\Database\Connection $conn, int $
     // re-priced campaign together. PUT /users/{id}/preferences runs the
     // same two steps (Prosper202\User\CurrencyChange).
     $updates = \Prosper202\User\CurrencyChange::plan($conn, $userId, $currency, $storedCurrency, $rate);
-    $conn->transaction(static function () use ($conn, $userId, $currency, $updates): void {
+    $conn->transaction(static function () use ($conn, $userId, $currency, $storedCurrency, $updates): void {
         $stmt = $conn->prepareWrite('UPDATE `202_users_pref` SET `user_account_currency` = ? WHERE `user_id` = ?');
         $conn->bind($stmt, 'si', [$currency, $userId]);
         $conn->executeUpdate($stmt);
         \Prosper202\User\CurrencyChange::apply($conn, $updates);
+        \Prosper202\User\CurrencyChange::record($conn, $userId, $storedCurrency, $currency, time());
     });
 }
 

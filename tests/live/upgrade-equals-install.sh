@@ -309,7 +309,12 @@ say "5. compare the rows both installs seed"
 #                            its networks' URLs keep converting); a new
 #                            account has no row and reads as `token` (checked
 #                            below)
-ROW_EXEMPT=' 202_users 202_api_keys 202_deployment_secrets 202_users_pref 202_attribution_models 202_attribution_backfill 202_reclick_backfill 202_licence_answers 202_postback_auth '
+#   202_currency_changes     where an account's currency history begins on an
+#                            upgraded install: one 'upgrade' row with its
+#                            currency then, since nothing recorded it before;
+#                            a fresh install's history begins empty, with
+#                            nothing earlier to mark (checked below)
+ROW_EXEMPT=' 202_users 202_api_keys 202_deployment_secrets 202_users_pref 202_attribution_models 202_attribution_backfill 202_reclick_backfill 202_licence_answers 202_postback_auth 202_currency_changes '
 ROWS_COMPARED=0
 ROW_DIFFS=()
 while IFS= read -r table; do
@@ -357,5 +362,11 @@ eq "$(mysql_q -N "$DB_UP" -e "$POSTBACK_AUTH")" "1/1" \
     "the $ORIGIN_VERSION account starts with its postback token not required, and no token or secret minted yet"
 eq "$(mysql_q -N "$DB_FRESH" -e "$POSTBACK_AUTH")" "0/0" \
     "a fresh install's account has no postback auth row, so it requires its token"
+HISTORY="SELECT CONCAT_WS('/', COUNT(*), COALESCE(SUM(kind = 'upgrade' AND from_currency = to_currency), 0), COUNT(DISTINCT user_id)) FROM 202_currency_changes"
+ACCOUNTS="SELECT COUNT(*) FROM 202_users_pref"
+eq "$(mysql_q -N "$DB_UP" -e "$HISTORY")" "$(mysql_q -N "$DB_UP" -e "$ACCOUNTS")/$(mysql_q -N "$DB_UP" -e "$ACCOUNTS")/$(mysql_q -N "$DB_UP" -e "$ACCOUNTS")" \
+    "each $ORIGIN_VERSION account's currency history begins at the upgrade, once, in its currency"
+eq "$(mysql_q -N "$DB_FRESH" -e "$HISTORY")" "0/0/0" \
+    "a fresh install's currency history begins empty"
 
 finish

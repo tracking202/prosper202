@@ -187,14 +187,6 @@ final class HeldReplay
 
     private function accountCurrency(int $userId): string
     {
-        $conn = new Connection($this->db);
-        $stmt = $conn->prepareRead('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1');
-        $conn->bind($stmt, 'i', [$userId]);
-        $row = $conn->fetchOne($stmt);
-        if ($row === null) {
-            throw new \RuntimeException('account ' . $userId . ' has no preferences row to read its currency from');
-        }
-
-        return strtoupper(trim((string) $row['user_account_currency']));
+        return \Prosper202\Conversion\Ledger\RowCurrency::knownOf(new Connection($this->db), $userId);
     }
 }

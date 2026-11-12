@@ -105,6 +105,15 @@ class CampaignsController extends Controller
         $extras = [
             'aff_campaign_time'      => ['type' => 'i', 'value' => time()],
         ];
+        // A campaign is in the account's currency unless the request says
+        // another: the column's default (USD) is no account's choice
+        // (CampaignCurrency::paidIn()).
+        if (!array_key_exists('aff_campaign_currency', $payload) || $payload['aff_campaign_currency'] === null || $payload['aff_campaign_currency'] === '') {
+            $account = \Prosper202\Conversion\Ledger\RowCurrency::ofAccount(new \Prosper202\Database\Connection($this->db), $this->userId);
+            if ($account !== \Prosper202\Conversion\Ledger\RowCurrency::UNKNOWN) {
+                $extras['aff_campaign_currency'] = ['type' => 's', 'value' => $account];
+            }
+        }
         foreach ($this->pendingLinks as $column => $value) {
             $extras[$column] = ['type' => 'i', 'value' => $value];
         }

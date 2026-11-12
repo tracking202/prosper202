@@ -25,10 +25,17 @@ final class CampaignFigures
     ];
 
     /**
+     * The figures of an answer's `other_currencies` (the revenue recorded in
+     * another currency than the account's: how many conversions, and how
+     * much), hidden with the report's or the breakdown's own.
+     */
+    public const array OTHER_CURRENCIES = ['conversions', 'amount'];
+
+    /**
      * A click's and a conversion's money: its cost and what it earned, as
      * the click's conversions panel hides them.
      */
-    public const array RECORD = ['click_cpc', 'click_payout', 'amount', 'ledger_value'];
+    public const array RECORD = ['click_cpc', 'click_payout', 'amount', 'ledger_value', 'stated_amount'];
 
     /**
      * GET /conversions/match-methods' figures: how many conversions each

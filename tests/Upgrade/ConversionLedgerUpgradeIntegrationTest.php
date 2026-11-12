@@ -100,9 +100,15 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
             aff_campaign_id mediumint(8) unsigned NOT NULL AUTO_INCREMENT,
             user_id mediumint(8) unsigned NOT NULL,
             aff_campaign_payout decimal(8,2) NOT NULL,
+            aff_campaign_foreign_payout decimal(8,2) NOT NULL DEFAULT '0.00',
             attribution_model_id int(11) DEFAULT NULL,
             PRIMARY KEY (aff_campaign_id)
         ) ENGINE=InnoDB");
+        // Every upgraded install has its accounts' preferences, and each
+        // campaign's payout under an earlier account currency: the rows here
+        // take their currency from them (_upgrade_ledger_currency_backfill()).
+        $db->query('CREATE TABLE IF NOT EXISTS 202_users_pref (user_id mediumint(8) unsigned NOT NULL,'
+            . " user_account_currency char(3) NOT NULL DEFAULT 'USD', PRIMARY KEY (user_id)) ENGINE=InnoDB");
 
         $rows = [
             // click 1: a network id and two blank-id rows (never deduped)
@@ -254,9 +260,19 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
 
         $reconciler = new SchemaReconciler(static fn (string $sql) => _upgrade_query($sql));
         $this->assertTrue($reconciler->reconcile(ConversionTables::conversionLogs()));
-        // Every column and key the installer declares but user_conv_time, which the 1.9.80 step adds.
+        // Every column and key the installer declares but what the 1.9.80
+        // step adds: each row's currency with what was stated, and two keys.
+        // The reconciler declares the columns as the step adds them itself
+        // (_upgrade_ledger_currency_backfill()), so either leaves the same table.
         $this->assertSame(
-            ['ALTER TABLE `202_conversion_logs` ADD KEY `user_conv_time` (`user_id`,`conv_time`)'],
+            [
+                "ALTER TABLE `202_conversion_logs` ADD COLUMN `currency` char(3) NOT NULL DEFAULT '' AFTER `match_method`",
+                'ALTER TABLE `202_conversion_logs` ADD COLUMN `stated_amount` decimal(11,5) DEFAULT NULL AFTER `currency`',
+                'ALTER TABLE `202_conversion_logs` ADD COLUMN `stated_currency` char(3) DEFAULT NULL AFTER `stated_amount`',
+                "ALTER TABLE `202_conversion_logs` ADD COLUMN `currency_basis` tinyint(1) unsigned NOT NULL DEFAULT '0' AFTER `stated_currency`",
+                'ALTER TABLE `202_conversion_logs` ADD KEY `user_conv_time` (`user_id`,`conv_time`)',
+                'ALTER TABLE `202_conversion_logs` ADD KEY `user_currency_click_time` (`user_id`,`currency`,`click_time`)',
+            ],
             $reconciler->getApplied()
         );
         $this->assertSame([], $reconciler->getUnreconciled());
