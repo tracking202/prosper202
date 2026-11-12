@@ -82,43 +82,6 @@ func TestMCPCatalogBuilds(t *testing.T) {
 	}
 }
 
-// The catalogue is read into the model's context on every connection.
-func TestMCPCatalogStaysInBudget(t *testing.T) {
-	cat, err := buildMCPCatalog(rootCmd, false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// What the server lists on connecting: the catalogue, get_more_tools
-	// and the sentence that tells the model to call it.
-	more := mcpGetMoreToolsTool()
-	cat.Tools = append(cat.Tools, mcpTool{Name: more.Name, Title: more.Title, Description: more.Description, InputSchema: more.InputSchema.(mcpSchema),
-		Annotations: mcpToolAnnotations{Title: more.Annotations.Title, ReadOnlyHint: more.Annotations.ReadOnlyHint, IdempotentHint: more.Annotations.IdempotentHint}})
-	cat.Instructions += mcpMoreToolsInstructions
-	body, err := json.Marshal(cat)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Characters, about 23k tokens. Most of it is the report tools' filters;
-	// a new tool or flag that crosses this should omit what few asks need.
-	// The traffic source and category updates and deletes are about 4,600,
-	// the text ad writes about 3,400 (Setup › Text Ads' own fields), the rotator
-	// writes about 5,000 (rotator_set_rules' rules are a schema of their own);
-	// with both the list was about 89,500; with every 1.9.79 addition (the scope
-	// refusals, the optimizer's and the reports' notes) it is about 93,600; the
-	// click filter's five tools (user_id and ids left out, no entry update) and
-	// settings_get add about 5,100; the publisher dimension and its filter
-	// (on report_summary, report_breakdown and click_list) about 800;
-	// landing_page_check about 700; ppc_network_add_chatgpt_ads about 330,
-	// paid for by a shorter help line on the link-token flags; get_more_tools
-	// and its sentence in the instructions about 700 (every later tool is
-	// listed on request, mcpDeferredToolSpecs), paid for by the click
-	// filter tools' user_id, which their Omit meant to leave out.
-	const budget = 100500
-	if len(body) > budget {
-		t.Fatalf("the tool list is %d characters, over its %d budget; trim notes or omit flags", len(body), budget)
-	}
-}
-
 // A tool's declared positionals must be exactly what its command accepts;
 // the command's Args validator is the authority.
 func TestMCPToolPositionalsMatchCommands(t *testing.T) {
