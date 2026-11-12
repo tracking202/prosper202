@@ -879,8 +879,9 @@ converts money: for a refund Shopify states in another currency
 `--currency` with the account's currency. `close`
 removes a refund with nothing recorded and asks first (`--force` skips the
 question). These are the panel above Setup › Inbound Log; `list` needs a role
-with access to the Setup section, `record` and `close` the Update section
-too.
+with access to the Setup section or to Account › API Integrations, `record`
+and `close` the Setup and Update sections together, or API Integrations
+alone (the role that runs the Shopify connection).
 
 ### Offline conversion files for Google Ads and Microsoft Advertising
 

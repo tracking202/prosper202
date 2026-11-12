@@ -382,7 +382,10 @@ and its amount box is left empty for what it returned in your currency.
 **Close** removes a refund from the list with nothing recorded (no money
 went back), and it stays closed if Shopify sends the refund again. A refund recorded there is not recorded again if Shopify settles
 it later. Recording or closing needs a role with access to the Update
-section. The same list and actions are `GET /conversions/shopify-refunds`
+section beside Setup, or to Account › API Integrations: the person who runs
+the Shopify connection sees, records and closes these refunds from the
+card's link even without the Setup section, and is shown only them, not
+the rest of the log. The same list and actions are `GET /conversions/shopify-refunds`
 and its `record` and `close` routes in the API, and `p202 conversion
 shopify-refunds` in the CLI. The amount offered is what the refund returns
 as far as is known, less any transaction Shopify reported as failed.

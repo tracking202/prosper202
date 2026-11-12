@@ -250,6 +250,15 @@ case "$ask" in
         printf 'Paste this right above the </body> tag of the EVAL LP A page (only that page), per `p202 landing-page code %s`:\n\n%s\n\nUse this as the offer button'"'"'s link (it records the click leaving for the offer):\n%s\n' \
             "$id" "$(printf '%s' "$code" | jq -r '.data.loader')" "$(printf '%s' "$code" | jq -r '.data.outbound_link')"
         ;;
+    *"tracking code installed on the EVAL LP A"*)
+        # The server's check, read as it answered: a page checked moments
+        # ago is that check's answer (fetched false), which is said as such.
+        id=$(p202 landing-page list --all --json | jq -r '.data[] | select(.landing_page_nickname=="EVAL LP A") | .landing_page_id' | head -1)
+        out=$(p202 landing-page check "$id" --json)
+        printf 'Per `p202 landing-page check %s`: %s. %s %s\n' "$id" \
+            "$(printf '%s' "$out" | jq -r '.data.status')" "$(printf '%s' "$out" | jq -r '.data.message')" \
+            "$(printf '%s' "$out" | jq -r 'if .data.fetched == false then .data.note else "The page was fetched just now." end')"
+        ;;
     *"EVAL Adv LP"*)
         # An advanced page's code exists only for its offers, in the page's order.
         id=$(p202 landing-page list --all --json | jq -r '.data[] | select(.landing_page_nickname=="EVAL Adv LP") | .landing_page_id' | head -1)

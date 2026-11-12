@@ -23,7 +23,11 @@ $p202E = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTE
 // label, path, the page names it is current for ('' is the section index)
 $p202StripItems = [];
 $p202StripLabel = '';
-if ($p202Nav2 === 'setup') {
+// A role without Setup reaches one Setup page (the Shopify refunds of the
+// Inbound Log, RefundAccess); every other entry would be a dead end for it.
+if ($p202Nav2 === 'setup' && isset($userObj) && !$userObj->hasPermission('access_to_setup_section')) {
+    $p202StripItems = [];
+} elseif ($p202Nav2 === 'setup') {
     $p202StripLabel = 'Setup';
     $p202StripItems = [
         ['Traffic Sources', 'tracking202/setup/ppc_accounts.php', ['ppc_accounts.php', '']],

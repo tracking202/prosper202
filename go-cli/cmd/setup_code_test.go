@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"p202/internal/api"
 )
 
 // setupServer answers the Setup endpoints with fixed bodies and records every
@@ -374,6 +376,49 @@ func TestLandingPageCheckIsNotStaged(t *testing.T) {
 	}
 	if len(*seen) != 1 || (*seen)[0].Query.Get("staged") != "" {
 		t.Fatalf("requests = %+v, want one POST without staged", *seen)
+	}
+}
+
+// A repeat inside the server's cooldown is the last check's answer, and the
+// output says so; past the key's limit the 429 says when to try again.
+func TestLandingPageCheckSaysWhenItAnsweredFromTheLastCheck(t *testing.T) {
+	newSetupServer(t, setupFeatures, func(r *http.Request) (int, string) {
+		return 200, `{"data":{"landing_page_id":12,"landing_page_url":"https://lp.example/spring","status":"absent",` +
+			`"found":false,"message":"The code was not found.","fetched":false,"fetch_again_in_seconds":21,` +
+			`"note":"This page was checked 9 seconds ago, and that check is the answer."}}`
+	})
+
+	stdout, _, err := executeCommand("landing-page", "check", "12")
+	if err != nil {
+		t.Fatalf("landing-page check: %v", err)
+	}
+	if !strings.Contains(stdout, "checked 9 seconds ago") {
+		t.Errorf("output lacks the note:\n%s", stdout)
+	}
+}
+
+func TestLandingPageCheckPastTheKeysLimitSaysWhenToTryAgain(t *testing.T) {
+	newSetupServer(t, setupFeatures, func(r *http.Request) (int, string) {
+		return 429, `{"error":true,"status":429,"message":"This API key has had 10 landing pages fetched in the last 60 seconds,` +
+			` the most it may: nothing was fetched. Try again in 37 seconds.","retry_after_seconds":37,` +
+			`"rate_limit":{"limit":10,"window_seconds":60,"per":"api_key"}}`
+	})
+
+	_, _, err := executeCommand("landing-page", "check", "12", "--json")
+	if err == nil {
+		t.Fatal("a refused check was reported as done")
+	}
+	if code := exitCodeForError(err); code != ExitValidation {
+		t.Errorf("exit %d, want %d", code, ExitValidation)
+	}
+	hint := hintFor(err)
+	for _, want := range []string{"Wait 37 seconds", "`p202 landing-page check 12`", "10 pages every 60 seconds", "last 30 seconds"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("hint %q lacks %q", hint, want)
+		}
+	}
+	if got := hintFor(&api.APIError{Status: 429, Raw: map[string]interface{}{"retry_after_seconds": float64(12)}}); !strings.Contains(got, "Wait 12 seconds") {
+		t.Errorf("class-wide 429 hint = %q, want the server's wait", got)
 	}
 }
 

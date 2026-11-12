@@ -166,7 +166,7 @@ func shopifyRefundError(err error) error {
 	}
 	switch apiErr.Status {
 	case 403:
-		return withHint(err, "Listing needs a role with access to the Setup section; recording or closing needs the Update section too. Use a key of such a role.")
+		return withHint(err, "Listing needs a role with access to the Setup section or to Account > API Integrations; recording or closing needs API Integrations, or Setup and Update together. `p202 user role list` shows the roles; use a key of such a role.")
 	case 404:
 		return withHint(err, "The refund is not one waiting to be recorded (recorded or closed already, or another account's). `p202 conversion shopify-refunds list` shows the ones that are.")
 	case 422:

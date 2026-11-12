@@ -313,6 +313,9 @@ func HintFor(err error) string {
 		case apiErr.Status == 400 || apiErr.Status == 422:
 			return "The server rejected the request values; fix what the message names and retry (`--help` lists the flags)."
 		case apiErr.Status == 429:
+			if seconds, ok := apiErr.Raw["retry_after_seconds"].(float64); ok && seconds >= 1 {
+				return fmt.Sprintf("Rate limited: nothing was done. Wait %d seconds (the server's Retry-After), then retry; reduce --concurrency for bulk operations.", int(seconds))
+			}
 			return "Rate limited. Wait and retry with backoff; reduce --concurrency for bulk operations."
 		// The files were deployed and the upgrade has not run (the message
 		// names both versions); `system health` answers healthy meanwhile.

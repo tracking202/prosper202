@@ -48,6 +48,31 @@ func setupMachineOutput() bool {
 // from a server that does not advertise the Setup API is that server's age,
 // not a wrong id, and the class-wide "run list" hint would send the caller
 // looking for an id that is fine.
+// landingPageCheckLimitHint is the next step for a check refused by the
+// server's per-key limit (429): when to run it again, from the answer's own
+// retry_after_seconds and rate_limit. "" for any other error.
+func landingPageCheckLimitHint(err error, id string) string {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 429 {
+		return ""
+	}
+	wait := "the seconds the message names"
+	if seconds, ok := apiErr.Raw["retry_after_seconds"].(float64); ok && seconds >= 1 {
+		wait = fmt.Sprintf("%d seconds", int(seconds))
+	}
+	limit := ""
+	if rate, ok := apiErr.Raw["rate_limit"].(map[string]interface{}); ok {
+		if n, ok := rate["limit"].(float64); ok && n >= 1 {
+			if window, ok := rate["window_seconds"].(float64); ok && window >= 1 {
+				limit = fmt.Sprintf(" (%d pages every %d seconds)", int(n), int(window))
+			}
+		}
+	}
+	return fmt.Sprintf("Nothing was fetched: this API key has had as many landing pages fetched as it may%s. "+
+		"Wait %s, then run `p202 landing-page check %s` again. A page checked in the last 30 seconds is answered "+
+		"from that check at once, without counting.", limit, wait, id)
+}
+
 func setupRequestError(c *api.Client, err error, page string) error {
 	var apiErr *api.APIError
 	if !errors.As(err, &apiErr) {
@@ -206,6 +231,9 @@ func newLandingPageCheckCmd(entity crudEntity) *cobra.Command {
 			"The answer is kept, and Setup > Landing Pages shows it beside the page. Only public\n" +
 			"addresses are fetched. Code a tag manager adds after the page loads is not seen.\n" +
 			"The command exits 0 whatever was found; read `found` or `status` under --json.\n" +
+			"A page checked in the last 30 seconds is answered from that check (`fetched: false`,\n" +
+			"with `fetch_again_in_seconds`) rather than fetched again. Each API key may have 10 pages\n" +
+			"fetched a minute; past that the server answers 429 and the error says when to try again.\n" +
 			"Accepts the internal landing_page_id, or the public id the code carries (lpip=).\n" +
 			"Needs a role with access_to_setup_section; a read-only key may run it.",
 		Example: "  p202 landing-page check 12\n" +
@@ -229,6 +257,9 @@ func newLandingPageCheckCmd(entity crudEntity) *cobra.Command {
 				}
 			}
 			if err != nil {
+				if hint := landingPageCheckLimitHint(err, id); hint != "" {
+					return withHint(err, "%s", hint)
+				}
 				return setupRequestError(c, err, "Setup > Get LP Code")
 			}
 			if setupMachineOutput() || quietOutput {
@@ -241,6 +272,7 @@ func newLandingPageCheckCmd(entity crudEntity) *cobra.Command {
 					URL           string `json:"landing_page_url"`
 					Status        string `json:"status"`
 					Message       string `json:"message"`
+					Note          string `json:"note"`
 				} `json:"data"`
 			}
 			if err := json.Unmarshal(data, &check); err != nil || check.Data.Status == "" {
@@ -249,6 +281,9 @@ func newLandingPageCheckCmd(entity crudEntity) *cobra.Command {
 					Hint:    "Check the server with `p202 system health`; rerun with --json to see what it sent."}
 			}
 			fmt.Printf("Landing page %d (%s): %s\n%s\n", check.Data.LandingPageID, check.Data.URL, check.Data.Status, check.Data.Message)
+			if check.Data.Note != "" {
+				fmt.Println(check.Data.Note)
+			}
 			return nil
 		},
 	}

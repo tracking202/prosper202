@@ -20,6 +20,7 @@ use Api\V3\InsufficientScopeException;
 use Api\V3\RequestContext;
 use Api\V3\Router;
 use Api\V3\Exception\ConflictException;
+use Api\V3\Exception\TooManyRequestsException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\PathId;
@@ -495,11 +496,17 @@ try {
         // /conversions routes, whose GET /conversions/{id} would otherwise
         // answer GET /conversions/postback-code. SetupRoutesPermissionTest
         // holds all of this.
-        $router->group('', function (Router $r) use ($crud, $queryParams, $payload, $auth) {
+        $router->group('', function (Router $r) use ($crud, $queryParams, $payload, $auth, $stateStore) {
             $code = \Api\V3\Controllers\SetupCodeController::class;
             $r->get('/landing-pages/{id}/code', fn($ctx) => $crud($code)->landingPageCode(PathId::of($ctx), $queryParams));
             // "Check my page": fetches the page and keeps the answer. Not stageable (it changes no setup), and no preview.
-            $r->post('/landing-pages/{id}/check', fn($ctx) => $crud($code)->landingPageCheck(PathId::of($ctx), $queryParams, $payload));
+            // Counted by the key that authenticated (LandingPageCheckLimit): a read-only key is no fetch loop.
+            $r->post('/landing-pages/{id}/check', fn($ctx) => $crud($code)->landingPageCheck(
+                PathId::of($ctx),
+                $queryParams,
+                $payload,
+                new \Api\V3\Support\LandingPageCheckLimit($stateStore, $auth->apiKeyRef())
+            ));
             // The postback token rides in the URLs only for a key that may write conversions.
             $r->get('/conversions/postback-code', fn() => $crud($code)->postbackCode($queryParams, null, $auth->hasScope('conversions:write')));
         }, [$setupSection]);
@@ -599,23 +606,34 @@ try {
                     $actorUserId
                 )
             ))->list($queryParams));
-            // The Shopify refunds Setup › Inbound Log lists above the log. Before /{id}.
-            $r->get('/shopify-refunds', fn() => (new \Api\V3\Controllers\ShopifyRefundsController($db, $actorUserId))
-                ->list($queryParams));
         }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'access_to_setup_section'); }]);
-        // Recording a refund writes a conversion, so it asks what recording one asks too, as the page does.
+        // The Shopify refunds Setup › Inbound Log lists above the log, asked
+        // as the page asks (RefundAccess): seen by a Setup role or the role
+        // that runs the Shopify connection on Account › API Integrations;
+        // recorded or closed, which writes the sale's ledger, by Setup with
+        // Update, or by that role. Before /{id}.
+        $refundAccess = static fn (string $permission): bool => $auth->hasPermission($db, $permission);
+        $shopifyRefundsSeen = static function () use ($refundAccess): void {
+            if (!\Prosper202\PaymentNotification\Shopify\RefundAccess::maySee($refundAccess)) {
+                throw new AuthException(\Prosper202\PaymentNotification\Shopify\RefundAccess::SEE_REFUSED, 403);
+            }
+        };
+        $shopifyRefundsSettled = static function () use ($refundAccess): void {
+            if (!\Prosper202\PaymentNotification\Shopify\RefundAccess::maySettle($refundAccess)) {
+                throw new AuthException(\Prosper202\PaymentNotification\Shopify\RefundAccess::SETTLE_REFUSED, 403);
+            }
+        };
+        $router->group('/conversions', function (Router $r) use ($db, $actorUserId, $queryParams) {
+            $cls = \Api\V3\Controllers\ShopifyRefundsController::class;
+            $r->get('/shopify-refunds', fn() => (new $cls($db, $actorUserId))->list($queryParams));
+        }, [$shopifyRefundsSeen]);
         $router->group('/conversions', function (Router $r) use ($db, $actorUserId, $payload) {
             $cls = \Api\V3\Controllers\ShopifyRefundsController::class;
             $r->post('/shopify-refunds/{id}/record', fn($ctx) => (new $cls($db, $actorUserId))
                 ->takeBack(PathId::of($ctx), $payload));
             $r->post('/shopify-refunds/{id}/close', fn($ctx) => (new $cls($db, $actorUserId))
                 ->close(PathId::of($ctx), $payload));
-        }, [
-            static function () use ($auth, $db): void {
-                $auth->requirePermission($db, 'access_to_setup_section');
-            },
-            $updateSection,
-        ]);
+        }, [$shopifyRefundsSettled]);
         $router->group('/conversions', function (Router $r) use ($crud, $queryParams, $campaignFigures, $recordMoney, $matchFigures) {
             $cls = \Api\V3\Controllers\ConversionsController::class;
             $r->get('',        fn() => $campaignFigures($crud($cls)->list($queryParams), $recordMoney));
@@ -1939,6 +1957,9 @@ try {
 } catch (WriteCommittedException $e) {
     error_log(p202UncaughtLogLine('API v3 write committed, then failed', $e));
     Bootstrap::errorResponse($e->getMessage(), $e->getHttpStatus());
+} catch (TooManyRequestsException $e) {
+    header('Retry-After: ' . $e->retryAfter);
+    Bootstrap::errorResponse($e->getMessage(), 429, ['retry_after_seconds' => $e->retryAfter] + $e->getDetails());
 } catch (HttpException $e) {
     $code = $e->getHttpStatus();
     $message = $e->getMessage();

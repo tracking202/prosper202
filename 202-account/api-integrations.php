@@ -1500,6 +1500,7 @@ template_top('API Integrations');
 		}
 	}
 	$shopifyLog = $base . 'tracking202/setup/inbound_log.php';
+	$shopifyLogLink = static fn (string $to, string $text): string => $userObj->hasPermission('access_to_setup_section') ? '<a href="' . $e($shopifyLog . '?endpoint=shopify' . $to) . '">' . $e($text) . '</a>' : '';
 	$shopifyAgo = static fn (int $at): string => \Prosper202\PaymentNotification\Shopify\WebhookStatus::ago($at);
 	?>
 	<div class="col-12 col-lg-6">
@@ -1525,8 +1526,7 @@ template_top('API Integrations');
 					total, and take it back on a refund, from Shopify’s webhooks.</p>
 				<?php echo $currencyNotice('shopify', 'Shopify'); ?>
 				<?php if ($shopifyConnected && $shopifyStatus === null) { ?>
-					<p class="text-secondary">Whether webhooks are arriving could not be read just now.
-						<a href="<?php echo $e($shopifyLog . '?endpoint=shopify'); ?>">Setup › Inbound Log</a> lists them.</p>
+					<p class="text-secondary">Whether webhooks are arriving could not be read just now. <?php echo $shopifyLogLink('', 'Inbound Log'); ?></p>
 				<?php } elseif ($shopifyStatus !== null) { ?>
 					<ul class="list-unstyled mb-3" id="shopify-status">
 						<?php if ($shopifyStatus->unverifiedAt !== null) { ?>
@@ -1535,7 +1535,7 @@ template_top('API Integrations');
 								store, or from another store pointed at this install. If your orders are not
 								arriving, the secret saved here is not the one Shopify signs with: copy it again
 								from Settings › Notifications › Webhooks and save it below.
-								<a href="<?php echo $e($shopifyLog . '?endpoint=shopify&outcome=unverified'); ?>">See it in the Inbound Log</a></li>
+								<?php echo $shopifyLogLink('&outcome=unverified', 'See it in the log'); ?></li>
 						<?php } ?>
 						<?php if ($shopifyStatus->last === null) { ?>
 							<li>No webhook signed with your secret has arrived yet. Shopify sends one when an order is
@@ -1544,7 +1544,7 @@ template_top('API Integrations');
 							<li>Last webhook: <?php echo $e(trim(\Prosper202\PaymentNotification\Shopify\WebhookStatus::topicName($shopifyStatus->last['topic'])
 								. ' ' . $shopifyAgo($shopifyStatus->last['at']))); ?>,
 								<?php echo $e(str_replace('_', ' ', $shopifyStatus->last['outcome'])); ?>.
-								<a href="<?php echo $e($shopifyLog . '?endpoint=shopify'); ?>">Inbound Log</a></li>
+								<?php echo $shopifyLogLink('', 'Inbound Log'); ?></li>
 							<li><?php echo $shopifyStatus->lastOrderAt === null
 								? 'No order has been recorded yet: an order is recorded when it carries a click id (step 1).'
 								: 'Last order recorded ' . $e($shopifyAgo($shopifyStatus->lastOrderAt)) . '.'; ?></li>

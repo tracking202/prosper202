@@ -821,6 +821,7 @@ Landing page code (Setup > Get LP Code):
 ```
 p202 landing-page code <id> [--offer campaign:N|rotator:N]... [--json]
 p202 landing-page check <id> [--json]   # the server fetches the page: data.found, data.status, data.message
+                                        # checked <30 s ago: that check, data.fetched false; 10 fetches/min per key, then 429
 ```
 
 `data`: `landing_page_type` (`simple`/`advanced`), `base_url`, `loader`,
@@ -908,7 +909,8 @@ p202 conversion inbound-log [--outcome refused|accepted|<outcome>] [--endpoint p
                        [--limit 1-500] [--before ID] [--json]
                        # Setup › Inbound Log: postbacks, pixels and IPNs received, newest first, with why each was refused
 p202 conversion shopify-refunds list [--json]
-                       # Shopify refunds still counted in a sale: waiting to settle or refused (Setup › Inbound Log)
+                       # Shopify refunds still counted in a sale: waiting to settle or refused (Setup › Inbound Log);
+                       # a Setup role lists them, Setup+Update or Account › API Integrations records and closes
 p202 conversion shopify-refunds record <refund-id> --amount F [--click-id N] [--currency CODE] [--json]
                        # reverse the order's sale by the refund, at most what is left; --click-id when the order is on several clicks;
                        # a refund in another currency (other_currency): convert --amount yourself and pass --currency <account_currency>
