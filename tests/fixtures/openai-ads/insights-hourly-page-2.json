@@ -4,8 +4,8 @@
   "data": [
     {
       "id": "start=@H1@:end=@H2@:entity_id=ad_501",
-      "start_time": @H1@,
-      "end_time": @H2@,
+      "start_time": "@H1@",
+      "end_time": "@H2@",
       "readable_time": "hour 1",
       "campaign_id": "cmpn_101",
       "ad_group_id": "adgrp_201",
@@ -16,8 +16,8 @@
     },
     {
       "id": "start=@H1@:end=@H2@:entity_id=ad_503",
-      "start_time": @H1@,
-      "end_time": @H2@,
+      "start_time": "@H1@",
+      "end_time": "@H2@",
       "readable_time": "hour 1",
       "campaign_id": "cmpn_102",
       "ad_group_id": null,
