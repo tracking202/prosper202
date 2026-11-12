@@ -731,6 +731,37 @@ case "$ask" in
         printf 'Saved your Shopify webhook secret (stored: %s, per `p202 system integrations`). In Shopify under Settings > Notifications > Webhooks, point the Order payment and Refund create JSON webhooks at %s, and add the click id to the cart as the line item property t202subid, filled from the tracker'"'"'s [[subid]], so each order is recorded on the click that sent the buyer.\n' \
             "$(printf '%s' "$entry" | jq -r '.secret_stored')" "$(printf '%s' "$entry" | jq -r '.url')"
         ;;
+    *"Shopify refund"*"not recorded"*)
+        # Read the refunds left to settle, then record each for the amount it
+        # states. One stated in another currency, or on an order with more
+        # than one click, needs an answer only the owner has: reported, never
+        # guessed. Nothing is closed.
+        list=$(p202 conversion shopify-refunds list --json)
+        rows=$(printf '%s' "$list" | jq -r '.data[] | [.refund_id, .amount, .amount_currency, .other_currency, (.click_ids | length), (.currency // "")] | @tsv')
+        recorded="" held=""
+        tab=$(printf '\t')
+        while IFS="$tab" read -r id amount cur other clicks stated; do
+            [ -n "$id" ] || continue
+            if [ "$other" = true ]; then
+                held="$held; refund $id states its amount in $stated and its sale is in $cur: tell me what it returned in $cur"
+            elif [ "$clicks" -gt 1 ]; then
+                held="$held; refund $id is on an order recorded on $clicks clicks: tell me which click it takes back from"
+            else
+                out=$(p202 conversion shopify-refunds record "$id" --amount "$amount" --json)
+                recorded="$recorded; refund $id: the order's sale was $(printf '%s' "$out" | jq -r '.data.outcome') by $amount $cur ($(printf '%s' "$out" | jq -r '.data.message'))"
+            fi
+        done <<EOF
+$rows
+EOF
+        if [ -z "$rows" ]; then
+            printf 'No Shopify refund is waiting to be recorded, per `p202 conversion shopify-refunds list`.\n'
+        else
+            printf 'Per `p202 conversion shopify-refunds list`, %s Shopify refund(s) were not recorded.' "$(printf '%s' "$list" | jq -r '.data | length')"
+            [ -z "$recorded" ] || printf ' Recorded with `p202 conversion shopify-refunds record`: %s.' "${recorded#; }"
+            [ -z "$held" ] || printf ' Not recorded yet: %s.' "${held#; }"
+            printf '\n'
+        fi
+        ;;
     *JVZoo*"Affiliate IPN"*)
         # One JVZIPN key verifies both JVZoo URLs; an affiliate pastes the
         # affiliate one, whose click is the tid. The reply never repeats the key.
@@ -896,6 +927,11 @@ case "$ask" in
             "$(if [ -n "$rows" ]; then printf 'these traffic sources lose money: %s' "$rows"; else printf 'no traffic source loses money'; fi)"
         ;;
     *)
+        # An ask with no branch of its own. scripts/check-eval-reference-answers.py
+        # sends every case's ask through here and refuses any that land.
+        if [ -n "${P202_REFERENCE_AGENT_FALLTHROUGH:-}" ]; then
+            : > "$P202_REFERENCE_AGENT_FALLTHROUGH"
+        fi
         summary=$(p202 report summary --period today --json)
         clicks=$(printf '%s' "$summary" | jq -r '.data.total_clicks')
         net=$(printf '%s' "$summary" | jq -r '.data.total_net')
