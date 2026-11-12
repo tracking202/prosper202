@@ -185,6 +185,22 @@ final class RefundSettlementStore
     }
 
     /**
+     * Whether the refund is settled: recorded, or closed by hand, with no
+     * reason left (a held copy of it records nothing more, HeldReplay).
+     */
+    public function settled(int $userId, string $refundId): bool
+    {
+        self::id($refundId);
+        $stmt = $this->conn->prepareWrite(
+            'SELECT 1 FROM 202_shopify_pending_refunds WHERE user_id = ? AND refund_id = ?'
+            . ' AND completed_at IS NOT NULL AND refused_reason IS NULL LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'is', [$userId, $refundId]);
+
+        return $this->conn->fetchOne($stmt) !== null;
+    }
+
+    /**
      * Closes a refund an operator settled or closed by hand: nothing is left
      * to list. Answers whether the refund was one still listed.
      */

@@ -76,12 +76,13 @@ final class ShopifyRefundsController
         PayloadKeys::refuseUnknown($payload, ['amount', 'click_id', 'currency'], 'a Shopify refund to record');
         $errors = [];
         $amount = $payload['amount'] ?? null;
-        // A decimal string or a JSON number; a float is read at the five decimals a payout holds.
-        if (is_int($amount) || is_float($amount)) {
+        // A decimal string or a JSON number with at most the five decimals a
+        // payout holds: a sixth is refused, never rounded away (#4).
+        if (is_int($amount) || (is_float($amount) && round($amount, 5) == $amount)) {
             $amount = rtrim(rtrim(number_format((float) $amount, 5, '.', ''), '0'), '.');
         }
         if (!is_string($amount) || preg_match('/^\d{1,6}(?:\.\d{1,5})?$/D', $amount) !== 1 || (float) $amount <= 0) {
-            $errors['amount'] = 'Required: what the refund returned, in the account\'s currency, such as 12.50:'
+            $errors['amount'] = 'Required: what the refund returned, in its sale\'s currency, such as 12.50:'
                 . ' more than 0, at most 999999.99999';
         }
         $clickId = null;
@@ -94,7 +95,7 @@ final class ShopifyRefundsController
         }
         $currency = $payload['currency'] ?? null;
         if ($currency !== null && (!is_string($currency) || preg_match('/^[A-Za-z]{3}$/D', $currency) !== 1)) {
-            $errors['currency'] = 'The currency the amount is stated in, such as USD: the account\'s currency';
+            $errors['currency'] = 'The currency the amount is stated in, such as USD: the refund\'s amount_currency';
             $currency = null;
         }
         PayloadKeys::refuse($errors);
@@ -140,6 +141,10 @@ final class ShopifyRefundsController
         PayloadKeys::refuseUnknown($payload, [], 'closing a Shopify refund');
         $this->mustBeListed($refundId);
         if (!$this->refunds->close($this->userId, (string) $refundId, RefundsToSettle::THE_API)) {
+            $refusal = $this->refunds->closeRefusal($this->userId, (string) $refundId);
+            if ($refusal !== null) {
+                throw new ConflictException($refusal, ['outcome' => 'waiting_for_order']);
+            }
             throw new NotFoundException('Shopify refund ' . $refundId . ' was recorded or closed already.');
         }
 
