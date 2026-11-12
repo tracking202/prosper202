@@ -99,6 +99,10 @@ final class UserTables
      * turns the guess on (Prosper202\Conversion\SameIpFallback). The 1.9.78
      * -> 1.9.79 rung turns it on for every account already there, which is
      * how they converted until then (_upgrade_same_ip_fallback()).
+     *
+     * user_pref_click_id_params (1.9.80) is the account's own names for the
+     * postback parameter a network sends an ad click id back in, '' for none
+     * (Prosper202\Conversion\ClickIdParameters).
      */
     public static function usersPref(): SchemaDefinition
     {
@@ -130,6 +134,7 @@ final class UserTables
                 `user_pref_ip` varchar(100) DEFAULT NULL,
                 `user_pref_dynamic_bid` tinyint(1) NOT NULL DEFAULT '0',
                 `user_pref_same_ip_fallback` tinyint(1) NOT NULL DEFAULT '0',
+                `user_pref_click_id_params` varchar(255) NOT NULL DEFAULT '',
                 `user_pref_referer` varchar(100) DEFAULT NULL,
                 `user_pref_keyword` varchar(100) DEFAULT NULL,
                 `user_pref_breakdown` varchar(100) NOT NULL DEFAULT 'day',

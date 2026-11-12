@@ -238,7 +238,7 @@ final class MatchMethodIntegrationTest extends TestCase
                 $api->list(['match_method' => $bad]);
                 self::fail("match_method=$bad was not refused");
             } catch (ValidationException $e) {
-                self::assertStringContainsString('click_id, cookie, visitor_id, same_ip, unknown', (string) json_encode($e->getFieldErrors()));
+                self::assertStringContainsString('click_id, ad_click_id, cookie, visitor_id, same_ip, unknown', (string) json_encode($e->getFieldErrors()));
             }
         }
     }
@@ -311,8 +311,9 @@ final class MatchMethodIntegrationTest extends TestCase
             '2 Camp 2 unknown: 1 conversions, 1 counted, 20.00',
         ], $rows, 'the replaced sale counts nothing, the reversal nets under its own method, the deleted row and the other account\'s are not there');
         self::assertSame(MatchMethod::values(), array_column($answer['totals'], 'match_method'), 'every method has a total');
-        self::assertSame([1, 1, 1, 1, 1], array_column($answer['totals'], 'conversions'));
-        self::assertSame([-7.0, 10.0, 3.0, 7.0, 20.0], array_column($answer['totals'], 'income'));
+        // ad_click_id, which no conversion here was found by, has its total too.
+        self::assertSame([1, 0, 1, 1, 1, 1], array_column($answer['totals'], 'conversions'));
+        self::assertSame([-7.0, 0.0, 10.0, 3.0, 7.0, 20.0], array_column($answer['totals'], 'income'));
         self::assertSame(MatchMethod::values(), $answer['match_methods']);
 
         self::assertSame([2, 2], array_column($api->matchMethods(['campaign_id' => '2'])['data'], 'campaign_id'), 'campaign_id narrows to the campaign');

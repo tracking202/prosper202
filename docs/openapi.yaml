@@ -2719,8 +2719,9 @@ paths:
         The account's live conversions grouped by campaign and by
         `match_method`, how each one's click was found: `click_id` (the
         request named it: a subid, ClickBank's tracking code, the API or an
-        upload line, an app install's token), `cookie` (a tracking cookie
-        named it), `visitor_id` (the landing-page script's visitor id),
+        upload line, an app install's token), `ad_click_id` (a global
+        postback with no SubID sent back an ad platform's click id that a
+        click carries), `cookie` (a tracking cookie named it), `visitor_id` (the landing-page script's visitor id),
         `same_ip` (nothing named a click: the latest click from the
         visitor's address) or `unknown` (recorded before 1.9.79).
 
@@ -14762,13 +14763,16 @@ components:
       description: >-
         How the conversion's click was found. click_id is the request naming
         it (a subid or sid, ClickBank's tracking code, the API's or an upload
-        line's click id, an app install's token); cookie a tracking cookie
+        line's click id, an app install's token); ad_click_id an ad platform's
+        click id (gclid, gbraid, wbraid, ttclid, msclkid, fbclid) that a
+        global postback with no SubID sent back and a click carries (one
+        visitor's latest click on one campaign); cookie a tracking cookie
         naming it; visitor_id the landing-page script's visitor id, on the
         click it was last seen on; same_ip the latest click from the
         visitor's address when nothing named one; unknown a conversion
         recorded before 1.9.79, the value carried in from before the ledger,
         or a goal reached by an event stored before then.
-      enum: [click_id, cookie, visitor_id, same_ip, unknown]
+      enum: [click_id, ad_click_id, cookie, visitor_id, same_ip, unknown]
 
     ConversionMatchMethodRow:
       type: object
@@ -14910,7 +14914,7 @@ components:
           $ref: "#/components/schemas/MatchMethod"
         match_method_label:
           type: string
-          description: The method in words (Click id, Cookie, Visitor id, Same IP, Unknown).
+          description: The method in words (Click id, Ad click id, Cookie, Visitor id, Same IP, Unknown).
         linked_to:
           type: object
           nullable: true
@@ -16892,6 +16896,9 @@ components:
           type: integer
           enum: [0, 1]
           description: Whether a pixel that names no click may credit the latest click from the visitor's IP address.
+        user_pref_click_id_params:
+          type: string
+          description: The postback parameters the account's networks send an ad click id back in, comma-separated; empty for none.
         user_daily_email:
           type: string
           description: >-
@@ -16958,6 +16965,18 @@ components:
             made from 1.9.79 on starts at 0, one from before the upgrade at 1.
             Never made for a visitor given no p202vid cookie (the privacy
             setting, a p202_consent other than 1, a campaign's identity_signals 0).
+        user_pref_click_id_params:
+          type: string
+          maxLength: 255
+          description: >-
+            The postback parameters the account's networks send an ad click id
+            back in, comma-separated (aff_sub3), at most 5; "" for none. Read
+            by the global postback when its SubID is empty or unfilled, and
+            looked up among this account's clicks as every kind of ad click
+            id (match_method ad_click_id). gclid, gbraid, wbraid, msclkid,
+            fbclid and ttclid are read under their own names without being
+            listed, and are refused here, as are the parameters a postback
+            already reads.
         user_pref_cloak_referer: {type: string, enum: [origin, never]}
         user_pref_ad_settings: {type: string, enum: [show_all, hide_login, hide_all]}
         user_account_currency:

@@ -146,8 +146,8 @@ var clickConversionsCmd = &cobra.Command{
 	Long: `Lists every conversion recorded on the click — counted, unpaid, superseded,
 deleted and reversals alike — with its amount, what produced it (source), what
 that is (a goal and version, an upload, the conversion a reversal nets, the API
-key that wrote it), how its click was found (matched_by: click_id, cookie,
-visitor_id, same_ip or unknown), its transaction id, and whether it counts
+key that wrote it), how its click was found (matched_by: click_id, ad_click_id,
+cookie, visitor_id, same_ip or unknown), its transaction id, and whether it counts
 toward the click's value, with the reason when it does not.
 
 The table shows one line per conversion and ends with the click's value; --json

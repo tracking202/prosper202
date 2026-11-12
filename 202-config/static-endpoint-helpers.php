@@ -800,6 +800,139 @@ if (!function_exists('p202ParseClickId')) {
     }
 }
 
+if (!function_exists('p202ClickByAdClickId')) {
+    /**
+     * The click a server postback means when it names none: the one click
+     * carrying an ad click id it sends back (Prosper202\Click\ClickByAdClickId),
+     * under the id's own name (gclid, ...) or in a parameter an account
+     * lists (ClickIdParameters). Asked only where the SubID is missing:
+     * subid and sid each absent, blank or the network's unfilled macro
+     * (UnfilledPlaceholder). A SubID that is present and names no click is
+     * refused by the caller as before, and never reaches this.
+     *
+     * Null when the SubID is not missing or the request sends no ad click
+     * id: the caller answers as it always has. Otherwise the click, or the
+     * request ends here: no click carries the id (404), the clicks carrying
+     * it do not say which one converted (409, the reason only in the inbound
+     * log of the account every one of them is of, or unattributed when they
+     * span accounts: the request is not authenticated yet), the 1.9.80 upgrade has
+     * not run, so the lookup is missing or not yet filled (503), or the
+     * lookup failed (500, so a sender that retries failures does). The ids'
+     * values go to no log.
+     *
+     * An id under its own name may find any account's click; one in a listed
+     * parameter only a click of the account listing it (`owners`, which the
+     * caller holds the click's owner to). Either way the caller holds the
+     * request to the owner's postback authentication before anything is
+     * written, as it does for a click a SubID names.
+     *
+     * @param array<array-key, mixed> $request p202PostbackRequest()'s
+     * @return array{click_id: int, owners: list<int>|null}|null
+     */
+    function p202ClickByAdClickId(mysqli $db, array $request, string $endpoint): ?array
+    {
+        foreach (['subid', 'sid'] as $name) {
+            if (!\Prosper202\Conversion\UnfilledPlaceholder::isMissing($request[$name] ?? null)) {
+                return null;
+            }
+        }
+        $conn = \Prosper202\Repository\LookupRepositoryFactory::connection($db);
+        $sent = \Prosper202\Click\ClickByAdClickId::sent($request);
+        $unreadable = $sent['unreadable'];
+        $names = array_keys($sent['ids']);
+        $ownIds = [];
+        $found = null;
+        try {
+            foreach (\Prosper202\Conversion\ClickIdParameters::ofEveryAccount($conn) as $userId => $listed) {
+                $own = \Prosper202\Click\ClickByAdClickId::sent($request, $listed);
+                $unreadable ??= $own['unreadable'];
+                if ($own['ids'] !== []) {
+                    $ownIds[$userId] = $own['ids'];
+                    $names = [...$names, ...array_keys($own['ids'])];
+                }
+            }
+            if ($names !== []) {
+                // What a retry of this sale is known by, so it lands where the sale already is.
+                $transactionId = p202ExtractTransactionId($request);
+                $eventId = null;
+                if (array_key_exists('event', $request)) {
+                    try {
+                        $event = \Prosper202\Goals\WebEvents::fromQuery($request, $transactionId, time(), false);
+                        $eventId = $event->eventId;
+                    } catch (\Prosper202\Goals\InvalidGoalDefinition) {
+                        $eventId = null; // refused by name where the event is recorded
+                    }
+                }
+                $found = \Prosper202\Click\ClickByAdClickId::find(
+                    $conn,
+                    $sent['ids'],
+                    $ownIds,
+                    time() - \Prosper202\Click\ClickByAdClickId::LOOKBACK,
+                    $transactionId,
+                    $eventId
+                );
+            }
+        } catch (\Throwable $lookupError) {
+            p202AdClickIdLookupPending($db, $endpoint, $lookupError->getMessage());
+            error_log($endpoint . ': the click could not be looked up by the ad click id sent: '
+                . $lookupError->getMessage());
+            p202RespondJsonError(500, 'Failed to look the click up by the ad click id sent');
+        }
+        $status = $found['status'] ?? \Prosper202\Click\ClickByAdClickId::NONE;
+        if ($status === \Prosper202\Click\ClickByAdClickId::AMBIGUOUS) {
+            // Which clicks carry an id is not told to a request no account has authenticated. The reason
+            // goes to the log of the one account the clicks are all of, which can settle it; across
+            // accounts, to no account's.
+            $log = \Prosper202\InboundLog\RequestLog::current();
+            $log?->clickFoundBy($found['why'] ?? '');
+            if (($found['account'] ?? null) !== null) {
+                $log?->account($found['account']);
+            }
+            p202RespondJsonError(409, 'SubID not found, and the ad click id sent does not name one click.'
+                . ' No conversion was recorded. Fill in the SubID in the postback URL.');
+        }
+        if ($status === \Prosper202\Click\ClickByAdClickId::ONE && $found !== null && $found['click_id'] !== null) {
+            // An unreadable value beside an id that found its click (another account may list its name) is not asked.
+            \Prosper202\InboundLog\RequestLog::current()?->clickFoundBy(
+                'The SubID was not filled in; the click was found by the ' . implode(', ', $found['matched']) . ' sent.'
+                . ($found['of'] > 1 ? ' ' . $found['of'] . ' clicks of one campaign carry it (one visitor, recorded'
+                    . ' more than once): this is the one the sale was already on, or else the latest.' : '')
+            );
+
+            return ['click_id' => $found['click_id'], 'owners' => $found['owners']];
+        }
+        if ($names === [] && $unreadable === null) {
+            return null;
+        }
+        // No click: until the upgrade has filled the lookup, that is not known yet.
+        p202AdClickIdLookupPending($db, $endpoint, 'no click was found');
+        if ($unreadable !== null) {
+            p202RespondJsonError(404, 'SubID not found, and ' . $unreadable . ' is not a click id');
+        }
+        p202RespondJsonError(404, 'SubID not found, and no click of the last 30 days carries the '
+            . implode(', ', array_unique($names)) . ' sent');
+    }
+
+    /**
+     * While the 1.9.80 upgrade has not run, the lookup by ad click id is
+     * missing or not yet filled: the request ends with a 503 naming the
+     * upgrade, which a sender retries, rather than an answer about the click.
+     * Returns when the upgrade has run.
+     */
+    function p202AdClickIdLookupPending(mysqli $db, string $endpoint, string $what): void
+    {
+        $pending = \Prosper202\Database\SchemaVersion::pendingUpgrade($db, \Prosper202\Click\AdClickIdIndex::SINCE);
+        if ($pending === null) {
+            return;
+        }
+        error_log($endpoint . ': a click cannot be found by its ad click id until the upgrade runs (' . $what
+            . '); ' . $pending);
+        header('Retry-After: 600');
+        p202RespondJsonError(503, 'SubID not found, and this Prosper202 cannot find a click by its ad click id'
+            . ' until its database upgrade has run. Retry later.');
+    }
+}
+
 if (!function_exists('p202LinkConversionIdentity')) {
     /**
      * Link the converting click to the signed customer id the conversion

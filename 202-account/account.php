@@ -309,6 +309,10 @@ $sameIpChoices = ['0' => 'Off: only a subid or a cookie finds the click', '1' =>
 $sameIpHelp = 'When a pixel names no click, credit your latest click from the visitor\'s IP address in the last 30'
     . ' days. A guess: on iPhones (iCloud Private Relay) and mobile networks many visitors share an address. Never'
     . ' for a visitor your privacy setting holds back. Conversions it finds read Same IP.';
+$clickIdParamsHelp = 'For a network that cannot send the SubID back. Pass it the ad click id instead (the gclid, say)'
+    . ' and name here the postback parameter it returns it in, such as aff_sub3. When a postback\'s SubID is empty,'
+    . ' the conversion goes to your click carrying that id. A postback sending gclid, gbraid, wbraid, msclkid,'
+    . ' fbclid or ttclid under its own name needs nothing here. Conversions it finds read Ad click id.';
 $cloakChoices = ['origin' => 'Show Prosper202 Domain', 'never' => 'Show Blank Referer'];
 $adChoices = ['show_all' => 'Show All Ads', 'hide_login' => 'Hide Ads On Login Screen', 'hide_all' => 'Hide All Ads'];
 
@@ -394,6 +398,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			if (!array_key_exists((string)($_POST['user_pref_same_ip_fallback'] ?? ''), $sameIpChoices)) {
 				$error['user_pref_same_ip_fallback'] = 'Choose whether a pixel may guess the click from the IP address.';
 			}
+            // Only when the form sent it: a page loaded before the field existed clears nothing.
+            $clickIdParams = null;
+            if (isset($_POST['user_pref_click_id_params'])) {
+                try {
+                    $clickIdParams = \Prosper202\Conversion\ClickIdParameters::accepted(
+                        $_POST['user_pref_click_id_params']
+                    );
+                } catch (\InvalidArgumentException $clickIdParamsRefused) {
+                    $error['user_pref_click_id_params'] = $clickIdParamsRefused->getMessage();
+                }
+            }
 			if (!array_key_exists((string)($_POST['cloak_referer'] ?? ''), $cloakChoices)) {
 				$error['cloak_referer'] = 'You must select how cloaked links show the referer.';
 			}
@@ -432,6 +447,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					'user_pref_privacy' => (string)$_POST['user_pref_privacy'],
 					'user_pref_same_ip_fallback' => (string)$_POST['user_pref_same_ip_fallback'] === '1' ? 1 : 0,
 				];
+                if ($clickIdParams !== null) {
+                    $prefSet['user_pref_click_id_params'] = $clickIdParams;
+                }
 
 				// The account row and the preferences row are one save: both
 				// land or neither does, so "nothing has changed" is true when
@@ -575,7 +593,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$pageFlashes[] = ['kind' => 'bad', 'text' => $consentRefused];
 		}
 		$profileErrors = $error;
-		foreach (['user_email', 'user_timezone', 'user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'user_pref_same_ip_fallback', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain'] as $profileField) {
+		foreach (['user_email', 'user_timezone', 'user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'user_pref_same_ip_fallback', 'user_pref_click_id_params', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain'] as $profileField) {
 			if (isset($_POST[$profileField])) {
 				$profileForm[$profileField] = (string)$_POST[$profileField];
 			}
@@ -954,6 +972,7 @@ $e = static fn (mixed $v): string => htmlspecialchars((string)$v, ENT_QUOTES, 'U
 $profileValue = static function (string $field, string $column) use ($profileForm, $user_row): string {
 	return array_key_exists($field, $profileForm) ? $profileForm[$field] : (string)($user_row[$column] ?? '');
 };
+$clickIdParamsValue = $profileValue('user_pref_click_id_params', 'user_pref_click_id_params');
 $selected = static fn (string $a, string $b): string => $a === $b ? ' selected' : '';
 $renderOptions = static function (array $choices, string $current) use ($e, $selected): string {
 	$out = '';
@@ -1047,7 +1066,7 @@ if (!\Prosper202\Report\AccountZone::isZone($currentTimezone)) {
 	array_unshift($timezoneOptions, $currentTimezone);
 }
 
-$profileAdvancedErrors = array_intersect_key($profileErrors, array_flip(['user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'user_pref_same_ip_fallback', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain']));
+$profileAdvancedErrors = array_intersect_key($profileErrors, array_flip(['user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'user_pref_same_ip_fallback', 'user_pref_click_id_params', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain']));
 
 template_top('Personal Settings');
 ?>
@@ -1083,7 +1102,16 @@ foreach (['clickserver_api_key', 'user_api_key', 'user_stats202_app_key'] as $ke
 	}
 }
 if ($profileErrors) {
-	$extraFlashes[] = ['kind' => 'bad', 'text' => 'Your settings were not saved. The fields below say why.'];
+    // A box under Advanced is far below where the page lands: its reason is said up here too.
+    $clickIdParamsRefusal = $profileErrors['user_pref_click_id_params'] ?? '';
+    $profileRefusal = 'Your settings were not saved. ';
+    if ($clickIdParamsRefusal === '') {
+        $profileRefusal .= 'The fields below say why.';
+    } else {
+        $profileRefusal .= 'Match conversions by ad click id, under Advanced: ' . $clickIdParamsRefusal
+            . (count($profileErrors) > 1 ? '. The other fields below say why too.' : '.');
+    }
+    $extraFlashes[] = ['kind' => 'bad', 'text' => $profileRefusal];
 }
 echo p202_account_render_flashes($extraFlashes);
 ?>
@@ -1129,7 +1157,7 @@ echo p202_account_render_flashes($extraFlashes);
 						</div>
 
 						<details class="p202-disclosure mb-3" data-p202-remember="account-profile-advanced"<?php echo $profileAdvancedErrors ? ' open' : ''; ?>>
-							<summary>Advanced <span class="p202-disclosure__hint">keyword, cost, referer, privacy, IP matching, ads, tracking domain</span></summary>
+							<summary>Advanced <span class="p202-disclosure__hint">keyword, cost, referer, privacy, IP matching, ad click ids, ads, tracking domain</span></summary>
 							<div class="p202-disclosure__body">
 								<div class="row g-3">
 									<div class="col-md-6">
@@ -1172,6 +1200,21 @@ echo p202_account_render_flashes($extraFlashes);
 										<div class="form-text"><?php echo $e($sameIpHelp); ?></div>
 										<?php echo p202_account_field_error($profileErrors, 'user_pref_same_ip_fallback'); ?>
 									</div>
+                                    <div class="col-md-6">
+                                        <label class="form-label" for="user_pref_click_id_params">
+                                            Match conversions by ad click id
+                                        </label>
+                                        <input type="text" id="user_pref_click_id_params"
+                                            name="user_pref_click_id_params" placeholder="aff_sub3" maxlength="255"
+                                            class="form-control<?php
+                                            echo p202_account_invalid($profileErrors, 'user_pref_click_id_params');
+                                            ?>"
+                                            value="<?php echo $e($clickIdParamsValue); ?>">
+                                        <div class="form-text"><?php echo $e($clickIdParamsHelp); ?></div>
+                                        <?php
+                                        echo p202_account_field_error($profileErrors, 'user_pref_click_id_params');
+                                        ?>
+                                    </div>
 									<div class="col-md-6">
 										<label class="form-label" for="cloak_referer">Cloaked referer</label>
 										<select class="form-select<?php echo p202_account_invalid($profileErrors, 'cloak_referer'); ?>" name="cloak_referer" id="cloak_referer">

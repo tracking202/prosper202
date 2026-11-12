@@ -818,6 +818,71 @@ if (!function_exists('_upgrade_conversion_ledger_probe')) {
     }
 }
 
+if (!function_exists('_upgrade_fill_click_ad_ids')) {
+    /**
+     * 202_clicks_ad_ids for the clicks already here (Prosper202\Click\
+     * AdClickIdIndex): a row for each ad click id of each click visited in
+     * the last 30 days, which is as far back as a postback is matched by one
+     * (ClickByAdClickId::LOOKBACK).
+     *
+     * The clicks are found by their visit times, in id order: each pass
+     * starts at the lowest id visited in the window above the last pass,
+     * so an old click visited again costs one pass, not a walk of every
+     * click after it. Statements of AdClickIdIndex::BACKFILL_BATCH click ids
+     * each hold the rows they read for a moment, and the click path keeps
+     * writing between them; clicks recorded once the table exists write
+     * their own rows. A click whose transaction began before the table did
+     * wrote none, and may have committed after its ids were read, so the
+     * ids from the last batch below the highest click at the start are read
+     * again at the end. INSERT IGNORE: a re-run writes nothing twice. False
+     * on any failure.
+     */
+    function _upgrade_fill_click_ad_ids(): bool
+    {
+        $scalar = static function (string $sql): string|false|null {
+            $result = _upgrade_query($sql);
+            if (!($result instanceof \mysqli_result)) {
+                return false;
+            }
+            $row = $result->fetch_row();
+            $result->free();
+
+            return is_array($row) && $row[0] !== null ? (string) $row[0] : null;
+        };
+        $since = time() - \Prosper202\Click\ClickByAdClickId::LOOKBACK;
+        $batch = \Prosper202\Click\AdClickIdIndex::BACKFILL_BATCH;
+        $walk = static function (int $next) use ($scalar, $since, $batch): bool {
+            for ($pass = 0; $pass < 1000000; $pass++) {
+                $first = $scalar('SELECT MIN(click_id) FROM `202_clicks` WHERE click_time >= ' . $since
+                    . ' AND click_id >= ' . $next);
+                if ($first === false) {
+                    return false;
+                }
+                if ($first === null) {
+                    return true;
+                }
+                $to = (int) $first + $batch - 1;
+                $fill = \Prosper202\Click\AdClickIdIndex::backfillSql((int) $first, $to, $since);
+                if (_upgrade_query($fill) === false) {
+                    return false;
+                }
+                $next = $to + 1;
+            }
+
+            return false;
+        };
+        $top = $scalar('SELECT MAX(click_id) FROM `202_clicks`');
+        if ($top === false) {
+            return false;
+        }
+        if ($top === null) {
+            return true; // no click at all
+        }
+
+        return $walk(0) && $walk(max(0, (int) $top - $batch + 1));
+    }
+}
+
 if (!function_exists('_upgrade_withhold_unconsented_analytics')) {
     /**
      * Before 1.9.80 analytics was recorded with no consent check. Before the
@@ -1262,6 +1327,19 @@ if (!function_exists('_upgrade_measurement_tables')) {
                         $ok = false;
                         _upgrade_note('failed to mark the clicks re-clicked before 1.9.79'
                             . ' for their backfill');
+                    }
+                    break;
+                }
+            }
+        }
+
+        // The ad click ids of the clicks a postback can still be matched to.
+        if ($ok) {
+            foreach ($definitions as $definition) {
+                if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::CLICKS_AD_IDS) {
+                    if (!_upgrade_fill_click_ad_ids()) {
+                        $ok = false;
+                        _upgrade_note('failed to record which clicks carry each ad click id');
                     }
                     break;
                 }
@@ -5239,7 +5317,9 @@ class UPGRADE
                 // 202_users_pref gains shopify_webhook_secret, which Shopify's
                 // order webhooks are verified with (ShopifyWebhookSecret),
                 // jvzoo_roleless_role, how the 1.9.56 JVZoo URL is read (JVZooRole),
-                // and the consent columns (ConsentPolicy); the messaging tables carry them.
+                // the consent columns (ConsentPolicy; the messaging tables carry them),
+                // and user_pref_click_id_params, the postback parameters an
+                // account's networks send an ad click id back in (ClickIdParameters).
                 \Prosper202\Database\Tables\UserTables::usersPref(),
                 \Prosper202\Database\Tables\CoreTables::messagingEvents(),
                 \Prosper202\Database\Tables\CoreTables::messagingAttributes(),
@@ -5310,6 +5390,11 @@ class UPGRADE
                 // What each landing page's last code check found
                 // (Prosper202\Setup\LandingPageCheckStore).
                 \Prosper202\Database\Tables\CampaignTables::landingPageChecks(),
+                // Which clicks carry an ad click id, which a global postback
+                // with no SubID finds its click by (Prosper202\Click\AdClickIdIndex),
+                // filled for the clicks of the last 30 days
+                // (_upgrade_fill_click_ad_ids()).
+                \Prosper202\Database\Tables\ClickTables::clicksAdIds(),
                 // 202_ppc_network_variables gains copied_from_ppc_variable_id:
                 // the variable a traffic source's copy took each of its own
                 // from (TrafficSourceOwners::split()), which names the values

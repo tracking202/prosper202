@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\User;
 
 use Prosper202\Click\TrackingDomain;
+use Prosper202\Conversion\ClickIdParameters;
 use Prosper202\Ltv\MysqlEngagementRepository;
 use Prosper202\Ltv\MysqlPersonalizationRepository;
 use Prosper202\Notifications\SlackWebhook;
@@ -91,6 +92,7 @@ final class PreferenceRules
         'user_tracking_domain', 'user_account_currency', 'user_slack_incoming_webhook', 'user_daily_email',
         'user_ltv_personalization_fields', 'user_ltv_score_weights', 'user_ltv_rec_fatigue',
         'paykickstart_ipn_secret_keys', 'jvzoo_ipn_secret_key', 'shopify_webhook_secret',
+        'user_pref_click_id_params',
     ];
 
     private function __construct()
@@ -202,6 +204,9 @@ final class PreferenceRules
                 // The endpoint reads the key through JVZooKey too, so a key
                 // stored here is one it can sign with.
                 return JVZooKey::parse($value);
+            case 'user_pref_click_id_params':
+                // Personal settings asks the same rule, and the postback reads what it stores.
+                return ClickIdParameters::accepted($value);
             case 'shopify_webhook_secret':
                 // The endpoint verifies with what ShopifyWebhookSecret::stored() reads.
                 return ShopifyWebhookSecret::parse($value);

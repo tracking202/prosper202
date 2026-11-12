@@ -72,7 +72,7 @@ class ClickConversionsCommandTest extends TestCase
         $tester->execute(['--source' => 'webhook']);
         self::assertStringContainsString('--source must be one of pixel, postback', $tester->getDisplay());
         $tester->execute(['--match-method' => 'ip']);
-        self::assertStringContainsString('--match-method must be one of click_id, cookie, visitor_id, same_ip, unknown', $tester->getDisplay());
+        self::assertStringContainsString('--match-method must be one of click_id, ad_click_id, cookie, visitor_id, same_ip, unknown', $tester->getDisplay());
         $tester->execute(['--click-id' => '7x']);
         self::assertStringContainsString('--click-id must be a positive integer', $tester->getDisplay());
     }

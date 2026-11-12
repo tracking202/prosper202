@@ -49,6 +49,8 @@ the click came from:
   nothing, so they have no row.
 - **Match method** gives a row to each way a conversion's click was found:
   **Click id** (the postback, pixel, API call or upload named the click),
+  **Ad click id** (a global postback with no SubID sent back an ad platform's
+  click id, such as a gclid, that the click carries),
   **Cookie** (a tracking cookie in the visitor's browser named it),
   **Visitor id** (the landing-page script's visitor id), **Same IP** (nothing
   named a click, so it was the latest click from the visitor's address: a
