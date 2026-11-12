@@ -27,9 +27,17 @@ func TestMCPCatalogBuilds(t *testing.T) {
 	if len(cat.Tools) != len(mcpToolSpecs) {
 		t.Fatalf("catalogue has %d tools, specs %d", len(cat.Tools), len(mcpToolSpecs))
 	}
+	// The deferred tools are listed the moment get_more_tools loads them.
+	deferred, err := buildMCPDeferredTools(rootCmd, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deferred) != len(mcpDeferredToolSpecs) {
+		t.Fatalf("deferred tools %d, specs %d", len(deferred), len(mcpDeferredToolSpecs))
+	}
 	valid := regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 	seen := map[string]bool{}
-	for _, tool := range cat.Tools {
+	for _, tool := range append(append([]mcpTool{}, cat.Tools...), deferred...) {
 		if !valid.MatchString(tool.Name) {
 			t.Errorf("tool name %q: want lowercase letters, digits and underscores, at most 64", tool.Name)
 		}
@@ -46,6 +54,20 @@ func TestMCPCatalogBuilds(t *testing.T) {
 		for name, prop := range tool.InputSchema.Properties {
 			if strings.Contains(prop.Description, "--") {
 				t.Errorf("tool %s argument %s still names a CLI flag: %s", tool.Name, name, prop.Description)
+			}
+		}
+	}
+	// A flag a spec leaves out is no argument, however the command spelled it.
+	for _, spec := range mcpAllToolSpecs() {
+		tool, err := spec.tool(rootCmd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range spec.Omit {
+			for _, name := range []string{f, strings.ReplaceAll(f, "-", "_"), strings.ReplaceAll(f, "_", "-")} {
+				if _, ok := tool.InputSchema.Properties[name]; ok {
+					t.Errorf("tool %s omits %s and still takes %s", spec.Name, f, name)
+				}
 			}
 		}
 	}
@@ -66,6 +88,12 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// What the server lists on connecting: the catalogue, get_more_tools
+	// and the sentence that tells the model to call it.
+	more := mcpGetMoreToolsTool()
+	cat.Tools = append(cat.Tools, mcpTool{Name: more.Name, Title: more.Title, Description: more.Description, InputSchema: more.InputSchema.(mcpSchema),
+		Annotations: mcpToolAnnotations{Title: more.Annotations.Title, ReadOnlyHint: more.Annotations.ReadOnlyHint, IdempotentHint: more.Annotations.IdempotentHint}})
+	cat.Instructions += mcpMoreToolsInstructions
 	body, err := json.Marshal(cat)
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +109,10 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 	// settings_get add about 5,100; the publisher dimension and its filter
 	// (on report_summary, report_breakdown and click_list) about 800;
 	// landing_page_check about 700; ppc_network_add_chatgpt_ads about 330,
-	// paid for by a shorter help line on the link-token flags.
+	// paid for by a shorter help line on the link-token flags; get_more_tools
+	// and its sentence in the instructions about 700 (every later tool is
+	// listed on request, mcpDeferredToolSpecs), paid for by the click
+	// filter tools' user_id, which their Omit meant to leave out.
 	const budget = 100500
 	if len(body) > budget {
 		t.Fatalf("the tool list is %d characters, over its %d budget; trim notes or omit flags", len(body), budget)
@@ -221,8 +252,8 @@ func TestMCPToolArgv(t *testing.T) {
 }
 
 func TestMCPTextNamesToolsAndArguments(t *testing.T) {
-	got := mcpText("Filter by ID (from `p202 aff-network list`, or `campaign list`); with --with-stats, see `p202 shell` or `breakdown device_type`")
-	want := "Filter by ID (from aff_network_list, or campaign_list); with with_stats, see `p202 shell` or `breakdown device_type`"
+	got := mcpText("Filter by ID (from `p202 aff-network list`, or `campaign list`); with --with-stats, see `p202 shell` or `breakdown device_type`; `p202 destination deliveries`")
+	want := "Filter by ID (from aff_network_list, or campaign_list); with with_stats, see `p202 shell` or `breakdown device_type`; destination_deliveries"
 	if got != want {
 		t.Fatalf("got  %q\nwant %q", got, want)
 	}
@@ -460,10 +491,19 @@ func TestMCPCallRefusals(t *testing.T) {
 		{[]string{"mcp", "call", "campaign_list", "--input", `{"bogus":1}`}, "does not take bogus"},
 		{[]string{"--staged", "mcp", "call", "change_apply", "--input", `{"change_id":"chg_1"}`}, "only proposes changes"},
 		{[]string{"--staged", "mcp", "call", "change_discard", "--input", `{"change_id":"chg_1"}`}, "only proposes changes"},
+		{[]string{"--staged", "mcp", "call", "destination_test", "--input", `{"id":"4"}`}, "only proposes changes"},
 	} {
 		_, _, err := mcpExecute(t, tc.args...)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%q: want %q, got %v", tc.args, tc.want, err)
+		}
+		// The staged refusal is true of a test fire as of an apply: the hint
+		// names the tool's own command, never another's.
+		if tc.args[0] == "--staged" {
+			want := "`p202 " + strings.ReplaceAll(strings.Join(tc.args[3:4], ""), "_", " ")
+			if hint := hintFor(err); !strings.Contains(hint, want) || strings.Count(hint, "`p202 ") != 1 || strings.Contains(err.Error(), "acts on a proposed change") {
+				t.Errorf("%q: hint %q, want one command, %s", tc.args, hint, want)
+			}
 		}
 		if exitCodeForError(err) != 1 {
 			t.Errorf("%q: exit %d, want 1", tc.args, exitCodeForError(err))
@@ -505,7 +545,11 @@ func TestMCPToolsTakeNoRootFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tool := range cat.Tools {
+	deferred, err := buildMCPDeferredTools(rootCmd, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range append(append([]mcpTool{}, cat.Tools...), deferred...) {
 		for name := range tool.InputSchema.Properties {
 			if root[name] {
 				t.Errorf("%s takes %s, a root flag", tool.Name, name)

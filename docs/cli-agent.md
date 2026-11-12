@@ -1430,9 +1430,10 @@ p202 system integrations record-held <paykickstart|shopify|zaxaa> [--json]   # r
 
 An AI app that speaks MCP (Claude Desktop, Claude Code, Cursor, ...) needs no
 hand-written tool: `p202 mcp` is an MCP server on stdin/stdout whose tools are
-the CLI's commands, one tool per command, each with an input schema generated
-from the command's flags and MCP's read-only/destructive hints, so the app asks
-before a write.
+CLI commands, one tool per command, each with an input schema generated from
+the command's flags and MCP's read-only/destructive hints, so the app asks
+before a write. Not every tool is listed at the start (see `get_more_tools`
+below).
 
 ```
 claude mcp add prosper202 -- p202 mcp --read-only    # reads only
@@ -1449,8 +1450,20 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
   `dry_run: true` first.
 - With `--staged`, `change_apply` and `change_discard` are not offered: the
   person applies a proposal (`p202 change apply <id>`), not the assistant.
-- `p202 mcp tools` prints the tool list as JSON; `p202 mcp call <tool> --input
-  '<json>'` runs one tool as the app would.
+  Neither is `destination_test`, a test fire that cannot be proposed.
+- Past the list's size budget, tools load on request. The server lists
+  `get_more_tools`, which takes the task in words (`{"task": "why did a
+  conversion not reach Google Ads"}`), adds the matching tools to the list
+  (`notifications/tools/list_changed`) and answers each one's name, what it
+  does and its input schema. A deferred tool called by name before that is
+  loaded and run. Today they are `destination_list`, `destination_deliveries`
+  and `destination_test` (Setup › Destinations); `--read-only` and `--staged`
+  leave out `destination_test`. They are local only: the hosted server below
+  refuses them.
+- `p202 mcp tools` prints the tool list as JSON (`--deferred`: the tools
+  `get_more_tools` loads); `p202 mcp call <tool> --input '<json>'` runs one
+  tool as the app would, deferred ones included, with the server's
+  `--read-only` and `--staged` refusals.
 - For claude.ai and other hosted apps there is Tracking202's hosted MCP server
   (`https://mcp.tracking202.com/mcp`): the person approves the connection on
   their own install, signed in as their own user, and chooses read only,

@@ -119,9 +119,10 @@ func newMCPServer(policy mcpServerPolicy) (*mcp.Server, error) {
 	if len(deferred) > 0 {
 		instructions += mcpMoreToolsInstructions
 	}
-	// The tool list changes when get_more_tools loads one: say so (notifications/tools/list_changed).
+	// The tool list changes when get_more_tools loads one: say so
+	// (notifications/tools/list_changed). With nothing to load it never changes.
 	server := mcp.NewServer(&mcp.Implementation{Name: "prosper202", Title: "Prosper202", Version: version},
-		&mcp.ServerOptions{Instructions: instructions, Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{ListChanged: true}}})
+		&mcp.ServerOptions{Instructions: instructions, Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{ListChanged: len(deferred) > 0}}})
 	for _, t := range cat.Tools {
 		server.AddTool(mcpSDKTool(t), mcpToolHandler(policy, t))
 	}
@@ -142,7 +143,7 @@ func newMCPServer(policy mcpServerPolicy) (*mcp.Server, error) {
 }
 
 // mcpMoreToolsInstructions tells the model the list is not every tool.
-const mcpMoreToolsInstructions = " Not every tool is listed: when no tool fits what the user asked, call get_more_tools with the task, and use the tools it names."
+const mcpMoreToolsInstructions = " Not every tool is listed: when none fits what the user asked, call get_more_tools with the task."
 
 func mcpSDKTool(t mcpTool) *mcp.Tool {
 	destructive, openWorld := t.Annotations.DestructiveHint, t.Annotations.OpenWorldHint
@@ -179,17 +180,20 @@ func mcpToolHandler(policy mcpServerPolicy, t mcpTool) mcp.ToolHandler {
 	}
 }
 
+// mcpGetMoreToolsTool is marked a read: it changes no data, only which tools
+// this session lists, and a tool it loads keeps its own annotations (a
+// write is still approved as a write when it is called).
 func mcpGetMoreToolsTool() *mcp.Tool {
-	no, yes := false, false
+	no := false
 	return &mcp.Tool{
 		Name:  mcpGetMoreTools,
-		Title: "Find more tools for a task",
-		Description: "When no listed tool fits what the user asked, send the task in a few words; the matching tools are added to the list " +
-			"and named here with what each does. Then call them as any other tool.",
+		Title: "More tools for a task",
+		Description: "When no listed tool fits what the user asked, send the task in a few words: the matching tools join the list, " +
+			"named here with what each does and takes, to call as any other tool.",
 		InputSchema: mcpSchema{Type: "object", Required: []string{"task"}, Properties: map[string]mcpProperty{
 			"task": {Type: "string", Description: "What the user asked, e.g. \"why did a conversion not reach Google Ads\"."},
 		}},
-		Annotations: &mcp.ToolAnnotations{Title: "Find more tools for a task", ReadOnlyHint: true, DestructiveHint: &no, IdempotentHint: true, OpenWorldHint: &yes},
+		Annotations: &mcp.ToolAnnotations{Title: "More tools for a task", ReadOnlyHint: true, DestructiveHint: &no, IdempotentHint: true, OpenWorldHint: &no},
 	}
 }
 
@@ -247,9 +251,12 @@ func (l *mcpDeferredLoader) getMoreTools(ctx context.Context, req *mcp.CallToolR
 		return mcpErrorResult(message, "validation", `Send {"task": "<what the user asked>"}.`), nil
 	}
 	matched := mcpMatchDeferred(*args.Task, mcpDeferredToolSpecs, l.tools)
+	// The arguments too: a client that ignores list_changed never sees the
+	// tool's listing, and would learn what it needs only from a refusal.
 	type found struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
+		Name        string    `json:"name"`
+		Description string    `json:"description"`
+		InputSchema mcpSchema `json:"input_schema"`
 	}
 	out := struct {
 		Tools []found `json:"tools"`
@@ -257,7 +264,7 @@ func (l *mcpDeferredLoader) getMoreTools(ctx context.Context, req *mcp.CallToolR
 	}{Tools: []found{}}
 	for _, t := range matched {
 		l.load(t.Name)
-		out.Tools = append(out.Tools, found{t.Name, mcpOneLine(t)})
+		out.Tools = append(out.Tools, found{t.Name, mcpOneLine(t), t.InputSchema})
 	}
 	if len(matched) == 0 {
 		names := make([]string, 0, len(l.tools))
