@@ -244,8 +244,8 @@ final class SpendSync
      * The ads are the ones the ledger holds for the connection in those
      * hours. OpenAI answers at most 2000 rows (ads x days) and refuses more
      * with 413: the ads are asked for in groups that fit, halved on a 413.
-     * What could not be read is answered as a note; a 429 or a refused key
-     * fails the run as the spend pull does.
+     * What could not be read is answered as a note (the spend stands); a 429
+     * or a refused key fails the run as the spend pull does.
      */
     private function pullConversions(SpendConnection $connection, int $from, int $to): ?string
     {
@@ -280,7 +280,11 @@ final class SpendSync
                     $i++;
                     continue;
                 }
-                throw $e;
+                if ($e->rateLimited() || $e->getCode() === InsightsFailure::KEY_REFUSED) {
+                    throw $e;
+                }
+                // The spend is written; the conversions are a note, not a failed run.
+                return 'conversions not read: ' . $e->getMessage();
             }
             $done = $store->write($connection->userId, self::PLATFORM, $connection->accountRef, $connection->timezone, $rows);
             $refused = [...$refused, ...$done['refused']];
