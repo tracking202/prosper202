@@ -22,10 +22,10 @@ var clickListCmd = &cobra.Command{
 	Long: "Lists clicks newest first, with what the Visitors page shows for each: campaign,\n" +
 		"traffic source, keyword, IP, location, device, referrer and landing URLs, and the\n" +
 		"ad platforms' click ids it arrived with (gclid, gbraid, wbraid, ttclid, msclkid,\n" +
-		"fbclid, oppref; null for none, and none on a redirector's click). It takes\n" +
-		"the Visitors page's filters, as `p202 report` does: --keyword and --referer\n" +
-		"(contains), --ip, --device-type, --show real|filtered|filtered_bot|leads, location,\n" +
-		"browser and platform ids, and --period.\n\n" +
+		"fbclid, oppref; null for none, and none on a redirector click recorded before\n" +
+		"1.9.80). It takes the Visitors page's filters, as `p202 report` does: --keyword\n" +
+		"and --referer (contains), --ip, --device-type, --show\n" +
+		"real|filtered|filtered_bot|leads, location, browser and platform ids, and --period.\n\n" +
 		"--follow is the Spy page: it prints the newest --limit clicks (default 10), then\n" +
 		"each new click as it arrives, polling every --interval, until interrupted or\n" +
 		"--stop-after elapses. Under --json or --ndjson it writes one JSON object per\n" +
@@ -216,6 +216,7 @@ func renderClickConversions(data []byte) error {
 		rows = append(rows, map[string]interface{}{
 			"conv_id":        r["conv_id"],
 			"amount":         r["amount"],
+			"currency":       r["currency"],
 			"counts":         counts,
 			"source":         r["source"],
 			"matched_by":     r["match_method"],

@@ -7,6 +7,7 @@ namespace Prosper202\PaymentNotification;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\PayKickstart\PayKickstartAdapter;
+use Prosper202\PaymentNotification\Shopify\RefundSettlementStore;
 use Prosper202\PaymentNotification\Shopify\SettlementCoordinator;
 use Prosper202\PaymentNotification\Shopify\ShopifyAdapter;
 use Prosper202\PaymentNotification\Zaxaa\ZaxaaAdapter;
@@ -132,8 +133,26 @@ final class HeldReplay
                 'notification' => $row['notification_key'] === null ? null : (string) $row['notification_key'],
                 'body' => (string) $row['body_key'],
             ]);
+            $refunds = $provider instanceof ShopifyAdapter && $notification->kind->reverses() && $notification->transactionId !== null
+                ? new RefundSettlementStore(new Connection($this->db))
+                : null;
+            // A Shopify refund settled since it was held (recorded, or closed by hand under Setup ›
+            // Inbound Log) records nothing more: closed with nothing recorded means no money went back.
+            if ($refunds !== null && $refunds->settled($userId, (string) $notification->transactionId)) {
+                return new Outcome(OutcomeKind::DUPLICATE, 'Shopify refund ' . $notification->transactionId
+                    . ' is settled already (recorded, or closed under Setup › Inbound Log); its held copy is dropped.', null, $userId);
+            }
             $outcome = $processor->process($notification, new Verification([$userId => 0]), $provider, $request);
             $this->afterShopifySale($provider, $notification, $outcome, $request);
+            // Recorded now: the refund is no longer one to settle by hand.
+            if ($refunds !== null && in_array($outcome->kind, [OutcomeKind::REVERSED, OutcomeKind::DUPLICATE], true)) {
+                try {
+                    $refunds->settledByHand($userId, (string) $notification->transactionId, time());
+                } catch (\Throwable $e) {
+                    error_log('Held Shopify refund ' . $notification->transactionId . ' was recorded, but could not be'
+                        . ' closed in the list of refunds to settle: ' . $e->getMessage());
+                }
+            }
 
             return $outcome;
         } catch (\Throwable $e) {
@@ -168,14 +187,6 @@ final class HeldReplay
 
     private function accountCurrency(int $userId): string
     {
-        $conn = new Connection($this->db);
-        $stmt = $conn->prepareRead('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1');
-        $conn->bind($stmt, 'i', [$userId]);
-        $row = $conn->fetchOne($stmt);
-        if ($row === null) {
-            throw new \RuntimeException('account ' . $userId . ' has no preferences row to read its currency from');
-        }
-
-        return strtoupper(trim((string) $row['user_account_currency']));
+        return \Prosper202\Conversion\Ledger\RowCurrency::knownOf(new Connection($this->db), $userId);
     }
 }

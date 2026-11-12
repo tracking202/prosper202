@@ -174,6 +174,22 @@ final class HeldNotifications
         return $conn->executeUpdate($stmt) === 1;
     }
 
+    /**
+     * A refund recorded or closed by hand (Shopify\RefundsToSettle): its
+     * held copy, refused for its currency, would otherwise be recorded once
+     * the account counts in that currency. Answers how many rows went.
+     */
+    public function dropRefund(int $userId, string $source, string $transactionId): int
+    {
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareWrite(
+            'DELETE FROM ' . self::TABLE . ' WHERE user_id = ? AND source = ? AND transaction_id = ? AND kind = ?'
+        );
+        $conn->bind($stmt, 'isss', [$userId, $source, $transactionId, \Prosper202\PaymentNotification\NotificationKind::REFUND->value]);
+
+        return $conn->executeUpdate($stmt);
+    }
+
     /** The row is on file as a conversion: it is held no longer. */
     public function done(int $userId, int $heldId): void
     {

@@ -240,11 +240,13 @@ final class PublishersPagesIntegrationTest extends TestCase
     {
         $lines = explode("\n", trim(self::page('tracking202/analyze/publishers_download.php')));
 
+        // Every row ends with the account's currency and the period's money in others (none here; the
+        // last line's empty cell is trimmed with the file's end).
         self::assertSame([
-            "Publisher\tLink\tCampaign\tClicks\tClick Throughs\tLeads\tConv Rate\tIncome\tCost\tNet\tROI",
-            "Dana Reyes\t" . self::SHOE_LINK . "\tRunning Shoes\t2\t0\t0\t0.00\t0.00\t0.50\t-0.50\t-100.00",
-            "Dana Reyes\tLink not recorded\tRunning Shoes\t1\t0\t0\t0.00\t0.00\t0.25\t-0.25\t-100.00",
-            "No publisher\t\t\t1\t0\t0\t0.00\t0.00\t0.25\t-0.25\t-100.00",
+            "Publisher\tLink\tCampaign\tClicks\tClick Throughs\tLeads\tConv Rate\tIncome\tCost\tNet\tROI\tCurrency\tOther currencies in period",
+            "Dana Reyes\t" . self::SHOE_LINK . "\tRunning Shoes\t2\t0\t0\t0.00\t0.00\t0.50\t-0.50\t-100.00\tUSD\t",
+            "Dana Reyes\tLink not recorded\tRunning Shoes\t1\t0\t0\t0.00\t0.00\t0.25\t-0.25\t-100.00\tUSD\t",
+            "No publisher\t\t\t1\t0\t0\t0.00\t0.00\t0.25\t-0.25\t-100.00\tUSD",
         ], $lines);
     }
 

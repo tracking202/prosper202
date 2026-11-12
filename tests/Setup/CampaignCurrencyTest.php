@@ -23,9 +23,9 @@ final class CampaignCurrencyTest extends TestCase
             CampaignCurrency::store('USD', 'USD', '12.50', $never)
         );
         self::assertSame(
-            ['currency' => 'USD', 'payout' => '0', 'foreign_payout' => '0'],
+            ['currency' => 'EUR', 'payout' => '0', 'foreign_payout' => '0'],
             CampaignCurrency::store('USD', 'EUR', '0', $never),
-            '0 is 0 in any currency'
+            '0 is 0 in any currency and needs no rate; the campaign stays paid in EUR, so its postbacks\' amounts are converted'
         );
     }
 
@@ -70,6 +70,12 @@ final class CampaignCurrencyTest extends TestCase
     {
         $row = ['aff_campaign_currency' => 'EUR', 'aff_campaign_payout' => '11.18', 'aff_campaign_foreign_payout' => '10.00'];
         self::assertSame(['currency' => 'EUR', 'payout' => '10.00'], CampaignCurrency::shown($row, 'USD'));
+        // One paid only by its postbacks' amounts keeps its currency too.
+        $byPostback = ['aff_campaign_currency' => 'EUR', 'aff_campaign_payout' => '0.00', 'aff_campaign_foreign_payout' => '0.00'];
+        self::assertSame(['currency' => 'EUR', 'payout' => '0'], CampaignCurrency::shown($byPostback, 'USD'));
+        self::assertSame('EUR', CampaignCurrency::paidIn($byPostback, 'USD'));
+        self::assertNull(CampaignCurrency::paidIn(['aff_campaign_currency' => 'USD', 'aff_campaign_payout' => '9.00', 'aff_campaign_foreign_payout' => '0.00'], 'EUR'),
+            'the column default with a payout in the account\'s currency is not foreign');
     }
 
     /**

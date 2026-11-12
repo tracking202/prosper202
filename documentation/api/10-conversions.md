@@ -24,6 +24,13 @@ List, inspect, manually create, and delete conversions.
 | `PUT` | `/conversions/postback-auth` | Choose what postbacks and pixels must carry: `off`, `token` (token or signature) or `signed` (signatures only; pixels refused) |
 | `POST` | `/conversions/postback-auth/rotate` | Replace the token or the signing secret, the old one working for a grace period |
 
+Each conversion is answered with `currency`, the currency its
+`click_payout` is in as the conversion recorded it (`null` when none was
+recorded; from 1.9.80), and with `stated_amount` and `stated_currency` when
+`click_payout` is an amount a postback or pixel sent in another currency,
+converted into the account's ([Currencies](../features/conversion-currency.md)).
+A later change of the account's currency does not alter them.
+
 Marking or deleting subids in bulk, resetting a campaign's subids and
 uploading a revenue report — the UI's Update section — are in the
 [Update API](26-update.md).
@@ -158,20 +165,27 @@ most what is left of it, and closes the refund. When the order is recorded
 on more than one click (`click_ids`), send `click_id` too; without it the
 answer is a `422` naming the clicks. It answers `200` with `outcome`
 (`reversed`, or `duplicate` when the refund was on file already) and the
-reversal's `conversion_id`. Nothing converts money: when Shopify states the
-refund in another currency than the account's (`other_currency` is true;
-`currency` is Shopify's, `account_currency` the account's), the list's
-`amount` is not what to record. Send what the refund returned in the
-account's currency, with `"currency"` naming that currency; without it, or
+reversal's `conversion_id`. Nothing converts money. A refund is recorded in
+its sale's currency, `amount_currency` in the list: the account's
+(`account_currency`) unless the sale was recorded before the account's
+currency changed. When Shopify states the refund in another currency
+(`other_currency` is true; `currency` is Shopify's), the list's `amount` is
+not what to record. Send what the refund returned in `amount_currency`,
+with `"currency"` naming that currency; without it, or
 with any other currency, the answer is a `422` on `currency` and nothing is
-recorded. The refund is recorded once under its id, so
-Shopify settling it later records nothing more. `POST
-/conversions/shopify-refunds/{id}/close` removes a refund from the list with
-nothing recorded, for one that returned no money. Both need the role's
-access to the Setup and Update sections, answer `404` for a refund that is
-not listed for the account, and write a line to the inbound log. Recording
-answers `409` with the reason when the sale is gone or the refund is on
-file at another amount.
+recorded. `amount` has at most 5 decimals: a sixth is refused (`422`), never
+rounded. The refund is recorded once under its id, so Shopify settling it
+later records nothing more. `POST /conversions/shopify-refunds/{id}/close`
+removes a refund from the list with nothing recorded, for one that returned
+no money, whose sale is gone, or that Shopify's settlement refused before
+its order arrived. Both need the role's access to the Setup and Update
+sections, answer `404` for a refund that is not listed for the account, and
+write a line to the inbound log. Recording answers `409` with the reason
+when the sale is gone, the order is not on file and the refund was refused,
+or the refund is on file at another amount; both answer `409` for a refund
+still waiting for its order's sale, which is recorded when the sale
+arrives. Recording or closing a refund also
+drops a copy of it held for its currency, so it is never recorded later.
 
 ## Inbound log
 
@@ -286,7 +300,8 @@ under the first that does not:
    (`before_click`), this account's (`not_accounts_click`) and at least 6
    hours old (`click_too_recent`: a later fetch whose window still covers it
    sends it);
-5. its value is not negative (`negative_value`), and it has a conversion name:
+5. its value is not negative (`negative_value`), its currency was recorded
+   (`no_currency`; see [Currencies](../features/conversion-currency.md)), and it has a conversion name:
    its campaign's or the account's, set on the Setup page, or `conversion_name`
    (`no_conversion_name`);
 6. a Microsoft file stops at Microsoft's 100,000 rows an upload, newest first
@@ -302,8 +317,8 @@ second, the one recorded first keeps its time and the other is sent at the
 next second no conversion on that click holds, the same second on every
 download ([the guide](../features/offline-conversions.md#the-files) says
 when it moves). `Conversion Value` is
-the amount the conversion counts for, as the ledger records it in the
-account's currency (`Conversion Currency`), three decimals for Microsoft.
+the amount the conversion counts for, in the currency its ledger row
+recorded (`Conversion Currency`), three decimals for Microsoft.
 `Order ID` is `P202-` and the conversion's id: the same on every download, so
 Google counts a conversion uploaded twice once. A refund or deletion after a
 platform has a conversion is not sent to it; adjust it in the platform.

@@ -91,6 +91,8 @@ if ($canSee) {
 		'credits' => ['enabled' => false],
 		'chart' => ['type' => 'line'],
 		'title' => ['text' => 'From ' . date('d/m/Y', (int) $from) . ' to ' . date('d/m/Y', (int) $to)],
+		// In the chart itself, which is read (and exported) without the page around it.
+		'subtitle' => ['text' => \Prosper202\Conversion\Ledger\RevenueCurrencies::chartNote($db, \Prosper202\DataEngine\DataScope::userId() ?? 0, (int) $from, (int) $to)],
 		'xAxis' => ['categories' => $categories],
 		'yAxis' => ['title' => ['text' => null]],
 		'series' => $chart['series'] ?? [],
@@ -186,6 +188,8 @@ try {
 
 $empty = p202_overview_empty($base);
 
+// Revenue of the period that is not in the account's currency is said above the figures (RevenueCurrencies).
+echo \Prosper202\Conversion\Ledger\RevenueCurrencies::notice($db, \Prosper202\DataEngine\DataScope::userId() ?? 0, (int) $time['from'], (int) $time['to']);
 echo '<h3 class="p202-section__title">Direct links and landing pages</h3>';
 echo p202_overview_metrics_table($lpsData, [
 	'id' => 'overview-landing-pages',
