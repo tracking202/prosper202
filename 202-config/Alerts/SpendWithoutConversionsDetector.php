@@ -89,8 +89,10 @@ final class SpendWithoutConversionsDetector implements AlertDetector
 
         return [
             sprintf(
-                ' Its clicks come from ChatGPT Ads campaign %s: pause it at Setup › Destinations › ChatGPT Ads, or run p202 ad-campaign pause %d %s.',
+                ' Its clicks come from ChatGPT Ads %s %s: pause %s at Setup › Destinations › ChatGPT Ads, or run p202 ad-campaign pause %d %s.',
+                count($found) === 1 ? 'campaign' : 'campaigns',
                 implode(', ', array_column($found, 'campaign_id')),
+                count($found) === 1 ? 'it' : 'them',
                 $first['connection_id'],
                 $first['campaign_id']
             ),

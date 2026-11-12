@@ -83,7 +83,7 @@ final class ChatGptCampaignInAlertIntegrationTest extends TestCase
         $alerts = (new SpendWithoutConversionsDetector())->detect($this->conn, $activity, new AlertSettings(dailyCostCap: '100.00'));
 
         self::assertCount(1, $alerts);
-        self::assertStringContainsString('Its clicks come from ChatGPT Ads campaign cmpn_101, cmpn_102: pause it at Setup › Destinations › ChatGPT Ads, or run p202 ad-campaign pause 3 cmpn_101.', $alerts[0]->message);
+        self::assertStringContainsString('Its clicks come from ChatGPT Ads campaigns cmpn_101, cmpn_102: pause them at Setup › Destinations › ChatGPT Ads, or run p202 ad-campaign pause 3 cmpn_101.', $alerts[0]->message);
         self::assertSame(['chatgpt_connection_id' => 3, 'chatgpt_campaign_ids' => 'cmpn_101,cmpn_102'], array_intersect_key($alerts[0]->facts, array_flip(['chatgpt_connection_id', 'chatgpt_campaign_ids'])));
 
         self::$db->query('TRUNCATE TABLE 202_ad_connections');
