@@ -6,6 +6,7 @@ namespace Prosper202\PaymentNotification\Shopify;
 
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\ConversionSource;
+use Prosper202\Conversion\Ledger\RowCurrency;
 use Prosper202\Database\Connection;
 use Prosper202\InboundLog\Entry;
 use Prosper202\InboundLog\InboundLog;
@@ -49,7 +50,8 @@ final class RefundsToSettle
      *
      * @return array{
      *     refunds: list<array{refund_id: string, order_id: string, occurred_at: int, waiting: bool, stale: bool,
-     *         reason: string, amount: string, currency: string, clicks: list<int>, other_currency: bool}>,
+     *         reason: string, amount: string, currency: string, clicks: list<int>, other_currency: bool,
+     *         amount_currency: string}>,
      *     more: bool,
      *     transaction_webhook_seen: bool,
      *     account_currency: string
@@ -89,10 +91,15 @@ final class RefundsToSettle
             ] + self::stated((string) $row['transactions'], $failed);
         }
 
+        // A refund is recorded in its sale's currency (RowCurrency), which is the
+        // account's unless the sale was recorded before the account's currency changed.
         $counts = $this->accountCurrency($account);
+        $sales = $this->saleCurrencies($account, array_column($refunds, 'order_id'));
         foreach ($refunds as $i => $refund) {
+            $in = self::amountCurrency($sales[$refund['order_id']] ?? [], $refund['clicks'], $counts);
             $its = strtoupper($refund['currency']);
-            $refunds[$i]['other_currency'] = $its !== '' && $its !== $counts;
+            $refunds[$i]['amount_currency'] = $in;
+            $refunds[$i]['other_currency'] = $its !== '' && $its !== $in;
         }
 
         return [
@@ -138,29 +145,6 @@ final class RefundsToSettle
                 $account
             );
         }
-        // Nothing here converts money: the amount is the account's currency's, and for a refund Shopify
-        // stated in another one the caller says so, so its figure is never taken over as it stands.
-        $counts = $this->accountCurrency($account);
-        $refunded = strtoupper(self::stated((string) $row['transactions'], [])['currency']);
-        if ($currency !== null && strtoupper($currency) !== $counts) {
-            return new Outcome(
-                OutcomeKind::CURRENCY_MISMATCH,
-                'This account counts in ' . $counts . ', and the amount was stated in ' . strtoupper($currency)
-                . '. Prosper202 does not convert it: state the amount in ' . $counts . '. Nothing was recorded.',
-                null,
-                $account
-            );
-        }
-        if ($refunded !== '' && $refunded !== $counts && $currency === null) {
-            return new Outcome(
-                OutcomeKind::CURRENCY_MISMATCH,
-                'Shopify states this refund in ' . $refunded . ' and this account counts in ' . $counts
-                . '. Prosper202 does not convert it: state what it returned in ' . $counts . ', and name '
-                . $counts . ' as the currency of the amount. Nothing was recorded.',
-                null,
-                $account
-            );
-        }
         $orderId = (string) $row['order_id'];
         $clicks = $this->clicksByOrder($account, [$orderId])[$orderId] ?? [];
         if ($clicks === []) {
@@ -183,6 +167,36 @@ final class RefundsToSettle
             );
         }
         $click = count($clicks) === 1 ? $clicks[0] : (int) $clickId;
+        // Nothing here converts money. A refund is recorded in its sale's currency (the
+        // account's, unless the sale was recorded before the account's currency changed), and
+        // for a refund Shopify stated in another one the caller says so, so its figure is
+        // never taken over as it stands.
+        $counts = self::amountCurrency(
+            $this->saleCurrencies($account, [$orderId])[$orderId] ?? [],
+            [$click],
+            $this->accountCurrency($account)
+        );
+        $refunded = strtoupper(self::stated((string) $row['transactions'], [])['currency']);
+        if ($currency !== null && strtoupper($currency) !== $counts) {
+            return new Outcome(
+                OutcomeKind::CURRENCY_MISMATCH,
+                'This refund is recorded in ' . $counts . ', the currency of its sale, and the amount was stated in '
+                . strtoupper($currency) . '. Prosper202 does not convert it: state the amount in ' . $counts
+                . '. Nothing was recorded.',
+                null,
+                $account
+            );
+        }
+        if ($refunded !== '' && $refunded !== $counts && $currency === null) {
+            return new Outcome(
+                OutcomeKind::CURRENCY_MISMATCH,
+                'Shopify states this refund in ' . $refunded . ' and it is recorded in ' . $counts
+                . ', the currency of its sale. Prosper202 does not convert it: state what it returned in '
+                . $counts . ', and name ' . $counts . ' as the currency of the amount. Nothing was recorded.',
+                null,
+                $account
+            );
+        }
         $at = (int) $row['occurred_at'];
         $notification = new Notification(
             NotificationKind::REFUND,
@@ -289,17 +303,59 @@ final class RefundsToSettle
         return $clicks;
     }
 
+    /**
+     * The currency recorded on each order's sale, by click: a code, or UNKNOWN
+     * where none was recorded or the upgrade has not added the column yet.
+     *
+     * @param list<string> $orderIds
+     * @return array<string, array<int, string>> order id => click id => currency
+     */
+    private function saleCurrencies(int $account, array $orderIds): array
+    {
+        $orderIds = array_values(array_unique(array_map('strval', $orderIds)));
+        if ($orderIds === [] || !RowCurrency::columnsPresent($this->conn)) {
+            return [];
+        }
+        $in = implode(', ', array_fill(0, count($orderIds), '?'));
+        $stmt = $this->conn->prepareWrite(
+            'SELECT transaction_id, click_id, currency FROM 202_conversion_logs WHERE user_id = ? AND source = ?'
+            . ' AND reverses_conv_id IS NULL AND deleted = 0 AND transaction_id IN (' . $in . ')'
+            . ' ORDER BY conv_id'
+        );
+        $this->conn->bind(
+            $stmt,
+            'is' . str_repeat('s', count($orderIds)),
+            [$account, ConversionSource::SHOPIFY->value, ...$orderIds]
+        );
+        $currencies = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $currencies[(string) $row['transaction_id']][(int) $row['click_id']] ??= RowCurrency::read($row['currency'] ?? null);
+        }
+
+        return $currencies;
+    }
+
+    /**
+     * The currency a refund of a sale on $clicks is recorded in: the sales'
+     * when every one of them recorded the same, the account's otherwise (a
+     * sale with none recorded takes the account's reading, as it is shown).
+     *
+     * @param array<int, string> $byClick
+     * @param list<int> $clicks
+     */
+    private static function amountCurrency(array $byClick, array $clicks, string $account): string
+    {
+        $known = array_unique(array_map(static fn (int $c): string => $byClick[$c] ?? RowCurrency::UNKNOWN, $clicks));
+
+        return count($known) === 1 && $known[array_key_first($known)] !== RowCurrency::UNKNOWN
+            ? $known[array_key_first($known)]
+            : $account;
+    }
+
     /** The currency the account counts in, as the processor reads it for a webhook's amount. */
     private function accountCurrency(int $account): string
     {
-        $stmt = $this->conn->prepareRead('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1');
-        $this->conn->bind($stmt, 'i', [$account]);
-        $row = $this->conn->fetchOne($stmt);
-        if ($row === null) {
-            throw new \RuntimeException('account ' . $account . ' has no preferences row to read its currency from');
-        }
-
-        return strtoupper(trim((string) $row['user_account_currency']));
+        return RowCurrency::knownOf($this->conn, $account);
     }
 
     /** Whether Shopify's Transaction creation webhook has ever settled a refund transaction for the account. */

@@ -8,6 +8,7 @@ use Api\V3\Controllers\UsersController;
 use Prosper202\Click\ClickRef;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\Ledger\Amount;
+use Prosper202\Conversion\Ledger\RowCurrency;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\Ledger\AmountOutOfRange;
@@ -181,6 +182,10 @@ final class Processor
             'payout' => $amount,
             'conv_time' => $time,
         ];
+        if ($n->currency !== null && $this->otherCurrency($n, $owner) !== null) {
+            // Kept as stated (currency() let it through): the row says which currency that is.
+            $what['currency'] = strtoupper($n->currency);
+        }
         if ($purLinkKey !== null) {
             // A signed PurLink SubID records on its offer, as on pb.php and gpb.php.
             $what += ['purlink_subid' => $n->purLinkSubid, 'purlink_key' => $purLinkKey];
@@ -262,7 +267,7 @@ final class Processor
         if ($owner === null) {
             return self::unknownClick($n->clickId, $provider->clickField());
         }
-        $currency = $this->currency($n, $owner, $provider, $request);
+        $currency = $this->currency($n, $owner, $provider, $request, $this->saleCurrency($n->clickId, $original, $owner));
         if ($currency instanceof Outcome) {
             return $currency;
         }
@@ -629,14 +634,46 @@ final class Processor
      * saying so ('' when the currencies agree or none is stated). A refused
      * one is held (HeldNotifications) to be recorded once the account counts
      * in its currency.
+     *
+     * A refund is held to the currency its sale recorded ($saleCurrency,
+     * when the sale is on file and recorded one), not to the account's now:
+     * a sale recorded before the account's currency changed is refunded in
+     * the currency it was sold in, and the two net. One stated in any other
+     * currency than its sale's is refused and not held: no change of the
+     * account's currency would make it net with its sale.
      */
     private function currency(
         Notification $n,
         int $owner,
         ProviderAdapter $provider,
-        InboundRequest $request
+        InboundRequest $request,
+        ?string $saleCurrency = null
     ): Outcome|string {
         $accountCurrency = $this->otherCurrency($n, $owner);
+        $stated = strtoupper((string) $n->currency);
+        // A sale on file with no currency recorded: the refund is recorded
+        // beside it, in the same unrecorded currency, and the two net. When
+        // the owner records the sale's currency (RowCurrency::recordBefore())
+        // its refunds follow it. Held, it would wait for a currency change
+        // that has nothing to do with it.
+        if ($n->currency !== null && $saleCurrency === RowCurrency::UNKNOWN && !($provider instanceof RecordsAmountsAsStated)) {
+            return ' The sale it takes back has no currency recorded, so the refund is recorded beside it the same way;'
+                . ' record the currency of earlier conversions under Personal settings › Account currency.';
+        }
+        if ($n->currency !== null && $saleCurrency !== null && !($provider instanceof RecordsAmountsAsStated)) {
+            if ($stated === $saleCurrency) {
+                return $accountCurrency === null ? '' : ' The amount is in ' . $stated . ', the currency the sale it takes back'
+                    . ' was recorded in; this account counts in ' . $accountCurrency . ' now.';
+            }
+
+            return new Outcome(
+                OutcomeKind::CURRENCY_MISMATCH,
+                'The amount is in ' . $stated . ' and the sale it takes back was recorded in ' . $saleCurrency
+                . '; Prosper202 does not convert it, so nothing was recorded.',
+                null,
+                $owner
+            );
+        }
         if ($accountCurrency === null) {
             return '';
         }
@@ -668,20 +705,35 @@ final class Processor
         );
     }
 
+    /**
+     * The currency recorded on the sale a transaction id names on a click:
+     * its code, UNKNOWN when the sale is on file with none recorded, or null
+     * when there is no such sale or the upgrade has not added the column.
+     */
+    private function saleCurrency(int $clickId, string $transactionId, int $owner): ?string
+    {
+        $conn = new Connection($this->db);
+        if (!RowCurrency::columnsPresent($conn)) {
+            return null;
+        }
+        $stmt = $conn->prepareWrite(
+            'SELECT currency FROM 202_conversion_logs'
+            . ' WHERE click_id = ? AND transaction_id = ? AND reverses_conv_id IS NULL AND user_id = ?'
+            . ' ORDER BY conv_id LIMIT 1'
+        );
+        $conn->bind($stmt, 'isi', [$clickId, $transactionId, $owner]);
+        $row = $conn->fetchOne($stmt);
+
+        return $row === null ? null : RowCurrency::read($row['currency'] ?? null);
+    }
+
     /** The account's currency when the notification states another, or null. */
     private function otherCurrency(Notification $n, int $owner): ?string
     {
         if ($n->currency === null) {
             return null;
         }
-        $conn = new Connection($this->db);
-        $stmt = $conn->prepareRead('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1');
-        $conn->bind($stmt, 'i', [$owner]);
-        $row = $conn->fetchOne($stmt);
-        if ($row === null) {
-            throw new \RuntimeException('account ' . $owner . ' has no preferences row to read its currency from');
-        }
-        $accountCurrency = strtoupper(trim((string) $row['user_account_currency']));
+        $accountCurrency = RowCurrency::knownOf(new Connection($this->db), $owner);
         return strtoupper($n->currency) === $accountCurrency ? null : $accountCurrency;
     }
 

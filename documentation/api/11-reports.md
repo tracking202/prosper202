@@ -245,6 +245,17 @@ has none set; from 1.9.79). A client adding two servers' summaries needs it:
 `p202 report summary --profiles` adds money only across profiles that state
 the same currency.
 
+Every report answer also lists `other_currencies` (beside `data`; from
+1.9.80): the revenue of the report's period that the conversion ledger
+recorded in a currency other than the account's, as
+`{"currency": "USD", "conversions": 3, "amount": 37.5}` rows (`currency` is
+`null` for conversions that recorded none). It is empty when all of the
+period's revenue is in the account's currency. When it is not, the report's
+money adds those amounts as recorded and nothing converts them. The list is
+the account's for the period (by click time), whatever else the report
+filters by. The other reports state the account's `currency` beside it. See
+[Currencies](../features/conversion-currency.md).
+
 ### How the ratios are computed
 
 Each ratio is computed from the sums of the rows the report covers, never as

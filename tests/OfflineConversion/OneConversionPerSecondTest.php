@@ -37,6 +37,7 @@ final class OneConversionPerSecondTest extends TestCase
             'conv_time' => $convTime,
             'match_method' => 'click_id',
             'counted_amount' => $convId . '.00000',
+            'currency' => 'USD',
             'gclid' => 'EAIaIQ_' . ($over['msclkid'] ?? self::CLICK),
             'gbraid' => '',
             'wbraid' => '',

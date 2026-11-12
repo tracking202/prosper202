@@ -127,7 +127,7 @@ Protocol API secret**: GA4 Admin › Data streams › your stream ›
 Measurement Protocol API secrets › Create.
 
 Each conversion is sent as one event, `purchase` unless you name another,
-with `value`, `currency` (the account's) and `transaction_id` (the network's
+with `value`, `currency` (the one the conversion recorded) and `transaction_id` (the network's
 transaction id, else `P202-<conversion id>`, so GA4 counts a purchase it
 receives twice once), at the conversion's own time. A conversion that
 replaces an earlier one on the same click (a campaign that pays the latest
@@ -260,7 +260,7 @@ install or an old attempt is refused.
 | `userIdentifiers` | With *send hashed email and phone* on and `ad_user_data` not denied: the SHA-256 hashes of the customer's email and E.164 phone (enhanced conversions for leads). Not sent beside a wbraid or gbraid alone, which Google ignores them with. |
 | `conversionAction` | The destination's `conversion_action`, or the one `campaign_conversion_actions` names for the conversion's campaign. An ID, or `customers/<id>/conversionActions/<id>` for an action a manager account owns. |
 | `conversionDateTime` | The conversion's time in your account's time zone, with that day's offset (`2026-06-01 14:30:00-04:00`). |
-| `conversionValue`, `currencyCode` | The payout and the account's currency. |
+| `conversionValue`, `currencyCode` | The payout and the currency the conversion recorded. A conversion with no currency recorded is withheld. |
 | `orderId` | The network's transaction id, else `P202-<conversion id>`: Google counts one conversion per order id, so a retry or an overlap with another uploader is not counted twice. |
 | `consent` | `adUserData` and `adPersonalization` as the destination states them. |
 

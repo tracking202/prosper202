@@ -160,6 +160,8 @@ foreach (['clicks' => 'Clicks', 'leads' => 'Leads', 'su' => 'S/U', 'payout' => '
 	$columns[] = ['key' => $key, 'label' => $label, 'num' => true];
 }
 
+// Revenue of the period that is not in the account's currency is said above the figures (RevenueCurrencies).
+echo \Prosper202\Conversion\Ledger\RevenueCurrencies::notice($db, \Prosper202\DataEngine\DataScope::userId() ?? 0, (int) $time['from'], (int) $time['to']);
 echo p202_data_table($columns, $rows, [
 	'id' => 'rotator-table',
 	'caption' => 'Each rotator, its rules and its default',

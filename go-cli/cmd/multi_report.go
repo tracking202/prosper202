@@ -234,6 +234,12 @@ func parseDataObjectNumbers(data []byte) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("the response has more after its JSON value")
 	}
 	if obj, ok := parsed["data"].(map[string]interface{}); ok {
+		// The summary lists beside its data the period's revenue that is not
+		// in the account's currency; carried with the row, so a TOTAL can
+		// tell that this profile's money is not one currency's.
+		if others, ok := parsed[summaryOtherCurrenciesField].([]interface{}); ok && len(others) > 0 {
+			obj[summaryOtherCurrenciesField] = others
+		}
 		return obj, nil
 	}
 	return parsed, nil
