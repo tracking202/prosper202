@@ -283,7 +283,9 @@ final class LedgerCost
         }
         $candidates = 'SELECT DISTINCT vc.variable_set_id FROM (' . $ads . ') ads'
             . ' JOIN 202_custom_variables cc ON cc.variable = ads.ad_ref COLLATE utf8mb4_general_ci'
-            . ' JOIN 202_variable_sets2 vc ON vc.variables = CAST(cc.custom_variable_id AS CHAR)';
+            // The column's own collation: CAST AS CHAR takes the connection's
+            // (utf8mb4_0900_ai_ci on MySQL 8.0), and = between the two is refused.
+            . ' JOIN 202_variable_sets2 vc ON vc.variables = CONVERT(CAST(cc.custom_variable_id AS CHAR) USING utf8mb4) COLLATE utf8mb4_general_ci';
         $sql = 'SELECT vs.variable_set_id AS set_no, pv.ppc_network_id AS network_id,'
             . ' MIN(CONVERT(cv.variable USING utf8mb4) COLLATE utf8mb4_bin) AS ad_ref'
             . ' FROM 202_variable_sets2 vs'
