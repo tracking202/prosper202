@@ -33,7 +33,7 @@ final class AdCampaignsController
     public function __construct(\mysqli $db, private readonly int $userId, ?AdvertiserApi $api = null)
     {
         $this->store = new AdConnectionStore(new Connection($db));
-        $this->campaigns = new OpenAiAdsCampaigns($this->store, $api ?? new AdvertiserApi());
+        $this->campaigns = new OpenAiAdsCampaigns($this->store, $api ?? AdvertiserApi::fromEnvironment());
     }
 
     /** @param array<string, mixed> $params */
