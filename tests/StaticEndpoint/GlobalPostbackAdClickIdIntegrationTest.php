@@ -328,6 +328,17 @@ final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
             'SELECT outcome, user_id FROM 202_inbound_log WHERE user_id IN (' . self::USER . ', ' . self::OTHER_USER
                 . ')'
         ));
+
+        // The refused row keeps the click and how it was found, so its owner can record it from the log, as found.
+        $row = (new \Prosper202\InboundLog\InboundLog(self::$db))->list(self::OTHER_USER, false)[0];
+        self::assertSame(['ad_click_id', true], [$row['match_method'], $row['can_record']]);
+        self::assertIsInt($row['click_id']);
+        $replay = new \Prosper202\InboundLog\InboundReplay(self::$db);
+        $answer = $replay->replay(self::OTHER_USER, $row['inbound_id']);
+        self::assertSame('recorded', $answer['status'], $answer['message']);
+        self::assertSame([[(string) $row['click_id'], '5.00000', 'ad_click_id']], self::conversions());
+        self::assertSame('already_recorded', $replay->replay(self::OTHER_USER, $row['inbound_id'])['status']);
+        self::assertCount(1, self::conversions());
     }
 
     public function testAReloadedVisitRecordsOnTheLatestOfItsClicks(): void

@@ -71,6 +71,7 @@ type cronSummary struct {
 	Types                   []cronTypeSummary `json:"types"`
 	Warnings                []string          `json:"warnings"`
 	Notes                   []string          `json:"notes"`
+	TrafficSourcePostbacks  json.RawMessage   `json:"traffic_source_postbacks,omitempty"`
 	Jobs                    json.RawMessage   `json:"jobs,omitempty"`
 	RecentLogs              json.RawMessage   `json:"recent_logs,omitempty"`
 }
@@ -226,6 +227,8 @@ func runSystemCron(cmd *cobra.Command, _ []string) error {
 		Data struct {
 			Jobs       json.RawMessage `json:"jobs"`
 			RecentLogs json.RawMessage `json:"recent_logs"`
+			// Queued traffic-source postbacks left unsent (1.9.80 on).
+			Postbacks json.RawMessage `json:"traffic_source_postbacks"`
 		} `json:"data"`
 	}
 	var jobs, logs []map[string]interface{}
@@ -243,6 +246,18 @@ func runSystemCron(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	sum := summarizeCron(jobs, logs, systemNow())
+	if len(resp.Data.Postbacks) > 0 {
+		var postbacks struct {
+			Warning *string `json:"warning"`
+		}
+		if err := json.Unmarshal(resp.Data.Postbacks, &postbacks); err != nil {
+			return fmt.Errorf("reading the traffic-source postback queue: %w", err)
+		}
+		sum.TrafficSourcePostbacks = resp.Data.Postbacks
+		if postbacks.Warning != nil && *postbacks.Warning != "" {
+			sum.Notes = append(sum.Notes, *postbacks.Warning)
+		}
+	}
 
 	if jsonOutput || ndjsonOutput {
 		if showRaw {

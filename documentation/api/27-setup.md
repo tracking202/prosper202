@@ -273,6 +273,7 @@ page from opening anything.
 | ------ | ---- | ---- | ---------- |
 | `GET` | `/conversions/postback-auth` | — | `access_to_api_integrations`, `conversions:write` |
 | `PUT` | `/conversions/postback-auth` | `{"mode": "token"}` (`off`, `token` or `signed`) | `access_to_api_integrations`, `conversions:write` |
+| `GET` | `/conversions/postback-auth/readiness` | — | `access_to_api_integrations`, `conversions:write` |
 | `POST` | `/conversions/postback-auth/rotate` | `{"credential": "token", "grace_hours": 168}` (`token` or `signing_secret`; 0–720 hours, default 168) | `access_to_api_integrations`, `conversions:write` |
 
 The read hands out the token and the signing secret, which record and
@@ -454,6 +455,7 @@ p202 landing-page code 14 --offer campaign:3 --offer rotator:2
 p202 conversion postback-url --subid '{aff_sub}' --amount '{payout}'
 p202 conversion pixel --type universal
 p202 conversion postback-auth get                            # mode, token, signing secret, how to sign
+p202 conversion postback-auth readiness                      # who a stricter mode would refuse, from the last 7 days
 p202 conversion postback-auth set --mode token               # off | token | signed
 p202 conversion postback-auth rotate --credential signing_secret --grace-hours 168
 p202 ppc-network variable create 3 --name 'Ad id' --parameter adid --placeholder '{ad_id}'
