@@ -170,6 +170,28 @@ case "$ask" in
     # The inbound log (inbound-log.json): a refused postback is found by the
     # order number the network names and recorded from its own row, never
     # typed in by hand and never let through by opening the gate.
+    # A spend export (spend-ledger.json): record it, then read the ad's
+    # hours back from the ledger and add them up.
+    *"exported yesterday's hourly spend"*"Put it into Prosper202"*)
+        file=$(printf '%s' "$ask" | sed -n 's|.* to \(/[^ ]*\.json\).*|\1|p')
+        out=$(p202 spend import "$file" --json)
+        ad=$(jq -r 'if type == "array" then .[0].ad_ref else .rows[0].ad_ref end' "$file")
+        hours=$(p202 spend list --period yesterday --interval hour --json)
+        printf 'Recorded %s with `p202 spend import`: %s new, %s replaced, %s unchanged. Per `p202 spend list --period yesterday --interval hour`, ad %s cost %s %s yesterday (%s).\n' \
+            "$file" "$(printf '%s' "$out" | jq -r '.data.inserted')" "$(printf '%s' "$out" | jq -r '.data.replaced')" \
+            "$(printf '%s' "$out" | jq -r '.data.unchanged')" "$ad" \
+            "$(printf '%s' "$hours" | jq -r --arg ad "$ad" '[.data[] | select(.ad_ref == $ad) | (.spend | tonumber)] | add // 0 | . * 100 | round / 100 | tostring')" \
+            "$(printf '%s' "$hours" | jq -r '.currency')" \
+            "$(printf '%s' "$hours" | jq -r --arg ad "$ad" '[.data[] | select(.ad_ref == $ad) | "\(.period): \(.spend)"] | join(", ")')"
+        ;;
+    # A spend question (spend-ledger.json): a read; an export lying around is not imported.
+    *"ChatGPT Ads charge us yesterday"*"hour by hour"*)
+        hours=$(p202 spend list --period yesterday --interval hour --platform openai_ads --json)
+        rows=$(printf '%s' "$hours" | jq -r '[.data[] | select(.ad_ref | test("espresso_grinder")) | "\(.period): \(.spend)"] | join(", ")')
+        total=$(printf '%s' "$hours" | jq -r '[.data[] | select(.ad_ref | test("espresso_grinder")) | (.spend | tonumber)] | add // 0 | . * 100 | round / 100 | tostring')
+        printf 'Per `p202 spend list --period yesterday --interval hour --platform openai_ads`, the espresso grinder ad cost %s %s yesterday: %s.\n' \
+            "$total" "$(printf '%s' "$hours" | jq -r '.currency')" "${rows:-no hours recorded}"
+        ;;
     *"order EVAL-REFUSED-1"*)
         row=$(p202 conversion inbound-log --search EVAL-REFUSED-1 --outcome refused --json | jq -c '[.data[] | select(.can_record)][0] // empty')
         if [ -z "$row" ]; then

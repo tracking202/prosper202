@@ -143,6 +143,7 @@ still needs the browser, see [UI parity](12-ui-parity.md).
 | `p202 click-filter list [add <address> \| update <entry-id> \| remove <entry-id>]` | The address list: `add 203.0.113.0/24 --action filter\|count --note "..."`; `remove` takes `--dry-run`, `--force` and `--ids` |
 | `p202 click-filter test <ip>` | Would a click from this address be filtered, and by which rule? Each check's answer too; records nothing |
 | `p202 click update-cpc` | Set what past clicks cost (the UI's Update CPC): `--from`/`--to` days in the account's time zone, `--cpc`, optional id filters and `--method-of-promotion`; counts first, asks, then writes only the clicks it counted. See [Update CPC, subids and revenue reports](#update-cpc-subids-and-revenue-reports) |
+| `p202 spend import <file\|->` / `p202 spend list` | Record and read what each ad platform billed per ad per hour (the spend ledger, which the reports read as cost). See [Spend ledger](#spend-ledger) |
 | `p202 conversion mark-subids <file\|->` | Mark clicks converted from a subid list, one per line (the UI's Update Subids); once per click, safe to repeat |
 | `p202 conversion delete-subids <file\|->` | Clear the conversions of a subid list (the UI's Delete Subids); previews, asks (`--force`), `--dry-run` |
 | `p202 conversion reset-subids` | Clear every conversion of a category (`--aff-network-id`) or one of its campaigns (`--aff-campaign-id`) (the UI's Reset Campaign Subids) |
@@ -464,6 +465,38 @@ p202 conversion upload-revenue march.csv --subid-column 'Sub ID 2' --amount-colu
 
 Under `--json` each prints the API's answer (for a list in parts, the parts
 put together); otherwise a table of the lines, and a summary on stderr.
+
+## Spend Ledger
+
+```bash
+p202 spend import spend.json --dry-run
+p202 spend import spend.json
+my-puller | p202 spend import -
+p202 spend list --period yesterday --platform openai_ads
+p202 spend list --period last7 --interval hour
+```
+
+- **`spend import <file|->`** sends a JSON file of rows (a list, or
+  `{"rows": [...]}`, 1 to 2000 rows) to `POST /api/v3/spend-ledger` in one
+  write. Each row is one UTC hour of one ad: `platform`, `account_ref`,
+  `campaign_ref`, `ad_group_ref` (both may be `null`), `ad_ref`, `hour_start`
+  (unix seconds, a multiple of 3600), `impressions`, `clicks`, `spend` (major
+  units, kept to the digits written) and `currency` (the account's). Sending
+  an hour again replaces it and the same rows again change nothing, so a
+  retry is safe. A file that is not one JSON list of objects, or holds more
+  than 2000 rows, is refused before anything is sent (split a longer list);
+  any row the server refuses (`rows.3.spend`, counted from 0) refuses the
+  whole file and nothing is written. `--dry-run` answers the same counts
+  (`received`, `inserted`, `replaced`, `unchanged`) and writes nothing. Needs
+  the `access_to_update_section` role permission and the
+  `spend-ledger:write` scope; refuses `--staged`.
+- **`spend list`** reads the ledger summed per `--interval day` (the
+  default, in the account's time zone) or `hour`, per platform, ad account,
+  campaign, ad group and ad, newest first, with `matched_clicks` (the
+  account's clicks that carried the ad) and `unallocated_spend` (spend in
+  hours no click carried it). The window is `--period` or
+  `--time-from`/`--time-to`, as the reports take it; `--platform` and
+  `--limit` (1 to 5000, default 500) narrow it. Needs `spend-ledger:read`.
 
 ## Setup Code and Traffic-Source Settings
 

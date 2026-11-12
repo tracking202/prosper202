@@ -5517,6 +5517,9 @@ class UPGRADE
                 // from (TrafficSourceOwners::split()), which names the values
                 // recorded before the copy. Null on every variable already there.
                 \Prosper202\Database\Tables\TrackingTables::ppcNetworkVariables(),
+                // What each ad platform billed per ad per hour, which the
+                // reports read as cost where present (Prosper202\Spend).
+                \Prosper202\Database\Tables\MiscTables::spendLedger(),
                 // 202_ppc_networks gains ppc_network_platform: 'chatgpt_ads' on
                 // the source Setup › Traffic Sources' "Add ChatGPT Ads" makes
                 // (Prosper202\Setup\ChatGptAdsSource), '' on every other.

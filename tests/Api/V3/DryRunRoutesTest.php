@@ -65,6 +65,7 @@ final class DryRunRoutesTest extends TestCase
             'POST /conversions/subids/delete',
             'POST /conversions/subids/reset',
             'POST /conversions/uploads',
+            'POST /spend-ledger',
             'POST /system/retention/delete-before',
             'PUT /rotators/{id}/rules',
         ], $reads, 'the writes whose handlers preview');

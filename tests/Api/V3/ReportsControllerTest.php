@@ -38,7 +38,7 @@ final class ReportsControllerTest extends TestCase
             ],
         ]);
 
-        $controller = new ReportsController($db, 1);
+        $controller = new ReportsController($db, 1, self::noLedger());
         $result = $controller->daypart([]);
 
         $this->assertSame('America/New_York', $result['timezone']);
@@ -74,7 +74,7 @@ final class ReportsControllerTest extends TestCase
             ],
         ]);
 
-        $controller = new ReportsController($db, 1);
+        $controller = new ReportsController($db, 1, self::noLedger());
         $result = $controller->daypart([]);
 
         $this->assertCount(24, $result['data']);
@@ -94,7 +94,7 @@ final class ReportsControllerTest extends TestCase
             ],
         ]);
 
-        $controller = new ReportsController($db, 1);
+        $controller = new ReportsController($db, 1, self::noLedger());
         $result = $controller->daypart(['sort' => 'roi', 'sort_dir' => 'DESC']);
 
         $this->assertSame(1, $result['data'][0]['hour_of_day']);
@@ -105,7 +105,7 @@ final class ReportsControllerTest extends TestCase
     public function testDaypartInvalidSortThrowsValidationException(): void
     {
         $db = $this->createMysqliMock();
-        $controller = new ReportsController($db, 1);
+        $controller = new ReportsController($db, 1, self::noLedger());
 
         $this->expectException(ValidationException::class);
         $controller->daypart(['sort' => 'bad_field']);
@@ -118,7 +118,7 @@ final class ReportsControllerTest extends TestCase
             'GROUP BY hour_of_day' => [],
         ]);
 
-        $controller = new ReportsController($db, 1);
+        $controller = new ReportsController($db, 1, self::noLedger());
         $result = $controller->daypart([]);
 
         $this->assertSame('UTC', $result['timezone']);
@@ -127,7 +127,7 @@ final class ReportsControllerTest extends TestCase
     public function testTimeseriesInvalidIntervalThrowsValidationException(): void
     {
         $db = $this->createMysqliMock();
-        $controller = new ReportsController($db, 1);
+        $controller = new ReportsController($db, 1, self::noLedger());
 
         $this->expectException(ValidationException::class);
         $controller->timeseries(['interval' => 'bad']);
@@ -154,7 +154,7 @@ final class ReportsControllerTest extends TestCase
             ],
         ]);
 
-        $controller = new ReportsController($db, 1);
+        $controller = new ReportsController($db, 1, self::noLedger());
         $result = $controller->timeseries(['interval' => 'day']);
 
         $this->assertCount(1, $result['data']);
@@ -190,7 +190,7 @@ final class ReportsControllerTest extends TestCase
             $db = $this->recordingDb([], $prepared);
 
             $params = ['breakdown' => $dimension, 'limit' => 500, 'offset' => 500] + $sortParams;
-            (new ReportsController($db, 1))->breakdown($params);
+            (new ReportsController($db, 1, self::noLedger()))->breakdown($params);
 
             $sql = $this->onlyStatementContaining($prepared, 'LIMIT ? OFFSET ?');
             self::assertMatchesRegularExpression('/\bref\.(\w+) as id\b/', $sql);
@@ -212,7 +212,7 @@ final class ReportsControllerTest extends TestCase
         $prepared = [];
         $db = $this->recordingDb($this->periodRows(2001), $prepared);
 
-        $result = (new ReportsController($db, 1))->timeseries(['interval' => 'hour']);
+        $result = (new ReportsController($db, 1, self::noLedger()))->timeseries(['interval' => 'hour']);
 
         self::assertStringContainsString('LIMIT 2001', $this->onlyStatementContaining($prepared, 'GROUP BY period'));
         self::assertCount(2000, $result['data']);
@@ -230,7 +230,7 @@ final class ReportsControllerTest extends TestCase
         $prepared = [];
         $db = $this->recordingDb($this->periodRows(5000), $prepared);
 
-        $result = (new ReportsController($db, 1))->timeseries(['interval' => 'day']);
+        $result = (new ReportsController($db, 1, self::noLedger()))->timeseries(['interval' => 'day']);
 
         self::assertCount(2000, $result['data']);
         self::assertTrue($result['truncated']);
@@ -241,7 +241,7 @@ final class ReportsControllerTest extends TestCase
         $prepared = [];
         $db = $this->recordingDb($this->periodRows(2000), $prepared);
 
-        $result = (new ReportsController($db, 1))->timeseries(['interval' => 'day']);
+        $result = (new ReportsController($db, 1, self::noLedger()))->timeseries(['interval' => 'day']);
 
         self::assertCount(2000, $result['data']);
         self::assertFalse($result['truncated']);
@@ -254,7 +254,7 @@ final class ReportsControllerTest extends TestCase
         $prepared = [];
         $db = $this->recordingDb($this->periodRows(3), $prepared);
 
-        $result = (new ReportsController($db, 1))->timeseries(['interval' => 'month']);
+        $result = (new ReportsController($db, 1, self::noLedger()))->timeseries(['interval' => 'month']);
 
         self::assertCount(3, $result['data']);
         self::assertFalse($result['truncated']);
@@ -273,7 +273,7 @@ final class ReportsControllerTest extends TestCase
         $db->method('prepare')->willReturn($stmt);
 
         $this->expectException(DatabaseException::class);
-        (new ReportsController($db, 1))->timeseries(['interval' => 'day']);
+        (new ReportsController($db, 1, self::noLedger()))->timeseries(['interval' => 'day']);
     }
 
     // ─── breakdown parameters: refused, never replaced ──────────────
@@ -286,7 +286,7 @@ final class ReportsControllerTest extends TestCase
     public function testBreakdownRefusesAnUnknownSortAndAcceptsEveryMetric(): void
     {
         $prepared = [];
-        $controller = new ReportsController($this->recordingDb([], $prepared), 1);
+        $controller = new ReportsController($this->recordingDb([], $prepared), 1, self::noLedger());
         foreach (['total_click_throughs', 'avg_cpc', 'cpa', 'roi'] as $sort) {
             $controller->breakdown(['breakdown' => 'campaign', 'sort' => $sort]);
             self::assertStringContainsString("ORDER BY $sort DESC,", (string) end($prepared), $sort);
@@ -306,7 +306,7 @@ final class ReportsControllerTest extends TestCase
 
     public function testBreakdownRefusesABadDirectionAndPagingOutOfRange(): void
     {
-        $controller = new ReportsController($this->createMysqliMock(), 1);
+        $controller = new ReportsController($this->createMysqliMock(), 1, self::noLedger());
         $refused = [
             ['sort_dir' => 'up'], ['limit' => '1000'], ['limit' => '0'], ['limit' => 'ten'],
             ['offset' => '-1'], ['offset' => '1.5'], ['breakdown' => ['campaign']],
@@ -334,11 +334,11 @@ final class ReportsControllerTest extends TestCase
         $prepared = [];
         $binds = [];
         $db = $this->bindRecordingDb([], $prepared, $binds);
-        $result = (new ReportsController($db, 1))->breakdown(['sort_dir' => 'asc', 'limit' => '', 'offset' => '']);
+        $result = (new ReportsController($db, 1, self::noLedger()))->breakdown(['sort_dir' => 'asc', 'limit' => '', 'offset' => '']);
         self::assertSame([1, 51, 0], end($binds)['values'], 'the user, then limit 50 (one more read) and offset 0');
         self::assertSame([50, 0], [$result['limit'], $result['offset']]);
         self::assertStringContainsString('ORDER BY total_clicks ASC,', (string) end($prepared));
-        $result = (new ReportsController($db, 1))->breakdown(['limit' => '500', 'offset' => '1000']);
+        $result = (new ReportsController($db, 1, self::noLedger()))->breakdown(['limit' => '500', 'offset' => '1000']);
         self::assertSame([1, 501, 1000], end($binds)['values']);
         self::assertSame([500, 1000], [$result['limit'], $result['offset']]);
     }
@@ -352,7 +352,7 @@ final class ReportsControllerTest extends TestCase
      */
     public function testBreakdownFlagsTruncationWhenRowsRemainPastThePage(): void
     {
-        $result = (new ReportsController($this->pagingDb($this->nameRows(51)), 1))->breakdown([]);
+        $result = (new ReportsController($this->pagingDb($this->nameRows(51)), 1, self::noLedger()))->breakdown([]);
 
         self::assertCount(50, $result['data']);
         self::assertTrue($result['truncated']);
@@ -368,7 +368,7 @@ final class ReportsControllerTest extends TestCase
     public function testBreakdownAtExactlyTheLimitIsNotTruncated(): void
     {
         foreach ([[50, []], [7, ['limit' => '7']], [500, ['limit' => '500']]] as [$count, $params]) {
-            $result = (new ReportsController($this->pagingDb($this->nameRows($count)), 1))->breakdown($params);
+            $result = (new ReportsController($this->pagingDb($this->nameRows($count)), 1, self::noLedger()))->breakdown($params);
 
             self::assertCount($count, $result['data'], json_encode($params));
             self::assertFalse($result['truncated'], json_encode($params));
@@ -388,7 +388,7 @@ final class ReportsControllerTest extends TestCase
             ['5000', 0, false, null],
         ];
         foreach ($pages as [$offset, $rows, $truncated, $first]) {
-            $result = (new ReportsController($db, 1))->breakdown(['offset' => $offset]);
+            $result = (new ReportsController($db, 1, self::noLedger()))->breakdown(['offset' => $offset]);
 
             self::assertCount($rows, $result['data'], "offset $offset");
             self::assertSame($truncated, $result['truncated'], "offset $offset");
@@ -456,7 +456,7 @@ final class ReportsControllerTest extends TestCase
             [['id' => 7, 'name' => $hostile, 'rotator_id' => 3, 'total_clicks' => '1']],
             $prepared
         );
-        $result = (new ReportsController($db, 1))->breakdown(['breakdown' => $dimension]);
+        $result = (new ReportsController($db, 1, self::noLedger()))->breakdown(['breakdown' => $dimension]);
 
         $sql = $this->onlyStatementContaining($prepared, 'LIMIT ? OFFSET ?');
         self::assertStringContainsString($join, $sql);
@@ -478,7 +478,7 @@ final class ReportsControllerTest extends TestCase
     public function testARotatorRuleRowCarriesItsRotator(): void
     {
         $prepared = [];
-        (new ReportsController($this->recordingDb([], $prepared), 1))->breakdown(['breakdown' => 'rotator_rule']);
+        (new ReportsController($this->recordingDb([], $prepared), 1, self::noLedger()))->breakdown(['breakdown' => 'rotator_rule']);
         $sql = $this->onlyStatementContaining($prepared, 'LIMIT ? OFFSET ?');
         self::assertStringContainsString('ref.rotator_id as rotator_id,', $sql);
         self::assertStringContainsString('GROUP BY ref.id, ref.rule_name, ref.rotator_id', $sql);
@@ -494,7 +494,7 @@ final class ReportsControllerTest extends TestCase
     public function testTheIpDimensionJoinsOnlyAnAllDigitReferenceToIpv6(): void
     {
         $prepared = [];
-        (new ReportsController($this->recordingDb([], $prepared), 1))->breakdown(['breakdown' => 'ip']);
+        (new ReportsController($this->recordingDb([], $prepared), 1, self::noLedger()))->breakdown(['breakdown' => 'ip']);
         $sql = $this->onlyStatementContaining($prepared, 'LIMIT ? OFFSET ?');
         self::assertStringContainsString(
             "LEFT JOIN 202_ips_v6 i6 ON (ref.ip_address REGEXP '^[0-9]+$'"
@@ -523,7 +523,7 @@ final class ReportsControllerTest extends TestCase
                 $binds
             );
             $before = (new \DateTimeImmutable('now', $tz))->setTime(0, 0)->modify("-$daysBack day")->getTimestamp();
-            (new ReportsController($db, 1))->summary(['period' => $period]);
+            (new ReportsController($db, 1, self::noLedger()))->summary(['period' => $period]);
             $after = (new \DateTimeImmutable('now', $tz))->setTime(0, 0)->modify("-$daysBack day")->getTimestamp();
 
             $summary = array_values(array_filter(
@@ -573,7 +573,7 @@ final class ReportsControllerTest extends TestCase
             ],
         ], $prepared, $binds);
 
-        $data = (new ReportsController($db, 7))->rotatorStats(9, ['period' => 'last30', 'show' => 'real'])['data'];
+        $data = (new ReportsController($db, 7, self::noLedger()))->rotatorStats(9, ['period' => 'last30', 'show' => 'real'])['data'];
 
         self::assertSame(['id' => 9, 'name' => 'Geo split'], $data['rotator']);
         self::assertSame(13, $data['totals']['total_clicks']);
@@ -619,7 +619,7 @@ final class ReportsControllerTest extends TestCase
         $binds = [];
         $db = $this->bindRecordingDb([], $prepared, $binds);
         try {
-            (new ReportsController($db, 7))->rotatorStats(9, []);
+            (new ReportsController($db, 7, self::noLedger()))->rotatorStats(9, []);
             self::fail('a rotator the account does not own was read');
         } catch (\Api\V3\Exception\NotFoundException) {
             self::assertSame([9, 7], $binds[0]['values'], 'looked up by id AND the caller');
@@ -642,7 +642,7 @@ final class ReportsControllerTest extends TestCase
                 $prepared,
                 $binds
             );
-            $data = (new ReportsController($db, 7))->summary([])['data'];
+            $data = (new ReportsController($db, 7, self::noLedger()))->summary([])['data'];
 
             self::assertSame($want, $data['currency'], "stored '$stored'");
             $read = array_values(array_filter(
@@ -672,7 +672,7 @@ final class ReportsControllerTest extends TestCase
         });
 
         try {
-            (new ReportsController($db, 1))->summary([]);
+            (new ReportsController($db, 1, self::noLedger()))->summary([]);
             self::fail('a failed currency read answered a summary');
         } catch (DatabaseException $e) {
             self::assertSame('Failed to read the account currency', $e->getPrevious()?->getMessage());
@@ -693,14 +693,14 @@ final class ReportsControllerTest extends TestCase
 
         foreach (['summary', 'breakdown'] as $report) {
             try {
-                (new ReportsController($db, 1))->$report([]);
+                (new ReportsController($db, 1, self::noLedger()))->$report([]);
                 self::fail("$report read a failed fetch as an answer");
             } catch (DatabaseException) {
                 $this->addToAssertionCount(1);
             }
         }
         $this->expectException(DatabaseException::class);
-        (new ReportsController($db, 1))->rotatorStats(1, []);
+        (new ReportsController($db, 1, self::noLedger()))->rotatorStats(1, []);
     }
 
     /**
@@ -857,5 +857,14 @@ final class ReportsControllerTest extends TestCase
         }
 
         return $rows;
+    }
+
+    /**
+     * The ledger has no part in these reports: the fakes answer the report's
+     * own statements only (LedgerCostIntegrationTest runs the ledger's).
+     */
+    private static function noLedger(): \Closure
+    {
+        return static fn (?int $from, ?int $to): ?\Prosper202\Spend\LedgerCost => null;
     }
 }

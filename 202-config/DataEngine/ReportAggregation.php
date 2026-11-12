@@ -21,6 +21,7 @@ final class ReportAggregation
      *
      * @param list<string> $dimensions Raw dataengine column names.
      * @param list<string> $metrics Columns to sum, excluding dimension columns.
+     * @param string $table 202_dataengine, or what stands for it (LedgerClicks::table())
      */
     public static function byDimensions(
         string $alias,
@@ -28,31 +29,38 @@ final class ReportAggregation
         string $where,
         array $metrics = self::METRICS,
         ?string $resultAlias = null,
+        string $table = LedgerClicks::TABLE,
     ): string {
-        return self::grouped($alias, $dimensions, $where, $metrics, [], $resultAlias);
+        return self::grouped($alias, $dimensions, $where, $metrics, [], $resultAlias, $table);
     }
 
     /**
      * Group UTC hours only when every modeled local-hour boundary aligns.
      *
      * @param list<string> $dimensions Additional raw IDs needed after grouping.
+     * @param string $table 202_dataengine, or what stands for it (LedgerClicks::table())
      */
-    public static function byHour(string $where, string $timezone, array $dimensions = []): string
-    {
+    public static function byHour(
+        string $where,
+        string $timezone,
+        array $dimensions = [],
+        string $table = LedgerClicks::TABLE,
+    ): string {
         foreach (LocalTime::offsets($timezone, time()) as [$transition, $offset]) {
             if ($transition % 3600 !== 0 || $offset % 3600 !== 0) {
                 // Keep WHERE inside the source so callers can still join labels.
-                return ' FROM (SELECT * FROM 202_dataengine AS 2st ' . $where . ') AS 2st ';
+                return ' FROM (SELECT * FROM ' . $table . ' AS 2st ' . $where . ') AS 2st ';
             }
         }
 
-        return self::grouped('2st', $dimensions, $where, self::METRICS, ['2st.click_time DIV 3600']);
+        return self::grouped('2st', $dimensions, $where, self::METRICS, ['2st.click_time DIV 3600'], null, $table);
     }
 
     /**
      * @param list<string> $dimensions
      * @param list<string> $metrics
      * @param list<string> $extraGroups Internal grouping expressions.
+     * @param string $table 202_dataengine, or what stands for it (LedgerClicks::table())
      */
     private static function grouped(
         string $alias,
@@ -61,6 +69,7 @@ final class ReportAggregation
         array $metrics,
         array $extraGroups = [],
         ?string $resultAlias = null,
+        string $table = LedgerClicks::TABLE,
     ): string {
         $resultAlias ??= $alias;
         if (!in_array($alias, ['2st', '2c'], true) || !in_array($resultAlias, ['2st', '2c'], true)) {
@@ -87,7 +96,7 @@ final class ReportAggregation
         }
 
         return ' FROM (SELECT ' . implode(', ', $select)
-            . " FROM 202_dataengine AS $alias " . $where
+            . " FROM $table AS $alias " . $where
             . ($groups === [] ? '' : ' GROUP BY ' . implode(', ', $groups)) . ") AS $resultAlias ";
     }
 }

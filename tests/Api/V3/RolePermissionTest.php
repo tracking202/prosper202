@@ -51,6 +51,7 @@ final class RolePermissionTest extends TestCase
         'GET /reports/weekpart' => '$reportFigures',
         'GET /reports/groups' => '$reportFigures',
         'GET /rotators/{id}/stats' => '$reportFigures',
+        'GET /spend-ledger' => '$spendFigures',
     ];
 
     /**

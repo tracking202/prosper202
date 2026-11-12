@@ -1148,6 +1148,24 @@ first 1,000; the summary counts every skipped line by reason).
 (`delete-subids` also `delete_individual_subids`), refuse `--staged`, and are
 safe to run again.
 
+### Record and read ad platform spend
+
+```bash
+p202 spend import spend.json --dry-run
+p202 spend import spend.json
+p202 spend list --period yesterday --platform openai_ads --interval hour
+```
+
+The spend ledger: what each ad platform billed per ad per hour, which the
+reports read as cost. `spend import` sends a JSON list of rows (or
+`{"rows": [...]}`, up to 2000; `-` reads stdin) in one write; sending an hour
+again replaces it, so a retry is safe, and any refused row (`rows.3.spend`,
+counted from 0) writes nothing. `--dry-run` answers the counts and writes
+nothing. It needs `access_to_update_section` and `spend-ledger:write`, and
+refuses `--staged`. `spend list` sums the ledger per day (the account's time
+zone) or `--interval hour`, over `--period` or `--time-from`/`--time-to`, with
+the clicks each ad matched and the spend no click carried.
+
 ## Destinations
 
 Send each new conversion to your ad platforms from your own server as it is
