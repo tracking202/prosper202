@@ -482,7 +482,7 @@ var linkTokens = []string{"c1", "c2", "c3", "c4", "utm_source", "utm_medium", "u
 // link as given.
 func registerLinkTokenFlags(cmd *cobra.Command) {
 	for _, token := range linkTokens {
-		cmd.Flags().String(token, "", "Value for "+token+" in the link, as given (e.g. your traffic source's macro); default: the traffic source's own variable")
+		cmd.Flags().String(token, "", "The link's "+token+" value, as given (e.g. a traffic source macro); default: the source's own variable")
 	}
 }
 
@@ -1326,8 +1326,8 @@ var crudEntities = []crudEntity{
 			{Name: "aff_network_id", Desc: "Category (affiliate network) id, from `p202 aff-network list`", Required: true},
 			{Name: "aff_campaign_cloaking", Desc: "Enable cloaking (1) or not (0)", Enum: binaryValues},
 			{Name: "aff_campaign_rotate", Desc: "Enable rotation (1) or not (0)", Enum: binaryValues},
-			{Name: "payout_mode", Desc: "How conversions set a click's value, replace (latest payout, default) or accumulate (sum)", Enum: []string{"replace", "accumulate"}},
-			{Name: "identity_signals", Desc: "Link this campaign's clicks into multi-touch journeys (1, default) or not (0)", Enum: binaryValues},
+			{Name: "payout_mode", Desc: "How conversions set a click's value: replace (latest payout, default) or accumulate (sum)", Enum: []string{"replace", "accumulate"}},
+			{Name: "identity_signals", Desc: "Link its clicks into multi-touch journeys (1, default) or not (0)", Enum: binaryValues},
 			{Name: "app_registration_id", Desc: "The Android app registration this campaign's store links install (`p202 app list --platform android`; 0 unlinks). An install of another app on its click is foreign_click"},
 			{Name: "attribution_model_id", Desc: "The attribution model this campaign's conversions are credited with, overriding the account default (`p202 attribution model list`; 0 returns it to the default)"},
 		},

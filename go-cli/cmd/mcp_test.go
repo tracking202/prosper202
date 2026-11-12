@@ -80,7 +80,8 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 	// click filter's five tools (user_id and ids left out, no entry update) and
 	// settings_get add about 5,100; the publisher dimension and its filter
 	// (on report_summary, report_breakdown and click_list) about 800;
-	// landing_page_check about 700.
+	// landing_page_check about 700; the three destination tools about 2,100,
+	// paid for by shorter shared flag help (the time window, the link tokens).
 	const budget = 100500
 	if len(body) > budget {
 		t.Fatalf("the tool list is %d characters, over its %d budget; trim notes or omit flags", len(body), budget)
@@ -490,7 +491,8 @@ func TestMCPStagedCatalogLeavesOutApplying(t *testing.T) {
 		t.Errorf("a staged server's instructions do not say it only proposes: %q", cat.Instructions)
 	}
 	full, _ := buildMCPCatalog(rootCmd, false, false)
-	if strings.Join(full.StagedExcludes, ",") != "change_apply,change_discard" {
+	// destination_test's route is not stageable: `destination test` refuses --staged.
+	if strings.Join(full.StagedExcludes, ",") != "change_apply,change_discard,destination_test" {
 		t.Errorf("staged_excludes = %q", full.StagedExcludes)
 	}
 }

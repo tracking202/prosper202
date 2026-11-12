@@ -20,8 +20,8 @@ var reportCmd = &cobra.Command{
 // (Api\V3\Support\TimeBound): a bare 2026-10-01 used to be read as 2026
 // seconds, so the answer was every row.
 const (
-	timeFromHelp = "Start: unix seconds, a date (2026-10-01, from its first second in the account's timezone) or a time with its offset (2026-10-01T09:30:00Z)"
-	timeToHelp   = "End, inclusive: unix seconds, a date (2026-10-01, through its last second in the account's timezone) or a time with its offset"
+	timeFromHelp = "Start: unix seconds, a date (2026-10-01, the account's timezone) or a time with offset (2026-10-01T09:30:00Z)"
+	timeToHelp   = "End, inclusive, in the start's forms; a date runs through its last second"
 )
 
 // reportWindowFlags are the window every report takes.
@@ -65,7 +65,7 @@ func addReportFilters(cmd *cobra.Command) {
 
 // addReportFilterFlags registers reportFilterFlags on a report command.
 func addReportFilterFlags(cmd *cobra.Command) {
-	cmd.Flags().String("aff_campaign_id", "", "Filter by INTERNAL campaign id (from `campaign list`), not the public id in tracking URLs")
+	cmd.Flags().String("aff_campaign_id", "", "Filter by INTERNAL campaign id (`campaign list`), not a tracking URL's public id")
 	cmd.Flags().String("ppc_account_id", "", "Filter by PPC account ID")
 	cmd.Flags().String("aff_network_id", "", "Filter by affiliate network ID")
 	cmd.Flags().String("ppc_network_id", "", "Filter by PPC network ID, or none for the clicks with no traffic source")
@@ -76,15 +76,15 @@ func addReportFilterFlags(cmd *cobra.Command) {
 	cmd.Flags().String("isp_id", "", "Filter by ISP/carrier ID (the id of a `--breakdown isp` row)")
 	cmd.Flags().String("browser_id", "", "Filter by browser ID (the id of a `--breakdown browser` row)")
 	cmd.Flags().String("platform_id", "", "Filter by platform (OS) ID (the id of a `--breakdown platform` row)")
-	cmd.Flags().String("device_type", "", "Filter by device type ID: 1 Desktop, 2 Mobile, 3 Tablet, 4 Bot (the ids of `--breakdown device_type` rows)")
+	cmd.Flags().String("device_type", "", "Filter by device type ID: 1 Desktop, 2 Mobile, 3 Tablet, 4 Bot (as `--breakdown device_type` rows)")
 	cmd.Flags().String("method_of_promotion", "", "Only direct-link clicks or only landing-page clicks: {values}")
 	enumFlag(cmd, "method_of_promotion", newEnum(promotionMethods))
-	cmd.Flags().String("show", "", "Which clicks count (default all): {values}; real = not filtered, filtered_bot = filtered as bots, leads = converted")
+	cmd.Flags().String("show", "", "Which clicks count (default all): {values}; real: not filtered, filtered_bot: as bots, leads: converted")
 	enumFlag(cmd, "show", newEnum(reportShowValues))
 	cmd.Flags().String("keyword", "", "Only clicks whose keyword contains this text (case-insensitive)")
 	cmd.Flags().String("ip", "", "Only clicks from this one IP address, IPv4 or IPv6")
 	cmd.Flags().String("referer", "", "Only clicks whose referring URL contains this text (case-insensitive)")
-	cmd.Flags().String("publisher_id", "", "Only clicks credited to this publisher (a `--breakdown publisher` row's id), or none for clicks on no publisher link")
+	cmd.Flags().String("publisher_id", "", "Only clicks credited to this publisher (a `--breakdown publisher` row's id), or none for clicks of no publisher")
 }
 
 var reportSummaryCmd = &cobra.Command{

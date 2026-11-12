@@ -190,8 +190,9 @@ func TestMCPCatalogListsWhatTheHostedServerLeavesOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The click filter and the settings are /users, which no hosted key reaches.
-	want := "click_filter_get,click_filter_update,click_filter_test,click_filter_list_add,click_filter_list_remove,system_info,settings_get"
+	// The click filter and the settings are /users, and the destinations /destinations, which no hosted key reaches.
+	want := "click_filter_get,click_filter_update,click_filter_test,click_filter_list_add,click_filter_list_remove,system_info,settings_get," +
+		"destination_list,destination_deliveries,destination_test"
 	if strings.Join(cat.HostedExcludes, ",") != want {
 		t.Fatalf("hosted_excludes = %q, want %s", cat.HostedExcludes, want)
 	}
