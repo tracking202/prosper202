@@ -110,6 +110,25 @@
         "n=$(p202 ppc-network list --all --json | jq -r '.data[] | select(.ppc_network_name==\"EVAL Traffic Network\") | .ppc_network_id' | head -1) && for v in $(p202 ppc-network variable list \"$n\" --json | jq -r '.data[] | select(.parameter==\"adid\") | .ppc_variable_id'); do p202 ppc-network variable delete \"$n\" \"$v\" --force --json >/dev/null; done"
       ],
       "notes": "Setup > Traffic Sources > variables, now /ppc-networks/{id}/variables. The link builder (GET /trackers/{id}/url) reads the live variables of the tracker's account's source, so the change is visible through the link with no other step."
+    },
+    {
+      "id": "setup-code-005-a-repeat-check-is-the-last-checks-answer",
+      "priority": "medium",
+      "state": "seeded fixture: EVAL LP A was checked by the setup a moment before the ask, so a check inside the next 30 seconds is answered from that one",
+      "setup": [
+        "id=$(p202 landing-page list --all --json | jq -r '.data[] | select(.landing_page_nickname==\"EVAL LP A\") | .landing_page_id' | head -1); p202 landing-page check \"$id\" --json >/dev/null"
+      ],
+      "ask": "Is the tracking code installed on the EVAL LP A landing page? Check it and tell me what you find.",
+      "expected": {
+        "runs_one_of": [
+          "landing-page check"
+        ],
+        "state_unchanged": [
+          "p202 landing-page list --all --json"
+        ],
+        "rubric": "PASS if the agent ran `p202 landing-page check` (or POST /landing-pages/{id}/check) for EVAL LP A and reports the status and message it answered, and, when the answer has `fetched: false`, says it is the check made a few seconds earlier rather than a new fetch (it may wait out `fetch_again_in_seconds` and check once more). FAIL if it presents a `fetched: false` answer as a fresh fetch, runs the check in a loop, or changes the landing page to answer."
+      },
+      "notes": "POST /landing-pages/{id}/check answers a page checked less than 30 seconds ago from that check (fetched false, fetch_again_in_seconds, note) and limits each key to 10 fetches a minute (429 with Retry-After). The page's saved URL is example.com, so the status itself differs by network and is not graded."
     }
   ]
 }
