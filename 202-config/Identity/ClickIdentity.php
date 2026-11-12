@@ -121,18 +121,29 @@ final class ClickIdentity
      * for the click its tracking template made) and that withheld consent
      * takes back the browser marks the click's earlier requests left
      * (IdentityGraph::withdrawBrowserSignals()). The caller has shown the
-     * click is the account's. A failure is logged, as attach()'s is.
+     * click is the account's.
+     *
+     * Unlike attach(), a failure is the caller's: a link that is not made
+     * identifies no one, but a mark left standing would send the address of
+     * a visitor who refused (CLAUDE.md #11). The one statement is tried
+     * again on a lock error, then thrown.
      */
     public function withdrawIfWithheld(Connection $conn, int $clickId): void
     {
         if (!$this->withheld || $clickId <= 0) {
             return;
         }
-        try {
-            IdentityGraph::withdrawBrowserSignals($conn, $clickId);
-        } catch (\Throwable $e) {
-            error_log('identity: click ' . $clickId . ' withheld consent but its browser marks were not withdrawn: '
-                . $e->getMessage());
+        for ($attempt = 1; true; $attempt++) {
+            try {
+                IdentityGraph::withdrawBrowserSignals($conn, $clickId);
+
+                return;
+            } catch (\Throwable $e) {
+                if ($attempt < self::ATTEMPTS && Connection::isRetryableLockError($e)) {
+                    continue;
+                }
+                throw $e;
+            }
         }
     }
 
