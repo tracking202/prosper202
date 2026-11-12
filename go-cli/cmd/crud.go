@@ -482,7 +482,7 @@ var linkTokens = []string{"c1", "c2", "c3", "c4", "utm_source", "utm_medium", "u
 // link as given.
 func registerLinkTokenFlags(cmd *cobra.Command) {
 	for _, token := range linkTokens {
-		cmd.Flags().String(token, "", "Value for "+token+" in the link, as given (e.g. your traffic source's macro); default: the traffic source's own variable")
+		cmd.Flags().String(token, "", "Value for "+token+" in the link, as given (e.g. a source's macro); default: the source's own variable")
 	}
 }
 
@@ -1479,6 +1479,7 @@ func init() {
 			cmd.AddCommand(newLandingPageCheckCmd(e))
 		case "ppc-network":
 			cmd.AddCommand(newPpcNetworkVariableCmd())
+			cmd.AddCommand(newPpcNetworkChatGptAdsCmd())
 		case "ppc-account":
 			cmd.AddCommand(newPpcAccountPixelCmd())
 		}

@@ -525,6 +525,20 @@ try {
             $auth->requireScope('conversions:write');
             $auth->requirePermission($db, 'access_to_api_integrations');
         }]);
+        // Setup › Traffic Sources' "Add ChatGPT Ads": the source, an account
+        // and its two variables, or what an existing ChatGPT Ads source lacks
+        // (Prosper202\Setup\ChatGptAdsSource). Idempotent by itself: 201 when
+        // the source was made, 200 when it was already there. The page asks
+        // for Setup alone, as adding a source does. It also makes a traffic
+        // source account, so a scoped key needs ppc-accounts:write as well as
+        // the ppc-networks:write its path asks for (CLAUDE.md #5).
+        $router->group('/ppc-networks', function (Router $r) use ($crud, $payload) {
+            $r->post('/chatgpt-ads', function () use ($crud, $payload): array {
+                $answer = $crud(\Api\V3\Controllers\PpcNetworksController::class)->addChatGptAds($payload);
+
+                return ['_status' => $answer['data']['source_created'] ? 201 : 200] + $answer;
+            });
+        }, [$setupSection, static function () use ($auth): void { $auth->requireScope('ppc-accounts:write'); }]);
         $router->group('/ppc-networks/{id}/variables', function (Router $r) use ($crud, $idempotent, $payload) {
             $vars = \Api\V3\Controllers\PpcNetworkVariablesController::class;
             $r->get('', fn($ctx) => $crud($vars)->list(PathId::of($ctx)));

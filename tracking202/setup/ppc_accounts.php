@@ -59,6 +59,36 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$error['token'] = 'Invalid or expired form token. Please reload the page and try again.';
 	}
 
+	// "Add ChatGPT Ads": the source, an account and its two variables in one
+	// step, or what an existing ChatGPT Ads source lacks (ChatGptAdsSource).
+	if (isset($_POST['add_chatgpt_ads']) && empty($error)) {
+		$chatGpt = null;
+		try {
+			$chatGpt = (new \Prosper202\Setup\ChatGptAdsSource(new \Prosper202\Database\Connection($db)))
+				->add((int) $_SESSION['user_id']);
+		} catch (\RuntimeException | \mysqli_sql_exception $e) {
+			record_mysql_error($db, 'INSERT INTO 202_ppc_networks (Add ChatGPT Ads)', $e->getMessage());
+		}
+		$changed = $chatGpt['source_created'] || $chatGpt['source_adopted'] || $chatGpt['account_created'] || $chatGpt['variables_added'] !== [];
+		if ($changed) {
+			\Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
+		}
+		if ($chatGpt['source_created']) {
+			if ($slack) {
+				$slack->push('traffic_source_created', ['name' => \Prosper202\Setup\ChatGptAdsSource::SOURCE_NAME, 'user' => $user_row['username']]);
+			}
+			require_once dirname(__DIR__, 2) . '/202-config/Messaging/Analytics.class.php';
+			Analytics::event('traffic_source_added', ['via' => 'ui'], 'analytics');
+		}
+		if ($chatGpt['source_created'] && $chatGpt['account_created'] && $slack) {
+			$slack->push('traffic_source_account_created', ['account_name' => \Prosper202\Setup\ChatGptAdsSource::ACCOUNT_NAME, 'network_name' => \Prosper202\Setup\ChatGptAdsSource::SOURCE_NAME, 'user' => $user_row['username']]);
+		}
+		$flash = $chatGpt['source_created'] ? 'chatgpt_added'
+			: ($chatGpt['source_adopted'] ? 'chatgpt_adopted' : ($changed ? 'chatgpt_completed' : 'chatgpt_exists'));
+		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php?' . $flash . '=1');
+		exit;
+	}
+
 	if (isset($_POST['ppc_network_name'])) {
 		$ppc_network_name = trim((string) $_POST['ppc_network_name']);
 		if (empty($ppc_network_name)) {
@@ -580,6 +610,10 @@ echo p202_setup_query_flashes([
 	'account_saved' => 'Account saved.',
 	'deleted' => 'Removed. Clicks already tracked keep their history.',
 	'variables_saved' => 'Custom variables saved. New tracking links for this source carry them.',
+	'chatgpt_added' => 'ChatGPT Ads added, with an account and the campaign_id and ad_id variables. On Get Links, pick it as the traffic source: you get the destination URL and the tracking template to paste into Ads Manager.',
+	'chatgpt_completed' => 'ChatGPT Ads was already set up, so no second source was made. The account or variables it was missing were added back; nothing you changed was touched.',
+	'chatgpt_adopted' => 'Your traffic source named ChatGPT Ads is now set up as ChatGPT Ads: it kept its links and reports, and was given what it was missing (an account, the campaign_id and ad_id variables). Get Links now gives its destination URL and tracking template.',
+	'chatgpt_exists' => 'ChatGPT Ads is already set up, so nothing was added. Get Links gives its destination URL and tracking template.',
 ], $_GET);
 if ($error) {
 	echo p202_setup_error_flashes($error, ['ppc_network_name', 'ppc_network_id', 'ppc_account_name']);
@@ -616,6 +650,16 @@ if ($error) {
 						<button type="submit" class="btn <?php echo $sourceIsPrimary ? 'btn-primary' : 'btn-secondary'; ?>"><?php echo $network_editing ? 'Save changes' : 'Add traffic source'; ?></button>
 					</div>
 				</form>
+				<?php if (!$network_editing) { ?>
+				<form method="post" action="<?php echo p202_setup_e($self); ?>" class="mt-3 pt-3 border-top" id="chatgpt-ads-form">
+					<?php echo p202_setup_token_field($token); ?>
+					<input type="hidden" name="add_chatgpt_ads" value="1">
+					<div class="p202-form-actions">
+						<button type="submit" class="btn btn-secondary">Add ChatGPT Ads</button>
+					</div>
+					<div class="form-text">Buying ads in ChatGPT? One click adds the source, an account and the <code>campaign_id</code> and <code>ad_id</code> variables Ads Manager fills in. A second click adds nothing twice.</div>
+				</form>
+				<?php } ?>
 			</div>
 		</section>
 
@@ -692,6 +736,7 @@ if ($error) {
 							$accounts = $accountsBySource[$sid] ?? []; ?>
 							<li class="p202-list__item<?php echo $editSourceId === $sid ? ' is-active' : ''; ?>" data-p202-filter-text="<?php echo p202_setup_e($sname); ?>">
 								<span class="p202-list__name"><?php echo p202_setup_e($sname); ?></span>
+								<?php if (\Prosper202\Setup\ChatGptAdsSource::isSourceRow($source)) { ?><span class="p202-pill p202-pill--accent" title="Get Links gives this source's links the ChatGPT Ads tracking template">ChatGPT Ads</span><?php } ?>
 								<span class="p202-pill"><?php echo count($accounts) . ' ' . (count($accounts) === 1 ? 'account' : 'accounts'); ?></span>
 								<span class="p202-list__actions">
 									<a class="p202-list__action" href="<?php echo p202_setup_e($self . '?edit_ppc_network_id=' . $sid . '&edit_ppc_network_name=' . rawurlencode($sname)); ?>">edit</a>

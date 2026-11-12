@@ -5520,6 +5520,10 @@ class UPGRADE
                 // What each ad platform billed per ad per hour, which the
                 // reports read as cost where present (Prosper202\Spend).
                 \Prosper202\Database\Tables\MiscTables::spendLedger(),
+                // 202_ppc_networks gains ppc_network_platform: 'chatgpt_ads' on
+                // the source Setup › Traffic Sources' "Add ChatGPT Ads" makes
+                // (Prosper202\Setup\ChatGptAdsSource), '' on every other.
+                \Prosper202\Database\Tables\CampaignTables::ppcNetworks(),
             ], [], [], true) && $before_ok;
             if ($step_ok) {
                 _upgrade_seed_bot202_facebook_pixel_lookups();
