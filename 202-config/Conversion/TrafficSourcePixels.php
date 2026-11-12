@@ -7,6 +7,7 @@ namespace Prosper202\Conversion;
 use Prosper202\Click\AdClickIdColumns;
 use Prosper202\Click\FirstVisit;
 use Prosper202\Database\Connection;
+use Prosper202\Destinations\DestinationEventId;
 use Prosper202\Notifications\PostbackResult;
 use Prosper202\Notifications\PostbackSender;
 
@@ -34,6 +35,14 @@ use Prosper202\Notifications\PostbackSender;
 final class TrafficSourcePixels
 {
     public const POSTBACK_USER_AGENT = PostbackSender::USER_AGENT;
+
+    /**
+     * The token holding the event id a browser pixel sends (Meta's `eid`):
+     * for a conversion its DestinationEventId (withConversionEventId()), the name
+     * the destinations send it under, so a platform given both counts it
+     * once; for a goal outcome, its own key. Not a [[token]] in any URL.
+     */
+    public const EVENT_ID = 'p202_event_id';
 
     /**
      * Every token replaceTokens() fills, in the order it fills them, as
@@ -303,9 +312,9 @@ final class TrafficSourcePixels
     /**
      * A Meta Pixel Purchase event as the image the Pixel's own <noscript>
      * code loads: the conversion's payout as its value, in the account's
-     * currency, and its transaction id (or dedupe key) as the event id, so
-     * Meta counts a repeat of one conversion once. Null for a code that
-     * holds no Pixel ID.
+     * currency, and EVENT_ID as the event id, so Meta counts a repeat of one
+     * conversion, and the same conversion from a server destination, once.
+     * Null for a code that holds no Pixel ID.
      *
      * @param array<string, scalar|null> $tokens
      */
@@ -321,13 +330,37 @@ final class TrafficSourcePixels
             $query['cd[value]'] = number_format((float) $payout, 2, '.', '');
             $query['cd[currency]'] = $currency;
         }
-        $eventId = (string) ($tokens['transactionid'] ?? '');
+        $eventId = (string) ($tokens[self::EVENT_ID] ?? '');
         if ($eventId !== '') {
             $query['eid'] = $eventId;
         }
         $src = htmlspecialchars('https://www.facebook.com/tr?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986), ENT_QUOTES);
 
         return "<img src='{$src}' height='1' width='1' style='display:none' alt='' />\n";
+    }
+
+    /**
+     * $tokens with EVENT_ID set to conversion $convId's DestinationEventId.
+     * When the ledger cannot be read the pixels go without one, logged: the
+     * conversion is recorded and its visitor is not kept waiting.
+     *
+     * @param array<string, scalar|null> $tokens
+     * @return array<string, scalar|null>
+     */
+    public static function withConversionEventId(Connection $conn, array $tokens, int $userId, int $clickId, int $convId, ?string $transactionId): array
+    {
+        try {
+            $tokens[self::EVENT_ID] = DestinationEventId::of($conn, $userId, $clickId, $convId, $transactionId);
+        } catch (\Throwable $e) {
+            // Inside a transaction a lock error ended it, and its owner must hear (CLAUDE.md #34); after one, the visitor goes on.
+            if ($conn->inTransaction() && Connection::isRetryableLockError($e)) {
+                throw $e;
+            }
+            unset($tokens[self::EVENT_ID]);
+            error_log('traffic source pixels: conversion ' . $convId . '\'s event id could not be read; its pixels go without one: ' . $e->getMessage());
+        }
+
+        return $tokens;
     }
 
     /**

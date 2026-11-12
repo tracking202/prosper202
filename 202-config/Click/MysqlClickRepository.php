@@ -8,6 +8,7 @@ use LogicException;
 use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Schema\TableRegistry;
+use Prosper202\Identity\IdentityGraph;
 use Prosper202\Report\RollupDirty;
 
 /**
@@ -162,6 +163,12 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             RollupDirty::click($this->conn, $click->userId, $click->clickId);
             $this->writeVisitRows($click, $arrival, $value);
             $this->recordLatestVisit($click->clickId);
+            // A visit that brings no browser signal takes back the earlier
+            // visits' marks with its own rows, so a visit in the second of
+            // the one before it is not read as having brought them.
+            if (!($click->identity?->bringsBrowserSignal() ?? false)) {
+                IdentityGraph::withdrawBrowserSignals($this->conn, $click->clickId);
+            }
             // The redirector records no text ad: the click's is kept unless
             // the re-click brings one. The keyword is the click's.
             $this->write(

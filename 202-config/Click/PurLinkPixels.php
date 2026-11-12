@@ -134,6 +134,14 @@ final class PurLinkPixels
                 $tokens['payout'] = (string) $conversion['click_payout'];
                 // The currency the row recorded, for a pixel that states one.
                 $tokens['row_currency'] = \Prosper202\Conversion\Ledger\RowCurrency::read($conversion['currency'] ?? null);
+                $tokens = TrafficSourcePixels::withConversionEventId(
+                    $this->conn,
+                    $tokens,
+                    $claims['user_id'],
+                    $claims['click_id'],
+                    (int) $conversion['conv_id'],
+                    isset($conversion['transaction_id']) ? (string) $conversion['transaction_id'] : null
+                );
                 // Browser markup only: server postbacks went out with the conversion.
                 $markup .= TrafficSourcePixels::fire(
                     $this->conn,
