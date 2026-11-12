@@ -11,7 +11,9 @@ use Api\V3\Support\AccountTimezone;
 use Api\V3\Support\ReportFilter;
 use Api\V3\Support\ResponseSanitizer;
 use Api\V3\Support\StatementHelpers;
+use Prosper202\Database\Connection;
 use Prosper202\Report\LocalTime;
+use Prosper202\Spend\LedgerCost;
 use Prosper202\Rotator\RuleOrder;
 
 class ReportsController
@@ -255,8 +257,15 @@ class ReportsController
         'total_leads',
     ];
 
-    public function __construct(private readonly \mysqli $db, private readonly int $userId)
-    {
+    /**
+     * @param (\Closure(?int, ?int): ?LedgerCost)|null $ledgerFor the spend ledger's part in a
+     *     report over a window; LedgerCost::forReport() on this connection by default
+     */
+    public function __construct(
+        private readonly \mysqli $db,
+        private readonly int $userId,
+        private readonly ?\Closure $ledgerFor = null
+    ) {
     }
 
     /**
@@ -296,22 +305,19 @@ class ReportsController
     {
         ReportFilter::rejectUnknown($params, self::reportParams('summary'));
         [$where, $binds, $types] = $this->filtered($params);
+        $ledger = $this->ledger($params);
+        $sum = self::summed($ledger);
+        if ($ledger !== null) {
+            $binds = [...$ledger->binds, ...$binds];
+            $types = $ledger->types . $types;
+        }
 
         $whereClause = 'WHERE ' . implode(' AND ', $where);
 
         $sql = "SELECT
-                SUM(de.clicks) as total_clicks,
-                SUM(de.click_out) as total_click_throughs,
-                SUM(de.leads) as total_leads,
-                SUM(de.income) as total_income,
-                SUM(de.cost) as total_cost,
-                SUM(de.income) - SUM(de.cost) as total_net,
-                CASE WHEN SUM(de.clicks) > 0 THEN SUM(de.income) / SUM(de.clicks) ELSE 0 END as epc,
-                CASE WHEN SUM(de.clicks) > 0 THEN SUM(de.cost) / SUM(de.clicks) ELSE 0 END as avg_cpc,
-                CASE WHEN SUM(de.click_out) > 0 THEN SUM(de.leads) / SUM(de.click_out) * 100 ELSE 0 END as conv_rate,
-                CASE WHEN SUM(de.cost) > 0 THEN (SUM(de.income) - SUM(de.cost)) / SUM(de.cost) * 100 ELSE 0 END as roi,
-                CASE WHEN SUM(de.leads) > 0 THEN SUM(de.cost) / SUM(de.leads) ELSE 0 END as cpa
+                " . self::metricsSelect($sum) . "
             FROM 202_dataengine de
+            {$ledger?->join}
             $whereClause";
 
         $stmt = $this->prepare($sql);
@@ -327,7 +333,8 @@ class ReportsController
         $row = $result->fetch_assoc();
         $stmt->close();
 
-        return ['data' => self::typedMetrics($row ?? []) + ['currency' => $this->accountCurrency()]];
+        return ['data' => self::typedMetrics($row ?? []) + ['currency' => $this->accountCurrency()]]
+            + $this->ledgerMeta($ledger);
     }
 
     /**
@@ -370,6 +377,12 @@ class ReportsController
         $sortDir = self::sortDirection($params, 'DESC');
 
         [$where, $binds, $types] = $this->filtered($params);
+        $ledger = $this->ledger($params);
+        $sum = self::summed($ledger);
+        if ($ledger !== null) {
+            $binds = [...$ledger->binds, ...$binds];
+            $types = $ledger->types . $types;
+        }
 
         $whereClause = 'WHERE ' . implode(' AND ', $where);
 
@@ -388,18 +401,9 @@ class ReportsController
         $sql = "SELECT
                 $idSql as id,
                 $nameSql as name,$extraSelect
-                SUM(de.clicks) as total_clicks,
-                SUM(de.click_out) as total_click_throughs,
-                SUM(de.leads) as total_leads,
-                SUM(de.income) as total_income,
-                SUM(de.cost) as total_cost,
-                SUM(de.income) - SUM(de.cost) as total_net,
-                CASE WHEN SUM(de.clicks) > 0 THEN SUM(de.income) / SUM(de.clicks) ELSE 0 END as epc,
-                CASE WHEN SUM(de.clicks) > 0 THEN SUM(de.cost) / SUM(de.clicks) ELSE 0 END as avg_cpc,
-                CASE WHEN SUM(de.click_out) > 0 THEN SUM(de.leads) / SUM(de.click_out) * 100 ELSE 0 END as conv_rate,
-                CASE WHEN SUM(de.cost) > 0 THEN (SUM(de.income) - SUM(de.cost)) / SUM(de.cost) * 100 ELSE 0 END as roi,
-                CASE WHEN SUM(de.leads) > 0 THEN SUM(de.cost) / SUM(de.leads) ELSE 0 END as cpa
+                " . self::metricsSelect($sum) . "
             FROM 202_dataengine de
+            {$ledger?->join}
             $join
             $whereClause
             GROUP BY $group
@@ -445,7 +449,7 @@ class ReportsController
             'truncated' => $truncated,
             'limit' => $limit,
             'offset' => $offset,
-        ];
+        ] + $this->ledgerMeta($ledger);
     }
 
     /**
@@ -492,6 +496,12 @@ class ReportsController
         $sortDir = self::sortDirection($params, $sortBy === 'name' ? 'ASC' : 'DESC');
 
         [$where, $binds, $types] = $this->filtered($params);
+        $ledger = $this->ledger($params);
+        $cost = $ledger?->costSql() ?? 'de.cost';
+        if ($ledger !== null) {
+            $binds = [...$ledger->binds, ...$binds];
+            $types = $ledger->types . $types;
+        }
         $last = count($levels) - 1;
         $select = [];
         $joins = [];
@@ -536,9 +546,10 @@ class ReportsController
                 ' . implode(",\n                ", $metrics) . '
             FROM (SELECT ' . implode(', ', $select) . ',
                     SUM(de.clicks) AS clicks, SUM(de.click_out) AS click_out, SUM(de.leads) AS leads,
-                    SUM(de.income) AS income, SUM(de.cost) AS cost
+                    SUM(de.income) AS income, SUM(' . $cost . ') AS cost
                 FROM 202_dataengine de
                 ' . implode("\n                ", $joins) . '
+                ' . ($ledger?->join ?? '') . '
                 WHERE ' . implode(' AND ', $where) . '
                 GROUP BY ' . implode(', ', $group) . '
                 LIMIT ?) leaf'
@@ -598,7 +609,7 @@ class ReportsController
             'totals' => $total,
             'by' => $levels,
             'available_breakdowns' => array_keys(self::BREAKDOWNS),
-        ];
+        ] + $this->ledgerMeta($ledger);
     }
 
     /**
@@ -699,6 +710,12 @@ class ReportsController
 
         $timezone = $this->accountTimezone();
         [$where, $binds, $types] = $this->filtered($params, $timezone);
+        $ledger = $this->ledger($params, $timezone);
+        $sum = self::summed($ledger);
+        if ($ledger !== null) {
+            $binds = [...$ledger->binds, ...$binds];
+            $types = $ledger->types . $types;
+        }
 
         $whereClause = 'WHERE ' . implode(' AND ', $where);
 
@@ -715,18 +732,9 @@ class ReportsController
 
         $sql = "SELECT
                 $groupExpr as period,
-                SUM(de.clicks) as total_clicks,
-                SUM(de.click_out) as total_click_throughs,
-                SUM(de.leads) as total_leads,
-                SUM(de.income) as total_income,
-                SUM(de.cost) as total_cost,
-                SUM(de.income) - SUM(de.cost) as total_net,
-                CASE WHEN SUM(de.clicks) > 0 THEN SUM(de.income) / SUM(de.clicks) ELSE 0 END as epc,
-                CASE WHEN SUM(de.clicks) > 0 THEN SUM(de.cost) / SUM(de.clicks) ELSE 0 END as avg_cpc,
-                CASE WHEN SUM(de.click_out) > 0 THEN SUM(de.leads) / SUM(de.click_out) * 100 ELSE 0 END as conv_rate,
-                CASE WHEN SUM(de.cost) > 0 THEN (SUM(de.income) - SUM(de.cost)) / SUM(de.cost) * 100 ELSE 0 END as roi,
-                CASE WHEN SUM(de.leads) > 0 THEN SUM(de.cost) / SUM(de.leads) ELSE 0 END as cpa
+                " . self::metricsSelect($sum) . "
             FROM 202_dataengine de
+            {$ledger?->join}
             $whereClause
             GROUP BY period
             ORDER BY period ASC
@@ -760,7 +768,7 @@ class ReportsController
             'timezone' => $timezone,
             'truncated' => $truncated,
             'limit' => self::TIMESERIES_MAX_ROWS,
-        ];
+        ] + $this->ledgerMeta($ledger, $timezone);
     }
 
     public function daypart(array $params): array
@@ -772,6 +780,12 @@ class ReportsController
         $timezone = $this->accountTimezone();
 
         [$where, $binds, $types] = $this->filtered($params, $timezone);
+        $ledger = $this->ledger($params, $timezone);
+        $sum = self::summed($ledger);
+        if ($ledger !== null) {
+            $binds = [...$ledger->binds, ...$binds];
+            $types = $ledger->types . $types;
+        }
 
         $whereClause = 'WHERE ' . implode(' AND ', $where);
 
@@ -779,18 +793,9 @@ class ReportsController
         // without MySQL's zone tables, and the fallback then counted UTC hours.
         $sql = "SELECT
                 HOUR(" . LocalTime::datetimeSql('de.click_time', $timezone) . ") as hour_of_day,
-                SUM(de.clicks) as total_clicks,
-                SUM(de.click_out) as total_click_throughs,
-                SUM(de.leads) as total_leads,
-                SUM(de.income) as total_income,
-                SUM(de.cost) as total_cost,
-                SUM(de.income) - SUM(de.cost) as total_net,
-                CASE WHEN SUM(de.clicks) > 0 THEN SUM(de.income) / SUM(de.clicks) ELSE 0 END as epc,
-                CASE WHEN SUM(de.clicks) > 0 THEN SUM(de.cost) / SUM(de.clicks) ELSE 0 END as avg_cpc,
-                CASE WHEN SUM(de.click_out) > 0 THEN SUM(de.leads) / SUM(de.click_out) * 100 ELSE 0 END as conv_rate,
-                CASE WHEN SUM(de.cost) > 0 THEN (SUM(de.income) - SUM(de.cost)) / SUM(de.cost) * 100 ELSE 0 END as roi,
-                CASE WHEN SUM(de.leads) > 0 THEN SUM(de.cost) / SUM(de.leads) ELSE 0 END as cpa
+                " . self::metricsSelect($sum) . "
             FROM 202_dataengine de
+            {$ledger?->join}
             $whereClause
             GROUP BY hour_of_day";
 
@@ -823,7 +828,7 @@ class ReportsController
         return [
             'data' => $rows,
             'timezone' => $timezone,
-        ];
+        ] + $this->ledgerMeta($ledger, $timezone);
     }
 
     public function weekpart(array $params): array
@@ -835,24 +840,21 @@ class ReportsController
         $timezone = $this->accountTimezone();
 
         [$where, $binds, $types] = $this->filtered($params, $timezone);
+        $ledger = $this->ledger($params, $timezone);
+        $sum = self::summed($ledger);
+        if ($ledger !== null) {
+            $binds = [...$ledger->binds, ...$binds];
+            $types = $ledger->types . $types;
+        }
 
         $whereClause = 'WHERE ' . implode(' AND ', $where);
 
         // The account's weekday (LocalTime); WEEKDAY() returns 0=Monday .. 6=Sunday.
         $sql = "SELECT
                 WEEKDAY(" . LocalTime::datetimeSql('de.click_time', $timezone) . ") as day_of_week,
-                SUM(de.clicks) as total_clicks,
-                SUM(de.click_out) as total_click_throughs,
-                SUM(de.leads) as total_leads,
-                SUM(de.income) as total_income,
-                SUM(de.cost) as total_cost,
-                SUM(de.income) - SUM(de.cost) as total_net,
-                CASE WHEN SUM(de.clicks) > 0 THEN SUM(de.income) / SUM(de.clicks) ELSE 0 END as epc,
-                CASE WHEN SUM(de.clicks) > 0 THEN SUM(de.cost) / SUM(de.clicks) ELSE 0 END as avg_cpc,
-                CASE WHEN SUM(de.click_out) > 0 THEN SUM(de.leads) / SUM(de.click_out) * 100 ELSE 0 END as conv_rate,
-                CASE WHEN SUM(de.cost) > 0 THEN (SUM(de.income) - SUM(de.cost)) / SUM(de.cost) * 100 ELSE 0 END as roi,
-                CASE WHEN SUM(de.leads) > 0 THEN SUM(de.cost) / SUM(de.leads) ELSE 0 END as cpa
+                " . self::metricsSelect($sum) . "
             FROM 202_dataengine de
+            {$ledger?->join}
             $whereClause
             GROUP BY day_of_week";
 
@@ -887,7 +889,7 @@ class ReportsController
         return [
             'data' => $rows,
             'timezone' => $timezone,
-        ];
+        ] + $this->ledgerMeta($ledger, $timezone);
     }
 
     /**
@@ -934,11 +936,18 @@ class ReportsController
         $binds[] = $rotatorId;
         $types .= 'i';
         $whereClause = 'WHERE ' . implode(' AND ', $where);
+        $ledger = $this->ledger($params);
+        $sum = self::summed($ledger);
+        if ($ledger !== null) {
+            $binds = [...$ledger->binds, ...$binds];
+            $types = $ledger->types . $types;
+            $whereClause = $ledger->join . ' ' . $whereClause;
+        }
 
         // 202_dataengine.rule_id is nullable; a NULL and a 0 group would be
         // two rows keyed 0 below, the second overwriting the first.
         $stmt = $this->prepare(
-            'SELECT COALESCE(de.rule_id, 0) AS rule_id, ' . self::metricsSelect()
+            'SELECT COALESCE(de.rule_id, 0) AS rule_id, ' . self::metricsSelect($sum)
             . " FROM 202_dataengine de $whereClause GROUP BY COALESCE(de.rule_id, 0)"
         );
         $this->bind($stmt, $types, ...$binds);
@@ -948,7 +957,7 @@ class ReportsController
             $byRule[(int) ($row['rule_id'] ?? 0)] = self::typedMetrics($row);
         }
 
-        $stmt = $this->prepare('SELECT ' . self::metricsSelect() . " FROM 202_dataengine de $whereClause");
+        $stmt = $this->prepare('SELECT ' . self::metricsSelect($sum) . " FROM 202_dataengine de $whereClause");
         $this->bind($stmt, $types, ...$binds);
         $this->execute($stmt, 'Rotator stats query failed');
         $totals = self::typedMetrics($this->fetchAll($stmt, 'Rotator stats query failed')[0] ?? []);
@@ -976,7 +985,54 @@ class ReportsController
             'totals' => $totals,
             'rules' => $ruleRows,
             'default' => $default,
-        ]];
+        ]] + $this->ledgerMeta($ledger);
+    }
+
+    /**
+     * The spend ledger's part in this report (Prosper202\Spend\LedgerCost),
+     * over the window the report's WHERE covers; null when the account's
+     * ledger holds nothing there, and the report is then what it was before
+     * the ledger existed.
+     *
+     * @param array<string, mixed> $params already through rejectUnknown()
+     */
+    private function ledger(array $params, ?string $timezone = null): ?LedgerCost
+    {
+        [$from, $to] = ReportFilter::bounds($params, fn (): string => $timezone ?? $this->accountTimezone());
+
+        if ($this->ledgerFor !== null) {
+            return ($this->ledgerFor)($from, $to);
+        }
+
+        return LedgerCost::forReport(new Connection($this->db), $this->userId, $from, $to, $this->accountCurrency());
+    }
+
+    /**
+     * metricsSelect()'s sums with the ledger's cost in place of the click's
+     * CPC; null (its own sums) when the ledger has no part.
+     *
+     * @return ?callable(string): string
+     */
+    private static function summed(?LedgerCost $ledger): ?callable
+    {
+        if ($ledger === null) {
+            return null;
+        }
+        $cost = $ledger->costSql();
+
+        return static fn (string $column): string => $column === 'cost' ? "SUM($cost)" : "SUM(de.$column)";
+    }
+
+    /**
+     * `spend_ledger` beside a report whose cost read the ledger: how far
+     * its spend reaches and what it holds that no click carries. Nothing
+     * when the ledger had no part.
+     *
+     * @return array<string, mixed>
+     */
+    private function ledgerMeta(?LedgerCost $ledger, ?string $timezone = null): array
+    {
+        return $ledger === null ? [] : ['spend_ledger' => $ledger->meta($timezone ?? $this->accountTimezone())];
     }
 
     /**

@@ -268,6 +268,38 @@ clicks an `epc` of `0.666666666`. The group report (`/reports/groups`) is the
 exception: it divides the same sums in floating point, unrounded
 (`16.666666666666664`).
 
+## Cost from the spend ledger
+
+Where the [spend ledger](28-spend-ledger.md) has an ad's spend for an hour,
+the clicks that carry that ad in that hour are costed at an equal share of
+it instead of their CPC. A click carries an ad when its traffic source has
+a variable with the parameter `ad_id` (the ChatGPT Ads tracking template
+sets `ad_id={ad_id}`) and the click came with a value for it; a click with
+two different values for it carries none. The hour is the UTC hour the click
+arrived in, and the share counts every click of the account in that whole
+hour, so a window that starts mid-hour costs its clicks as the whole hour
+does. Every other click keeps its CPC: clicks after the latest hour the
+ledger holds, clicks with no `ad_id`, and ads the ledger has no row for.
+
+A report whose cost read the ledger carries `spend_ledger`:
+
+```json
+"spend_ledger": {
+  "reaches": 1794297600,
+  "reaches_at": "2026-11-11T07:00:00Z",
+  "note": "Spend data reaches 2026-11-11 02:00 (America/New_York). Clicks after that are costed at their CPC.",
+  "unallocated": {"total_cost": 4.1, "note": "…"}
+}
+```
+
+`unallocated.total_cost` is the spend in the window's hours for ads that no
+click of the account carries in that hour. It is in no row or total, and is
+not narrowed by the report's filters. Rows in a currency other than the
+account's are not counted (`other_currency_rows` says how many). With no
+ledger row in the window, a report has no `spend_ledger` and is exactly what
+it was before the ledger existed. The report pages in the browser still show
+CPC cost.
+
 ## A click a redirector link re-clicked
 
 A visitor who comes back through a redirector link with `?lpr=` re-clicks

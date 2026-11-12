@@ -213,6 +213,47 @@ final class ReportFilter
     }
 
     /**
+     * The window apply() narrows click_time to, as one pair of inclusive
+     * bounds (null for none): time_from/time_to and period both apply, so
+     * the window is where they overlap. For a reader beside the report's
+     * WHERE (the spend ledger) that must cover the same seconds.
+     *
+     * @param array<string, mixed> $params already through rejectUnknown()
+     * @param callable(): string $timezone
+     * @return array{0: ?int, 1: ?int}
+     */
+    public static function bounds(array $params, callable $timezone): array
+    {
+        $from = null;
+        $to = null;
+        foreach (self::windows($params, $timezone) as [$f, $t]) {
+            $from = $f === null ? $from : max($from ?? $f, $f);
+            $to = $t === null ? $to : min($to ?? $t, $t);
+        }
+
+        return [$from, $to];
+    }
+
+    /**
+     * time_from/time_to, then period when one is given: each window apply()
+     * adds to the WHERE list.
+     *
+     * @param array<string, mixed> $params
+     * @param callable(): string $timezone
+     * @return list<array{0: ?int, 1: ?int}>
+     */
+    private static function windows(array $params, callable $timezone): array
+    {
+        $windows = [TimeBound::window($params, $timezone)];
+        $period = $params['period'] ?? '';
+        if ($period !== '') {
+            $windows[] = TimeBound::period($period, $timezone);
+        }
+
+        return $windows;
+    }
+
+    /**
      * Append the window and the filters to a WHERE list, with their binds.
      *
      * @param array<string, mixed> $params already through rejectUnknown()
@@ -255,20 +296,7 @@ final class ReportFilter
             return $zone ??= $timezone();
         };
 
-        [$from, $to] = TimeBound::window($params, $tz);
-        if ($from !== null) {
-            $where[] = $col('click_time') . ' >= ?';
-            $binds[] = $from;
-            $types .= 'i';
-        }
-        if ($to !== null) {
-            $where[] = $col('click_time') . ' <= ?';
-            $binds[] = $to;
-            $types .= 'i';
-        }
-        $period = $params['period'] ?? '';
-        if ($period !== '') {
-            [$from, $to] = TimeBound::period($period, $tz);
+        foreach (self::windows($params, $tz) as [$from, $to]) {
             if ($from !== null) {
                 $where[] = $col('click_time') . ' >= ?';
                 $binds[] = $from;

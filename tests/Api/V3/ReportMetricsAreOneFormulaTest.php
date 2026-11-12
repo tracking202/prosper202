@@ -24,7 +24,7 @@ use PHPUnit\Framework\TestCase;
 final class ReportMetricsAreOneFormulaTest extends TestCase
 {
     /** Methods that compute metrics through metricsSelect() rather than inline. */
-    private const BUILDERS = ['groups', 'rotatorStats', 'metricsSelect'];
+    private const BUILDERS = ['summary', 'breakdown', 'timeseries', 'daypart', 'weekpart', 'groups', 'rotatorStats', 'metricsSelect'];
 
     private static function squash(string $s): string
     {
@@ -73,7 +73,7 @@ final class ReportMetricsAreOneFormulaTest extends TestCase
         }
         sort($inline);
         self::assertSame(
-            ['breakdown', 'daypart', 'summary', 'timeseries', 'weekpart'],
+            [],
             $inline,
             'the reports that write the formula inline'
         );

@@ -648,6 +648,15 @@ try {
         $router->group('/clicks', function (Router $r) use ($crud, $payload, $queryParams) {
             $r->post('/cpc', fn() => $crud(\Api\V3\Controllers\UpdateController::class)->cpc($payload, writeDryRunRequested($queryParams)));
         }, [$updateSection]);
+        // ── Spend ledger: what each ad platform billed per ad per hour ───
+        // It replaces click CPCs in the reports, so writing it asks for the
+        // Update section as POST /clicks/cpc does; `?dry_run=1` previews.
+        // Reading it shows money and clicks, masked as the reports' are.
+        $spendFigures = \Api\V3\Support\CampaignFigures::SPEND;
+        $router->group('/spend-ledger', function (Router $r) use ($crud, $payload, $queryParams) {
+            $r->post('', fn() => $crud(\Api\V3\Controllers\SpendLedgerController::class)->write($payload, writeDryRunRequested($queryParams)));
+        }, [$updateSection]);
+        $router->get('/spend-ledger', fn() => $campaignFigures($crud(\Api\V3\Controllers\SpendLedgerController::class)->read($queryParams), $spendFigures));
         $router->group('/conversions', function (Router $r) use ($crud, $payload, $queryParams, $auth, $db) {
             $cls = \Api\V3\Controllers\UpdateController::class;
             $r->post('/subids',        fn() => $crud($cls)->markSubids($payload, writeDryRunRequested($queryParams)));
@@ -1428,6 +1437,7 @@ try {
                 'conversions'   => '/conversions',
                 'update'        => '/clicks/cpc, /conversions/{subids|subids/delete|subids/reset|uploads}',
                 'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart|groups}',
+                'spend_ledger'  => '/spend-ledger',
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}[/{id}][/deliveries]',
                 'rotators'      => '/rotators[/{id}/rules|/{id}/stats]',
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
@@ -1563,6 +1573,7 @@ try {
     $writePreviewRouter = new Router();
     $writePreview = static fn() => true;
     $writePreviewRouter->post('/clicks/cpc', $writePreview);
+    $writePreviewRouter->post('/spend-ledger', $writePreview);
     $writePreviewRouter->group('/conversions', function (Router $r) use ($writePreview) {
         $r->post('/subids', $writePreview);
         $r->post('/subids/delete', $writePreview);

@@ -240,6 +240,9 @@ final class TableRegistry
     public const string SORT_BREAKDOWNS = '202_sort_breakdowns';
     public const string CHARTS = '202_charts';
 
+    // Spend ledger: what each ad platform billed, per ad per hour
+    public const string SPEND_LEDGER = '202_spend_ledger';
+
     // DNI tables
     public const string DNI_NETWORKS = '202_dni_networks';
 

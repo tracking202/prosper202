@@ -5256,6 +5256,9 @@ class UPGRADE
                 // from (TrafficSourceOwners::split()), which names the values
                 // recorded before the copy. Null on every variable already there.
                 \Prosper202\Database\Tables\TrackingTables::ppcNetworkVariables(),
+                // What each ad platform billed per ad per hour, which the
+                // reports read as cost where present (Prosper202\Spend).
+                \Prosper202\Database\Tables\MiscTables::spendLedger(),
             ], [], [], true) && $paid_ok;
             if ($step_ok) {
                 _upgrade_seed_bot202_facebook_pixel_lookups();
