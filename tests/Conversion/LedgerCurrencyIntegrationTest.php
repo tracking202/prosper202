@@ -460,6 +460,56 @@ final class LedgerCurrencyIntegrationTest extends TestCase
         self::assertSame(['USD', (string) RowCurrency::BASIS_BY_CLICK], $this->currencyOf((int) $next['convId']));
     }
 
+    public function testTheOwnersLatestWordForADateWinsAndNeverSpeaksOverAKnownChange(): void
+    {
+        $this->campaign(7, 'replace');
+        $this->click(100, 7, '10.00');
+        $this->history(1700000900, 'EUR', 'EUR', 'upgrade');
+        $this->account('EUR');
+
+        RowCurrency::recordBefore($this->conn, self::USER, 'USD', 1700000500);
+        RowCurrency::recordBefore($this->conn, self::USER, 'GBP', 1700000500);
+        $next = $this->record(100, ['transaction_id' => 'A']);
+        self::assertSame('GBP', $this->currencyOf((int) $next['convId'])[0], 'said again for the same date: the latest word');
+        self::assertSame('1', (string) self::$db->query("SELECT COUNT(*) FROM 202_currency_changes WHERE kind = 'owner'")->fetch_row()[0]);
+
+        // A change recorded at 1700000300 is known: a statement for a later date speaks only for before it.
+        self::$db->query('TRUNCATE TABLE 202_currency_changes');
+        $this->history(1700000300, 'USD', 'EUR');
+        $this->click(101, 7, '10.00');
+        self::fixture('UPDATE 202_clicks SET click_time = 1700000400 WHERE click_id = 101');
+        RowCurrency::recordBefore($this->conn, self::USER, 'GBP', 1700000800);
+        $after = $this->record(101, ['transaction_id' => 'B']);
+        self::assertSame(['EUR', '0'], $this->currencyOf((int) $after['convId']), 'after the known change: EUR, known');
+        $before = $this->record(100, ['transaction_id' => 'C']);
+        self::assertSame(['USD', '0'], $this->currencyOf((int) $before['convId']), 'before it: what the change recorded');
+    }
+
+    public function testBeforeTheUpgradeMakesTheHistoryAConversionIsStillRecorded(): void
+    {
+        $this->campaign(7, 'replace');
+        $this->click(100, 7, '10.00');
+        self::$db->query('DROP TABLE 202_currency_changes');
+        try {
+            // A new handle: one that saw the ledger's columns is fine either way.
+            $pixel = $this->record(100, ['transaction_id' => 'A']);
+
+            self::assertSame(['USD', (string) RowCurrency::BASIS_BY_CLICK], $this->currencyOf((int) $pixel['convId']),
+                'the account\'s currency, marked for the owner to correct, as the upgrade marks it');
+        } finally {
+            self::$db->query(\Prosper202\Database\Tables\UserTables::currencyChanges()->createStatement);
+        }
+    }
+
+    public function testADeletedCampaignPaidInAnotherCurrencyKeepsItsRateFresh(): void
+    {
+        $this->campaign(7, 'accumulate', 'EUR');
+        self::fixture('UPDATE 202_aff_campaigns SET aff_campaign_deleted = 1 WHERE aff_campaign_id = 7');
+
+        self::assertSame([['EUR', 'USD']], \Prosper202\Conversion\Ledger\ExchangeRateCache::duePairs($this->conn, time()),
+            'its postbacks are converted too');
+    }
+
     public function testTheOwnerSaysWhichCurrencyTheConversionsBeforeADateWereIn(): void
     {
         $w = RowCurrency::BASIS_WRITTEN;

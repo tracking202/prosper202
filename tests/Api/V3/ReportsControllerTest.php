@@ -780,6 +780,7 @@ final class ReportsControllerTest extends TestCase
     private static function isMoneyRead(string $sql): bool
     {
         return str_starts_with($sql, 'SELECT user_account_currency FROM 202_users_pref')
+            || str_starts_with($sql, 'SELECT currency FROM 202_conversion_logs WHERE user_id = ? GROUP BY')
             || str_starts_with($sql, 'SELECT cl.currency, SUM(');
     }
 

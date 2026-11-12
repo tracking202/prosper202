@@ -157,19 +157,44 @@ final class RowCurrency
         // The statement joins the account's currency history, so a
         // conversion recorded later on a click from before the date takes
         // it too (inForceAt()).
-        $conn->transaction(static function () use ($conn, $userId, $currency, $before): void {
-            $after = self::inForceAt($conn, $userId, $before, true)[0];
-            $stmt = $conn->prepareWrite(
-                'INSERT INTO 202_currency_changes (user_id, changed_at, from_currency, to_currency, kind) VALUES (?, ?, ?, ?, ?)'
+        // The owner speaks for the time the history does not know: up to its
+        // first recorded entry (a change, or where it begins at the upgrade),
+        // never over a known currency. With a start date, what was in force
+        // before it stays so: a second entry at $since keeps the history's
+        // answer for earlier times. One owner entry a date: said again, the
+        // latest word replaces it.
+        $conn->transaction(static function () use ($conn, $userId, $currency, $before, $since): void {
+            $first = $conn->prepareWrite(
+                "SELECT MIN(changed_at) AS at FROM 202_currency_changes WHERE user_id = ? AND kind IN ('change', 'upgrade')"
             );
-            $conn->bind($stmt, 'iisss', [$userId, $before, $currency, $after, 'owner']);
-            $conn->executeInsert($stmt);
+            $conn->bind($first, 'i', [$userId]);
+            $known = $conn->fetchOne($first)['at'] ?? null;
+            $until = $known !== null ? min($before, (int) $known) : $before;
+            $entries = [[$until, $currency, self::inForceAt($conn, $userId, $until, true)[0]]];
+            if ($since !== null && $since < $until) {
+                $entries[] = [$since, self::inForceAt($conn, $userId, $since, true)[0], $currency];
+            }
+            foreach ($entries as [$at, $from, $to]) {
+                $update = $conn->prepareWrite(
+                    "UPDATE 202_currency_changes SET from_currency = ?, to_currency = ? WHERE user_id = ? AND changed_at = ? AND kind = 'owner'"
+                );
+                $conn->bind($update, 'ssii', [$from, $to, $userId, $at]);
+                if ($conn->executeUpdate($update) > 0) {
+                    continue;
+                }
+                $stmt = $conn->prepareWrite(
+                    'INSERT INTO 202_currency_changes (user_id, changed_at, from_currency, to_currency, kind) VALUES (?, ?, ?, ?, ?)'
+                );
+                $conn->bind($stmt, 'iisss', [$userId, $at, $from, $to, 'owner']);
+                $conn->executeInsert($stmt);
+            }
         });
 
         $stamped = 0;
         for ($batch = 0; $batch < $maxBatches; $batch++) {
-            $stmt = $conn->prepareWrite('UPDATE 202_conversion_logs SET currency = ?, currency_basis = IF(currency_basis = '
-                . self::BASIS_BY_CLICK . ', ' . self::BASIS_BY_CLICK . ', ' . self::BASIS_OWNER . ')' . $where . ' LIMIT ' . self::BATCH);
+            // 3 stays 3 (BASIS_BY_CLICK), every other row becomes 2 (BASIS_OWNER).
+            $stmt = $conn->prepareWrite('UPDATE 202_conversion_logs SET currency = ?, currency_basis = IF(currency_basis = 3, 3, 2)'
+                . $where . ' LIMIT ' . self::BATCH);
             $conn->bind($stmt, 's' . $types, [$currency, ...$values]);
             $changed = $conn->executeUpdate($stmt);
             $stamped += $changed;
@@ -206,10 +231,23 @@ final class RowCurrency
      */
     public static function inForceAt(Connection $conn, int $userId, int $at, bool $byClick): array
     {
-        $stmt = $conn->prepareWrite(
-            'SELECT from_currency, kind FROM 202_currency_changes WHERE user_id = ? AND changed_at > ?'
-            . ' ORDER BY changed_at, change_id LIMIT 1'
-        );
+        try {
+            $stmt = $conn->prepareWrite(
+                // At one time a recorded change is known, the owner's word
+                // comes before where the history begins, and so on in order.
+                'SELECT from_currency, kind FROM 202_currency_changes WHERE user_id = ? AND changed_at > ?'
+                . " ORDER BY changed_at, CASE kind WHEN 'change' THEN 0 WHEN 'owner' THEN 1 ELSE 2 END, change_id LIMIT 1"
+            );
+        } catch (\RuntimeException $e) {
+            if (!self::historyMissing($e)) {
+                throw $e;
+            }
+            // An install climbing the upgrade ladder has the ledger's
+            // columns (1.9.78's rung) before this table (1.9.80's): nothing
+            // is known of the history yet, so the account's currency now,
+            // marked for the owner to correct, as the upgrade marks it (#35).
+            return [self::ofAccount($conn, $userId), $byClick ? self::BASIS_BY_CLICK : self::BASIS_UPGRADE];
+        }
         $conn->bind($stmt, 'ii', [$userId, $at]);
         $row = $conn->fetchOne($stmt);
         if ($row === null) {
@@ -257,6 +295,18 @@ final class RowCurrency
         self::$present[$handle] = true;
 
         return true;
+    }
+
+    /** Whether $e, or one it wraps, is the server's 1146 for the currency history. */
+    private static function historyMissing(\Throwable $e): bool
+    {
+        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+            if (Connection::isMysqlError($current, 1146, '') && str_contains($current->getMessage(), '202_currency_changes')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** Whether $e, or one it wraps, is the server's 1054 for one of the currency columns. */

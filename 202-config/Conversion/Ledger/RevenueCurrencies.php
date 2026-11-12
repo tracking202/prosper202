@@ -54,12 +54,14 @@ final class RevenueCurrencies
         // its first two columns), then each other one by its range of the
         // period: `currency <> ?` could not bound the time, and read every
         // row in another currency on every report.
-        $distinct = $conn->prepareRead('SELECT DISTINCT currency FROM 202_conversion_logs WHERE user_id = ?');
+        // Grouped by the key's own columns, so it reads one index entry a currency.
+        $distinct = $conn->prepareRead('SELECT currency FROM 202_conversion_logs WHERE user_id = ? GROUP BY user_id, currency');
         $conn->bind($distinct, 'i', [$userId]);
         $currencies = [];
         foreach ($conn->fetchAll($distinct) as $row) {
-            if ((string) $row['currency'] !== $accountCurrency) {
-                $currencies[] = (string) $row['currency'];
+            $currency = (string) ($row['currency'] ?? '');
+            if ($currency !== $accountCurrency) {
+                $currencies[] = $currency;
             }
         }
         if ($currencies === []) {
