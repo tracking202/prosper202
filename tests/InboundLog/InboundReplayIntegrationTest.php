@@ -229,6 +229,100 @@ final class InboundReplayIntegrationTest extends TestCase
         self::assertSame([null, null], [self::logRow($plain)['conversion_id'], self::logRow($plain)['record_started_at']]);
     }
 
+    /** @return array{0: string, 1: array<string, mixed>} the question asked of the row, and what recording it did */
+    private static function askThenRecord(int $id): array
+    {
+        $replay = new InboundReplay(self::requireScratch());
+        $row = self::logRow($id);
+        $plan = InboundReplay::plan($row);
+        $click = InboundReplay::clickOf($row);
+        $onFile = $plan !== null && $click !== null && $plan['transaction'] !== ''
+            ? $replay->saleOnFile(self::ACCOUNT, $click, $plan['transaction']) : null;
+
+        return [InboundReplay::question($row, [], time(), null, $onFile), $replay->replay(self::ACCOUNT, $id)];
+    }
+
+    public function testTheQuestionDescribesWhatRecordingDoes(): void
+    {
+        // pb.php reads no amount: a negative one is not a reversal, and the campaign's payout is recorded.
+        [$asked, $done] = self::askThenRecord(self::refused('pb',
+            ['acip' => (string) self::CAMPAIGN_PUBLIC, 'subid' => (string) self::CLICK, 'amount' => '-12.50', 'txid' => 'PB-T1']));
+        self::assertStringStartsWith('Record this request now?', $asked);
+        self::assertStringContainsString("the campaign's payout, transaction id PB-T1", $asked);
+        self::assertSame('recorded', $done['status'], $done['message']);
+        $sale = self::conversions()[0];
+        self::assertSame(['PB-T1', 30.0], [$sale['transaction_id'], (float) $sale['click_payout']]);
+
+        // gpb.php reads it: with the sale on file, it is that sale's reversal, as asked.
+        [$asked, $done] = self::askThenRecord(self::refused('gpb',
+            ['subid' => (string) self::CLICK, 'amount' => '-12.50', 'txid' => 'PB-T1']));
+        self::assertStringStartsWith('Record this reversal now? It takes money off a sale already recorded.', $asked);
+        self::assertSame('recorded', $done['status'], $done['message']);
+        $reversal = self::$db->query('SELECT reverses_conv_id, click_payout FROM 202_conversion_logs WHERE conv_id = '
+            . (int) $done['conversion_id'])->fetch_assoc();
+        self::assertSame([(string) $sale['conv_id'], -12.5], [$reversal['reverses_conv_id'], (float) $reversal['click_payout']]);
+
+        // gpb.php with no sale under the transaction: refused, as asked, and nothing written.
+        [$asked, $done] = self::askThenRecord(self::refused('gpb',
+            ['subid' => (string) self::CLICK, 'status' => 'reversed', 'txid' => 'NOT-ON-FILE']));
+        self::assertStringContainsString('No sale with transaction id NOT-ON-FILE is on file on this click, so it will be refused', $asked);
+        self::assertSame('refused', $done['status'], $done['message']);
+        self::assertCount(2, self::conversions());
+    }
+
+    public function testAPixelReadsNoReversalAsItsEndpointReadsNone(): void
+    {
+        // px.php reads neither status=reversed nor a transaction id: the click converts with the campaign's payout.
+        [$asked, $done] = self::askThenRecord(self::refused('px',
+            ['acip' => (string) self::CAMPAIGN_PUBLIC, 'status' => 'reversed', 'txid' => 'PX-T1'],
+            'unauthenticated', self::ACCOUNT, 'GET', self::CLICK, 'cookie'));
+        self::assertStringStartsWith('Record this request now?', $asked);
+        self::assertStringNotContainsString('a reversal of', $asked);
+        self::assertSame('recorded', $done['status'], $done['message']);
+        self::assertSame([['transaction_id' => null, 'reverses_conv_id' => null]], self::$db->query(
+            'SELECT transaction_id, reverses_conv_id FROM 202_conversion_logs WHERE click_id = ' . self::CLICK)->fetch_all(MYSQLI_ASSOC));
+    }
+
+    public function testTheClickIsReadAsTheDestinationsReadIt(): void
+    {
+        // Re-clicked: its first visit, 100 days ago on the tea campaign, carried the gclid; its latest is today on coffee.
+        $click = 99071150;
+        $first = time() - 100 * 86400;
+        foreach ([[self::SECOND_CAMPAIGN, $first], [self::CAMPAIGN, time() - 600]] as [$campaign, $at]) {
+            $columns = "click_id = $click, user_id = " . self::ACCOUNT . ", aff_campaign_id = $campaign, ppc_account_id = 0, click_payout = 0, click_cpc = 0,"
+                . " click_lead = 0, click_time = $at";
+            self::q("INSERT INTO 202_clicks SET $columns");
+            self::q("INSERT INTO 202_clicks_spy SET $columns");
+        }
+        \Prosper202\Click\LatestVisit::refresh(new Connection(self::requireScratch()), $click);
+        self::q("INSERT INTO 202_google SET click_id = $click, gclid = 'Cj0KCQ-demo', utm_source_id = 0, utm_medium_id = 0,"
+            . ' utm_campaign_id = 0, utm_term_id = 0, utm_content_id = 0');
+        try {
+            $id = self::refused('gpb', ['subid' => (string) $click, 'txid' => 'NW-6001']);
+            $replay = new InboundReplay(self::requireScratch());
+
+            self::assertSame(['first_visit' => $first, 'campaign_id' => self::CAMPAIGN, 'google_click' => true],
+                $replay->clickFacts(self::ACCOUNT, self::logRow($id)), 'the first visit\'s time and id, the latest visit\'s campaign');
+            self::assertNull($replay->clickFacts(self::OTHER, self::logRow($id) + ['user_id' => self::OTHER]), 'not another account\'s');
+
+            // Recorded, its answer names the Google Ads destination that will refuse a click this old.
+            self::q('INSERT INTO 202_destinations SET user_id = ' . self::ACCOUNT . ", type = 'google_ads', name = 'Search ads',"
+                . " enabled = 1, settings = '{}', credentials = '', created_at = 1, updated_at = 1");
+            $answer = $replay->replay(self::ACCOUNT, $id);
+            self::assertSame('recorded', $answer['status'], $answer['message']);
+            self::assertStringContainsString('this click is older, so Search ads does not receive it', $answer['message']);
+        } finally {
+            self::q('DELETE FROM 202_destination_deliveries WHERE user_id = ' . self::ACCOUNT);
+            self::q('DELETE FROM 202_destinations WHERE user_id = ' . self::ACCOUNT);
+            foreach (['202_attribution_pending' => 'conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id = ' . $click . ')',
+                '202_notification_pending' => 'user_id = ' . self::ACCOUNT, '202_conversion_logs' => "click_id = $click",
+                '202_clicks' => "click_id = $click", '202_clicks_spy' => "click_id = $click", '202_google' => "click_id = $click",
+                '202_click_latest_visits' => "click_id = $click", '202_dataengine' => "click_id = $click"] as $table => $where) {
+                self::q("DELETE FROM $table WHERE $where");
+            }
+        }
+    }
+
     public function testARowWhoseClickWasFoundInAWayThisCodeDoesNotKnowIsNotOffered(): void
     {
         // A server postback, so no other rule refuses it: only how its click was found is unreadable.

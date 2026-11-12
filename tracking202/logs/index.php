@@ -73,28 +73,10 @@ if (($_GET['download'] ?? null) === 'csv' && $errors === [] && !$readFailed) {
     }
     // A long list is read in batches and streamed; the request's time limit is the list's length, not a fault.
     set_time_limit(0);
-    $cell = \Prosper202\Attribution\ExportCsv::cell(...);
-    $stamp = static fn (int $ts): string => $ts > 0 ? date('Y-m-d H:i:s', $ts) : '';
-    fputcsv($out, ['conversion_id', 'subid', 'campaign', 'click_time', 'conversion_time', 'elapsed', 'ip_address', 'type',
-        'reverses_conversion_id', 'transaction_id', 'payout', 'deleted', 'user_agent'], ',', '"', '');
-    try {
-        $written = $log->export($userId, $read['filters'], static function (array $row) use ($out, $cell, $stamp, $masked): void {
-            fputcsv($out, [
-                $row['conv_id'], $row['click_id'], $cell((string) ($row['campaign_name'] ?? '')), $stamp($row['click_time']),
-                $stamp($row['conv_time']), (string) ($row['elapsed'] ?? ''), $row['ip'], $cell($row['type']),
-                (string) ($row['reverses_conv_id'] ?? ''), $cell((string) ($row['transaction_id'] ?? '')),
-                $masked ? '?' : (string) $row['amount'], $row['deleted'] ? 'yes' : 'no', $cell($row['user_agent']),
-            ], ',', '"', '');
-        });
-        if ($written['more']) {
-            fputcsv($out, ['This file holds the newest ' . number_format(ConversionLog::EXPORT_MAX) . ' conversions of a longer'
-                . ' list. Narrow the dates or a filter to download the rest.'], ',', '"', '');
-        }
-    } catch (\Throwable $failed) {
-        // The headers are sent: the file says it is not whole, never ends as if it were.
-        error_log('Conversion Logs: the download stopped: ' . $failed->getMessage());
-        fputcsv($out, ['The download stopped here and is not the whole list. Download it again.'], ',', '"', '');
-    }
+    // An install may hold a download to fewer rows in 202-config.php.
+    $csvMax = defined('P202_CONVERSION_LOGS_CSV_MAX') && is_int(P202_CONVERSION_LOGS_CSV_MAX) && P202_CONVERSION_LOGS_CSV_MAX > 0
+        ? min(P202_CONVERSION_LOGS_CSV_MAX, ConversionLog::EXPORT_MAX) : ConversionLog::EXPORT_MAX;
+    \Prosper202\Conversion\ConversionLogCsv::write($out, $log, $userId, $read['filters'], $masked, $csvMax);
     exit;
 }
 

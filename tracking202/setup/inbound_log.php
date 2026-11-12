@@ -153,6 +153,36 @@ try {
 } catch (\Throwable $e) {
     error_log('Setup › Inbound Log: the destinations could not be read for the record question: ' . $e->getMessage());
 }
+// A row's click, as the destinations judge it, read only when a switched-on destination could refuse one for its age.
+$switchedOn = array_filter($destinations, static fn (array $d): bool => ($d['enabled'] ?? false) === true);
+// Whether the sale a reversal or a negative amount names is on file, so the question says what becomes of it.
+$saleFor = static function (array $row) use ($db, $userId): ?bool {
+    $plan = InboundReplay::plan($row);
+    $click = InboundReplay::clickOf($row);
+    $takesBack = $plan !== null && ($plan['reversal'] || ($plan['amount'] !== null && (float) $plan['amount'] < 0));
+    if (!$takesBack || $click === null || $plan['transaction'] === '') {
+        return null;
+    }
+    try {
+        return (new InboundReplay($db))->saleOnFile($userId, $click, $plan['transaction']);
+    } catch (\Throwable $e) {
+        error_log('Setup › Inbound Log: the sale of request ' . (int) $row['inbound_id'] . ' could not be read: ' . $e->getMessage());
+
+        return null;
+    }
+};
+$clickFor = static function (array $row) use ($db, $userId, $switchedOn): ?array {
+    if ($switchedOn === []) {
+        return null;
+    }
+    try {
+        return (new InboundReplay($db))->clickFacts($userId, $row);
+    } catch (\Throwable $e) {
+        error_log('Setup › Inbound Log: the click of request ' . (int) $row['inbound_id'] . ' could not be read: ' . $e->getMessage());
+
+        return null;
+    }
+};
 
 AUTH::set_timezone($_SESSION['user_timezone'] ?? date_default_timezone_get());
 template_top('Inbound Log');
@@ -334,7 +364,7 @@ if ($seesUnattributed) {
                                 <div class="form-text">Recorded from this log on <?php echo p202_setup_e($when((int) $row['recorded_later_at'])); ?>.</div>
                             <?php } elseif ($mayRecord && $row['can_record'] && $row['user_id'] === $userId) { ?>
                                 <form method="post" action="<?php echo p202_setup_e($self . ($params === [] ? '' : '?' . http_build_query($params))); ?>" class="mt-1"
-                                    data-p202-confirm="<?php echo p202_setup_e(InboundReplay::question($row, $destinations, time())); ?>">
+                                    data-p202-confirm="<?php echo p202_setup_e(InboundReplay::question($row, $destinations, time(), $clickFor($row), $saleFor($row))); ?>">
                                     <?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>
                                     <input type="hidden" name="inbound_id" value="<?php echo (int) $row['inbound_id']; ?>">
                                     <button type="submit" class="btn btn-sm btn-outline-primary">Record it now</button>

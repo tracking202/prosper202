@@ -108,6 +108,23 @@ final class InboundReplayEventIntegrationTest extends TestCase
         self::assertSame('already_recorded', (new InboundReplay(self::$db))->replay(1, $id)['status']);
     }
 
+    public function testAnEventFromBeforeItsGoalExistedIsThePlainConversionItWasThen(): void
+    {
+        // Arrived before the goal was made: then the campaign had no goal, and the event was its plain conversion.
+        $before = 1_699_990_000;
+        (new InboundLog(self::$db))->append(new Entry('gpb', 'GET', 403, 'unauthenticated', 'x', 1, null, null, null,
+            Redactor::fields(['subid' => (string) self::CLICK, 'event' => 'purchase', 'txid' => 'ORD-EARLY'], 'gpb'), 'none'), $before);
+        $id = (int) self::$db->insert_id;
+
+        $answer = (new InboundReplay(self::$db))->replay(1, $id);
+
+        self::assertSame('recorded', $answer['status'], $answer['message']);
+        self::assertIsInt($answer['conversion_id'], 'a conversion, not an event that reached nothing');
+        self::assertSame([['purchase', 'ORD-EARLY', (string) $before]], self::$db->query(
+            'SELECT event_name, transaction_id, conv_time FROM 202_conversion_logs WHERE click_id = ' . self::CLICK)->fetch_all(MYSQLI_NUM));
+        self::assertSame('0', self::$db->query("SELECT COUNT(*) FROM 202_goal_events WHERE event_id = '@tx:ORD-EARLY'")->fetch_row()[0]);
+    }
+
     public function testAnEventOnAnotherAccountsClickIsRefused(): void
     {
         $id = self::refused('gpb', ['subid' => (string) self::THEIR_CLICK, 'event' => 'purchase', 'event_id' => 'order-882']);

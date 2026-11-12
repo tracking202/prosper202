@@ -142,10 +142,12 @@ final class InboundLogPagesIntegrationTest extends TestCase
             . self::CLICK . ')');
         foreach (['202_clicks', '202_clicks_spy', '202_clicks_advance', '202_clicks_tracking', '202_clicks_record',
             '202_clicks_site', '202_click_latest_visits', '202_attribution_rollup_dirty_clicks', '202_dataengine',
-            '202_conversion_logs'] as $table) {
+            '202_conversion_logs', '202_google'] as $table) {
             self::q("DELETE FROM $table WHERE click_id = " . self::CLICK);
         }
         self::q("DELETE FROM 202_notification_pending WHERE user_id IN ($users)");
+        self::q("DELETE FROM 202_destination_deliveries WHERE user_id IN ($users)");
+        self::q("DELETE FROM 202_destinations WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_inbound_log WHERE user_id IN (0, $users)");
         self::q("DELETE FROM 202_postback_auth WHERE user_id IN ($users)");
         self::q('UPDATE 202_users_pref SET ' . ShopifyWebhookSecret::COLUMN . " = '' WHERE user_id IN ($users)");
@@ -211,12 +213,43 @@ final class InboundLogPagesIntegrationTest extends TestCase
 
     public function testAReversalIsAskedAboutAsAReversal(): void
     {
-        self::refusedPostback(['subid' => (string) self::CLICK, 'status' => 'reversed', 'txid' => 'ORD-7']);
+        $reversal = self::refusedPostback(['subid' => (string) self::CLICK, 'status' => 'reversed', 'txid' => 'ORD-7']);
+
+        // With no sale under ORD-7 the page says the reversal will be refused, which is what recording it does.
+        $page = self::decoded(self::page(self::LOG));
+        self::assertStringContainsString('a reversal of transaction ORD-7', $page);
+        self::assertStringContainsString('No sale with transaction id ORD-7 is on file on this click, so it will be refused', $page);
+        self::assertStringNotContainsString('Record this reversal now?', $page);
+
+        // Once the sale is on file, it is asked as taking money off that sale.
+        p202RecordLegacyConversion(self::requireScratch(), self::CLICK, 2, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID,
+            ['user_id' => self::USER, 'transaction_id' => 'ORD-7', 'conv_time' => self::ARRIVED - 60]);
+        $page = self::decoded(self::page(self::LOG));
+        self::assertStringContainsString('Record this reversal now? It takes money off a sale already recorded.', $page);
+        self::assertStringContainsString('name="inbound_id" value="' . $reversal . '"', $page);
+    }
+
+    public function testTheQuestionNamesAnAdsDestinationTheClickIsTooOldFor(): void
+    {
+        // The click was made 100 days ago with a gclid, and the account sends conversions to Google Ads.
+        $clicked = time() - 100 * 86400;
+        foreach (['202_clicks', '202_clicks_spy', '202_click_latest_visits'] as $table) {
+            self::q("UPDATE $table SET click_time = $clicked WHERE click_id = " . self::CLICK);
+        }
+        self::q('INSERT INTO 202_google SET click_id = ' . self::CLICK . ", gclid = 'Cj0KCQ-demo', utm_source_id = 0, utm_medium_id = 0,"
+            . ' utm_campaign_id = 0, utm_term_id = 0, utm_content_id = 0');
+        self::q('INSERT INTO 202_destinations SET user_id = ' . self::USER . ", type = 'google_ads', name = 'Search ads', enabled = 1,"
+            . " settings = '{}', credentials = '', created_at = 1, updated_at = 1");
+        self::refusedPostback(['subid' => (string) self::CLICK, 'txid' => 'ORD-9']);
 
         $page = self::decoded(self::page(self::LOG));
 
-        self::assertStringContainsString('Record this reversal now? It takes money off a sale already recorded.', $page);
-        self::assertStringContainsString('a reversal of transaction ORD-7', $page);
+        self::assertStringContainsString('Google Ads takes a conversion up to 90 days after its click, and this click is older,'
+            . ' so Search ads does not receive it.', $page);
+
+        self::q('UPDATE 202_destinations SET enabled = 0 WHERE user_id = ' . self::USER);
+        self::assertStringNotContainsString('Search ads does not receive', self::decoded(self::page(self::LOG)),
+            'a switched-off destination is not named');
     }
 
     public function testASearchCoversOnlyWhatTheAccountMayRead(): void
@@ -238,21 +271,53 @@ final class InboundLogPagesIntegrationTest extends TestCase
         self::assertStringContainsString('Shopify webhook', $admin);
     }
 
+    /** @return list<list<string>> the download's lines */
+    private static function csv(array $constants = []): array
+    {
+        $csv = self::page('tracking202/logs/index.php', [], self::USER, ['range' => 'alltime', 'download' => 'csv'], $constants);
+        $lines = array_map('str_getcsv', array_values(array_filter(explode("\n", $csv), static fn (string $l): bool => $l !== '')));
+        self::assertSame('conversion_id', $lines[0][0] ?? null, substr($csv, 0, 300));
+
+        return $lines;
+    }
+
     public function testConversionLogsDownloadsCellsASpreadsheetWillNotRun(): void
     {
-        $id = self::refusedPostback(['subid' => (string) self::CLICK, 'amount' => '18.40', 'txid' => self::FORMULA]);
-        self::page(self::LOG, ['inbound_id' => (string) $id, 'token' => 'SESSION']);
+        // A campaign name and a visitor's user agent can be anything: each is written so a spreadsheet will not run it.
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_name = ' . self::str(self::FORMULA) . ' WHERE aff_campaign_id = ' . self::CAMPAIGN);
+        try {
+            p202RecordLegacyConversion(self::requireScratch(), self::CLICK, 2, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID,
+                ['user_id' => self::USER, 'transaction_id' => self::FORMULA, 'user_agent' => self::FORMULA, 'conv_time' => self::ARRIVED]);
 
-        $csv = self::page('tracking202/logs/index.php', [], self::USER, ['range' => 'alltime', 'download' => 'csv']);
-        $lines = array_map('str_getcsv', array_values(array_filter(explode("\n", $csv), static fn (string $l): bool => $l !== '')));
+            $lines = self::csv();
 
-        self::assertSame('conversion_id', $lines[0][0] ?? null, substr($csv, 0, 300));
-        self::assertCount(2, $lines, 'the header and the one conversion');
-        $row = array_combine($lines[0], $lines[1]);
-        self::assertSame(["'" . self::FORMULA, (string) self::CLICK, '18.40000'], [$row['transaction_id'], $row['subid'], $row['payout']]);
+            self::assertCount(2, $lines, 'the header and the one conversion');
+            $row = array_combine($lines[0], $lines[1]);
+            self::assertSame(["'" . self::FORMULA, "'" . self::FORMULA, "'" . self::FORMULA, (string) self::CLICK],
+                [$row['campaign'], $row['transaction_id'], $row['user_agent'], $row['subid']]);
+        } finally {
+            self::q("UPDATE 202_aff_campaigns SET aff_campaign_name = 'Demo coffee store' WHERE aff_campaign_id = " . self::CAMPAIGN);
+        }
 
         $list = self::page('tracking202/logs/index.php', [], self::USER, ['range' => 'alltime']);
         self::assertStringContainsString('inbound_log.php?click_id=' . self::CLICK . '">its inbound requests</a>', $list);
+    }
+
+    public function testADownloadLongerThanItsCapSaysSo(): void
+    {
+        foreach (['ORD-1' => self::ARRIVED - 60, 'ORD-2' => self::ARRIVED] as $transaction => $at) {
+            p202RecordLegacyConversion(self::requireScratch(), self::CLICK, 2, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID,
+                ['user_id' => self::USER, 'transaction_id' => $transaction, 'conv_time' => $at]);
+        }
+
+        $whole = self::csv();
+        $cut = self::csv(['P202_CONVERSION_LOGS_CSV_MAX' => 1]);
+
+        self::assertCount(3, $whole, 'the header and both conversions, and no note');
+        self::assertCount(3, $cut, 'the header, the newest conversion, and the note');
+        self::assertSame('ORD-2', array_combine($cut[0], $cut[1])['transaction_id']);
+        self::assertSame(['This file holds the newest conversion of a longer list. Narrow the dates or a filter to download the rest.'],
+            $cut[2]);
     }
 
     public function testHealthIsAnsweredWhenThePostbackQueueCannotBeRead(): void
@@ -275,10 +340,11 @@ final class InboundLogPagesIntegrationTest extends TestCase
      * @param array<string, string> $post
      * @param array<string, string> $get
      */
-    private static function page(string $page, array $post = [], int $user = self::USER, array $get = []): string
+    private static function page(string $page, array $post = [], int $user = self::USER, array $get = [], array $constants = []): string
     {
         self::requireScratch();
         $env = [
+            'P202_TEST_CONSTANTS' => (string) json_encode((object) $constants),
             'P202_TEST_REPORT_USER' => (string) $user,
             'P202_TEST_SESSION_DIR' => self::$sessions,
             'P202_TEST_GET' => (string) json_encode((object) $get),

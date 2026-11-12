@@ -5,10 +5,15 @@ declare(strict_types=1);
 namespace Prosper202\InboundLog;
 
 use Prosper202\Click\ClickId;
+use Prosper202\Click\FirstVisit;
+use Prosper202\Click\LatestVisit;
+use Prosper202\Conversion\TrafficSourcePixels;
 use Prosper202\Conversion\Ledger\AmountOutOfRange;
 use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\Ledger\ReversalException;
 use Prosper202\Database\Connection;
+use Prosper202\Destinations\Ga4Destination;
+use Prosper202\Destinations\GoogleAdsDestination;
 
 /**
  * "Record it now": the conversion or event of a postback or pixel the log
@@ -41,21 +46,22 @@ final class InboundReplay
      * Per endpoint, what its live script hands the recorder: the pixel type
      * and source of its rows, whether it names a campaign (acip), whether
      * the click must have visited that campaign, whether it reads amount
-     * and a transaction id, whether it carries product lines, whether the
-     * traffic source is told, and whether the click comes from the visitor's
-     * browser (kept on the row) or the request's subid.
+     * and a transaction id, whether it reads status=reversed, whether it
+     * carries product lines, whether the traffic source is told, and whether
+     * the click comes from the visitor's browser (kept on the row) or the
+     * request's subid.
      */
     private const KINDS = [
         'pb' => ['pixel_type' => 2, 'source' => 'legacy_pixel', 'acip' => true, 'visited' => true, 'amount' => false,
-            'txid' => true, 'items' => false, 'notify' => true, 'browser' => false],
+            'txid' => true, 'reversal' => true, 'items' => false, 'notify' => true, 'browser' => false],
         'gpb' => ['pixel_type' => 2, 'source' => 'postback', 'acip' => false, 'visited' => false, 'amount' => true,
-            'txid' => true, 'items' => true, 'notify' => true, 'browser' => false],
+            'txid' => true, 'reversal' => true, 'items' => true, 'notify' => true, 'browser' => false],
         'px' => ['pixel_type' => 1, 'source' => 'legacy_pixel', 'acip' => true, 'visited' => false, 'amount' => false,
-            'txid' => false, 'items' => false, 'notify' => false, 'browser' => true],
+            'txid' => false, 'reversal' => false, 'items' => false, 'notify' => false, 'browser' => true],
         'gpx' => ['pixel_type' => 1, 'source' => 'pixel', 'acip' => false, 'visited' => false, 'amount' => true,
-            'txid' => true, 'items' => true, 'notify' => false, 'browser' => true],
+            'txid' => true, 'reversal' => false, 'items' => true, 'notify' => false, 'browser' => true],
         'upx' => ['pixel_type' => 3, 'source' => 'universal_pixel', 'acip' => false, 'visited' => false, 'amount' => true,
-            'txid' => true, 'items' => true, 'notify' => true, 'browser' => true],
+            'txid' => true, 'reversal' => false, 'items' => true, 'notify' => true, 'browser' => true],
     ];
     public const OUTCOMES = ['unauthenticated', 'failed'];
     /**
@@ -76,85 +82,237 @@ final class InboundReplay
     public const ORDER_NUMBER_NAMES = ['txid', 'transaction_id', 'transactionid', 'order_id', 'orderid', 'oid', 't202txid'];
 
     /**
-     * What the owner is asked before a refused request is recorded: what it
-     * says (its click, amount, event and transaction id, and a reversal as a
-     * reversal), when it arrived, that nothing vouched for it when it carried
-     * no token, and which of the account's destinations will not take it for
-     * its age.
+     * What the endpoint's recorder is handed for the row, read once for both
+     * write() and question(), so the question says what is recorded: the
+     * amount only where the endpoint reads one (pb.php and px.php take the
+     * campaign's payout), the transaction id only where it reads one (px.php
+     * does not), a reversal only where it reads status=reversed (pb.php and
+     * gpb.php), and the event. Null for a row of no kind replay records.
+     *
+     * @param array<string, mixed> $row a log row as InboundLog shapes it
+     * @return array{endpoint: string, amount: string|null, transaction: string, reversal: bool, reversal_ref: string,
+     *     event: string|null, unread: list<string>}|null unread: what the request sent that this endpoint does not read
+     */
+    public static function plan(array $row): ?array
+    {
+        $endpoint = (string) ($row['endpoint'] ?? '');
+        $kind = self::KINDS[$endpoint] ?? null;
+        if ($kind === null) {
+            return null;
+        }
+        $request = self::request($row['fields'] ?? null) ?? [];
+        $text = static fn (string $name): string => is_string($request[$name] ?? null) ? trim($request[$name]) : '';
+        $sentAmount = $text('amount') !== '' && is_numeric($text('amount')) ? $text('amount') : null;
+        $sentTransaction = '';
+        foreach (self::ORDER_NUMBER_NAMES as $name) {
+            if ($sentTransaction === '') {
+                $sentTransaction = $text($name);
+            }
+        }
+        $sentReversal = strtolower($text('status')) === 'reversed';
+        $unread = [];
+        if ($sentAmount !== null && !$kind['amount']) {
+            $unread[] = 'amount';
+        }
+        if ($sentTransaction !== '' && !$kind['txid']) {
+            $unread[] = 'transaction id';
+        }
+        if ($sentReversal && !$kind['reversal']) {
+            $unread[] = 'status=reversed';
+        }
+
+        return [
+            'endpoint' => $endpoint,
+            'amount' => $kind['amount'] ? $sentAmount : null,
+            'transaction' => $kind['txid'] ? $sentTransaction : '',
+            'reversal' => $kind['reversal'] && $sentReversal,
+            'reversal_ref' => $kind['reversal'] ? $text('reversal_id') : '',
+            'event' => $text('event') !== '' ? $text('event') : null,
+            'unread' => $unread,
+        ];
+    }
+
+    /**
+     * Whether the click has a live sale under the transaction id, the row a
+     * reversal or a negative amount takes money off: the writer's own target
+     * (MysqlConversionRepository::record()), on the account's click.
+     */
+    public function saleOnFile(int $userId, int $clickId, string $transaction): bool
+    {
+        if ($transaction === '') {
+            return false;
+        }
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareRead(
+            'SELECT deleted FROM 202_conversion_logs WHERE click_id = ? AND user_id = ? AND transaction_id = ?'
+            . ' AND reverses_conv_id IS NULL ORDER BY conv_id LIMIT 1'
+        );
+        $conn->bind($stmt, 'iis', [$clickId, $userId, $transaction]);
+        $row = $conn->fetchOne($stmt);
+
+        return $row !== null && (int) $row['deleted'] === 0;
+    }
+
+    /** The click the row names, as write() records on; null when it names none. */
+    public static function clickOf(array $row): ?int
+    {
+        if (!isset(self::KINDS[(string) ($row['endpoint'] ?? '')])) {
+            return null;
+        }
+
+        return self::clickId($row, self::request($row['fields'] ?? null) ?? []);
+    }
+
+    /**
+     * What the owner is asked before a refused request is recorded: what the
+     * endpoint's recorder will do with it (plan()), a reversal as a reversal
+     * and what becomes of it, when it arrived, that nothing vouched for it
+     * when it carried no token, and which of the account's destinations will
+     * not take it for its age.
      *
      * @param array<string, mixed> $row a log row as InboundLog shapes it
      * @param list<array<string, mixed>> $destinations the account's, as DestinationStore::list() gives them
+     * @param array{first_visit: int|null, campaign_id: int, google_click: bool}|null $click the row's click (clickFacts())
+     * @param bool|null $saleOnFile whether the transaction a reversal or negative amount names is on file (saleOnFile())
      */
-    public static function question(array $row, array $destinations, int $now): string
+    public static function question(array $row, array $destinations, int $now, ?array $click = null, ?bool $saleOnFile = null): string
     {
+        $plan = self::plan($row);
         $fields = is_array($row['fields'] ?? null) ? $row['fields'] : [];
-        $text = static fn (string $name): ?string => is_string($fields[$name] ?? null) && trim($fields[$name]) !== ''
-            ? trim($fields[$name]) : null;
-        $transaction = null;
-        foreach (self::ORDER_NUMBER_NAMES as $name) {
-            $transaction ??= $text($name);
-        }
-        $amount = $text('amount');
-        $reversed = strtolower((string) $text('status')) === 'reversed';
-        $negative = $amount !== null && is_numeric($amount) && (float) $amount < 0;
-
-        $said = [];
-        $click = $row['click_id'] ?? $text('subid') ?? $text('sid');
-        if (is_scalar($click)) {
-            $said[] = 'click ' . $click;
-        }
-        if ($reversed) {
-            $said[] = 'a reversal of transaction ' . ($transaction ?? '(none named)')
-                . ($text('reversal_id') !== null ? ' (reversal id ' . $text('reversal_id') . ')' : '');
-        } elseif ($negative) {
-            $said[] = 'amount ' . $amount . ', which reverses transaction ' . ($transaction ?? '(none named)') . ' if it is on file';
-        } else {
-            if ($amount !== null) {
-                $said[] = 'amount ' . $amount;
+        $named = $row['click_id'] ?? (is_string($fields['subid'] ?? null) && $fields['subid'] !== '' ? $fields['subid'] : null);
+        $said = is_scalar($named) ? ['click ' . $named] : [];
+        $takesMoney = false;
+        $outcome = '';
+        if ($plan !== null) {
+            $transaction = $plan['transaction'];
+            $negative = $plan['amount'] !== null && (float) $plan['amount'] < 0;
+            if ($plan['reversal']) {
+                $said[] = 'a reversal of transaction ' . ($transaction !== '' ? $transaction : '(none named)')
+                    . ($plan['reversal_ref'] !== '' ? ' (reversal id ' . $plan['reversal_ref'] . ')' : '');
+                if ($transaction === '') {
+                    $outcome = ' It names no transaction to reverse, so it will be refused and nothing recorded.';
+                } elseif ($saleOnFile === false) {
+                    $outcome = ' No sale with transaction id ' . $transaction . ' is on file on this click, so it will be refused and nothing recorded.';
+                } else {
+                    $takesMoney = true;
+                }
+            } elseif ($negative && $transaction !== '' && $saleOnFile !== false) {
+                $said[] = 'amount ' . $plan['amount'] . ', a reversal of transaction ' . $transaction;
+                $takesMoney = true;
+            } else {
+                $said[] = $plan['amount'] !== null ? 'amount ' . $plan['amount'] : 'the campaign\'s payout';
+                if ($transaction !== '') {
+                    $said[] = 'transaction id ' . $transaction;
+                }
+                if ($negative) {
+                    $outcome = ' No sale ' . ($transaction !== '' ? 'with transaction id ' . $transaction . ' ' : '')
+                        . 'is on file to reverse, so it is recorded as a negative correction of ' . $plan['amount'] . '.';
+                }
             }
-            if ($transaction !== null) {
-                $said[] = 'transaction id ' . $transaction;
+            if ($plan['event'] !== null) {
+                $said[] = 'event ' . $plan['event'];
             }
-        }
-        if ($text('event') !== null) {
-            $said[] = 'event ' . $text('event');
+            if ($plan['unread'] !== []) {
+                $outcome .= ' ' . $plan['endpoint'] . '.php does not read its ' . implode(' or ', $plan['unread']) . ', so it is not used.';
+            }
         }
 
         $arrived = (int) ($row['received_at'] ?? 0);
 
-        return ($reversed || $negative ? 'Record this reversal now? It takes money off a sale already recorded. ' : 'Record this request now? ')
-            . 'It says: ' . ($said === [] ? 'nothing beyond its click' : implode(', ', $said)) . '. '
+        return ($takesMoney ? 'Record this reversal now? It takes money off a sale already recorded. ' : 'Record this request now? ')
+            . 'It says: ' . implode(', ', $said) . '.' . $outcome . ' '
             . (in_array($row['auth'] ?? null, ['none', 'invalid'], true)
                 ? 'It did not carry your postback token, so nothing shows who sent it: record it only if you know it is real. '
                 : '')
             . 'It is recorded as it would have been when it arrived, ' . date('M j, Y g:i a', $arrived) . '.'
-            . self::tooOldFor($destinations, $arrived, $now);
+            . self::tooOldFor($destinations, $arrived, $now, $click);
     }
 
     /**
      * The sentence naming the account's switched-on destinations that will
-     * not take a conversion this old ('' when none): GA4 takes events up to
-     * 72 hours old.
+     * not take this conversion for its age ('' when none), each judged as it
+     * judges a conversion: Google Analytics by the conversion's own time
+     * (Ga4Destination::MAX_AGE_SECONDS), Google Ads by its click's first
+     * visit, when the click carries an id Google matches it by
+     * (GoogleAdsDestination::CLICK_MAX_AGE). A destination that sends only
+     * some campaigns is named only for one of them.
      *
      * @param list<array<string, mixed>> $destinations
+     * @param array{first_visit: int|null, campaign_id: int, google_click: bool}|null $click as clickFacts() reads it
      */
-    public static function tooOldFor(array $destinations, int $arrived, int $now): string
+    public static function tooOldFor(array $destinations, int $arrived, int $now, ?array $click = null): string
     {
-        if ($now - $arrived <= \Prosper202\Destinations\Ga4Destination::MAX_AGE_SECONDS) {
-            return '';
-        }
-        $names = [];
+        $analytics = [];
+        $ads = [];
         foreach ($destinations as $destination) {
-            if (($destination['enabled'] ?? false) === true && ($destination['type'] ?? '') === \Prosper202\Destinations\Ga4Destination::TYPE) {
-                $names[] = (string) ($destination['name'] ?? 'Google Analytics');
+            if (($destination['enabled'] ?? false) !== true) {
+                continue;
+            }
+            $settings = (array) ($destination['settings'] ?? []);
+            $campaigns = is_array($settings['campaign_ids'] ?? null) ? $settings['campaign_ids'] : [];
+            if ($campaigns !== [] && ($click === null || !in_array($click['campaign_id'], $campaigns, true))) {
+                continue;
+            }
+            $name = (string) ($destination['name'] ?? '');
+            if (($destination['type'] ?? '') === Ga4Destination::TYPE && $now - $arrived > Ga4Destination::MAX_AGE_SECONDS) {
+                $analytics[] = $name;
+            }
+            if (($destination['type'] ?? '') === GoogleAdsDestination::TYPE && $click !== null && $click['google_click']
+                && $now - ($click['first_visit'] ?? $arrived) > GoogleAdsDestination::CLICK_MAX_AGE) {
+                $ads[] = $name;
             }
         }
-        if ($names === []) {
-            return '';
+        $said = '';
+        if ($analytics !== []) {
+            $said .= ' Google Analytics takes conversions up to ' . intdiv(Ga4Destination::MAX_AGE_SECONDS, 3600) . ' hours old, so '
+                . implode(', ', $analytics) . (count($analytics) === 1 ? ' does' : ' do') . ' not receive this one.';
+        }
+        if ($ads !== []) {
+            $said .= ' Google Ads takes a conversion up to ' . intdiv(GoogleAdsDestination::CLICK_MAX_AGE, 86400) . ' days after its'
+                . ' click, and this click is older, so ' . implode(', ', $ads) . (count($ads) === 1 ? ' does' : ' do') . ' not receive it.';
         }
 
-        return ' Google Analytics takes conversions up to 72 hours old, so ' . implode(', ', $names)
-            . (count($names) === 1 ? ' does' : ' do') . ' not receive this one; your reports and other destinations do.';
+        return $said === '' ? '' : $said . ' Your reports still count it.';
+    }
+
+    /**
+     * The row's click as the destinations judge it, or null when the row
+     * names none of the account's clicks: its first visit's time and its
+     * Google click ids (the visit and ids DestinationQueue sends), and the
+     * campaign its conversion would credit (its latest visit's).
+     *
+     * @param array<string, mixed> $row
+     * @return array{first_visit: int|null, campaign_id: int, google_click: bool}|null
+     */
+    public function clickFacts(int $userId, array $row): ?array
+    {
+        $request = self::request($row['fields'] ?? null) ?? [];
+        $kind = self::KINDS[(string) ($row['endpoint'] ?? '')] ?? null;
+        $clickId = $kind === null ? null : self::clickId($row, $request);
+        if ($clickId === null) {
+            return null;
+        }
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareRead('SELECT c.click_time FROM ' . FirstVisit::of('?') . ' AS c WHERE c.user_id = ?');
+        $conn->bind($stmt, 'ii', [$clickId, $userId]);
+        $first = $conn->fetchOne($stmt);
+        if ($first === null) {
+            return null;
+        }
+        $stmt = $conn->prepareRead('SELECT c.aff_campaign_id FROM ' . LatestVisit::of('?') . ' AS c WHERE c.user_id = ?');
+        $conn->bind($stmt, 'ii', [$clickId, $userId]);
+        $latest = $conn->fetchOne($stmt);
+        $tokens = TrafficSourcePixels::clickTokens($conn, $userId, $clickId)['tokens'] ?? [];
+        $google = false;
+        foreach (['gclid', 'wbraid', 'gbraid'] as $type) {
+            $google = $google || trim((string) ($tokens[$type] ?? '')) !== '';
+        }
+
+        return [
+            'first_visit' => $first['click_time'] === null ? null : (int) $first['click_time'],
+            'campaign_id' => (int) ($latest['aff_campaign_id'] ?? 0),
+            'google_click' => $google,
+        ];
     }
 
     /**
@@ -329,7 +487,8 @@ final class InboundReplay
                 $late = self::tooOldFor(
                     (new \Prosper202\Destinations\DestinationStore(new Connection($this->db)))->list($userId),
                     (int) $row['received_at'],
-                    $now
+                    $now,
+                    $this->clickFacts($userId, $row)
                 );
             } catch (\Throwable $e) {
                 error_log('Inbound log: the destinations could not be read after recording request ' . $inboundId . ': ' . $e->getMessage());
@@ -393,20 +552,23 @@ final class InboundReplay
             };
         }
 
-        $amount = $kind['amount'] && array_key_exists('amount', $request) && is_numeric($request['amount']);
+        // What the endpoint reads of the request, as the question before recording described it.
+        $plan = self::plan($row) ?? throw new \LogicException('Inbound log: request ' . (int) $row['inbound_id'] . ' has no recorder');
         $outcome = p202RecordLegacyConversion($this->db, $clickId, $kind['pixel_type'], $matchedBy, [
             'ip' => self::NO_VISITOR,
             'user_agent' => self::USER_AGENT,
-            'transaction_id' => $kind['txid'] ? p202ExtractTransactionId($request) : '',
+            'transaction_id' => $plan['transaction'],
             'source' => $kind['source'],
             // Dated when the sender reported it, so it counts on the day it happened.
             'conv_time' => (int) $row['received_at'],
             'notify_traffic_source' => $kind['notify'],
-            'use_pixel_payout' => $amount,
-            'payout' => $amount ? $request['amount'] : '0',
+            'use_pixel_payout' => $plan['amount'] !== null,
+            'payout' => $plan['amount'] ?? '0',
             'items' => $kind['items'] ? p202ExtractItems($request) : [],
             'event_name' => $event['event_name'] ?? null,
-        ] + $scope + p202ExtractReversal($request));
+            'reversal' => $plan['reversal'],
+            'reversal_ref' => $plan['reversal_ref'],
+        ] + $scope);
 
         if ($outcome['conv_id'] <= 0) {
             return $refused(RequestLog::LEGACY_REASONS[$outcome['reason']] ?? 'The recorder refused it (' . $outcome['reason'] . ').');

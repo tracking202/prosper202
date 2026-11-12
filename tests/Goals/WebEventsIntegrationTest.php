@@ -509,6 +509,7 @@ final class WebEventsIntegrationTest extends TestCase
         self::assertFalse($events->campaignEvaluatesGoals(1, 7, self::T), 'no goals: the legacy path');
         $g = $this->goal(7, ['name' => 'S', 'trigger' => ['event' => 's']]);
         self::assertTrue($events->campaignEvaluatesGoals(1, 7, $this->clock + 1));
+        self::assertFalse($events->campaignEvaluatesGoals(1, 7, $this->clock - 1), 'before its first version was in force');
         $this->goals->archive(1, $g, $this->clock + 100);
         self::assertFalse($events->campaignEvaluatesGoals(1, 7, $this->clock + 200), 'every goal archived: the legacy path again');
         self::assertFalse($events->campaignEvaluatesGoals(2, 7, $this->clock + 1), 'another account\'s campaign');
