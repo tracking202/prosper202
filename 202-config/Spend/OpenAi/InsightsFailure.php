@@ -10,6 +10,12 @@ final class InsightsFailure extends \RuntimeException
     public const int FAILED = 0;
     public const int RATE_LIMITED = 1;
     public const int KEY_REFUSED = 2;
+    public const int TOO_LARGE = 3;
+
+    public function tooLarge(): bool
+    {
+        return $this->getCode() === self::TOO_LARGE;
+    }
 
     public function rateLimited(): bool
     {

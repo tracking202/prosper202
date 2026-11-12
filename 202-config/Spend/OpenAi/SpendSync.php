@@ -167,6 +167,10 @@ final class SpendSync
         $rateLimited = false;
         try {
             $rows = $this->pull($connection, $ledger, $from, $now, $note);
+            $more = $this->pullConversions($connection, $from, $now);
+            if ($more !== null) {
+                $note = ($note === null ? '' : $note . '; ') . $more;
+            }
         } catch (InsightsFailure $e) {
             $error = $e->getMessage();
             $rateLimited = $e->rateLimited();
@@ -231,6 +235,66 @@ final class SpendSync
         }
 
         return $written;
+    }
+
+    /**
+     * The conversions OpenAI attributes to the connection's ads per day of
+     * the ad account's zone, over the days [$from, $to] touches, beside
+     * Prosper202's for reconciliation (Prosper202\Spend\PlatformConversions).
+     * The ads are the ones the ledger holds for the connection in those
+     * hours. OpenAI answers at most 2000 rows (ads x days) and refuses more
+     * with 413: the ads are asked for in groups that fit, halved on a 413.
+     * What could not be read is answered as a note; a 429 or a refused key
+     * fails the run as the spend pull does.
+     */
+    private function pullConversions(SpendConnection $connection, int $from, int $to): ?string
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT DISTINCT ad_ref FROM 202_spend_ledger WHERE user_id = ? AND platform = ? AND account_ref = ?'
+            . ' AND hour_start >= ? AND hour_start <= ? ORDER BY ad_ref'
+        );
+        $this->conn->bind($stmt, 'issii', [$connection->userId, self::PLATFORM, $connection->accountRef, $from, $to]);
+        $ads = array_map(static fn (array $row): string => (string) $row['ad_ref'], $this->conn->fetchAll($stmt));
+        if ($ads === []) {
+            return null;
+        }
+        $zone = new \DateTimeZone($connection->timezone);
+        $start = (new \DateTimeImmutable('@' . $from))->setTimezone($zone)->setTime(0, 0);
+        $end = (new \DateTimeImmutable('@' . $to))->setTimezone($zone)->setTime(0, 0)->modify('+1 day');
+        $days = max(1, (int) round(($end->getTimestamp() - $start->getTimestamp()) / 86400));
+        $store = new \Prosper202\Spend\PlatformConversions($this->conn, $this->clock);
+        $size = max(1, intdiv(2000, $days));
+        $refused = [];
+        $unread = 0;
+        for ($i = 0; $i < count($ads);) {
+            $group = array_slice($ads, $i, $size);
+            try {
+                $rows = $this->insights->conversions($connection->apiKey, $start->getTimestamp(), $end->getTimestamp(), $group);
+            } catch (InsightsFailure $e) {
+                if ($e->tooLarge() && count($group) > 1) {
+                    $size = max(1, intdiv(count($group), 2));
+                    continue;
+                }
+                if ($e->tooLarge()) {
+                    $unread++;
+                    $i++;
+                    continue;
+                }
+                throw $e;
+            }
+            $done = $store->write($connection->userId, self::PLATFORM, $connection->accountRef, $connection->timezone, $rows);
+            $refused = [...$refused, ...$done['refused']];
+            $i += count($group);
+        }
+        $notes = [];
+        if ($refused !== []) {
+            $notes[] = count($refused) . ' conversion row(s) OpenAI sent were left out: ' . $refused[0];
+        }
+        if ($unread > 0) {
+            $notes[] = $unread . ' ad(s)\' conversions were more than OpenAI answers in one request (413) and were not read';
+        }
+
+        return $notes === [] ? null : implode('; ', $notes);
     }
 
     /**

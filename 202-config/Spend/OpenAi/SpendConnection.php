@@ -17,12 +17,14 @@ final class SpendConnection
         public readonly string $accountRef,
         public readonly string $currency,
         #[\SensitiveParameter] public readonly string $apiKey,
+        /** The ad account's time zone, the one OpenAI's days are in. */
+        public readonly string $timezone = 'UTC',
     ) {
     }
 
     public function __debugInfo(): array
     {
         return ['connectionId' => $this->connectionId, 'userId' => $this->userId, 'accountRef' => $this->accountRef,
-            'currency' => $this->currency, 'apiKey' => '[sealed]'];
+            'currency' => $this->currency, 'apiKey' => '[sealed]', 'timezone' => $this->timezone];
     }
 }

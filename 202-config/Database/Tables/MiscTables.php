@@ -46,6 +46,7 @@ final class MiscTables
             // Spend ledger
             self::spendLedger(),
             self::adSpendSync(),
+            self::adPlatformConversions(),
             // Export tables
             self::exportAdgroups(),
             self::exportCampaigns(),
@@ -375,6 +376,36 @@ final class MiscTables
                 `updated_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`connection_id`),
                 KEY `user_id` (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The conversions an ad platform reports per ad per day, beside
+     * Prosper202's own for reconciliation (Prosper202\Spend\OpenAi\SpendSync),
+     * from 1.9.80 on. `day` is a date in the ad account's zone (`timezone`),
+     * as the platform reports it; a re-pull replaces the day's row. sales is
+     * null when the platform could not value it.
+     */
+    public static function adPlatformConversions(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::AD_PLATFORM_CONVERSIONS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::AD_PLATFORM_CONVERSIONS . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `platform` varchar(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `account_ref` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+                `ad_ref` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+                `day` date NOT NULL,
+                `timezone` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `conversions` int(10) unsigned NOT NULL,
+                `click_through` int(10) unsigned DEFAULT NULL,
+                `view_through` int(10) unsigned DEFAULT NULL,
+                `sales` decimal(16,6) DEFAULT NULL,
+                `sales_currency` char(3) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`user_id`,`platform`,`account_ref`,`ad_ref`,`day`),
+                KEY `user_day` (`user_id`,`day`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
