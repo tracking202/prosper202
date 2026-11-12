@@ -892,7 +892,7 @@ starts names the one it meant, the same block twice is a 409 naming the entry.
 p202 conversion list   [--limit 50] [--offset 0] [--campaign-id N] [--all]
                        [--time-from T] [--time-to T] [--click-id N]
                        [--source pixel|postback|universal_pixel|api|subid_upload|revenue_upload|legacy_pixel|clickbank|paykickstart|jvzoo|zaxaa|app_install|goal|legacy_baseline]
-                       [--match-method click_id|cookie|visitor_id|same_ip|unknown]   # how the click was found; same_ip = a guess
+                       [--match-method click_id|ad_click_id|cookie|visitor_id|same_ip|unknown]   # how the click was found; same_ip = a guess
                        [--goal N] [--json]
 p202 conversion match-methods [--aff-campaign-id N] [--period P] [--time-from T] [--time-to T] [--json]
                        # each campaign's conversions, counted ones and income by how their click was found
@@ -1280,6 +1280,7 @@ p202 user prefs get    <user_id> [--json]               # a secret only as {"sto
 p202 user prefs update <user_id> [--user-tracking-domain S]
                        [--user-account-currency CODE] [--user-pref-time-predefined R] [--user-pref-limit N]
                        [--user-pref-privacy disabled|eu|all] [--user-pref-same-ip-fallback 0|1]
+                       [--user-pref-click-id-params aff_sub3]   # postback parameters carrying an ad click id; "" for none
                        [--cb-key S] [--user-ltv-score-weights S] ... [--json]
                        # every settings-page preference; --help lists each with its values; "" clears free text
 ```

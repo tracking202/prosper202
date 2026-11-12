@@ -22,6 +22,7 @@ final class RequestLog
     private string $reason = '';
     private ?int $status = null;
     private bool $written = false;
+    private string $clickFoundBy = '';
 
     /** @param array<array-key, mixed> $fields */
     private function __construct(
@@ -69,6 +70,12 @@ final class RequestLog
         if ($clickId !== null && $clickId > 0) {
             $this->clickId = $clickId;
         }
+    }
+
+    /** How the click was found, or why none was, when no SubID named it: a sentence added to the reason. */
+    public function clickFoundBy(string $how): void
+    {
+        $this->clickFoundBy = $how;
     }
 
     /** What the conversion writer did: recorded, duplicate, or why it recorded nothing. */
@@ -147,7 +154,7 @@ final class RequestLog
             $this->method,
             $status,
             $outcome,
-            $reason,
+            trim($reason . ' ' . $this->clickFoundBy),
             $this->userId,
             $this->clickId,
             $this->conversionId,

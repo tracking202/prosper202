@@ -266,6 +266,37 @@ final class OfflineExportIntegrationTest extends TestCase
         self::assertSame([1, 4], [$summary->rows, $summary->leftOut['no_conversion_name']]);
     }
 
+    /**
+     * A global postback whose SubID was not filled in finds its click by the
+     * ad click id it sends back (MatchMethod::AD_CLICK_ID). The conversion
+     * named that click, so each file sends it as it would one matched by
+     * SubID; it is still left out when the click is another account's.
+     */
+    public function testAConversionFoundByItsAdClickIdIsSent(): void
+    {
+        $msclkid = '0123456789abcdef0123456789abc150';
+        $this->click(150, 7, ['gclid' => 'EAIaIQ_150', 'msclkid' => $msclkid]);
+        $this->click(151, 9, ['gclid' => 'EAIaIQ_151'], 2 * 86400, self::OTHER);
+        $conv = $this->record(150, MatchMethod::AD_CLICK_ID, ['payout' => '9', 'conv_time' => $this->now - 86400]);
+        self::fixture('INSERT INTO 202_conversion_logs SET click_id=151, campaign_id=7, click_payout=5,'
+            . ' user_id=' . self::USER . ', click_time=' . ($this->now - 2 * 86400)
+            . ', conv_time=' . ($this->now - 86400 + 1) . ", time_difference='',"
+            . " ip='', pixel_type=0, user_agent='', deleted=0, source='postback', payable=1, dedupe_key='other',"
+            . " match_method='ad_click_id'");
+        $this->names();
+
+        [$lines, $summary] = $this->file(new ExportOptions(Format::GOOGLE, 30, $this->now));
+        self::assertSame(2, $summary->conversions);
+        self::assertSame(1, $summary->rows, implode("\n", $lines));
+        self::assertStringStartsWith('EAIaIQ_150,,,Sale,', $lines[1]);
+        self::assertStringContainsString(',9,EUR,P202-' . $conv . ',', $lines[1]);
+        self::assertSame(1, $summary->leftOut['not_accounts_click'], 'click 151 is the other account\'s');
+
+        [$lines, $summary] = $this->file(new ExportOptions(Format::MICROSOFT, 30, $this->now, null, 'Sale'));
+        self::assertSame(1, $summary->rows, implode("\n", $lines));
+        self::assertSame($msclkid, explode(',', $lines[2])[4]);
+    }
+
     public function testTheWindowAndTheNameOptionsChooseTheLines(): void
     {
         $this->click(100, 7, ['gclid' => 'EAIaIQ_100'], 20 * 86400);

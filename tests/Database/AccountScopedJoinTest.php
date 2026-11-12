@@ -150,6 +150,16 @@ final class AccountScopedJoinTest extends TestCase
      * @var array<string, array<string, string>>
      */
     private const HARMLESS = [
+        '202-config/Click/AdClickIdIndex.php' => [
+            'no user_id tie | 202_clicks | v.click_id = x.click_id AND v.click_time >= ?' =>
+                'clicksWith(): asks only whether the click an index row names was visited in the window, before'
+                . ' the row limit; it reads no column of the click. The index is every account\'s, on purpose (an'
+                . ' id under its own name may find any account\'s click), and ClickByAdClickId reads the click\'s'
+                . ' owner afterwards, which gpb.php holds to that account\'s postback authentication',
+            'no user_id tie | 202_clicks | c.click_id BETWEEN {$from} AND {$to} AND c.click_time >= {$since}' =>
+                'backfillSql(): the 1.9.80 upgrade fills the index for every account\'s clicks of the last 30 days,'
+                . ' and a click\'s rows are keyed by its own id: no row of one account names another\'s',
+        ],
         '202-config/Click/ClickPathReads.php' => [
             'no user_id tie | 202_ppc_networks | '
                 . 'other.ppc_network_id = ppc.ppc_network_id AND other.user_id <> ppc.user_id' =>

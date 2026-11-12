@@ -26,7 +26,7 @@ CLICK_TABLES = (
     "202_facebook", "202_dataengine", "202_identity_observations",
     "202_clicks_visitor", "202_clicks_filter_reason",
     "202_purlink_exit_order", "202_purlink_pixel_fires", "202_clicks_publisher",
-    "202_click_latest_visits", "202_clicks",
+    "202_clicks_ad_ids", "202_click_latest_visits", "202_clicks",
 )
 REQUIRED_TABLES = CLICK_TABLES + (
     "202_attribution_rollup_dirty", "202_attribution_models",

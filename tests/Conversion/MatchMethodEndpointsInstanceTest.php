@@ -175,7 +175,7 @@ final class MatchMethodEndpointsInstanceTest extends TestCase
         foreach (['click_id', 'same_ip'] as $method) {
             self::assertContains($method, $methods, "the campaign's breakdown has a $method row");
         }
-        self::assertSame(['click_id', 'cookie', 'visitor_id', 'same_ip', 'unknown'], array_column($breakdown['totals'], 'match_method'));
+        self::assertSame(['click_id', 'ad_click_id', 'cookie', 'visitor_id', 'same_ip', 'unknown'], array_column($breakdown['totals'], 'match_method'));
         foreach ($breakdown['data'] as $row) {
             self::assertSame(self::$campaign, $row['campaign_id']);
         }

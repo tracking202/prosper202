@@ -66,6 +66,7 @@ final class TableRegistry
     public const string RECLICK_BACKFILL = '202_reclick_backfill';
     public const string CLICKS_FILTER_REASON = '202_clicks_filter_reason';
     public const string CLICKS_PUBLISHER = '202_clicks_publisher';
+    public const string CLICKS_AD_IDS = '202_clicks_ad_ids';
 
     // Tracking tables
     public const string TRACKING_C1 = '202_tracking_c1';

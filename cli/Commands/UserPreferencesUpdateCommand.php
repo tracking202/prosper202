@@ -32,12 +32,19 @@ class UserPreferencesUpdateCommand extends BaseCommand
                 'No effect since 1.9.79: the hosted daily email report was switched off. Still accepted: 00-23, or ""'
             )
             ->addOption('ipqs-api-key', null, InputOption::VALUE_REQUIRED, 'IPQS fraud detection API key')
-            ->addOption('user-pref-same-ip-fallback', null, InputOption::VALUE_REQUIRED, 'When a pixel names no click: 1 credits your latest click from the visitor\'s IP address in the last 30 days (a guess), 0 none');
+            ->addOption('user-pref-same-ip-fallback', null, InputOption::VALUE_REQUIRED, 'When a pixel names no click: 1 credits your latest click from the visitor\'s IP address in the last 30 days (a guess), 0 none')
+            ->addOption(
+                'user-pref-click-id-params',
+                null,
+                InputOption::VALUE_REQUIRED,
+                'Postback parameters your networks send an ad click id back in, comma-separated (aff_sub3):'
+                . ' read when a postback\'s SubID is empty. "" for none'
+            );
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $body = $this->collectOptions($input, ['user_tracking_domain', 'user_account_currency', 'user_slack_incoming_webhook', 'user_daily_email', 'ipqs_api_key', 'user_pref_same_ip_fallback']);
+        $body = $this->collectOptions($input, ['user_tracking_domain', 'user_account_currency', 'user_slack_incoming_webhook', 'user_daily_email', 'ipqs_api_key', 'user_pref_same_ip_fallback', 'user_pref_click_id_params']);
         if (empty($body)) {
             $output->writeln('<error>Provide at least one preference to update</error>');
             return Command::FAILURE;
