@@ -10,6 +10,7 @@ use Prosper202\Conversion\Ledger\RowCurrency;
 use Prosper202\Database\Connection;
 use Prosper202\InboundLog\Entry;
 use Prosper202\InboundLog\InboundLog;
+use Prosper202\PaymentNotification\HeldNotifications;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\Notification;
 use Prosper202\PaymentNotification\NotificationKind;
@@ -112,7 +113,7 @@ final class RefundsToSettle
 
     /**
      * Records the refund as a reversal of its order's sale, by the amount the
-     * operator states in the account's currency, capped at what is left of
+     * operator states in its sale's currency, capped at what is left of
      * the sale as a refund webhook is, and closes it. Recorded once under
      * the refund's id, so the webhook settling later, or a second click of
      * the button, is that same reversal.
@@ -146,6 +147,26 @@ final class RefundsToSettle
             );
         }
         $orderId = (string) $row['order_id'];
+        if (self::waitsForItsOrder($row)) {
+            return new Outcome(
+                OutcomeKind::NOTHING_TO_REVERSE,
+                'Order ' . $orderId . ' is not on file yet: the refund is recorded when its sale arrives and Shopify'
+                . ' settles it. Nothing was recorded.',
+                null,
+                $account
+            );
+        }
+        if ((int) $row['order_on_file'] !== 1) {
+            return new Outcome(
+                OutcomeKind::NOTHING_TO_REVERSE,
+                'Order ' . $orderId . ' is not on file, so there is no sale to take the refund from. Shopify\'s'
+                . ' settlement of it was refused (' . rtrim((string) $row['refused_reason'], '.') . '): once the sale'
+                . ' arrives it is listed under Setup › Inbound Log to record by hand, or close it now if no money was'
+                . ' returned. Nothing was recorded.',
+                null,
+                $account
+            );
+        }
         $clicks = $this->clicksByOrder($account, [$orderId])[$orderId] ?? [];
         if ($clicks === []) {
             return new Outcome(
@@ -215,21 +236,69 @@ final class RefundsToSettle
             $request
         );
         if (in_array($outcome->kind, [OutcomeKind::REVERSED, OutcomeKind::DUPLICATE], true)) {
-            (new RefundSettlementStore($this->conn))->settledByHand($account, $refundId, time());
+            // The reversal has landed (#13): a failure here leaves the refund
+            // listed, and recording it again answers DUPLICATE and closes it.
+            try {
+                (new RefundSettlementStore($this->conn))->settledByHand($account, $refundId, time());
+                (new HeldNotifications($this->db))->dropRefund($account, ConversionSource::SHOPIFY->value, $refundId);
+            } catch (\Throwable $e) {
+                error_log('Shopify refund ' . $refundId . ' was recorded for account ' . $account
+                    . ' but could not be closed in the list: ' . $e->getMessage());
+            }
         }
         $this->log($account, $outcome, 'Recorded by hand from ' . $from . '. ', $refundId, $click);
 
         return $outcome;
     }
 
+    /**
+     * Why close() refuses a listed refund, for the answer: null when it does
+     * not (it closes, or the refund is not one waiting, recorded or closed
+     * already).
+     */
+    public function closeRefusal(int $account, string $refundId): ?string
+    {
+        $row = $this->listed($account, $refundId);
+        if ($row === null || !self::waitsForItsOrder($row)) {
+            return null;
+        }
+
+        return 'Refund ' . $refundId . ' waits for its order\'s sale, which is not on file yet: it is recorded when the'
+            . ' sale arrives and Shopify settles the refund. Nothing was changed.';
+    }
+
+    /**
+     * Still pending with its order not on file: recorded when the sale
+     * arrives and Shopify settles it. One refused already (a settlement
+     * at another amount, say) is not waiting for anything.
+     *
+     * @param array<string, mixed> $row listed()'s
+     */
+    private static function waitsForItsOrder(array $row): bool
+    {
+        return (int) $row['order_on_file'] !== 1 && $row['refused_reason'] === null;
+    }
+
     /** Closes the refund with nothing recorded (no money was returned, or it is handled elsewhere). */
     public function close(int $account, string $refundId, string $from = self::THE_PAGE): bool
     {
+        // A refund waiting for its order stays, to be recorded when the sale
+        // arrives (closeRefusal() says so); one whose sale is gone, or one
+        // refused before its order arrived, has nothing to settle and may
+        // be closed.
+        $row = $this->listed($account, $refundId);
         if (
-            $this->listed($account, $refundId) === null
+            $row === null || self::waitsForItsOrder($row)
             || !(new RefundSettlementStore($this->conn))->settledByHand($account, $refundId, time())
         ) {
             return false;
+        }
+        // Closed (#13): a failure here is logged, never answered as "not closed".
+        try {
+            (new HeldNotifications($this->db))->dropRefund($account, ConversionSource::SHOPIFY->value, $refundId);
+        } catch (\Throwable $e) {
+            error_log('Shopify refund ' . $refundId . ' was closed for account ' . $account
+                . ' but its held copy could not be dropped: ' . $e->getMessage());
         }
         $this->log(
             $account,
@@ -265,7 +334,7 @@ final class RefundsToSettle
             return null;
         }
         $stmt = $this->conn->prepareWrite(
-            'SELECT order_id, occurred_at, transactions FROM 202_shopify_pending_refunds'
+            'SELECT order_id, occurred_at, transactions, order_on_file, refused_reason FROM 202_shopify_pending_refunds'
             . ' WHERE user_id = ? AND refund_id = ?'
             . ' AND (completed_at IS NULL OR refused_reason IS NOT NULL)'
         );

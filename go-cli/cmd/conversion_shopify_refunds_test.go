@@ -62,6 +62,7 @@ func TestShopifyRefundsRecordRefusesABadAmountOrIDBeforeSending(t *testing.T) {
 		{"9100001", "--amount", "0"},
 		{"9100001", "--amount", "12abc"},
 		{"9100001", "--amount", "-5"},
+		{"9100001", "--amount", "007"},
 		{"12abc", "--amount", "5"},
 		{"9100001", "--amount", "5", "--click-id", "x"},
 	} {

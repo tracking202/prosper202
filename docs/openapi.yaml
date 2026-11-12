@@ -3160,7 +3160,8 @@ paths:
                   type: number
                   description: >-
                     What the refund returned, in its sale's currency
-                    (amount_currency). More than 0; a decimal string is read too.
+                    (amount_currency). More than 0, with at most 5 decimals (a
+                    sixth is refused, not rounded); a decimal string is read too.
                 currency:
                   type: string
                   description: >-
@@ -3215,9 +3216,10 @@ paths:
       summary: Close a listed Shopify refund with nothing recorded
       description: |
         Removes the refund from the list without a reversal, for one that
-        returned no money. Its amount stays counted in the sale. Asks for
-        the role's access to the Setup and Update sections together, or to
-        Account › API Integrations.
+        returned no money. Its amount stays counted in the sale. A refund
+        still waiting for its order's sale is not closed: it is recorded
+        when the sale arrives (409). Asks for the role's access to the
+        Setup and Update sections together, or to Account › API Integrations.
       operationId: closeShopifyRefund
       parameters:
         - name: id
@@ -3245,6 +3247,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: The refund waits for its order's sale and is recorded when it arrives; nothing was changed
         "422":
           $ref: "#/components/responses/ValidationError"
   /conversions/offline-export:
