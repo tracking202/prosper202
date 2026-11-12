@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"p202/internal/api"
 
@@ -116,6 +117,16 @@ func runUserPrefsUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	renderPrefs(data)
+	// What a change of the account's currency does to what is already
+	// recorded, as the server says it (--json carries it in the answer).
+	var answer struct {
+		Change struct {
+			Earlier string `json:"earlier_conversions"`
+		} `json:"currency_change"`
+	}
+	if !jsonOutput && !ndjsonOutput && !quietOutput && json.Unmarshal(data, &answer) == nil && answer.Change.Earlier != "" {
+		fmt.Fprintln(os.Stderr, "Note: "+answer.Change.Earlier)
+	}
 	return nil
 }
 

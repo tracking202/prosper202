@@ -117,6 +117,9 @@ final class AccountQueryResultsAreCheckedTest extends TestCase
         self::assertSame(['EUR', '0.00', '0', 2, 7], $updates[1]->boundValues);
         self::assertSame(['4.4', 3, 7], $updates[2]->boundValues);
         self::assertSame(['USD', 7], $db->statementsContaining('UPDATE `202_users_pref`')[0]->boundValues);
+        $recorded = $db->statementsContaining('INSERT INTO 202_currency_changes');
+        self::assertCount(1, $recorded, 'the change is recorded in the same transaction');
+        self::assertSame([7, 'EUR', 'USD'], [$recorded[0]->boundValues[0], $recorded[0]->boundValues[2], $recorded[0]->boundValues[3]]);
     }
 
     public function testARateTheServiceDidNotGiveWritesNothing(): void

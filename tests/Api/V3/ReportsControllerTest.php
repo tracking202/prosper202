@@ -222,7 +222,7 @@ final class ReportsControllerTest extends TestCase
         // Oldest first: the cut drops the newest bucket, never an earlier one.
         self::assertSame('p0000', $result['data'][0]['period']);
         self::assertSame('p1999', $result['data'][1999]['period']);
-        self::assertSame(['data', 'interval', 'timezone', 'truncated', 'limit'], array_keys($result));
+        self::assertSame(['data', 'interval', 'timezone', 'truncated', 'limit', 'currency', 'other_currencies'], array_keys($result));
     }
 
     public function testTimeseriesReadsOnlyOneRowPastTheCap(): void
@@ -360,7 +360,7 @@ final class ReportsControllerTest extends TestCase
         self::assertSame(0, $result['offset']);
         self::assertSame('n0049', $result['data'][49]['name'], 'the extra row is read, never served');
         self::assertSame(
-            ['data', 'breakdown', 'available_breakdowns', 'truncated', 'limit', 'offset'],
+            ['data', 'breakdown', 'available_breakdowns', 'truncated', 'limit', 'offset', 'currency', 'other_currencies'],
             array_keys($result)
         );
     }
@@ -717,6 +717,10 @@ final class ReportsControllerTest extends TestCase
         $db = $this->getMockBuilder(\mysqli::class)->disableOriginalConstructor()->getMock();
         $db->method('prepare')->willReturnCallback(
             function (string $sql) use ($results, &$prepared, &$binds): \mysqli_stmt {
+                // A test that stores a currency reads it back, and sees the read.
+                if (self::isMoneyRead($sql) && !(isset($results['FROM 202_users_pref']) && str_contains($sql, '202_users_pref'))) {
+                    return $this->buildStmtMock($sql, []);
+                }
                 $prepared[] = $sql;
                 /** @var \mysqli_stmt&\PHPUnit\Framework\MockObject\MockObject $stmt */
                 $stmt = $this->getMockBuilder(\mysqli_stmt::class)->disableOriginalConstructor()->getMock();
@@ -751,6 +755,9 @@ final class ReportsControllerTest extends TestCase
         $db = $this->getMockBuilder(\mysqli::class)->disableOriginalConstructor()->getMock();
         $db->method('prepare')->willReturnCallback(
             function (string $sql) use ($rows, &$prepared): \mysqli_stmt {
+                if (self::isMoneyRead($sql)) {
+                    return $this->buildStmtMock($sql, []);
+                }
                 $prepared[] = $sql;
                 if (preg_match('/LIMIT (\d+)\s*$/', $sql, $m) === 1) {
                     $rows = array_slice($rows, 0, (int) $m[1]);
@@ -761,6 +768,20 @@ final class ReportsControllerTest extends TestCase
         );
 
         return $db;
+    }
+
+    /**
+     * The two reads every report answer makes for what its money is in
+     * (ReportsController::money()): the account's currency, and the period's
+     * revenue in other currencies. The mocks answer them with no rows (USD,
+     * and none) and keep them out of what a test reads the report's own
+     * statements from.
+     */
+    private static function isMoneyRead(string $sql): bool
+    {
+        return str_starts_with($sql, 'SELECT user_account_currency FROM 202_users_pref')
+            || str_starts_with($sql, 'SELECT currency FROM 202_conversion_logs WHERE user_id = ? GROUP BY')
+            || str_starts_with($sql, 'SELECT cl.currency, SUM(');
     }
 
     /**
@@ -785,6 +806,9 @@ final class ReportsControllerTest extends TestCase
         /** @var \mysqli&\PHPUnit\Framework\MockObject\MockObject $db */
         $db = $this->getMockBuilder(\mysqli::class)->disableOriginalConstructor()->getMock();
         $db->method('prepare')->willReturnCallback(function (string $sql) use ($rows): \mysqli_stmt {
+            if (self::isMoneyRead($sql)) {
+                return $this->buildStmtMock($sql, []);
+            }
             self::assertMatchesRegularExpression('/LIMIT \? OFFSET \?$/', $sql);
             $bound = [];
             /** @var \mysqli_stmt&\PHPUnit\Framework\MockObject\MockObject $stmt */
