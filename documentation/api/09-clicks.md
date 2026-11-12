@@ -51,7 +51,7 @@ The ids — `click_id`, `aff_campaign_id`, `ppc_account_id`, `landing_page_id`, 
 | `country_name`, `country_code`, `region_name`, `city_name`, `isp_name` | Location |
 | `platform_name`, `browser_name`, `device_name`, `device_type` | The visitor's software and device |
 | `filter_reason`, `filter_entry_id` | Why a filtered click is filtered, and the address list entry of a `filter_list` one ([below](#why-a-click-is-filtered)); `null` for a counted click |
-| `gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid` | The ad platforms' click ids the click arrived with, as stored: Google Ads' gclid, its iOS click ids (`gbraid` for app, `wbraid` for web), TikTok's `ttclid`, Microsoft Advertising's `msclkid` and Meta's `fbclid`. `null` when it came with none |
+| `gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid`, `oppref` | The ad platforms' click ids the click arrived with, as stored: Google Ads' gclid, its iOS click ids (`gbraid` for app, `wbraid` for web), TikTok's `ttclid`, Microsoft Advertising's `msclkid`, Meta's `fbclid` and OpenAI's `oppref` (ChatGPT ads). `null` when it came with none |
 
 `GET /clicks/{id}` adds `user_id`, `click_reviewed`, the `c1`-`c4` values and their ids.
 
@@ -59,19 +59,20 @@ Everything the visitor or the visitor's browser wrote — keyword, URLs, locatio
 
 ### Ad click ids
 
-Direct links (`dl.php`) and simple and advanced landing pages record the six
-click ids from the link's query (the landing page script sends them on from
-the page's URL); the redirector (`rtr.php`) records none, as it records no
-UTM values. Each is stored as sent, a byte that is not UTF-8 as `?`, and cut
+Direct links (`dl.php`), redirector links (`rtr.php`, from 1.9.80; a re-click
+keeps its first visit's) and simple and advanced landing pages record the
+seven click ids from the link's query (the landing page script sends them on
+from the page's URL). Each is stored as sent, a byte that is not UTF-8 as `?`, and cut
 to its column: 150 characters for `gclid`, `gbraid`, `wbraid` and `msclkid`,
-1,000 for `ttclid` (real ones run to about 340) and `fbclid` (about 200). One
-sent as a list (`?gbraid[]=x`) is none. `gbraid`, `wbraid`, `ttclid`,
+1,000 for `ttclid` (real ones run to about 340), `fbclid` (about 200) and
+`oppref` (OpenAI documents no length). One sent as a list (`?gbraid[]=x`) is none. `gbraid`, `wbraid`, `ttclid`,
 `msclkid` and `fbclid` are recorded from 1.9.79: a click recorded before that
 has none of them (no version since at least 1.9.55 kept a click's msclkid
 or fbclid, although each had tables and tokens for them), and one recorded on
 1.9.79 code before the 1.9.79 upgrade has run is stored without them, which
-the server's error log says. The same values fill the `[[gclid]]`,
-`[[gbraid]]`, `[[wbraid]]`, `[[ttclid]]`, `[[msclkid]]` and `[[fbclid]]` URL
+the server's error log says. `oppref` is recorded from 1.9.80, the same way.
+The same values fill the `[[gclid]]`, `[[gbraid]]`, `[[wbraid]]`,
+`[[ttclid]]`, `[[msclkid]]`, `[[fbclid]]` and `[[oppref]]` URL
 tokens ([Tokens](../tutorials-and-guides/999-prosper202-tokens.md)).
 
 ## A click a redirector link re-clicked
