@@ -747,6 +747,12 @@ p202 <resource> delete  --ids N1,N2,... [--force] [--dry-run] [--json]
 the source alone, not its accounts (`ppc-account delete` them first if they
 are to go). The same holds for an `aff-network` and its campaigns.
 
+ChatGPT Ads (Setup > Traffic Sources > Add ChatGPT Ads; safe to run again, adds only what is missing; `tracker get-url` then answers `chatgpt_ads` with `destination_url` and `tracking_template`):
+
+```
+p202 ppc-network add-chatgpt-ads [--json]
+```
+
 Custom variables (Setup > Traffic Sources > variables):
 
 ```

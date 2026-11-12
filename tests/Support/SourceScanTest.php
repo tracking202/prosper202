@@ -219,6 +219,7 @@ final class SourceScanTest extends TestCase
             'tests/Api/V3/SyncJobKeysAndStopsTest.php' => 1,
             'tests/Api/V3/SyncLandingPageUrlsIntegrationTest.php' => 1,
             'tests/Api/V3/SyncRotatorRulesIntegrationTest.php' => 1,
+            'tests/Api/V3/SyncTrafficSourcePlatformIntegrationTest.php' => 1,
             'tests/Apps/Android/AndroidDatabase.php' => 1,
             'tests/Apps/Android/CampaignLinkChangeFeedTest.php' => 1,
             'tests/Apps/Android/Integrity/FakeGoogle.php' => 1,

@@ -5517,6 +5517,10 @@ class UPGRADE
                 // from (TrafficSourceOwners::split()), which names the values
                 // recorded before the copy. Null on every variable already there.
                 \Prosper202\Database\Tables\TrackingTables::ppcNetworkVariables(),
+                // 202_ppc_networks gains ppc_network_platform: 'chatgpt_ads' on
+                // the source Setup › Traffic Sources' "Add ChatGPT Ads" makes
+                // (Prosper202\Setup\ChatGptAdsSource), '' on every other.
+                \Prosper202\Database\Tables\CampaignTables::ppcNetworks(),
             ], [], [], true) && $before_ok;
             if ($step_ok) {
                 _upgrade_seed_bot202_facebook_pixel_lookups();
