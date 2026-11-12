@@ -483,8 +483,9 @@ recover from a failure without a person in the loop. So:
 Errors are written for an agent to act on:
 
 - **Exit codes mean something:** `1` bad input, `2` auth, `3` network,
-  `4` server error, `5` partial failure, and they hold through error
-  wrapping.
+  `4` server error, `5` partial failure, `6` licence, `7` rate limited
+  (wait `retry_after_seconds`, then run it again), and they hold through
+  error wrapping.
 - **Every error carries a recovery hint.** In human mode:
 
   ```text

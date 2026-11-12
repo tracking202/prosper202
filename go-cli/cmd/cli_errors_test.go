@@ -52,6 +52,49 @@ func TestHintFor_ExplicitHintWins(t *testing.T) {
 	}
 }
 
+// A 429 is not an input error: it has its own category and exit code, the
+// envelope carries the wait, and neither the class-wide hint nor the --help
+// fallback tells the agent to change its flags.
+func TestA429IsRateLimitedWithItsWaitInTheEnvelope(t *testing.T) {
+	old := activeCommandPath
+	defer func() { activeCommandPath = old }()
+	activeCommandPath = "p202 sync plan"
+
+	err := fmt.Errorf("planning: %w", &api.APIError{Status: 429, Message: "Rate limit exceeded", RetryAfter: 41})
+	if code := exitCodeForError(err); code != ExitRateLimited {
+		t.Errorf("exit = %d, want %d", code, ExitRateLimited)
+	}
+	hint := hintFor(err)
+	if !strings.Contains(hint, "Wait 41 seconds") || strings.Contains(hint, "--help") {
+		t.Errorf("hint = %q, want the wait and no --help", hint)
+	}
+	env := errorEnvelope(err)["error"].(map[string]interface{})
+	if env["category"] != "rate_limited" || env["exit_code"] != ExitRateLimited || env["retry_after_seconds"] != 41 || env["http_status"] != 429 {
+		t.Errorf("envelope = %v", env)
+	}
+
+	jsonOutput, ndjsonOutput = true, false
+	defer func() { jsonOutput, ndjsonOutput = false, false }()
+	var buf bytes.Buffer
+	printError(&buf, err)
+	var parsed map[string]map[string]interface{}
+	if jErr := json.Unmarshal(buf.Bytes(), &parsed); jErr != nil {
+		t.Fatalf("--json error output is not JSON: %v\n%s", jErr, buf.String())
+	}
+	if parsed["error"]["retry_after_seconds"] != float64(41) || parsed["error"]["category"] != "rate_limited" {
+		t.Errorf("printed envelope = %v", parsed["error"])
+	}
+
+	// No wait known: no retry_after_seconds, and the hint still says to wait.
+	bare := errorEnvelope(&api.APIError{Status: 429})["error"].(map[string]interface{})
+	if _, has := bare["retry_after_seconds"]; has || !strings.Contains(fmt.Sprint(bare["hint"]), "Wait a minute") {
+		t.Errorf("bare 429 envelope = %v", bare)
+	}
+	if code := exitCodeForError(&api.APIError{Status: 422}); code != ExitValidation {
+		t.Errorf("a 422 still exits %d, got %d", ExitValidation, code)
+	}
+}
+
 func TestHintFor_GenericHelpFallback(t *testing.T) {
 	old := activeCommandPath
 	defer func() { activeCommandPath = old }()

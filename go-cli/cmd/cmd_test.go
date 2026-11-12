@@ -3709,7 +3709,8 @@ func TestSyncSkipErrorsStopsAtTheKeysFailure(t *testing.T) {
 	if !handleSyncRecordError("campaigns", "A", &api.APIError{Status: 422, Message: "invalid"}, true, &result) {
 		t.Error("a record's 422 under --skip-errors should go on")
 	}
-	for _, status := range []int{401, 403} {
+	// A 429 is the key's too: every later record is refused until its window passes.
+	for _, status := range []int{401, 403, 429} {
 		if handleSyncRecordError("campaigns", "A", &api.APIError{Status: status, Message: "key"}, true, &result) {
 			t.Errorf("a %d under --skip-errors should stop the sync", status)
 		}
@@ -3717,7 +3718,10 @@ func TestSyncSkipErrorsStopsAtTheKeysFailure(t *testing.T) {
 	if handleSyncRecordError("campaigns", "A", &api.APIError{Status: 422, Message: "invalid"}, false, &result) {
 		t.Error("without --skip-errors every failure stops the sync")
 	}
-	if result.Failed != 4 || len(result.Errors) != 4 {
+	if !abortsImport(&api.APIError{Status: 429, Message: "Rate limit exceeded"}) {
+		t.Error("a 429 stops a conversion import: every later row would be refused the same way")
+	}
+	if result.Failed != 5 || len(result.Errors) != 5 {
 		t.Errorf("every failure is counted and listed: %+v", result)
 	}
 }
@@ -5125,5 +5129,272 @@ func TestUserIdentityKeyRotateStagedProposesWithoutAsking(t *testing.T) {
 	}
 	if got != "POST /api/v3/users/7/identity-key/rotate?staged=1" {
 		t.Errorf("request = %q, want a staged POST", got)
+	}
+}
+
+// An import a 429 stops part-way has sent records already: the hint names the
+// wait and the records still to send, never "run the same command again",
+// which would send the first ones a second time. With --skip-errors too.
+func TestImportStoppedByARateLimitNamesTheRecordsLeft(t *testing.T) {
+	for _, flags := range [][]string{{"--json"}, {"--skip-errors", "--json"}} {
+		posts := 0
+		srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == "POST" && r.URL.Path == "/api/v3/campaigns" {
+				posts++
+				if posts <= 2 {
+					w.WriteHeader(201)
+					w.Write([]byte(`{"data":{"aff_campaign_id":1}}`))
+					return
+				}
+				w.Header().Set("Retry-After", "30")
+				w.WriteHeader(429)
+				w.Write([]byte(`{"error":true,"status":429,"message":"Rate limit exceeded","retry_after_seconds":30}`))
+				return
+			}
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"not found"}`))
+		}))
+		tmp := t.TempDir()
+		setTestHome(t, tmp)
+		writeTestConfig(t, tmp, srv.URL, "test-key")
+		inFile := filepath.Join(tmp, "campaigns.json")
+		if err := os.WriteFile(inFile, []byte(`[{"aff_campaign_name":"A"},{"aff_campaign_name":"B"},{"aff_campaign_name":"C"},{"aff_campaign_name":"D"}]`), 0600); err != nil {
+			t.Fatalf("writing import file: %v", err)
+		}
+
+		_, _, err := executeCommand(append([]string{"import", "campaigns", inFile}, flags...)...)
+		srv.Close()
+		if err == nil {
+			t.Fatalf("%v: a rate-limited import was reported as done", flags)
+		}
+		hint := hintFor(err)
+		if code := exitCodeForError(err); code != ExitRateLimited {
+			t.Errorf("%v: exit %d, want %d", flags, code, ExitRateLimited)
+		}
+		for _, want := range []string{"Wait 30 seconds", "records 3 to 4 only", "a second time"} {
+			if !strings.Contains(hint, want) {
+				t.Errorf("%v: hint %q lacks %q", flags, hint, want)
+			}
+		}
+		if strings.Contains(hint, "run the same command again") || strings.Contains(hint, "nothing was done") {
+			t.Errorf("%v: hint %q would send records 1 and 2 again", flags, hint)
+		}
+		if posts != 3 {
+			t.Errorf("%v: %d POSTs, want 3: the import stops at the 429", flags, posts)
+		}
+	}
+}
+
+// Stopped at the first record, nothing was sent: the 429's own step stands.
+func TestImportRateLimitedAtTheFirstRecordSaysToRunItAgain(t *testing.T) {
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/api/v3/campaigns" {
+			w.WriteHeader(429)
+			w.Write([]byte(`{"error":true,"status":429,"message":"Rate limit exceeded","retry_after_seconds":9}`))
+			return
+		}
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"not found"}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	inFile := filepath.Join(tmp, "campaigns.json")
+	if err := os.WriteFile(inFile, []byte(`[{"aff_campaign_name":"A"},{"aff_campaign_name":"B"}]`), 0600); err != nil {
+		t.Fatalf("writing import file: %v", err)
+	}
+	_, _, err := executeCommand("import", "campaigns", inFile, "--json")
+	hint := hintFor(err)
+	if exitCodeForError(err) != ExitRateLimited || !strings.Contains(hint, "Wait 9 seconds") ||
+		!strings.Contains(hint, "run the same command again") || strings.Contains(hint, "records 1 to") {
+		t.Errorf("exit %d, hint %q", exitCodeForError(err), hint)
+	}
+}
+
+// One 429 beside another failure is not a rate-limited run.
+func TestRateLimitedOnlyWhenEveryFailureIs(t *testing.T) {
+	limited := &api.APIError{Status: 429, Message: "Rate limit exceeded"}
+	var first *api.APIError
+	if got := rateLimited(nil, limited, limited); !errors.As(got, &first) || first != limited {
+		t.Error("every failure a 429: the first one is the run's")
+	}
+	if rateLimited(limited, &api.APIError{Status: 404, Message: "Not found"}) != nil {
+		t.Error("a 404 among them: not a rate-limited run")
+	}
+	if rateLimited() != nil || rateLimited(nil) != nil {
+		t.Error("no failure: nothing to report")
+	}
+}
+
+// importStub answers POST /api/v3/campaigns with the statuses given, in order
+// (the last one repeats), and counts the POSTs.
+func importStub(t *testing.T, statuses ...int) (*int, string) {
+	t.Helper()
+	posts := 0
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/api/v3/campaigns" {
+			status := statuses[len(statuses)-1]
+			if posts < len(statuses) {
+				status = statuses[posts]
+			}
+			posts++
+			switch status {
+			case 201:
+				w.WriteHeader(201)
+				w.Write([]byte(`{"data":{"aff_campaign_id":1}}`))
+			case 422:
+				w.WriteHeader(422)
+				w.Write([]byte(`{"error":true,"status":422,"message":"Validation failed","field_errors":{"aff_campaign_name":"is taken"}}`))
+			case 429:
+				w.Header().Set("Retry-After", "30")
+				w.WriteHeader(429)
+				w.Write([]byte(`{"error":true,"status":429,"message":"Rate limit exceeded","retry_after_seconds":30}`))
+			default:
+				w.WriteHeader(status)
+				w.Write([]byte(`{"error":true,"status":500,"message":"Internal server error"}`))
+			}
+			return
+		}
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"not found"}`))
+	}))
+	t.Cleanup(srv.Close)
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	file := filepath.Join(tmp, "campaigns.json")
+	records := make([]string, 0, 5)
+	for _, name := range []string{"A", "B", "C", "D", "E"} {
+		records = append(records, `{"aff_campaign_name":"`+name+`"}`)
+	}
+	if err := os.WriteFile(file, []byte("["+strings.Join(records, ",")+"]"), 0600); err != nil {
+		t.Fatalf("writing import file: %v", err)
+	}
+	return &posts, file
+}
+
+// A record --skip-errors went past is neither dropped from what to send next
+// nor lost: the stop names it, its error, and sends it with the rest.
+func TestImportStoppedAfterARefusedRecordNamesIt(t *testing.T) {
+	posts, file := importStub(t, 201, 422, 201, 429)
+	_, _, err := executeCommand("import", "campaigns", file, "--skip-errors", "--json")
+	if exitCodeForError(err) != ExitRateLimited {
+		t.Fatalf("exit %d (%v)", exitCodeForError(err), err)
+	}
+	if !strings.Contains(err.Error(), "1 refused before it (record 2: API error (422)") || !strings.Contains(err.Error(), "is taken") {
+		t.Errorf("the message must name record 2 and why it was refused: %v", err)
+	}
+	hint := hintFor(err)
+	for _, want := range []string{"Wait 30 seconds", "records 2, 4 to 5 only", "Fix record 2 first", "a second time"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("hint %q lacks %q", hint, want)
+		}
+	}
+	if *posts != 4 {
+		t.Errorf("%d POSTs, want 4", *posts)
+	}
+}
+
+// A create that failed with a 5xx may have been written (CLAUDE.md #13): the
+// hint sends the agent to the list first, stopped or skipped past.
+func TestImportAfterAServerErrorSaysTheRecordMayExist(t *testing.T) {
+	_, file := importStub(t, 201, 500)
+	_, _, err := executeCommand("import", "campaigns", file, "--json")
+	hint := hintFor(err)
+	if exitCodeForError(err) != ExitServer || !strings.Contains(hint, "system health") ||
+		!strings.Contains(hint, "Then import a file of records 2 to 5 only") ||
+		!strings.Contains(hint, "Record 2 failed with a server or connection error and may exist already: check `p202 campaign list` first") {
+		t.Errorf("exit %d, hint %q", exitCodeForError(err), hint)
+	}
+
+	_, file = importStub(t, 201, 500, 201)
+	_, _, err = executeCommand("import", "campaigns", file, "--skip-errors", "--json")
+	hint = hintFor(err)
+	if exitCodeForError(err) != ExitPartialFailure || !strings.Contains(hint, "Fix record 2 and import a file of just them") ||
+		!strings.Contains(hint, "Record 2 failed with a server or connection error and may exist already") {
+		t.Errorf("--skip-errors: exit %d, hint %q", exitCodeForError(err), hint)
+	}
+
+	_, file = importStub(t, 201, 422)
+	_, _, err = executeCommand("import", "campaigns", file, "--json")
+	hint = hintFor(err)
+	if !strings.Contains(hint, "Then import a file of records 2 to 5 only: record 1 was already sent") || strings.Contains(hint, "may exist") {
+		t.Errorf("a 422 stop: hint %q", hint)
+	}
+}
+
+// A record that is not an object is refused naming it, never skipped: a skip
+// shifts the numbers every later error and hint names.
+func TestImportRefusesARecordThatIsNotAnObject(t *testing.T) {
+	for _, body := range []string{`{"data":[{"aff_campaign_name":"A"},5,{"aff_campaign_name":"C"}]}`, `[{"aff_campaign_name":"A"},null]`} {
+		_, err := parseImportRecords([]byte(body))
+		if err == nil || exitCodeForError(err) != ExitValidation || !strings.Contains(err.Error(), "record 2 (index 1 of") {
+			t.Errorf("%s: err %v", body, err)
+		}
+	}
+	if recs, err := parseImportRecords([]byte(`{"data":[{"a":1},{"b":2}]}`)); err != nil || len(recs) != 2 {
+		t.Errorf("objects only: %v, %d records", err, len(recs))
+	}
+}
+
+// A --stop-on-error batch stopped by a 429 after a command landed: the hint
+// names what is left to run and that the earlier commands ran, never "run
+// the same command again", which would create A a second time.
+func TestShellStopOnErrorAfterACommandRanNamesWhatIsLeft(t *testing.T) {
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/versions":
+			_, _ = w.Write([]byte(`{"data":{"preferred":"v3"}}`))
+		case r.URL.Path == "/api/v3/capabilities":
+			_, _ = w.Write([]byte(`{"data":{"shell":true}}`))
+		case r.URL.Path == "/api/v3/aff-networks" && r.Method == http.MethodPost:
+			posts++
+			if posts == 1 {
+				w.WriteHeader(201)
+				_, _ = w.Write([]byte(`{"data":{"aff_network_id":1,"aff_network_name":"A"}}`))
+				return
+			}
+			w.Header().Set("Retry-After", "30")
+			w.WriteHeader(429)
+			_, _ = w.Write([]byte(`{"error":true,"status":429,"message":"Rate limit exceeded","retry_after_seconds":30}`))
+		default:
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"message":"not found"}`))
+		}
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key-12345678")
+
+	batch := "aff-network create --aff-network-name A; aff-network create --aff-network-name B; aff-network create --aff-network-name C"
+	_, _, err := executeCommand("shell", "--stop-on-error", "-c", batch)
+	if code := exitCodeForError(err); code != ExitRateLimited {
+		t.Fatalf("exit %d (%v), want %d", code, err, ExitRateLimited)
+	}
+	hint := hintFor(err)
+	for _, want := range []string{"Wait 30 seconds", "The 1 command(s) before it already ran",
+		"`aff-network create --aff-network-name B; aff-network create --aff-network-name C`", "not the whole batch"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("hint %q lacks %q", hint, want)
+		}
+	}
+	if strings.Contains(hint, "run the same command again") {
+		t.Errorf("hint %q would run A again", hint)
+	}
+	if !strings.Contains(err.Error(), "retry after 30 seconds") {
+		t.Errorf("the error text should carry the wait too: %v", err)
+	}
+	if posts != 2 {
+		t.Errorf("%d POSTs, want 2", posts)
+	}
+
+	// Stopped at the first command, nothing ran: the command's own hint stands.
+	posts = 1
+	_, _, err = executeCommand("shell", "--stop-on-error", "-c", batch)
+	if hint := hintFor(err); !strings.Contains(hint, "run the same command again") {
+		t.Errorf("stopped first: hint %q", hint)
 	}
 }

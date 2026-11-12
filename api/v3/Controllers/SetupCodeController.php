@@ -8,6 +8,7 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\PayloadKeys;
+use Api\V3\Support\LandingPageCheckLimit;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\TrackingBaseLookup;
 use Prosper202\Conversion\PostbackAuth\PostbackAuthStore;
@@ -134,21 +135,50 @@ final class SetupCodeController
      * returns it. A page that could not be fetched is an answer too
      * (`status: error`, `found: false`), not a failed request.
      *
+     * A page checked less than LandingPageCheckLimit::COOLDOWN seconds ago,
+     * for the URL it has now, is answered from that check (`fetched: false`)
+     * with nothing fetched or counted. Otherwise the fetch is taken from the
+     * key's limit first ($limit), and refused with a 429 past it.
+     *
      * @param array<string, mixed> $query the query string, as sent
      * @param array<array-key, mixed> $payload the body, as decoded
      * @param array<string, mixed>|null $server the request ($_SERVER)
      * @return array{data: array<string, mixed>}
      */
-    public function landingPageCheck(int $id, array $query, array $payload, ?array $server = null, ?LandingPageCheck $checker = null): array
-    {
+    public function landingPageCheck(
+        int $id,
+        array $query,
+        array $payload,
+        LandingPageCheckLimit $limit,
+        ?array $server = null,
+        ?LandingPageCheck $checker = null,
+        ?int $now = null
+    ): array {
         self::refuseUnknown($query, [], 'POST /landing-pages/{id}/check takes no parameters');
         PayloadKeys::refuseUnknown($payload, [], 'a landing page check');
+        $clock = $now === null ? static fn (): int => time() : static fn (): int => $now;
 
         (new LandingPagesController($this->db, $this->userId))->repairMissingPublicIds();
         $page = $this->landingPage($id);
-        $store = new LandingPageCheckStore(new Connection($this->db), $checker);
+        $store = new LandingPageCheckStore(new Connection($this->db), $checker, $clock);
         try {
-            $result = $store->run($this->userId, $id, LandingPageCheckStore::hostOf($this->trackingBaseUrl($server)));
+            $last = $store->forPage($this->userId, $id);
+            $age = $last === null ? null : $clock() - $last['checked_at'];
+            if ($last !== null && $age >= 0 && $age < LandingPageCheckLimit::COOLDOWN) {
+                $result = new LandingPageCheckResult(
+                    $last['status'],
+                    $last['message'],
+                    LandingPageCheck::otherIdsNamedIn($last['status'], $last['message'])
+                );
+                $checkedAt = $last['checked_at'];
+                $fetchAgainIn = LandingPageCheckLimit::COOLDOWN - $age;
+            } else {
+                $limit->take();
+                $host = LandingPageCheckStore::hostOf($this->trackingBaseUrl($server));
+                $result = $store->run($this->userId, $id, $host);
+                $checkedAt = $clock();
+                $fetchAgainIn = null;
+            }
         } catch (\Api\V3\HttpException $e) {
             throw $e;
         } catch (\Throwable $e) {
@@ -158,7 +188,7 @@ final class SetupCodeController
             throw new NotFoundException("Landing page $id not found");
         }
 
-        return ['data' => [
+        $data = [
             'landing_page_id' => (int) $page['landing_page_id'],
             'landing_page_id_public' => (int) $page['landing_page_id_public'],
             'landing_page_url' => (string) $page['landing_page_url'],
@@ -166,7 +196,19 @@ final class SetupCodeController
             'found' => in_array($result->status, [LandingPageCheckResult::PRESENT, LandingPageCheckResult::LEGACY], true),
             'message' => str_replace('the code above', 'the code from GET /landing-pages/' . $id . '/code', $result->message),
             'other_landing_page_ids_public' => $result->otherIds,
-        ]];
+            'checked_at' => $checkedAt,
+            'fetched' => $fetchAgainIn === null,
+        ];
+        if ($fetchAgainIn !== null) {
+            $data['fetch_again_in_seconds'] = $fetchAgainIn;
+            $seconds = static fn (int $n): string => $n . ($n === 1 ? ' second' : ' seconds');
+            $data['note'] = 'This page was checked ' . $seconds($clock() - $checkedAt) . ' ago,'
+                . ' and that check is the answer:'
+                . ' a page is fetched at most once every ' . LandingPageCheckLimit::COOLDOWN . ' seconds. Ask again in '
+                . $seconds($fetchAgainIn) . ' to have it fetched now.';
+        }
+
+        return ['data' => $data];
     }
 
     /**

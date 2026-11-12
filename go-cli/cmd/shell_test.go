@@ -431,3 +431,34 @@ func TestShellCommentsSkipped(t *testing.T) {
 		t.Errorf("expected health output after comment, got: %s", stdout)
 	}
 }
+
+// A batch whose every failure is a 429 keeps the category and exit 7, and
+// says to run only the commands that failed: the others already ran.
+func TestShellBatchOfRateLimitsKeepsExit7(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/versions":
+			_, _ = w.Write([]byte(`{"data":{"preferred":"v3"}}`))
+		case r.URL.Path == "/api/v3/capabilities":
+			_, _ = w.Write([]byte(`{"data":{"shell":true}}`))
+		case r.URL.Path == "/api/v3/system/health":
+			_, _ = w.Write([]byte(`{"data":{"status":"ok","version":"4.0"}}`))
+		default:
+			w.Header().Set("Retry-After", "20")
+			w.WriteHeader(429)
+			_, _ = w.Write([]byte(`{"error":true,"status":429,"message":"Rate limit exceeded","retry_after_seconds":20}`))
+		}
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key-12345678")
+
+	_, _, err := executeCommand("shell", "-c", "campaign get 9; system health; campaign get 10")
+	if code := exitCodeForError(err); code != ExitRateLimited {
+		t.Fatalf("exit %d (%v), want %d", code, err, ExitRateLimited)
+	}
+	if hint := hintFor(err); !strings.Contains(hint, "Wait 20 seconds") || !strings.Contains(hint, "only the commands that failed") || strings.Contains(hint, "run the same command again") {
+		t.Errorf("hint = %q", hint)
+	}
+}
