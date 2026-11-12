@@ -42,6 +42,9 @@ final class InsightsClientTest extends TestCase
     {
         $text = (string) file_get_contents(dirname(__DIR__, 2) . '/fixtures/openai-ads/' . $name);
 
+        // Placeholders are strings so the file is JSON; a number takes the quotes' place.
+        $text = (string) preg_replace_callback('/"@H(\d)@"/', static fn (array $m): string => (string) ($hour + 3600 * (int) $m[1]), $text);
+
         return (string) preg_replace_callback('/@H(\d)@/', static fn (array $m): string => (string) ($hour + 3600 * (int) $m[1]), $text);
     }
 

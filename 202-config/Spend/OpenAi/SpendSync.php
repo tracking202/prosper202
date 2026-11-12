@@ -180,7 +180,7 @@ final class SpendSync
             $error = $e->getMessage();
             $refused = true;
         }
-        $this->record($connection, $now, $rows, $error, $note, $rateLimited, $backfill && $error === null, (int) ($state['rate_limited'] ?? 0));
+        $this->recordRun($connection, $now, $rows, $error, $note, $rateLimited, $backfill && $error === null, (int) ($state['rate_limited'] ?? 0));
 
         return ['rows' => $rows, 'from' => $from, 'to' => $now, 'error' => $error, 'note' => $note,
             'refused' => $refused, 'rate_limited' => $rateLimited];
@@ -413,7 +413,7 @@ final class SpendSync
      * The run's outcome on the sync row: a failure in last_error (and no
      * success), a note on a run that succeeded in last_note.
      */
-    private function record(SpendConnection $connection, int $now, int $rows, ?string $error, ?string $note, bool $rateLimited, bool $backfilled, int $limitedBefore): void
+    private function recordRun(SpendConnection $connection, int $now, int $rows, ?string $error, ?string $note, bool $rateLimited, bool $backfilled, int $limitedBefore): void
     {
         $limited = $rateLimited ? min($limitedBefore + 1, 60) : 0;
         $retryAfter = $rateLimited ? $now + min(self::BACKOFF_SECONDS * (2 ** ($limited - 1)), self::BACKOFF_MAX_SECONDS) : 0;
