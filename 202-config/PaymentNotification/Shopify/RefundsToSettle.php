@@ -355,14 +355,7 @@ final class RefundsToSettle
     /** The currency the account counts in, as the processor reads it for a webhook's amount. */
     private function accountCurrency(int $account): string
     {
-        $stmt = $this->conn->prepareRead('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1');
-        $this->conn->bind($stmt, 'i', [$account]);
-        $row = $this->conn->fetchOne($stmt);
-        if ($row === null) {
-            throw new \RuntimeException('account ' . $account . ' has no preferences row to read its currency from');
-        }
-
-        return strtoupper(trim((string) $row['user_account_currency']));
+        return RowCurrency::knownOf($this->conn, $account);
     }
 
     /** Whether Shopify's Transaction creation webhook has ever settled a refund transaction for the account. */

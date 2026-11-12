@@ -496,9 +496,13 @@ final class UserTables
     }
 
     /**
-     * Each change of an account's currency, from 1.9.80 (CurrencyChange::record()):
-     * when, and from and to which. Written in the transaction that changes
-     * it, so nothing later has to infer it. Personal settings lists them.
+     * The account's currency over time, from 1.9.80: each change of it
+     * (kind 'change', CurrencyChange::record(), written in the transaction
+     * that changes it), each owner's statement of what it was before a date
+     * ('owner', RowCurrency::recordBefore()), and where the record begins on
+     * an upgraded install ('upgrade': the currency then, nothing known
+     * before). RowCurrency::inForceAt() reads it; Personal settings lists
+     * the changes.
      */
     public static function currencyChanges(): SchemaDefinition
     {
@@ -510,6 +514,7 @@ final class UserTables
                 `changed_at` int(10) unsigned NOT NULL,
                 `from_currency` char(3) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
                 `to_currency` char(3) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `kind` varchar(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'change',
                 PRIMARY KEY (`change_id`),
                 KEY `user_changed` (`user_id`, `changed_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"

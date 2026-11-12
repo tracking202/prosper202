@@ -267,8 +267,9 @@ class ConversionsController
         // currency are counted apart, by the currency they recorded, so a
         // caller can tell how much of a total is another currency's.
         $accountCurrency = RowCurrency::ofAccount(new \Prosper202\Database\Connection($this->db), $this->userId);
+        // Counted as the income is (and as /reports/summary counts them).
         $otherSql = 'SELECT cl.currency,
-                SUM(cl.reverses_conv_id IS NULL) AS conversions,
+                SUM(cl.reverses_conv_id IS NULL AND ' . $counted . ') AS conversions,
                 SUM(IF(' . $counted . ', cl.click_payout, 0)) AS income
             FROM 202_conversion_logs cl
             WHERE ' . implode(' AND ', $where) . ' AND cl.currency <> ?

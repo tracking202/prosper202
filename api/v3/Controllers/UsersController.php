@@ -1153,7 +1153,8 @@ class UsersController
                     $value = is_array($answer) ? ($answer['exchange_payout'] ?? null) : null;
 
                     return is_numeric($value) ? (string) $value : null;
-                }
+                },
+                $userId
             );
         }
 
@@ -1168,7 +1169,8 @@ class UsersController
             $answer['currency_change'] = [
                 'from' => $previous,
                 'to' => (string) $clean['user_account_currency'],
-                'earlier_conversions' => 'Conversions already recorded stay in ' . $previous . ', unconverted; new ones are recorded in '
+                'earlier_conversions' => 'Conversions already recorded keep the currency each was recorded in (' . $previous
+                    . ' until now), unconverted; new ones are recorded in '
                     . $clean['user_account_currency'] . '. Report answers list a period\'s revenue in other currencies under other_currencies.',
             ];
         }

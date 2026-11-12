@@ -50,12 +50,28 @@ final class RevenueCurrencies
         if ($basis !== self::BY_CLICK_TIME && $basis !== self::BY_CONVERSION_TIME) {
             throw new \InvalidArgumentException('"' . $basis . '" is not a time the ledger keeps');
         }
+        // The account's currencies first (user_currency_click_time, read by
+        // its first two columns), then each other one by its range of the
+        // period: `currency <> ?` could not bound the time, and read every
+        // row in another currency on every report.
+        $distinct = $conn->prepareRead('SELECT DISTINCT currency FROM 202_conversion_logs WHERE user_id = ?');
+        $conn->bind($distinct, 'i', [$userId]);
+        $currencies = [];
+        foreach ($conn->fetchAll($distinct) as $row) {
+            if ((string) $row['currency'] !== $accountCurrency) {
+                $currencies[] = (string) $row['currency'];
+            }
+        }
+        if ($currencies === []) {
+            return [];
+        }
         $counted = LedgerReportSql::countedPredicate('cl');
         $sql = 'SELECT cl.currency, SUM(cl.reverses_conv_id IS NULL AND ' . $counted . ') AS conversions,'
             . ' SUM(IF(' . $counted . ', cl.click_payout, 0)) AS amount'
-            . ' FROM 202_conversion_logs cl WHERE cl.user_id = ? AND cl.currency <> ?';
-        $types = 'is';
-        $values = [$userId, $accountCurrency];
+            . ' FROM 202_conversion_logs cl WHERE cl.user_id = ? AND cl.currency IN ('
+            . implode(', ', array_fill(0, count($currencies), '?')) . ')';
+        $types = 'i' . str_repeat('s', count($currencies));
+        $values = [$userId, ...$currencies];
         if ($from !== null) {
             $sql .= ' AND cl.' . $basis . ' >= ?';
             $types .= 'i';

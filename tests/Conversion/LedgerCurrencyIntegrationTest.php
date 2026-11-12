@@ -81,7 +81,7 @@ final class LedgerCurrencyIntegrationTest extends TestCase
             self::markTestSkipped('No test database configured (set P202_TEST_DB_HOST).');
         }
         foreach (['202_conversion_logs', '202_clicks', '202_clicks_spy', '202_aff_campaigns', '202_attribution_pending',
-            '202_dataengine', '202_exchange_rates', '202_users_pref'] as $t) {
+            '202_dataengine', '202_exchange_rates', '202_users_pref', '202_currency_changes'] as $t) {
             self::$db->query('TRUNCATE TABLE ' . $t);
         }
         $this->conn = new Connection(self::$db);
@@ -385,6 +385,79 @@ final class LedgerCurrencyIntegrationTest extends TestCase
         self::fixture($old(103, ''));
         $this->record(102, ['transaction_id' => 'NEW']);
         self::assertSame('/0', $baseline(102), 'the account holds rows with no currency recorded, so this value\'s is not known either');
+    }
+
+    /** An entry of the account's currency history (kind: change, owner or upgrade). */
+    private function history(int $at, string $from, string $to, string $kind = 'change'): void
+    {
+        self::fixture("INSERT INTO 202_currency_changes SET user_id=" . self::USER . ", changed_at=$at, from_currency='$from', to_currency='$to', kind='$kind'");
+    }
+
+    /** @return array{0: string, 1: string} the conversion's currency and basis */
+    private function currencyOf(int $convId): array
+    {
+        return self::$db->query("SELECT currency, currency_basis FROM 202_conversion_logs WHERE conv_id=$convId")->fetch_row();
+    }
+
+    public function testACampaignPaidByItsPostbacksAmountsStaysInItsCurrencyThroughAChangeAndIsConverted(): void
+    {
+        self::fixture("INSERT INTO 202_aff_campaigns SET aff_campaign_id=7, user_id=" . self::USER . ", aff_network_id=1,
+            aff_campaign_name='store', aff_campaign_url='http://x', aff_campaign_payout=0, aff_campaign_time=1,
+            aff_campaign_currency='USD', aff_campaign_foreign_payout=0, payout_mode='accumulate'");
+        $this->click(100, 7, '0.00');
+        $updates = \Prosper202\User\CurrencyChange::plan($this->conn, self::USER, 'EUR', 'USD', static fn (): array => ['exchange_payout' => 1]);
+        $this->conn->transaction(function () use ($updates): void {
+            $this->account('EUR');
+            \Prosper202\User\CurrencyChange::apply($this->conn, $updates);
+        });
+        $this->rate('USD', 'EUR', '0.9000000000');
+
+        $postback = $this->record(100, ['transaction_id' => 'A', 'payout' => '20.00']);
+
+        self::assertSame(['18.00000', 'EUR', '20.00000'], array_values(array_slice($this->row((int) $postback['convId']), 0, 3)),
+            'its network still reports in USD: converted, and what was sent is kept');
+    }
+
+    public function testAConversionThatTakesTheClicksPayoutIsInTheCurrencyOfTheClicksTime(): void
+    {
+        // The click (at 1700000000) carried 10.00 while the account counted in USD; it changed to EUR since.
+        $this->campaign(7, 'replace');
+        $this->click(100, 7, '10.00');
+        $this->history(1700000500, 'USD', 'EUR');
+        $this->account('EUR');
+
+        $pixel = $this->record(100, ['transaction_id' => 'A']);
+        self::assertSame(['USD', '0'], $this->currencyOf((int) $pixel['convId']), 'known from the change recorded after the click');
+
+        // An amount stated now is in the account's currency now.
+        $stated = $this->record(100, ['transaction_id' => 'B', 'payout' => '5.00'], 'api');
+        self::assertSame(['EUR', '0'], $this->currencyOf((int) $stated['convId']));
+
+        // One dated before the change (a replay, an import) is in the currency of its own time.
+        $dated = $this->record(100, ['transaction_id' => 'C', 'payout' => '5.00', 'conv_time' => 1700000100], 'api');
+        self::assertSame(['USD', '0'], $this->currencyOf((int) $dated['convId']));
+    }
+
+    public function testAClicksPayoutFromBeforeTheUpgradeIsAGuessTheOwnerCanCorrectByTheClicksTime(): void
+    {
+        // The history begins at the upgrade, in EUR; the click is older, so its payout's currency is not known.
+        $this->campaign(7, 'replace');
+        $this->click(100, 7, '10.00');
+        $this->history(1700000900, 'EUR', 'EUR', 'upgrade');
+        $this->account('EUR');
+
+        $pixel = $this->record(100, ['transaction_id' => 'A']);
+        self::assertSame(['EUR', (string) RowCurrency::BASIS_BY_CLICK], $this->currencyOf((int) $pixel['convId']));
+
+        // The owner says the account counted in USD before 1700000500: the conversion, recorded now on that
+        // click, is chosen by its click's time.
+        self::assertSame(['stamped' => 1, 'left' => 0], RowCurrency::recordBefore($this->conn, self::USER, 'USD', 1700000500));
+        self::assertSame(['USD', (string) RowCurrency::BASIS_BY_CLICK], $this->currencyOf((int) $pixel['convId']));
+        self::assertSame(['stamped' => 0, 'left' => 0], RowCurrency::recordBefore($this->conn, self::USER, 'USD', 1700000500), 'said again, nothing changes');
+
+        // And the statement is history now: the next conversion on that click takes it.
+        $next = $this->record(100, ['transaction_id' => 'B']);
+        self::assertSame(['USD', (string) RowCurrency::BASIS_BY_CLICK], $this->currencyOf((int) $next['convId']));
     }
 
     public function testTheOwnerSaysWhichCurrencyTheConversionsBeforeADateWereIn(): void

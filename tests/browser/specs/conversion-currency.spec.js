@@ -263,7 +263,7 @@ module.exports = {
             await ui.select('#account_currency', 'GBP');
             await app.submit('#currency form button[type="submit"]');
             panel = await currencyPanel(ui);
-            expect.eq(panel.flashes, ['Account currency saved. New conversions are recorded in GBP. The conversions already recorded stay in EUR,'
+            expect.eq(panel.flashes, ['Account currency saved. New conversions are recorded in GBP. The conversions already recorded keep the currency each was recorded in (EUR until now),'
               + ' unconverted: reports say how much of a period is in each currency.'], 'the panel says what the change did to earlier conversions');
             expect.ok(await onScreen(ui, '#currency .p202-flash__body'), 'where the page lands');
             expect.eq(panel.account, 'GBP', 'the new currency is the one selected');

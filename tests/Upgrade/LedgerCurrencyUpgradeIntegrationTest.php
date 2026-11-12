@@ -73,6 +73,10 @@ final class LedgerCurrencyUpgradeIntegrationTest extends TestCase
         self::q("DELETE FROM 202_conversion_logs WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_aff_campaigns WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_users_pref WHERE user_id IN ($users)");
+        $history = self::$db->query("SHOW TABLES LIKE '202\\_currency\\_changes'");
+        if ($history instanceof \mysqli_result && $history->num_rows > 0) {
+            self::q("DELETE FROM 202_currency_changes WHERE user_id IN ($users)");
+        }
     }
 
     /** A 1.9.79 table: no currency columns, no key over them, no rates table. */
@@ -152,6 +156,15 @@ final class LedgerCurrencyUpgradeIntegrationTest extends TestCase
             array_map('strval', array_column($basis->fetch_all(MYSQLI_ASSOC), 'currency_basis', 'click_id')),
             'each row the upgrade labelled says so, for the owner to correct; an unrecorded one is known by its currency'
         );
+        // Each account's currency history begins at the upgrade, in its currency as every page read it.
+        $starts = self::$db->query("SELECT user_id, from_currency, to_currency FROM 202_currency_changes WHERE kind = 'upgrade' AND user_id IN ("
+            . self::STEADY . ', ' . self::UNREADABLE . ') ORDER BY user_id');
+        self::assertInstanceOf(\mysqli_result::class, $starts);
+        self::assertSame([[(string) self::STEADY, 'EUR', 'EUR'], [(string) self::UNREADABLE, 'USD', 'USD']], $starts->fetch_all());
+        // A campaign saved before the field returned (the column default, no foreign payout) says the account's currency.
+        $steady = self::$db->query('SELECT aff_campaign_currency FROM 202_aff_campaigns WHERE user_id = ' . self::STEADY);
+        self::assertInstanceOf(\mysqli_result::class, $steady);
+        self::assertSame([['EUR']], $steady->fetch_all());
         // The campaigns paid in another currency are listed on Personal settings; a deleted one is not.
         $marked = self::$db->query('SELECT user_id, aff_campaign_deleted, aff_campaign_currency_notice FROM 202_aff_campaigns WHERE user_id IN ('
             . self::STEADY . ', ' . self::CHANGED . ', ' . self::DELETED_CAMPAIGN . ') ORDER BY user_id');
@@ -178,6 +191,9 @@ final class LedgerCurrencyUpgradeIntegrationTest extends TestCase
         self::assertSame('RETURNED true', $out, $err);
         self::assertStringNotContainsString('Prosper202 upgrade', $err);
         self::assertSame([978710003 => 'USD', 978710004 => 'EUR'], self::currencies());
+        $starts = self::$db->query("SELECT COUNT(*) FROM 202_currency_changes WHERE kind = 'upgrade' AND user_id = " . self::STEADY);
+        self::assertInstanceOf(\mysqli_result::class, $starts);
+        self::assertSame('1', (string) $starts->fetch_row()[0], 'one start, however often the step runs');
         $basis = self::$db->query('SELECT click_id, currency_basis FROM 202_conversion_logs WHERE click_id IN (978710003, 978710004) ORDER BY click_id');
         self::assertInstanceOf(\mysqli_result::class, $basis);
         self::assertSame([978710003 => '0', 978710004 => '1'], array_map('strval', array_column($basis->fetch_all(MYSQLI_ASSOC), 'currency_basis', 'click_id')));

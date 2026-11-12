@@ -268,10 +268,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
         // A campaign paid in another currency: the rate its postbacks'
         // amounts are converted with is kept now, not at the cron job's next
         // run (ExchangeRateCache). The campaign is saved either way.
-        if ((float) $campaignStored['foreign_payout'] != 0.0) {
+        if ($campaignStored['currency'] !== $accountCurrency) {
             \Prosper202\Conversion\Ledger\ExchangeRateCache::refreshQuietly(
                 new \Prosper202\Database\Connection($db),
-                static fn (string $from, string $to, string $amount): ?string => \Prosper202\User\ExchangeRates::convert($from, $to, $amount, 10)
+                static fn (string $from, string $to, string $amount): ?string => \Prosper202\User\ExchangeRates::convert($from, $to, $amount, 10),
+                (int) $_SESSION['user_id']
             );
         }
 

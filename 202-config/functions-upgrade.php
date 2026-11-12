@@ -350,6 +350,48 @@ if (!function_exists('_upgrade_conversion_ledger_columns')) {
     }
 }
 
+if (!function_exists('_upgrade_currency_history_start')) {
+    /**
+     * Where each account's currency history begins, for the 1.9.80 rung:
+     * one 'upgrade' row (202_currency_changes) holding the account's
+     * currency now, since nothing recorded what it was before. A conversion
+     * recorded later on a click from before it then takes that currency as
+     * a guess the owner can correct (RowCurrency::inForceAt()), never as a
+     * fact. Makes the table as UserTables declares it, so the reconcile
+     * finds it done; an account that already has its row is left alone, so
+     * a re-run adds nothing.
+     */
+    function _upgrade_currency_history_start(): bool
+    {
+        if (_upgrade_query(\Prosper202\Database\Tables\UserTables::currencyChanges()->createStatement) === false) {
+            _upgrade_note('could not make 202_currency_changes; the currency history step will retry.');
+            return false;
+        }
+        $prefs = _upgrade_query('SELECT p.`user_id`, p.`user_account_currency` FROM `202_users_pref` p'
+            . " WHERE NOT EXISTS (SELECT 1 FROM `202_currency_changes` c WHERE c.`user_id` = p.`user_id` AND c.`kind` = 'upgrade')");
+        if (!$prefs instanceof \mysqli_result) {
+            _upgrade_note('could not read the accounts\' currencies; the currency history step will retry.');
+            return false;
+        }
+        $rows = [];
+        $now = time();
+        while (($row = $prefs->fetch_row()) !== null && $row !== false) {
+            $currency = \Api\V3\Controllers\UsersController::normalizeCurrency($row[1]);
+            $rows[] = '(' . (int) $row[0] . ', ' . $now . ", '" . $currency . "', '" . $currency . "', 'upgrade')";
+        }
+        $prefs->free();
+        foreach (array_chunk($rows, 1000) as $chunk) {
+            if (_upgrade_query('INSERT INTO `202_currency_changes` (`user_id`, `changed_at`, `from_currency`, `to_currency`, `kind`)'
+                . ' VALUES ' . implode(', ', $chunk)) === false) {
+                _upgrade_note('failed to record where the accounts\' currency history begins; the step will retry.');
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
 if (!function_exists('_upgrade_campaign_currency_notice')) {
     /**
      * Mark, for the 1.9.80 rung, every campaign paid in another currency
@@ -376,8 +418,22 @@ if (!function_exists('_upgrade_campaign_currency_notice')) {
             _upgrade_note('failed to add 202_aff_campaigns.aff_campaign_currency_notice; the campaign currency step will retry.');
             return false;
         }
-        if (_upgrade_query('UPDATE `202_aff_campaigns` SET `aff_campaign_currency_notice` = 1'
-            . ' WHERE `aff_campaign_deleted` = 0 AND `aff_campaign_foreign_payout` <> 0') === false) {
+        // A campaign saved before the field returned carries the column
+        // default (USD) with no foreign payout: it is in the account's
+        // currency, so it says so, as every save since writes it. One paid by
+        // its postbacks' amounts (payout 0) cannot be told from one an earlier
+        // change of currency left in the old one, and is kept as recorded
+        // before: in the account's currency (Setup › Campaigns changes it).
+        $supported = "'" . implode("', '", \Api\V3\Controllers\UsersController::SUPPORTED_CURRENCIES) . "'";
+        $accountSql = "CASE WHEN UPPER(TRIM(p.`user_account_currency`)) IN ($supported) THEN UPPER(TRIM(p.`user_account_currency`)) ELSE 'USD' END";
+        if (_upgrade_query('UPDATE `202_aff_campaigns` c JOIN `202_users_pref` p ON p.`user_id` = c.`user_id`'
+            . " SET c.`aff_campaign_currency` = $accountSql WHERE c.`aff_campaign_foreign_payout` = 0") === false) {
+            _upgrade_note('failed to give the campaigns in the account\'s currency that currency; the campaign currency step will retry.');
+            return false;
+        }
+        if (_upgrade_query('UPDATE `202_aff_campaigns` c JOIN `202_users_pref` p ON p.`user_id` = c.`user_id`'
+            . ' SET c.`aff_campaign_currency_notice` = 1 WHERE c.`aff_campaign_deleted` = 0'
+            . " AND c.`aff_campaign_currency` <> $accountSql AND c.`aff_campaign_foreign_payout` <> 0") === false) {
             _upgrade_note('failed to mark the campaigns paid in another currency; the campaign currency step will retry.');
             return false;
         }
@@ -5352,7 +5408,9 @@ class UPGRADE
             // for Personal settings to list; in this step alone, so a later
             // one never lists again what the owner has answered.
             $campaigns_ok = _upgrade_campaign_currency_notice();
-            $before_ok = $baseline_ok && $carried_ok && $campaigns_ok;
+            // Where each account's currency history begins (202_currency_changes).
+            $history_ok = _upgrade_currency_history_start();
+            $before_ok = $baseline_ok && $carried_ok && $campaigns_ok && $history_ok;
             $step_ok = _upgrade_measurement_tables([
                 // 202_users_pref gains shopify_webhook_secret, which Shopify's
                 // order webhooks are verified with (ShopifyWebhookSecret),

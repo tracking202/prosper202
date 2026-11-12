@@ -386,7 +386,12 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // without the columns (the upgrade has not run) the row is written
         // as before them and the upgrade stamps it.
         $stamped = RowCurrency::columnsPresent($this->conn);
-        $accountCurrency = $stamped ? RowCurrency::ofAccount($this->conn, $userId) : RowCurrency::UNKNOWN;
+        // The account's currency when the conversion happened, which a
+        // conversion dated in the past (a replay, an import) may not be
+        // the account's now (RowCurrency::inForceAt()).
+        [$accountCurrency, $atConversion] = $stamped
+            ? RowCurrency::inForceAt($this->conn, $userId, $convTime, false)
+            : [RowCurrency::UNKNOWN, RowCurrency::BASIS_WRITTEN];
 
         // A reversal names the row it reverses by that row's transaction
         // id. It is its own row with its own key (never tx:<id>, which the
@@ -554,17 +559,28 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $money = $stamped
                 ? $this->statedMoney($explicitPayout, $data['currency'] ?? null, $source, $terms['paid_in'], $accountCurrency, $clickId)
                 : ['units' => $explicitPayout, 'currency' => RowCurrency::UNKNOWN];
+            if ($money['currency'] === $accountCurrency) {
+                $money['basis'] = $atConversion;
+            }
             $amountUnits = $money['units'];
         } elseif ($terms['mode'] === PayoutMode::ACCUMULATE) {
             $amountUnits = Amount::toUnits($terms['default_payout']);
+            // The campaign's payout is kept in the account's currency now.
+            $money = ['currency' => $stamped ? RowCurrency::ofAccount($this->conn, $userId) : RowCurrency::UNKNOWN];
         } else {
             $amountUnits = Amount::toUnits((string) ($click['click_payout'] ?? '0'));
+            // The click's payout (or its cached total, for a repeat
+            // conversion) was set in the currency of its click's time.
+            if ($stamped) {
+                [$atClick, $basis] = RowCurrency::inForceAt($this->conn, $userId, (int) ($click['click_time'] ?? 0), true);
+                $money = ['currency' => $atClick, 'basis' => $basis];
+            }
         }
         // The campaign's default, or the click's cached total for a repeat
         // conversion, can be out of range too: refused, never clamped (Y5N2).
         Amount::checkedForColumn($amountUnits, $explicitPayout !== null ? 'payout' : 'default payout');
-        // A campaign's default and a click's own value are in the account's currency.
         $rowCurrency = $money['currency'] ?? $accountCurrency;
+        $rowBasis = $money['basis'] ?? RowCurrency::BASIS_WRITTEN;
         $statedUnits = $money['stated_units'] ?? null;
         $statedCurrency = $statedUnits !== null ? ($money['stated_currency'] ?? null) : null;
         $payout = (float) Amount::fromUnits($amountUnits);
@@ -644,9 +660,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $dedupeKey
         );
         if ($stamped) {
-            array_push($columns, 'currency', 'stated_amount', 'stated_currency');
-            $types .= 'sss';
-            array_push($values, $rowCurrency, $statedUnits !== null ? Amount::fromUnits($statedUnits) : null, $statedCurrency);
+            array_push($columns, 'currency', 'stated_amount', 'stated_currency', 'currency_basis');
+            $types .= 'sssi';
+            array_push($values, $rowCurrency, $statedUnits !== null ? Amount::fromUnits($statedUnits) : null, $statedCurrency, $rowBasis);
         }
         // Last: prepareInsert() drops it while the 1.9.79 upgrade has not added it.
         $columns[] = 'match_method';
@@ -941,6 +957,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 'conv_id'         => $result['convId'],
                 'campaign_id'     => (int) ($result['campaignId'] ?? 0),
                 'payout'          => (float) ($result['payout'] ?? 0),
+                // The currency the payout is in ('' when none was recorded).
+                'currency'        => (string) ($result['currency'] ?? ''),
                 'conv_time'       => $convTime,
                 'click_time'      => (int) ($result['clickTime'] ?? 0),
                 'pixel_type'      => (int) ($data['pixel_type'] ?? 0),

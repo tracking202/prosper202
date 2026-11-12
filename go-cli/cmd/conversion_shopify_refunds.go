@@ -227,7 +227,7 @@ func renderShopifyRefunds(data []byte) error {
 
 func init() {
 	conversionShopifyRefundsRecordCmd.Flags().String("amount", "", "What the refund returned, in its sale's currency, amount_currency in the list (required)")
-	conversionShopifyRefundsRecordCmd.Flags().String("currency", "", "The currency --amount is stated in: the account's; needed for a refund Shopify states in another")
+	conversionShopifyRefundsRecordCmd.Flags().String("currency", "", "The currency --amount is stated in: the refund's amount_currency, its sale's; needed for a refund Shopify states in another")
 	conversionShopifyRefundsRecordCmd.Flags().String("click-id", "", "The click the refund takes back from, when the order is on more than one")
 	conversionShopifyRefundsCloseCmd.Flags().Bool("force", false, "Close without asking")
 	conversionShopifyRefundsCmd.AddCommand(conversionShopifyRefundsListCmd, conversionShopifyRefundsRecordCmd, conversionShopifyRefundsCloseCmd)

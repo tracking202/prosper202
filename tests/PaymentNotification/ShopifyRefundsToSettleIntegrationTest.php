@@ -401,6 +401,32 @@ final class ShopifyRefundsToSettleIntegrationTest extends TestCase
         }
     }
 
+    public function testARefundOfASaleWithNoCurrencyRecordedIsRecordedBesideItAndFollowsItsCurrency(): void
+    {
+        $db = self::requireScratch();
+        $this->deliver('orders/paid', self::order());
+        // As the upgrade leaves a sale it could not label, on an account that counts in EUR now.
+        $db->query("UPDATE 202_conversion_logs SET currency = '' WHERE click_id = " . self::CLICK);
+        $db->query("UPDATE 202_users_pref SET user_account_currency = 'EUR' WHERE user_id = " . self::ACCOUNT);
+        $rows = static fn (): array => $db->query('SELECT click_payout, currency FROM 202_conversion_logs WHERE click_id = '
+            . self::CLICK . ' AND deleted = 0 ORDER BY conv_id')->fetch_all();
+        try {
+            $refund = $this->deliver('refunds/create', self::refundIn('USD'));
+
+            self::assertSame(OutcomeKind::REVERSED, $refund->kind, $refund->message);
+            self::assertStringContainsString('no currency recorded', $refund->message);
+            self::assertSame([['59.00000', ''], ['-10.00000', '']], $rows(), 'recorded, and nets with its sale');
+            self::assertSame('0', (string) $db->query('SELECT COUNT(*) FROM 202_held_payment_notifications WHERE user_id = '
+                . self::ACCOUNT)->fetch_row()[0], 'nothing held for a currency change');
+
+            \Prosper202\Conversion\Ledger\RowCurrency::recordBefore(new \Prosper202\Database\Connection($db), self::ACCOUNT, 'USD', time() + 60);
+            self::assertSame([['59.00000', 'USD'], ['-10.00000', 'USD']], $rows(), 'the owner records the sale\'s currency, and its refund follows');
+        } finally {
+            $db->query("UPDATE 202_users_pref SET user_account_currency = 'USD' WHERE user_id = " . self::ACCOUNT);
+            $db->query('DELETE FROM 202_currency_changes WHERE user_id = ' . self::ACCOUNT);
+        }
+    }
+
     public function testAWaitingRefundRefusedOutrightLaterIsListedAsRefusedWithItsReason(): void
     {
         $this->deliver('orders/paid', self::order());

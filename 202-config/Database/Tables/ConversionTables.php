@@ -38,16 +38,18 @@ use Prosper202\Database\Schema\TableRegistry;
  * not added the column, or whose account had no preferences to read at the
  * upgrade. `stated_amount` and `stated_currency` hold what a postback or
  * pixel sent when `click_payout` is that amount converted into the account's
- * currency; NULL on every other row. Only codes this code wrote are stored
- * and no key is over them, so they keep the table's collation.
+ * currency; NULL on every other row. Only codes this code wrote are stored,
+ * and no UNIQUE key is over them, so they keep the table's collation.
  * `currency_basis` says how `currency` is known (RowCurrency::BASIS_*):
  * written with the row (0), labelled by the 1.9.80 upgrade with the
- * account's currency then (1), or said by the owner (2). Personal settings
- * lets the owner correct the rows that are not 0.
+ * account's currency then (1), said by the owner (2), or taken from the
+ * account's currency at the click where its history does not reach (3).
+ * Personal settings lets the owner correct the rows that are not 0.
  *
  * `user_currency_click_time` is the reports' read of a period's revenue that
- * is not in the account's currency (Ledger\RevenueCurrencies): it reads only
- * those rows, which for nearly every account is none.
+ * is not in the account's currency (Ledger\RevenueCurrencies): the account's
+ * currencies by its first two columns, then each other one's range of the
+ * period, which for nearly every account is none.
  *
  * `user_conv_time` is the money-loss alerts' read of an account's last week
  * of conversions (Prosper202\Alerts\AccountActivity), from 1.9.80.

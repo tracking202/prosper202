@@ -651,6 +651,15 @@ final class Processor
     ): Outcome|string {
         $accountCurrency = $this->otherCurrency($n, $owner);
         $stated = strtoupper((string) $n->currency);
+        // A sale on file with no currency recorded: the refund is recorded
+        // beside it, in the same unrecorded currency, and the two net. When
+        // the owner records the sale's currency (RowCurrency::recordBefore())
+        // its refunds follow it. Held, it would wait for a currency change
+        // that has nothing to do with it.
+        if ($n->currency !== null && $saleCurrency === RowCurrency::UNKNOWN && !($provider instanceof RecordsAmountsAsStated)) {
+            return ' The sale it takes back has no currency recorded, so the refund is recorded beside it the same way;'
+                . ' record the currency of earlier conversions under Personal settings › Account currency.';
+        }
         if ($n->currency !== null && $saleCurrency !== null && !($provider instanceof RecordsAmountsAsStated)) {
             if ($stated === $saleCurrency) {
                 return $accountCurrency === null ? '' : ' The amount is in ' . $stated . ', the currency the sale it takes back'
@@ -697,9 +706,9 @@ final class Processor
     }
 
     /**
-     * The currency recorded on the sale a transaction id names on a click,
-     * or null: no such sale, none recorded on it, or the upgrade has not
-     * added the column yet.
+     * The currency recorded on the sale a transaction id names on a click:
+     * its code, UNKNOWN when the sale is on file with none recorded, or null
+     * when there is no such sale or the upgrade has not added the column.
      */
     private function saleCurrency(int $clickId, string $transactionId, int $owner): ?string
     {
@@ -714,9 +723,8 @@ final class Processor
         );
         $conn->bind($stmt, 'isi', [$clickId, $transactionId, $owner]);
         $row = $conn->fetchOne($stmt);
-        $currency = RowCurrency::read($row['currency'] ?? null);
 
-        return $currency === RowCurrency::UNKNOWN ? null : $currency;
+        return $row === null ? null : RowCurrency::read($row['currency'] ?? null);
     }
 
     /** The account's currency when the notification states another, or null. */
@@ -725,14 +733,7 @@ final class Processor
         if ($n->currency === null) {
             return null;
         }
-        $conn = new Connection($this->db);
-        $stmt = $conn->prepareRead('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1');
-        $conn->bind($stmt, 'i', [$owner]);
-        $row = $conn->fetchOne($stmt);
-        if ($row === null) {
-            throw new \RuntimeException('account ' . $owner . ' has no preferences row to read its currency from');
-        }
-        $accountCurrency = strtoupper(trim((string) $row['user_account_currency']));
+        $accountCurrency = RowCurrency::knownOf(new Connection($this->db), $owner);
         return strtoupper($n->currency) === $accountCurrency ? null : $accountCurrency;
     }
 

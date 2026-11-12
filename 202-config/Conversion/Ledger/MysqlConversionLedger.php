@@ -147,9 +147,9 @@ final class MysqlConversionLedger
      * neither value throws, naming it.
      *
      * paid_in is the currency the campaign's network pays in when that is
-     * not the account's (CampaignCurrency keeps the payout typed in it as
-     * aff_campaign_foreign_payout, and none for a campaign in the account's
-     * currency): RowCurrency::UNKNOWN for every other campaign.
+     * not the account's (CampaignCurrency::paidIn(), also for a campaign
+     * paid only by its postbacks' amounts): RowCurrency::UNKNOWN for every
+     * other campaign.
      *
      * @return array{mode: PayoutMode, default_payout: string, paid_in: string}
      */
@@ -171,10 +171,9 @@ final class MysqlConversionLedger
             throw new LedgerIntegrityException('campaign ' . $campaignId . ': ' . $e->getMessage(), 0, $e);
         }
 
-        $foreign = $row['aff_campaign_foreign_payout'] ?? null;
-        $paidIn = is_numeric($foreign) && (float) $foreign != 0.0
-            ? RowCurrency::read($row['aff_campaign_currency'] ?? null)
-            : RowCurrency::UNKNOWN;
+        // Against the account's currency now; a conversion dated earlier
+        // compares it with the currency of its own time (statedMoney()).
+        $paidIn = \Prosper202\Setup\CampaignCurrency::paidIn($row, RowCurrency::ofAccount($this->conn, $userId)) ?? RowCurrency::UNKNOWN;
 
         return ['mode' => $mode, 'default_payout' => (string) ($row['aff_campaign_payout'] ?? '0'), 'paid_in' => $paidIn];
     }
@@ -262,7 +261,7 @@ final class MysqlConversionLedger
         // The row's currency, in this transaction; without the column (the
         // upgrade has not run) the upgrade stamps it.
         if (RowCurrency::columnsPresent($this->conn)) {
-            [$currency, $basis] = $this->carriedCurrency($clickId, $userId, $baselineId);
+            [$currency, $basis] = $this->carriedCurrency($clickId, $userId, $baselineId, $clickTime);
             $stamp = $this->conn->prepareWrite('UPDATE 202_conversion_logs SET currency = ?, currency_basis = ? WHERE conv_id = ?');
             $this->conn->bind($stamp, 'sii', [$currency, $basis, $baselineId]);
             $this->conn->executeUpdate($stamp);
@@ -285,13 +284,14 @@ final class MysqlConversionLedger
      * known (RowCurrency::BASIS_*): its newest pre-ledger row's, as the
      * upgrade or the owner recorded it (none for an account whose currency
      * the upgrade could not tell). A click whose value was set by writes
-     * that left no row takes the account's, labelled as the upgrade labels
-     * (the value is from before it), unless the account holds rows with no
-     * currency recorded: then this value's is not known either.
+     * that left no row takes the account's at the click (inForceAt()),
+     * labelled as the upgrade labels (the value is from before it), unless
+     * the account holds rows with no currency recorded: then this value's
+     * is not known either.
      *
      * @return array{0: string, 1: int}
      */
-    private function carriedCurrency(int $clickId, int $userId, int $baselineId): array
+    private function carriedCurrency(int $clickId, int $userId, int $baselineId, int $clickTime): array
     {
         $stmt = $this->conn->prepareWrite(
             "SELECT currency, currency_basis FROM 202_conversion_logs
@@ -306,9 +306,14 @@ final class MysqlConversionLedger
         $unrecorded = $this->conn->prepareWrite("SELECT 1 FROM 202_conversion_logs WHERE user_id = ? AND currency = '' AND conv_id <> ? LIMIT 1");
         $this->conn->bind($unrecorded, 'ii', [$userId, $baselineId]);
 
-        return $this->conn->fetchOne($unrecorded) !== null
-            ? [RowCurrency::UNKNOWN, RowCurrency::BASIS_WRITTEN]
-            : [RowCurrency::ofAccount($this->conn, $userId), RowCurrency::BASIS_UPGRADE];
+        if ($this->conn->fetchOne($unrecorded) !== null) {
+            return [RowCurrency::UNKNOWN, RowCurrency::BASIS_WRITTEN];
+        }
+        // The account's currency at the click, from its history: a guess,
+        // correctable, where that reaches back no further than the upgrade.
+        [$currency, $basis] = RowCurrency::inForceAt($this->conn, $userId, $clickTime, false);
+
+        return [$currency, $basis === RowCurrency::BASIS_WRITTEN ? RowCurrency::BASIS_UPGRADE : $basis];
     }
 
     /**

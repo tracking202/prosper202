@@ -127,11 +127,11 @@ final class ExchangeRateCache
      *        $amount in $from, in $to; null when no rate could be had
      * @return array{fetched: int, failed: list<string>}
      */
-    public static function refresh(Connection $conn, callable $convert, int $now, int $limit = 10): array
+    public static function refresh(Connection $conn, callable $convert, int $now, int $limit = 10, ?int $userId = null): array
     {
         $fetched = 0;
         $failed = [];
-        $due = self::duePairs($conn, $now);
+        $due = self::duePairs($conn, $now, $userId);
         if (count($due) > 1) {
             usort($due, static fn (array $a, array $b): int => strcmp($a[0] . '>' . $a[1], $b[0] . '>' . $b[1]));
             $start = intdiv($now, 3600) % count($due);
@@ -168,10 +168,16 @@ final class ExchangeRateCache
      *
      * @param callable(string $from, string $to, string $amount): ?string $convert
      */
-    public static function refreshQuietly(Connection $conn, callable $convert, int $limit = 5): void
+    public static function refreshQuietly(Connection $conn, callable $convert, int $userId, int $limit = 5, int $budgetSeconds = 12): void
     {
+        // The account's own pairs only, and a whole-run budget: a page that
+        // saved waits for this, so a silent rate service costs it seconds,
+        // not a minute. What is not reached the cron job asks for.
+        $stopAt = microtime(true) + $budgetSeconds;
+        $bounded = static fn (string $from, string $to, string $amount): ?string
+            => microtime(true) >= $stopAt ? null : $convert($from, $to, $amount);
         try {
-            $result = self::refresh($conn, $convert, time(), $limit);
+            $result = self::refresh($conn, $bounded, time(), $limit, $userId);
             if ($result['failed'] !== []) {
                 error_log('p202 exchange rates: no rate could be had for ' . implode(', ', $result['failed'])
                     . '; the cron job asks again within the hour.');
@@ -188,19 +194,23 @@ final class ExchangeRateCache
      *
      * @return list<array{0: string, 1: string}>
      */
-    public static function duePairs(Connection $conn, int $now): array
+    public static function duePairs(Connection $conn, int $now, ?int $userId = null): array
     {
         $stmt = $conn->prepareWrite(
-            'SELECT DISTINCT c.aff_campaign_currency AS from_currency, p.user_account_currency AS to_currency
-             FROM 202_aff_campaigns AS c
-             JOIN 202_users_pref AS p ON p.user_id = c.user_id
-             WHERE c.aff_campaign_deleted = 0 AND c.aff_campaign_foreign_payout <> 0'
+            // Deleted campaigns too: their postbacks are converted as well (campaignTerms()).
+            'SELECT DISTINCT c.aff_campaign_currency, c.aff_campaign_payout, c.aff_campaign_foreign_payout,'
+            . ' p.user_account_currency AS to_currency'
+            . ' FROM 202_aff_campaigns AS c JOIN 202_users_pref AS p ON p.user_id = c.user_id'
+            . ' WHERE c.aff_campaign_currency <> p.user_account_currency' . ($userId !== null ? ' AND c.user_id = ?' : '')
         );
+        if ($userId !== null) {
+            $conn->bind($stmt, 'i', [$userId]);
+        }
         $pairs = [];
         foreach ($conn->fetchAll($stmt) as $row) {
-            $from = RowCurrency::read($row['from_currency'] ?? null);
             $to = UsersController::normalizeCurrency($row['to_currency'] ?? null);
-            if ($from !== RowCurrency::UNKNOWN && $from !== $to) {
+            $from = \Prosper202\Setup\CampaignCurrency::paidIn($row, $to) ?? RowCurrency::UNKNOWN;
+            if ($from !== RowCurrency::UNKNOWN) {
                 $pairs[$from . '>' . $to] = [$from, $to];
             }
         }

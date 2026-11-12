@@ -115,7 +115,7 @@ final class PreferencesWriteIntegrationTest extends TestCase
 
         // The answer says what the change does to what is already recorded.
         self::assertSame(['USD', 'EUR'], [$answer['currency_change']['from'], $answer['currency_change']['to']]);
-        self::assertStringContainsString('stay in USD, unconverted', $answer['currency_change']['earlier_conversions']);
+        self::assertStringContainsString('keep the currency each was recorded in (USD until now), unconverted', $answer['currency_change']['earlier_conversions']);
         $prefs = $this->prefs();
         self::assertSame('EUR', $prefs['user_account_currency']);
         self::assertSame(100, (int) $prefs['user_pref_limit']);

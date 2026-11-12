@@ -78,7 +78,7 @@ final class LedgerRowsCarryTheirCurrencyTest extends TestCase
 
         $files = SourceScan::phpFiles();
         self::assertStringContainsString(
-            "array_push(\$columns, 'currency', 'stated_amount', 'stated_currency')",
+            "array_push(\$columns, 'currency', 'stated_amount', 'stated_currency', 'currency_basis')",
             $files['202-config/Conversion/MysqlConversionRepository.php'],
             'record() names the currency columns on its insert'
         );

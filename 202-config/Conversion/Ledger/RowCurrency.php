@@ -19,9 +19,12 @@ use Prosper202\Database\Connection;
  *
  * currency_basis says how the currency is known: written with the row
  * (BASIS_WRITTEN), labelled by the 1.9.80 upgrade with the account's
- * currency at the time (BASIS_UPGRADE), or said by the owner
- * (BASIS_OWNER). Only rows that are not BASIS_WRITTEN, and unrecorded ones,
- * are the owner's to correct (recordBefore()).
+ * currency at the time (BASIS_UPGRADE), said by the owner (BASIS_OWNER), or
+ * taken from the click's time where the account's currency history does not
+ * reach back that far (BASIS_BY_CLICK: an amount the click carried, such as
+ * its payout, is in the currency of its click). Only rows that are not
+ * BASIS_WRITTEN, and unrecorded ones, are the owner's to correct
+ * (recordBefore()), a BASIS_BY_CLICK row by its click's time.
  */
 final class RowCurrency
 {
@@ -30,6 +33,7 @@ final class RowCurrency
     public const BASIS_WRITTEN = 0;
     public const BASIS_UPGRADE = 1;
     public const BASIS_OWNER = 2;
+    public const BASIS_BY_CLICK = 3;
 
     /** The ledger's currency columns, as a SELECT list names them. */
     public const COLUMNS = 'currency, stated_amount, stated_currency, currency_basis';
@@ -62,8 +66,11 @@ final class RowCurrency
 
     /**
      * The account's currency now, as every page and report reads it
-     * (UsersController::normalizeCurrency()). Read on the write connection:
-     * a ledger writer calls it inside its transaction, after the click's lock.
+     * (UsersController::normalizeCurrency()), or UNKNOWN for an account with
+     * no preferences row, whose rows the upgrade also leaves unrecorded. Read
+     * on the write connection: a ledger writer calls it inside its
+     * transaction, after the click's lock. Every reader of the account's
+     * currency asks here (or knownOf()), so all read one value.
      */
     public static function ofAccount(Connection $conn, int $userId): string
     {
@@ -71,7 +78,21 @@ final class RowCurrency
         $conn->bind($stmt, 'i', [$userId]);
         $row = $conn->fetchOne($stmt);
 
-        return UsersController::normalizeCurrency($row['user_account_currency'] ?? null);
+        return $row === null ? self::UNKNOWN : UsersController::normalizeCurrency($row['user_account_currency'] ?? null);
+    }
+
+    /**
+     * ofAccount() for a caller that has to compare with it: an account with
+     * no preferences row throws, never reads as some currency.
+     */
+    public static function knownOf(Connection $conn, int $userId): string
+    {
+        $currency = self::ofAccount($conn, $userId);
+        if ($currency === self::UNKNOWN) {
+            throw new \RuntimeException('account ' . $userId . ' has no preferences row to read its currency from');
+        }
+
+        return $currency;
     }
 
     /** How many of the account's ledger rows have no currency recorded. */
@@ -120,16 +141,35 @@ final class RowCurrency
             throw new \InvalidArgumentException('the range is empty: it starts at or after its end');
         }
         // A reversal is never chosen by its own time: it follows its sale, below.
-        $where = ' WHERE user_id = ? AND reverses_conv_id IS NULL AND conv_time < ?' . ($since !== null ? ' AND conv_time >= ?' : '')
-            . " AND (currency = '' OR currency_basis <> " . self::BASIS_WRITTEN . ')'
-            . ' AND NOT (currency = ? AND currency_basis = ' . self::BASIS_OWNER . ')';
-        $types = 'ii' . ($since !== null ? 'i' : '') . 's';
-        $values = [$userId, $before, ...($since !== null ? [$since] : []), $currency];
+        // Chosen by the time its amount is from: a row's own, or for an
+        // amount the click carried (BASIS_BY_CLICK) the click's, which stays
+        // its basis so a statement made again chooses it the same way.
+        $range = static fn (string $column): string => $column . ' < ?' . ($since !== null ? ' AND ' . $column . ' >= ?' : '');
+        $where = ' WHERE user_id = ? AND reverses_conv_id IS NULL'
+            . ' AND NOT (currency = ? AND currency_basis IN (' . self::BASIS_OWNER . ', ' . self::BASIS_BY_CLICK . '))'
+            . " AND (((currency = '' OR currency_basis IN (" . self::BASIS_UPGRADE . ', ' . self::BASIS_OWNER . '))'
+            . ' AND ' . $range('conv_time') . ')'
+            . ' OR (currency_basis = ' . self::BASIS_BY_CLICK . ' AND ' . $range('click_time') . '))';
+        $bounds = [$before, ...($since !== null ? [$since] : [])];
+        $types = 'is' . str_repeat('i', 2 * count($bounds));
+        $values = [$userId, $currency, ...$bounds, ...$bounds];
+
+        // The statement joins the account's currency history, so a
+        // conversion recorded later on a click from before the date takes
+        // it too (inForceAt()).
+        $conn->transaction(static function () use ($conn, $userId, $currency, $before): void {
+            $after = self::inForceAt($conn, $userId, $before, true)[0];
+            $stmt = $conn->prepareWrite(
+                'INSERT INTO 202_currency_changes (user_id, changed_at, from_currency, to_currency, kind) VALUES (?, ?, ?, ?, ?)'
+            );
+            $conn->bind($stmt, 'iisss', [$userId, $before, $currency, $after, 'owner']);
+            $conn->executeInsert($stmt);
+        });
 
         $stamped = 0;
         for ($batch = 0; $batch < $maxBatches; $batch++) {
-            $stmt = $conn->prepareWrite('UPDATE 202_conversion_logs SET currency = ?, currency_basis = '
-                . self::BASIS_OWNER . $where . ' LIMIT ' . self::BATCH);
+            $stmt = $conn->prepareWrite('UPDATE 202_conversion_logs SET currency = ?, currency_basis = IF(currency_basis = '
+                . self::BASIS_BY_CLICK . ', ' . self::BASIS_BY_CLICK . ', ' . self::BASIS_OWNER . ')' . $where . ' LIMIT ' . self::BATCH);
             $conn->bind($stmt, 's' . $types, [$currency, ...$values]);
             $changed = $conn->executeUpdate($stmt);
             $stamped += $changed;
@@ -142,7 +182,8 @@ final class RowCurrency
             'UPDATE 202_conversion_logs r JOIN 202_conversion_logs s'
             . ' ON s.conv_id = r.reverses_conv_id AND s.user_id = r.user_id'
             . ' SET r.currency = s.currency'
-            . ' WHERE r.user_id = ? AND s.currency_basis = ' . self::BASIS_OWNER . ' AND r.currency <> s.currency'
+            . ' WHERE r.user_id = ? AND s.currency_basis IN (' . self::BASIS_OWNER . ', ' . self::BASIS_BY_CLICK . ')'
+            . ' AND r.currency <> s.currency'
         );
         $conn->bind($follow, 'i', [$userId]);
         $stamped += $conn->executeUpdate($follow);
@@ -151,6 +192,34 @@ final class RowCurrency
         $conn->bind($left, $types, $values);
 
         return ['stamped' => $stamped, 'left' => (int) ($conn->fetchOne($left)['n'] ?? 0)];
+    }
+
+    /**
+     * The currency the account counted in at $at, with how that is known:
+     * the first entry of its currency history after $at says what it was
+     * until then (a change: known; an owner's statement or the start of the
+     * history on an upgraded install: correctable, BASIS_BY_CLICK for an
+     * amount the click carried and BASIS_UPGRADE for one stated at the
+     * conversion). With none after $at it is the account's now.
+     *
+     * @return array{0: string, 1: int}
+     */
+    public static function inForceAt(Connection $conn, int $userId, int $at, bool $byClick): array
+    {
+        $stmt = $conn->prepareWrite(
+            'SELECT from_currency, kind FROM 202_currency_changes WHERE user_id = ? AND changed_at > ?'
+            . ' ORDER BY changed_at, change_id LIMIT 1'
+        );
+        $conn->bind($stmt, 'ii', [$userId, $at]);
+        $row = $conn->fetchOne($stmt);
+        if ($row === null) {
+            return [self::ofAccount($conn, $userId), self::BASIS_WRITTEN];
+        }
+        $currency = UsersController::normalizeCurrency($row['from_currency'] ?? null);
+
+        return [$currency, (string) $row['kind'] === 'change'
+            ? self::BASIS_WRITTEN
+            : ($byClick ? self::BASIS_BY_CLICK : self::BASIS_UPGRADE)];
     }
 
     /**

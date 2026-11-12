@@ -636,13 +636,14 @@ if (!empty($_POST['update_account_currency']) && $_POST['update_account_currency
 				// The rates the campaigns' postback amounts are converted with, now rather than at the cron job's next run.
 				\Prosper202\Conversion\Ledger\ExchangeRateCache::refreshQuietly(
 					new \Prosper202\Database\Connection($db),
-					static fn (string $from, string $to, string $amount): ?string => \Prosper202\User\ExchangeRates::convert($from, $to, $amount, 10)
+					static fn (string $from, string $to, string $amount): ?string => \Prosper202\User\ExchangeRates::convert($from, $to, $amount, 10),
+					(int) $_SESSION['user_id']
 				);
 			}
 			p202_account_flash('ok', $previousCurrency === $postedCurrency
 				? 'Account currency saved.'
-				: 'Account currency saved. New conversions are recorded in ' . $postedCurrency . '. The conversions already recorded stay in '
-					. $previousCurrency . ', unconverted: reports say how much of a period is in each currency.');
+				: 'Account currency saved. New conversions are recorded in ' . $postedCurrency . '. The conversions already recorded keep'
+					. ' the currency each was recorded in (' . $previousCurrency . ' until now), unconverted: reports say how much of a period is in each currency.');
 			p202_account_redirect('202-account/account.php#currency');
 		}
 		$pageFlashes[] = ['kind' => 'bad', 'text' => 'The account currency could not be saved, and no campaign was re-priced; try again.'];

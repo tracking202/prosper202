@@ -34,16 +34,16 @@ final class CampaignCurrencyNotice
     public static function listed(Connection $conn, int $userId, string $accountCurrency): array
     {
         $stmt = $conn->prepareRead(
-            'SELECT aff_campaign_id, aff_campaign_name, aff_campaign_currency FROM 202_aff_campaigns'
-            . ' WHERE user_id = ? AND aff_campaign_currency_notice = 1 AND aff_campaign_deleted = 0'
-            . ' AND aff_campaign_foreign_payout <> 0 ORDER BY aff_campaign_name, aff_campaign_id'
+            'SELECT aff_campaign_id, aff_campaign_name, aff_campaign_currency, aff_campaign_payout, aff_campaign_foreign_payout'
+            . ' FROM 202_aff_campaigns WHERE user_id = ? AND aff_campaign_currency_notice = 1 AND aff_campaign_deleted = 0'
+            . ' ORDER BY aff_campaign_name, aff_campaign_id'
         );
         $conn->bind($stmt, 'i', [$userId]);
         $account = UsersController::normalizeCurrency($accountCurrency);
         $campaigns = [];
         foreach ($conn->fetchAll($stmt) as $row) {
-            $currency = strtoupper(trim((string) $row['aff_campaign_currency']));
-            if ($currency === $account) {
+            $currency = \Prosper202\Setup\CampaignCurrency::paidIn($row, $account);
+            if ($currency === null) {
                 continue;
             }
             $campaigns[] = ['id' => (int) $row['aff_campaign_id'], 'name' => (string) $row['aff_campaign_name'], 'currency' => $currency];
@@ -64,9 +64,9 @@ final class CampaignCurrencyNotice
         $changed = 0;
         $conn->transaction(static function () use ($conn, $userId, $account, &$changed): void {
             $stmt = $conn->prepareWrite(
-                "UPDATE 202_aff_campaigns SET aff_campaign_currency = ?, aff_campaign_foreign_payout = '0.00'"
-                . ' WHERE user_id = ? AND aff_campaign_currency_notice = 1 AND aff_campaign_deleted = 0'
-                . ' AND aff_campaign_foreign_payout <> 0 AND aff_campaign_currency <> ?'
+                "UPDATE 202_aff_campaigns AS c SET c.aff_campaign_currency = ?, c.aff_campaign_foreign_payout = '0.00'"
+                . ' WHERE c.user_id = ? AND c.aff_campaign_currency_notice = 1 AND c.aff_campaign_deleted = 0'
+                . ' AND ' . \Prosper202\Setup\CampaignCurrency::paidInSql('c')
             );
             $conn->bind($stmt, 'sis', [$account, $userId, $account]);
             $changed = $conn->executeUpdate($stmt);

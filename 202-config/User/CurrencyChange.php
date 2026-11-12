@@ -61,16 +61,16 @@ final class CurrencyChange
             $payout = (string) $row['aff_campaign_payout'];
             $foreign = (string) $row['aff_campaign_foreign_payout'];
             $campaignCurrency = (string) $row['aff_campaign_currency'];
-            if ((float) $foreign == 0.0) {
+            if (\Prosper202\Setup\CampaignCurrency::paidIn($row, $storedCurrency) === null) {
                 // In the account currency (CampaignCurrency::store() keeps no
                 // foreign payout for it; a row saved before carries the column
                 // default, not its currency): keep the original in the old
                 // account currency, which becomes the campaign's, and show
                 // the converted.
                 $updates[] = ['UPDATE `202_aff_campaigns` SET `aff_campaign_currency` = ?, `aff_campaign_foreign_payout` = ?, `aff_campaign_payout` = ? WHERE `aff_campaign_id` = ? AND `user_id` = ?', 'sssii', [$storedCurrency, $payout, $converted($storedCurrency, $payout), $id, $userId]];
-            } elseif ($currency === $campaignCurrency) {
-                // Back to its own currency: the original returns.
-                $updates[] = ['UPDATE `202_aff_campaigns` SET `aff_campaign_payout` = ?, `aff_campaign_foreign_payout` = \'0.00\' WHERE `aff_campaign_id` = ? AND `user_id` = ?', 'sii', [$foreign, $id, $userId]];
+            } elseif ($currency === strtoupper(trim($campaignCurrency))) {
+                // Back to its own currency: the original returns (0 for one paid by its postbacks' amounts).
+                $updates[] = ['UPDATE `202_aff_campaigns` SET `aff_campaign_payout` = ?, `aff_campaign_foreign_payout` = \'0.00\' WHERE `aff_campaign_id` = ? AND `user_id` = ?', 'sii', [(float) $foreign != 0.0 ? $foreign : $payout, $id, $userId]];
             } else {
                 $updates[] = ['UPDATE `202_aff_campaigns` SET `aff_campaign_payout` = ? WHERE `aff_campaign_id` = ? AND `user_id` = ?', 'sii', [$converted($campaignCurrency, $foreign), $id, $userId]];
             }
@@ -129,7 +129,7 @@ final class CurrencyChange
     {
         $stmt = $conn->prepareRead(
             'SELECT changed_at, from_currency, to_currency FROM 202_currency_changes'
-            . ' WHERE user_id = ? ORDER BY changed_at DESC, change_id DESC LIMIT ?'
+            . " WHERE user_id = ? AND kind = 'change' ORDER BY changed_at DESC, change_id DESC LIMIT ?"
         );
         $conn->bind($stmt, 'ii', [$userId, $limit]);
 

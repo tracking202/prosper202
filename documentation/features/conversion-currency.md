@@ -87,7 +87,9 @@ After a change, a report over a period that spans it holds amounts in both
 currencies, and says how much of each.
 
 Your campaigns stay paid in the currency they were set up in: the change
-keeps each payout as you entered it and shows it converted. So a postback or
+keeps each payout as you entered it and shows it converted. A campaign paid
+only by the amounts its postbacks send (a payout of 0) stays in its currency
+too. So a postback or
 pixel that sends its own amount on one of them is read in that earlier
 currency and converted into your new one, as for any campaign paid in
 another currency. If a network now reports amounts in your new currency,
@@ -108,6 +110,12 @@ by an earlier change of your account's currency:
 
 Either answer clears the notice. You can change any campaign's currency
 under Setup › Campaigns at any time.
+
+A campaign paid only by its postbacks' amounts (a payout of 0) from before
+1.9.80 cannot be told apart from one an earlier change left in the old
+currency, so the upgrade keeps it in your account's currency, as its amounts
+were recorded before; set its currency under Setup › Campaigns if its
+network reports in another.
 
 ## Conversions from before 1.9.80
 
@@ -145,4 +153,15 @@ it wrong. If you changed currency more than once, record each period: open
 **Advanced** and give the date it starts in **From**.
 
 From 1.9.80 each change of the account's currency is recorded when it is
-made (when, from and to), and Personal settings lists them.
+made (when, from and to), and Personal settings lists them. That history,
+with what you record above and where it begins at the upgrade, decides the
+currency of a conversion whose amount is from another time: one that takes
+its click's payout (or the click's value, for a repeat conversion) is in the
+currency of the click's time, and one dated in the past (a replay from the
+Inbound Log, an import) is in the currency of its own time. Where the
+history does not reach that far back, the currency is the account's at the
+upgrade, and the conversion is among those you can correct by date.
+
+A refund of a sale that has no currency recorded is recorded beside it the
+same way, so the two net; when you record the sale's currency, its refunds
+take it too.
