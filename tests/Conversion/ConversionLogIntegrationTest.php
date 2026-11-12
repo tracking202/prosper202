@@ -290,11 +290,11 @@ final class ConversionLogIntegrationTest extends TestCase
         $listed = $this->log->page(self::MINE, $filters, 0)['rows'];
 
         $exported = [];
-        $count = $this->log->export(self::MINE, $filters, static function (array $row) use (&$exported): void {
+        $written = $this->log->export(self::MINE, $filters, static function (array $row) use (&$exported): void {
             $exported[] = $row;
         }, 2);
 
-        self::assertSame(7, $count);
+        self::assertSame(['rows' => 7, 'more' => false], $written);
         self::assertSame($listed, $exported, 'the same rows, in the same shape and order, across batches');
 
         $live = [];
@@ -302,6 +302,16 @@ final class ConversionLogIntegrationTest extends TestCase
             $live[] = $row['conv_id'];
         }, 3);
         self::assertSame([7, 5, 4, 3, 2, 1], $live, 'the filters are the page\'s');
+
+        // A list longer than a download holds is cut at the newest, and says so.
+        $cut = [];
+        self::assertSame(['rows' => 4, 'more' => true], $this->log->export(self::MINE, $filters,
+            static function (array $row) use (&$cut): void {
+                $cut[] = $row['conv_id'];
+            }, 3, 4));
+        self::assertSame([7, 6, 5, 4], $cut);
+        self::assertSame(['rows' => 7, 'more' => false], $this->log->export(self::MINE, $filters, static function (): void {
+        }, 3, 7), 'a list exactly as long as the cap is whole');
     }
 
     public function testTheCampaignListIsTheAccountsLiveCampaigns(): void

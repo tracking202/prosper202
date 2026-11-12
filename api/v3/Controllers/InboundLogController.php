@@ -19,7 +19,7 @@ use Prosper202\InboundLog\InboundReplay;
  */
 final class InboundLogController
 {
-    public const PARAMS = ['outcome', 'endpoint', 'search', 'limit', 'before'];
+    public const PARAMS = ['outcome', 'endpoint', 'search', 'click_id', 'limit', 'before'];
 
     /**
      * @param bool $seesUnattributed whether the requests no account was found for are listed too (admins)
@@ -82,7 +82,7 @@ final class InboundLogController
 
     /**
      * @param array<string, mixed> $params
-     * @return array{outcome?: string, endpoint?: string, search?: string, before?: int}
+     * @return array{outcome?: string, endpoint?: string, search?: string, click_id?: int, before?: int}
      */
     public static function filters(array $params): array
     {
@@ -119,6 +119,9 @@ final class InboundLogController
         }
         if ($errors !== []) {
             throw new ValidationException('Invalid inbound log filter', $errors);
+        }
+        if (array_key_exists('click_id', $params) && $params['click_id'] !== '' && $params['click_id'] !== null) {
+            $filters['click_id'] = QueryInt::param($params, 'click_id', 0, 1, PHP_INT_MAX, 'the click the requests named');
         }
         if (array_key_exists('before', $params) && $params['before'] !== '' && $params['before'] !== null) {
             $filters['before'] = QueryInt::param($params, 'before', 0, 1, PHP_INT_MAX, 'the next_before of the previous page');

@@ -197,7 +197,8 @@ per account.
 | `endpoint` | One of the endpoints above |
 | `limit` | 1 to 500 (50) |
 | `before` | Only requests older than this `inbound_id`: the previous page's `next_before` |
-| `search` | A subid (click id), conversion id or transaction id, given whole: the row's own, or the one the request carried |
+| `search` | A subid (click id), conversion id or transaction id, given whole: the row's own, or the one the request carried. For a role that does not manage users it covers only the account's own requests |
+| `click_id` | Only the requests the endpoint found this click for |
 
 A row that recorded nothing carries `fix` (what to do, and the page that does
 it) and `can_record`. `POST /conversions/inbound-log/{id}/record` records what

@@ -229,6 +229,33 @@ final class InboundReplayIntegrationTest extends TestCase
         self::assertSame([null, null], [self::logRow($plain)['conversion_id'], self::logRow($plain)['record_started_at']]);
     }
 
+    public function testARowWhoseClickWasFoundInAWayThisCodeDoesNotKnowIsNotOffered(): void
+    {
+        // A server postback, so no other rule refuses it: only how its click was found is unreadable.
+        $id = self::refused('gpb', ['subid' => (string) self::CLICK], 'unauthenticated', self::ACCOUNT, 'GET', self::CLICK, 'telepathy');
+        $row = self::logRow($id);
+
+        self::assertFalse($row['can_record']);
+        $answer = (new InboundReplay(self::requireScratch()))->replay(self::ACCOUNT, $id);
+        self::assertSame('not_recordable', $answer['status']);
+        self::assertStringContainsString('does not say how this request\'s click was found', $answer['message']);
+        self::assertSame([], self::conversions());
+    }
+
+    public function testARowRecordedWithNoConversionIsNotTakenAgain(): void
+    {
+        // As an event that reached no goal leaves its row: recorded, with no conversion to show for it.
+        $log = new InboundLog(self::requireScratch());
+        $id = self::refused('gpb', ['subid' => (string) self::CLICK]);
+        self::assertTrue($log->claimReplay(self::ACCOUNT, $id, self::ARRIVED));
+        $log->finishReplay(self::ACCOUNT, $id, null, self::ARRIVED);
+
+        self::assertFalse($log->claimReplay(self::ACCOUNT, $id, self::ARRIVED + InboundLog::REPLAY_CLAIM_SECONDS + 1),
+            'a recorded row is never taken again, however long ago it was recorded');
+        $log->releaseReplay(self::ACCOUNT, $id, self::ARRIVED);
+        self::assertNotNull($log->find(self::ACCOUNT, $id)['recorded_later_at'], 'and giving it back does not undo it');
+    }
+
     public function testTwoPressesAtOnceLetOneWrite(): void
     {
         $log = new InboundLog(self::requireScratch());
@@ -435,7 +462,8 @@ final class InboundReplayIntegrationTest extends TestCase
         $answer = (new InboundReplay(self::requireScratch()))->replay(self::ACCOUNT, $id);
 
         self::assertSame('recorded', $answer['status'], $answer['message']);
-        self::assertSame(['signup', 'NW-5001'], [self::conversions()[0]['event_name'], self::conversions()[0]['transaction_id']]);
+        self::assertSame(['signup', 'NW-5001', self::ARRIVED], [self::conversions()[0]['event_name'], self::conversions()[0]['transaction_id'],
+            (int) self::conversions()[0]['conv_time']], 'dated when it arrived');
 
         // A malformed event is the recorder's refusal, and the row is given back.
         $bad = self::refused('gpb', ['subid' => (string) self::CLICK, 'event' => 'sign up!']);
@@ -515,10 +543,42 @@ final class InboundReplayIntegrationTest extends TestCase
         self::assertSame([], $ids('AxB\\C|D%'));
         self::assertSame([], $ids('ORD'));
 
+        // The requests no account was found for are shown to an account that stores a Shopify secret without their
+        // values; a search, which reads them, runs over the account's own rows alone. An admin's covers everything.
+        $store->append(new Entry('shopify', 'POST', 401, 'unverified', 'x', 0, null, null, '5550001234',
+            ['order_id' => '5550001234']));
+        $unverified = (int) self::$db->insert_id;
+        $theirs = static fn (bool $admin, array $filters): array => array_column(
+            $store->list(self::ACCOUNT, $admin, $filters, InboundLog::DEFAULT_LIMIT, true), 'inbound_id');
+        self::assertContains($unverified, $theirs(false, []), 'listed, as the account stores a secret');
+        self::assertSame([], $theirs(false, ['search' => '5550001234']), 'never found by a value it withholds');
+        self::assertSame([$unverified], $theirs(true, ['search' => '5550001234']), 'an admin\'s search covers it');
+        $api = static fn (bool $admin): array => array_column(
+            (new InboundLogController(self::requireScratch(), self::ACCOUNT, $admin, true))->list(['search' => '5550001234'])['data'],
+            'inbound_id');
+        self::assertSame([], $api(false));
+        self::assertSame([$unverified], $api(true));
+
         $page = (new InboundLogController(self::requireScratch(), self::ACCOUNT, false))->list(['search' => ' 4410 ']);
         self::assertSame([$recorded, $bySubid], array_column($page['data'], 'inbound_id'));
         $this->expectException(ValidationException::class);
         InboundLogController::filters(['search' => str_repeat('x', 300)]);
+    }
+
+    public function testTheClickFilterListsOnlyTheRequestsForThatClick(): void
+    {
+        $store = new InboundLog(self::requireScratch());
+        $store->append(new Entry('gpb', 'GET', 200, 'recorded', 'x', self::ACCOUNT, 4410, 9001));
+        $forClick = (int) self::$db->insert_id;
+        // A conversion id equal to the click id is another request's.
+        $store->append(new Entry('gpb', 'GET', 200, 'recorded', 'x', self::ACCOUNT, 77, 4410));
+        $store->append(new Entry('gpb', 'GET', 200, 'recorded', 'x', self::OTHER, 4410, 9002));
+
+        self::assertSame([$forClick], array_column($store->list(self::ACCOUNT, false, ['click_id' => 4410]), 'inbound_id'));
+        self::assertSame([$forClick], array_column(
+            (new InboundLogController(self::requireScratch(), self::ACCOUNT, false))->list(['click_id' => '4410'])['data'], 'inbound_id'));
+        $this->expectException(ValidationException::class);
+        InboundLogController::filters(['click_id' => '12abc']);
     }
 
     public function testEachRefusalSaysWhatToDoAndWhere(): void

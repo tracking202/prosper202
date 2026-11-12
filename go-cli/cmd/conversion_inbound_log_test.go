@@ -132,3 +132,23 @@ func TestPostbackAuthReadinessReadsTheReport(t *testing.T) {
 		t.Errorf("output should carry the answer:\n%s", out)
 	}
 }
+
+func TestInboundLogFiltersByClickAndRefusesAMalformedOne(t *testing.T) {
+	_, seen := goalServer(t, 200, inboundLogJSON)
+	if _, _, err := executeCommand("--json", "conversion", "inbound-log", "--click-id", "9001"); err != nil {
+		t.Fatalf("conversion inbound-log --click-id: %v", err)
+	}
+	if len(*seen) != 1 || !strings.Contains((*seen)[0].Query, "click_id=9001") {
+		t.Fatalf("requests = %+v, want one carrying click_id=9001", *seen)
+	}
+	_, _, err := executeCommand("conversion", "inbound-log", "--click-id", "12abc")
+	if err == nil || exitCodeForError(err) != ExitValidation {
+		t.Fatalf("--click-id 12abc should be a validation error, got %v", err)
+	}
+	if !strings.Contains(hintFor(err), "p202 click list") {
+		t.Errorf("hint = %q, want one naming p202 click list", hintFor(err))
+	}
+	if len(*seen) != 1 {
+		t.Errorf("a refused flag should send nothing more, sent %+v", *seen)
+	}
+}

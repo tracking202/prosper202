@@ -25,7 +25,8 @@ final class InboundReplayEventIntegrationTest extends TestCase
 
     private const CLICK = 100;
     private const THEIR_CLICK = 200;
-    private const ARRIVED = 1_690_003_600;
+    /** After the goal was made (GoalDatabase's clock): an event is evaluated under the goals of when it arrived. */
+    private const ARRIVED = 1_700_003_600;
 
     protected function setUp(): void
     {
@@ -76,6 +77,11 @@ final class InboundReplayEventIntegrationTest extends TestCase
 
         self::assertSame('recorded', $first['status'], $first['message']);
         self::assertIsInt($first['conversion_id']);
+        // Recorded long after it arrived, it is dated when it arrived: the event, and the conversion its goal reached.
+        self::assertSame([[(string) self::ARRIVED, (string) self::ARRIVED]], self::$db->query(
+            "SELECT occurred_at, received_at FROM 202_goal_events WHERE event_id = 'order-881'")->fetch_all(MYSQLI_NUM));
+        self::assertSame([[(string) self::ARRIVED]], self::$db->query(
+            'SELECT conv_time FROM 202_conversion_logs WHERE click_id = ' . self::CLICK)->fetch_all(MYSQLI_NUM));
         self::assertSame(1, self::conversions());
         $row = (new InboundLog(self::$db))->find(1, $id);
         self::assertSame([$first['conversion_id'], false], [$row['conversion_id'], $row['can_record']]);

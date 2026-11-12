@@ -72,6 +72,91 @@ final class InboundReplay
     {
     }
 
+    /** The order number names a request may carry, first non-blank wins (P202_ORDER_NUMBER_NAMES). */
+    public const ORDER_NUMBER_NAMES = ['txid', 'transaction_id', 'transactionid', 'order_id', 'orderid', 'oid', 't202txid'];
+
+    /**
+     * What the owner is asked before a refused request is recorded: what it
+     * says (its click, amount, event and transaction id, and a reversal as a
+     * reversal), when it arrived, that nothing vouched for it when it carried
+     * no token, and which of the account's destinations will not take it for
+     * its age.
+     *
+     * @param array<string, mixed> $row a log row as InboundLog shapes it
+     * @param list<array<string, mixed>> $destinations the account's, as DestinationStore::list() gives them
+     */
+    public static function question(array $row, array $destinations, int $now): string
+    {
+        $fields = is_array($row['fields'] ?? null) ? $row['fields'] : [];
+        $text = static fn (string $name): ?string => is_string($fields[$name] ?? null) && trim($fields[$name]) !== ''
+            ? trim($fields[$name]) : null;
+        $transaction = null;
+        foreach (self::ORDER_NUMBER_NAMES as $name) {
+            $transaction ??= $text($name);
+        }
+        $amount = $text('amount');
+        $reversed = strtolower((string) $text('status')) === 'reversed';
+        $negative = $amount !== null && is_numeric($amount) && (float) $amount < 0;
+
+        $said = [];
+        $click = $row['click_id'] ?? $text('subid') ?? $text('sid');
+        if (is_scalar($click)) {
+            $said[] = 'click ' . $click;
+        }
+        if ($reversed) {
+            $said[] = 'a reversal of transaction ' . ($transaction ?? '(none named)')
+                . ($text('reversal_id') !== null ? ' (reversal id ' . $text('reversal_id') . ')' : '');
+        } elseif ($negative) {
+            $said[] = 'amount ' . $amount . ', which reverses transaction ' . ($transaction ?? '(none named)') . ' if it is on file';
+        } else {
+            if ($amount !== null) {
+                $said[] = 'amount ' . $amount;
+            }
+            if ($transaction !== null) {
+                $said[] = 'transaction id ' . $transaction;
+            }
+        }
+        if ($text('event') !== null) {
+            $said[] = 'event ' . $text('event');
+        }
+
+        $arrived = (int) ($row['received_at'] ?? 0);
+
+        return ($reversed || $negative ? 'Record this reversal now? It takes money off a sale already recorded. ' : 'Record this request now? ')
+            . 'It says: ' . ($said === [] ? 'nothing beyond its click' : implode(', ', $said)) . '. '
+            . (in_array($row['auth'] ?? null, ['none', 'invalid'], true)
+                ? 'It did not carry your postback token, so nothing shows who sent it: record it only if you know it is real. '
+                : '')
+            . 'It is recorded as it would have been when it arrived, ' . date('M j, Y g:i a', $arrived) . '.'
+            . self::tooOldFor($destinations, $arrived, $now);
+    }
+
+    /**
+     * The sentence naming the account's switched-on destinations that will
+     * not take a conversion this old ('' when none): GA4 takes events up to
+     * 72 hours old.
+     *
+     * @param list<array<string, mixed>> $destinations
+     */
+    public static function tooOldFor(array $destinations, int $arrived, int $now): string
+    {
+        if ($now - $arrived <= \Prosper202\Destinations\Ga4Destination::MAX_AGE_SECONDS) {
+            return '';
+        }
+        $names = [];
+        foreach ($destinations as $destination) {
+            if (($destination['enabled'] ?? false) === true && ($destination['type'] ?? '') === \Prosper202\Destinations\Ga4Destination::TYPE) {
+                $names[] = (string) ($destination['name'] ?? 'Google Analytics');
+            }
+        }
+        if ($names === []) {
+            return '';
+        }
+
+        return ' Google Analytics takes conversions up to 72 hours old, so ' . implode(', ', $names)
+            . (count($names) === 1 ? ' does' : ' do') . ' not receive this one; your reports and other destinations do.';
+    }
+
     /**
      * Why "record it now" is not offered for the row, or null when it is.
      *
@@ -238,7 +323,20 @@ final class InboundReplay
                 . $noteFailed->getMessage());
         }
 
-        return self::answer($outcome['status'], $outcome['message'], $outcome['conversion_id'], $clickId);
+        $late = '';
+        if ($outcome['status'] === 'recorded') {
+            try {
+                $late = self::tooOldFor(
+                    (new \Prosper202\Destinations\DestinationStore(new Connection($this->db)))->list($userId),
+                    (int) $row['received_at'],
+                    $now
+                );
+            } catch (\Throwable $e) {
+                error_log('Inbound log: the destinations could not be read after recording request ' . $inboundId . ': ' . $e->getMessage());
+            }
+        }
+
+        return self::answer($outcome['status'], $outcome['message'] . $late, $outcome['conversion_id'], $clickId);
     }
 
     /**
@@ -285,7 +383,8 @@ final class InboundReplay
         $scope = ['user_id' => $userId] + ($kind['visited'] ? ['campaign_id' => $campaignId] : []);
 
         // An event goes to the click's goals first, as on the endpoint; a campaign without goals records its plain conversion.
-        $event = p202RecordWebEvent($this->db, $clickId, $request, $matchedBy, $scope + ['browser' => false]);
+        // Dated when it arrived, as the plain conversion below is: it counts on the day it happened.
+        $event = p202RecordWebEvent($this->db, $clickId, $request, $matchedBy, $scope + ['browser' => false, 'at' => (int) $row['received_at']]);
         if ($event !== null && $event['status'] !== 'no_goals') {
             return match ($event['status']) {
                 'recorded' => self::eventRecorded($event['result']),

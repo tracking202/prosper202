@@ -26,6 +26,8 @@ use Tracking202\Report\ReportWindow;
 final class ConversionLog
 {
     public const PER_PAGE = 50;
+    /** The most conversions one download holds; a longer list is cut, and the file says so. */
+    public const EXPORT_MAX = 100000;
 
     public const DEFAULT_RANGE = 'last30';
 
@@ -233,9 +235,10 @@ final class ConversionLog
      *
      * @param Filters $filters as readQuery() gives them
      * @param callable(array<string, mixed>): void $each
-     * @return int the rows handed over
+     * @param int $max the most rows handed over; past it the list is cut, and `more` says so
+     * @return array{rows: int, more: bool} the rows handed over, and whether the list holds more
      */
-    public function export(int $userId, array $filters, callable $each, int $batch = 1000): int
+    public function export(int $userId, array $filters, callable $each, int $batch = 1000, int $max = self::EXPORT_MAX): array
     {
         if ($userId <= 0) {
             throw new \InvalidArgumentException('ConversionLog: an account id is required');
@@ -256,13 +259,16 @@ final class ConversionLog
             $this->conn->bind($stmt, $pageTypes . 'i', array_merge($pageBinds, [$batch]));
             $rows = $this->conn->fetchAll($stmt);
             foreach ($rows as $r) {
+                if ($count === $max) {
+                    return ['rows' => $count, 'more' => true];
+                }
                 $each(self::shape($r));
                 $after = [(int) $r['conv_time'], (int) $r['conv_id']];
                 $count++;
             }
         } while (count($rows) === $batch);
 
-        return $count;
+        return ['rows' => $count, 'more' => false];
     }
 
     /**

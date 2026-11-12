@@ -39,6 +39,13 @@ var conversionInboundLogCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("search"); v != "" {
 			params["search"] = v
 		}
+		if v, _ := cmd.Flags().GetString("click-id"); v != "" {
+			if !positiveIDPattern.MatchString(v) {
+				return validationError("--click-id must be a positive integer, got %q", v).
+					WithHint("Pass a click id (subid) as `p202 click list` shows it.")
+			}
+			params["click_id"] = v
+		}
 		if v, _ := cmd.Flags().GetString("limit"); v != "" {
 			if n, err := strconv.Atoi(v); err != nil || n < 1 || n > 500 {
 				return validationError("--limit must be a whole number from 1 to 500, got %q", v).
@@ -165,6 +172,7 @@ var conversionInboundLogRecordCmd = &cobra.Command{
 func init() {
 	conversionInboundLogCmd.AddCommand(conversionInboundLogRecordCmd)
 	conversionInboundLogCmd.Flags().String("search", "", "Only the requests for this subid (click id), conversion id or transaction id, given whole")
+	conversionInboundLogCmd.Flags().String("click-id", "", "Only the requests the endpoint found this click for")
 	conversionInboundLogCmd.Flags().String("outcome", "", "refused (recorded nothing), accepted, or one outcome name such as unknown_click")
 	conversionInboundLogCmd.Flags().String("endpoint", "", "Only this endpoint's requests: {values}")
 	enumFlag(conversionInboundLogCmd, "endpoint", newEnum(inboundLogEndpoints))

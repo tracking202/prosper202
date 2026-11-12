@@ -102,7 +102,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !array_key_exists('inbound_id', $_P
 $flash = $_SESSION['p202_inbound_log_flash'] ?? null;
 unset($_SESSION['p202_inbound_log_flash']);
 
-$params = array_intersect_key($_GET, array_flip(['outcome', 'endpoint', 'search', 'before']));
+$params = array_intersect_key($_GET, array_flip(['outcome', 'endpoint', 'search', 'click_id', 'before']));
 $params = array_filter($params, static fn (mixed $v): bool => is_string($v) && $v !== '');
 $rows = [];
 $errors = [];
@@ -146,32 +146,13 @@ $when = static fn (int $ts): string => date('Y-m-d H:i:s', $ts);
 // What a postback or pixel carried to say who sent it.
 $carried = ['none' => 'carried no token', 'invalid' => 'carried a wrong token or signature', 'token' => 'carried your token',
     'signed' => 'signed'];
-// The question before a refused request is recorded: what it says, and that nothing vouched for it.
-$confirmRecord = static function (array $row): string {
-    $fields = is_array($row['fields']) ? $row['fields'] : [];
-    $said = [];
-    $click = $row['click_id'] ?? ($fields['subid'] ?? ($fields['sid'] ?? null));
-    if (is_scalar($click)) {
-        $said[] = 'click ' . $click;
-    }
-    foreach (['amount' => 'amount', 'event' => 'event'] as $name => $label) {
-        if (is_string($fields[$name] ?? null) && $fields[$name] !== '') {
-            $said[] = $label . ' ' . $fields[$name];
-        }
-    }
-    foreach (['txid', 'transaction_id', 'transactionid', 'order_id', 'orderid', 'oid', 't202txid'] as $name) {
-        if (is_string($fields[$name] ?? null) && $fields[$name] !== '') {
-            $said[] = 'transaction id ' . $fields[$name];
-            break;
-        }
-    }
-
-    return 'Record this request now? It says: ' . ($said === [] ? 'nothing beyond its click' : implode(', ', $said)) . '. '
-        . (in_array($row['auth'], ['none', 'invalid'], true)
-            ? 'It did not carry your postback token, so nothing shows who sent it: record it only if you know this sale is real. '
-            : '')
-        . 'It is recorded as it would have been when it arrived.';
-};
+// The account's destinations, which the question before recording warns about when the request is too old for one.
+$destinations = [];
+try {
+    $destinations = (new \Prosper202\Destinations\DestinationStore(new \Prosper202\Database\Connection($db)))->list($userId);
+} catch (\Throwable $e) {
+    error_log('Setup › Inbound Log: the destinations could not be read for the record question: ' . $e->getMessage());
+}
 
 AUTH::set_timezone($_SESSION['user_timezone'] ?? date_default_timezone_get());
 template_top('Inbound Log');
@@ -194,6 +175,11 @@ if ($recorded !== null) {
     }, $recorded['message']);
 }
 echo p202_setup_error_flashes($errors, ['outcome', 'endpoint', 'search', 'before']);
+if (isset($filters['click_id'])) {
+    echo '<div class="alert alert-info p202-flash" role="status"><i class="bi bi-info-circle"></i><div class="p202-flash__body">'
+        . p202_setup_e('Showing the requests for click ' . $filters['click_id'] . '.')
+        . ' <a class="alert-link" href="' . p202_setup_e($self) . '">Show every request</a></div></div>';
+}
 if (is_array($flash) && is_string($flash[0] ?? null) && is_string($flash[1] ?? null)) {
     echo p202_flash($flash[0], $flash[1]);
 }
@@ -348,7 +334,7 @@ if ($seesUnattributed) {
                                 <div class="form-text">Recorded from this log on <?php echo p202_setup_e($when((int) $row['recorded_later_at'])); ?>.</div>
                             <?php } elseif ($mayRecord && $row['can_record'] && $row['user_id'] === $userId) { ?>
                                 <form method="post" action="<?php echo p202_setup_e($self . ($params === [] ? '' : '?' . http_build_query($params))); ?>" class="mt-1"
-                                    data-p202-confirm="<?php echo p202_setup_e($confirmRecord($row)); ?>">
+                                    data-p202-confirm="<?php echo p202_setup_e(InboundReplay::question($row, $destinations, time())); ?>">
                                     <?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>
                                     <input type="hidden" name="inbound_id" value="<?php echo (int) $row['inbound_id']; ?>">
                                     <button type="submit" class="btn btn-sm btn-outline-primary">Record it now</button>

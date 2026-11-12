@@ -78,7 +78,7 @@ if (($_GET['download'] ?? null) === 'csv' && $errors === [] && !$readFailed) {
     fputcsv($out, ['conversion_id', 'subid', 'campaign', 'click_time', 'conversion_time', 'elapsed', 'ip_address', 'type',
         'reverses_conversion_id', 'transaction_id', 'payout', 'deleted', 'user_agent'], ',', '"', '');
     try {
-        $log->export($userId, $read['filters'], static function (array $row) use ($out, $cell, $stamp, $masked): void {
+        $written = $log->export($userId, $read['filters'], static function (array $row) use ($out, $cell, $stamp, $masked): void {
             fputcsv($out, [
                 $row['conv_id'], $row['click_id'], $cell((string) ($row['campaign_name'] ?? '')), $stamp($row['click_time']),
                 $stamp($row['conv_time']), (string) ($row['elapsed'] ?? ''), $row['ip'], $cell($row['type']),
@@ -86,6 +86,10 @@ if (($_GET['download'] ?? null) === 'csv' && $errors === [] && !$readFailed) {
                 $masked ? '?' : (string) $row['amount'], $row['deleted'] ? 'yes' : 'no', $cell($row['user_agent']),
             ], ',', '"', '');
         });
+        if ($written['more']) {
+            fputcsv($out, ['This file holds the newest ' . number_format(ConversionLog::EXPORT_MAX) . ' conversions of a longer'
+                . ' list. Narrow the dates or a filter to download the rest.'], ',', '"', '');
+        }
     } catch (\Throwable $failed) {
         // The headers are sent: the file says it is not whole, never ends as if it were.
         error_log('Conversion Logs: the download stopped: ' . $failed->getMessage());
@@ -176,7 +180,7 @@ echo '<span class="p202-panel__sub">' . $e(number_format($total)) . ' conversion
         . '"><i class="bi bi-file-earmark-spreadsheet"></i> Download CSV</a></div>' : '')
     . '</div><div class="p202-panel__body">';
 
-$inboundLog = $base . 'tracking202/setup/inbound_log.php?search=';
+$inboundLog = $base . 'tracking202/setup/inbound_log.php?click_id=';
 $rows = [];
 foreach ($result['rows'] as $row) {
     $type = $e($row['type']);
@@ -186,7 +190,7 @@ foreach ($result['rows'] as $row) {
     $agent = $row['user_agent'] !== '' ? '<code class="small text-break">' . $e($row['user_agent']) . '</code>' : '—';
     $rows[] = [
         'click' => ['html' => p202_click_breakdown_button($base, $row['click_id'])
-            . ' <a class="small text-nowrap" href="' . $e($inboundLog . $row['click_id']) . '">requests</a>'],
+            . ' <a class="small text-nowrap" href="' . $e($inboundLog . $row['click_id']) . '">its inbound requests</a>'],
         'campaign' => $row['campaign_name'] ?? '—',
         'click_time' => $row['click_time'] > 0 ? date('m/d/y g:ia', $row['click_time']) : '—',
         'conv_time' => date('m/d/y g:ia', $row['conv_time']),

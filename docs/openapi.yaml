@@ -2812,8 +2812,10 @@ paths:
         fields the endpoint is known to send and only when it holds no
         email or IP address; every other value is `[redacted]`. `search`
         finds the requests for one subid (click id), conversion id or
-        transaction id, given whole. A row that recorded nothing carries
-        `fix`: what to do about it and the page that does it.
+        transaction id, given whole; for a role that does not manage users it
+        covers only the account's own requests. `click_id` lists the
+        requests for one click. A row that recorded nothing carries `fix`:
+        what to do about it and the page that does it.
       operationId: listInboundLog
       parameters:
         - name: search
@@ -2824,6 +2826,14 @@ paths:
           schema:
             type: string
             maxLength: 255
+        - name: click_id
+          in: query
+          description: >-
+            Only the requests the endpoint found this click for (exactly; unlike
+            search, a conversion id of the same number is not matched).
+          schema:
+            type: integer
+            minimum: 1
         - name: outcome
           in: query
           description: >-

@@ -131,11 +131,14 @@ final class InboundLog
      * could be found for (user_id 0), which only an admin sees. With
      * $withUnverifiedShopify the list also has the Shopify webhooks no stored
      * secret verified, for an account that stores one: nothing proves whose
-     * they are, so they come without their fields.
+     * they are, so they come without their fields, and a search, which reads
+     * the values those rows withhold, never runs over them: a search lists
+     * only the account's own rows, or an admin's whole view.
      *
-     * @param array{outcome?: string, endpoint?: string, before?: int, search?: string} $filters
+     * @param array{outcome?: string, endpoint?: string, before?: int, search?: string, click_id?: int} $filters
      *        outcome: 'refused' (anything not in ACCEPTED_OUTCOMES), 'accepted', or one outcome name;
-     *        search: a subid (click id), conversion id or transaction id, matched whole
+     *        search: a subid (click id), conversion id or transaction id, matched whole;
+     *        click_id: only the requests the endpoint found that click for
      * @return list<array<string, mixed>>
      */
     public function list(
@@ -146,7 +149,8 @@ final class InboundLog
         bool $withUnverifiedShopify = false
     ): array {
         $where = $withUnattributed ? '(user_id = ? OR user_id = 0)' : 'user_id = ?';
-        if (!$withUnattributed && $withUnverifiedShopify) {
+        $searching = isset($filters['search']) && $filters['search'] !== '';
+        if (!$withUnattributed && $withUnverifiedShopify && !$searching) {
             $where = "(user_id = ? OR (user_id = 0 AND endpoint = 'shopify' AND outcome = 'unverified'))";
         }
         $types = 'i';
@@ -172,6 +176,11 @@ final class InboundLog
             $where .= ' AND ' . $clause;
             $types .= $searchTypes;
             array_push($values, ...$searchValues);
+        }
+        if (isset($filters['click_id'])) {
+            $where .= ' AND click_id = ?';
+            $types .= 'i';
+            $values[] = $filters['click_id'];
         }
         if (isset($filters['before'])) {
             $where .= ' AND inbound_id < ?';
