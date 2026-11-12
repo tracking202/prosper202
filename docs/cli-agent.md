@@ -916,7 +916,7 @@ p202 conversion shopify-refunds list [--json]
                        # Shopify refunds still counted in a sale: waiting to settle or refused (Setup › Inbound Log)
 p202 conversion shopify-refunds record <refund-id> --amount F [--click-id N] [--currency CODE] [--json]
                        # reverse the order's sale by the refund, at most what is left; --click-id when the order is on several clicks;
-                       # a refund in another currency (other_currency): convert --amount yourself and pass --currency <account_currency>
+                       # a refund in another currency (other_currency): convert --amount yourself and pass --currency <amount_currency>
 p202 conversion shopify-refunds close <refund-id> [--force] [--json]
                        # close one with nothing recorded (no money was returned)
 p202 conversion get    <id> [--json]
@@ -1560,7 +1560,7 @@ Visitor-authored (or visitor-derived) fields returned by this CLI:
 | Referrer, landing and outbound URLs | The visitor's browser (`Referer`) and the tracking link's query | `click list`/`click get` (`referer`, `landing`, `outbound`), `report breakdown`/`analytics` by `referer` (the domain) and `referer_url` |
 | SubIDs `c1`--`c4` | Query parameters on the tracking link | `click get` (`c1`..`c4`), `report breakdown`/`analytics` by `c1`..`c4` |
 | UTM values | `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content` on the tracking link | `report breakdown`/`analytics` by `utm_source` .. `utm_content` |
-| Ad click ids | `gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid` on the tracking or landing URL | `click list`/`click get` (`gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid`; capped at 1,000 characters, not 512) |
+| Ad click ids | `gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid`, `oppref` on the tracking or landing URL | `click list`/`click get` (`gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid`, `oppref`; capped at 1,000 characters, not 512) |
 | IP addresses | The visitor's connection (or the `X-Forwarded-For` header the redirect honours) | `report breakdown`/`analytics` by `ip` |
 | Browser, platform, device names | Parsed from the visitor's user-agent string | `click list`/`click get` resolved names, `report breakdown`/`analytics` by `browser`/`platform`/`device` |
 | Region, city, ISP names | GeoIP resolution of the visitor's IP | `click list`/`click get`, `report breakdown`/`analytics` by `region`/`city`/`isp` |

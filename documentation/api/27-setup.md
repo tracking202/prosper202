@@ -155,8 +155,8 @@ as `gpb.php?subid={aff_sub}&amount=49.00` with the macro itself where the
 click's id should be, or with `subid=` empty. Until 1.9.80 that conversion was
 answered `SubID not found` and lost. Now `gpb.php` looks for the click by an
 **ad click id** the postback sends back instead: the `gclid`, `gbraid` or
-`wbraid` Google put on the ad click, Microsoft's `msclkid`, Meta's `fbclid`
-or TikTok's `ttclid`, which every click keeps.
+`wbraid` Google put on the ad click, Microsoft's `msclkid`, Meta's `fbclid`,
+TikTok's `ttclid` or OpenAI's `oppref` (ChatGPT ads), which every click keeps.
 
 A SubID that is there is read exactly as before. The ad click id is asked
 only when `subid` (and `sid`) is empty or is one unfilled macro and nothing
@@ -170,7 +170,7 @@ through a network whose postbacks drop the sub id:
 1. Hand the network the ad click id when you send it the visitor. In the
    campaign's URL put the token in one of the network's sub id slots, e.g.
    `https://network.example/offer/812?aff_sub={aff_sub}&aff_sub3=[[gclid]]`
-   (`[[msclkid]]`, `[[fbclid]]`, `[[ttclid]]`, `[[gbraid]]` and `[[wbraid]]`
+   (`[[msclkid]]`, `[[fbclid]]`, `[[ttclid]]`, `[[oppref]]`, `[[gbraid]]` and `[[wbraid]]`
    work the same way).
 2. Have the network send it back. Either name it for what it is in the
    postback URL you give the network:

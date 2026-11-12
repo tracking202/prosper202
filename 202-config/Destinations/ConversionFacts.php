@@ -49,6 +49,7 @@ final class ConversionFacts
             'subid' => '0', 'c1' => '', 'c2' => '', 'c3' => '', 'c4' => '', 't202kw' => 'running shoes',
             'utm_source' => 'google', 'utm_medium' => 'cpc', 'utm_campaign' => 'spring-sale', 'utm_term' => '', 'utm_content' => '',
             'gclid' => '', 'gbraid' => '', 'wbraid' => '', 'ttclid' => '', 'msclkid' => '', 'fbclid' => '',
+            'oppref' => '',
         ], null, [], [], $zone, null, null, null, 'https://shop.example.com/checkout/done');
     }
 }

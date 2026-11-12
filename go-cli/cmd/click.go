@@ -22,10 +22,10 @@ var clickListCmd = &cobra.Command{
 	Long: "Lists clicks newest first, with what the Visitors page shows for each: campaign,\n" +
 		"traffic source, keyword, IP, location, device, referrer and landing URLs, and the\n" +
 		"ad platforms' click ids it arrived with (gclid, gbraid, wbraid, ttclid, msclkid,\n" +
-		"fbclid; null for none, and none on a redirector's click). It takes\n" +
-		"the Visitors page's filters, as `p202 report` does: --keyword and --referer\n" +
-		"(contains), --ip, --device-type, --show real|filtered|filtered_bot|leads, location,\n" +
-		"browser and platform ids, and --period.\n\n" +
+		"fbclid, oppref; null for none, and none on a redirector click recorded before\n" +
+		"1.9.80). It takes the Visitors page's filters, as `p202 report` does: --keyword\n" +
+		"and --referer (contains), --ip, --device-type, --show\n" +
+		"real|filtered|filtered_bot|leads, location, browser and platform ids, and --period.\n\n" +
 		"--follow is the Spy page: it prints the newest --limit clicks (default 10), then\n" +
 		"each new click as it arrives, polling every --interval, until interrupted or\n" +
 		"--stop-after elapses. Under --json or --ndjson it writes one JSON object per\n" +
@@ -116,12 +116,12 @@ var clickGetCmd = &cobra.Command{
 	Short: "Get a click by ID",
 	Long: "Gets one click with what `click list` shows for it, plus its c1-c4 values. The\n" +
 		"ad platforms' click ids it arrived with are gclid, gbraid and wbraid (Google Ads),\n" +
-		"ttclid (TikTok), msclkid (Microsoft Advertising) and fbclid (Meta), each null for\n" +
-		"none; --json gives them whole. A filtered click (click_filtered 1) says why in\n" +
-		"filter_reason: sign_in_address, crawler_range, repeat_visit, filter_list (with the\n" +
-		"list's filter_entry_id), fraud_score (IPQualityScore, after the click) or bot; null\n" +
-		"for a click filtered before 1.9.79, which\n" +
-		"recorded no reason. `p202 click-filter` shows and changes the rules.",
+		"ttclid (TikTok), msclkid (Microsoft Advertising), fbclid (Meta) and oppref\n" +
+		"(ChatGPT ads), each null for none; --json gives them whole. A filtered click\n" +
+		"(click_filtered 1) says why in filter_reason: sign_in_address, crawler_range,\n" +
+		"repeat_visit, filter_list (with the list's filter_entry_id), fraud_score\n" +
+		"(IPQualityScore, after the click) or bot; null for a click filtered before 1.9.79,\n" +
+		"which recorded no reason. `p202 click-filter` shows and changes the rules.",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
@@ -216,6 +216,7 @@ func renderClickConversions(data []byte) error {
 		rows = append(rows, map[string]interface{}{
 			"conv_id":        r["conv_id"],
 			"amount":         r["amount"],
+			"currency":       r["currency"],
 			"counts":         counts,
 			"source":         r["source"],
 			"matched_by":     r["match_method"],

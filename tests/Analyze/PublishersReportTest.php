@@ -67,19 +67,20 @@ final class PublishersReportTest extends TestCase
 
     public function testTheDownloadIsOneTabSeparatedLinePerRow(): void
     {
-        $lines = PublishersReport::exportLines(PublishersReport::shape(self::groups()));
+        // Every row says the account's currency and the period's money in others, as every report download does.
+        $lines = PublishersReport::exportLines(PublishersReport::shape(self::groups()) + ['money' => ['currency' => 'EUR', 'others' => 'USD 12.50 (1)']]);
 
         self::assertSame(
-            "Publisher\tLink\tCampaign\tClicks\tClick Throughs\tLeads\tConv Rate\tIncome\tCost\tNet\tROI",
+            "Publisher\tLink\tCampaign\tClicks\tClick Throughs\tLeads\tConv Rate\tIncome\tCost\tNet\tROI\tCurrency\tOther currencies in period",
             $lines[0]
         );
         self::assertSame(
-            "'=Dana Reyes\t4200000001\tRunning Shoes\t2\t2\t1\t50.00\t12.50\t0.50\t12.00\t2400.00",
+            "'=Dana Reyes\t4200000001\tRunning Shoes\t2\t2\t1\t50.00\t12.50\t0.50\t12.00\t2400.00\tEUR\tUSD 12.50 (1)",
             $lines[1],
             'a name cannot add a column or be read as a formula'
         );
-        self::assertSame("'=Dana Reyes\tLink not recorded\tNo campaign\t1\t1\t0\t0.00\t0.00\t0.10\t-0.10\t-100.00", $lines[2]);
-        self::assertSame("No publisher\t\t\t2\t2\t0\t0.00\t0.00\t0.50\t-0.50\t-100.00", $lines[3]);
+        self::assertSame("'=Dana Reyes\tLink not recorded\tNo campaign\t1\t1\t0\t0.00\t0.00\t0.10\t-0.10\t-100.00\tEUR\tUSD 12.50 (1)", $lines[2]);
+        self::assertSame("No publisher\t\t\t2\t2\t0\t0.00\t0.00\t0.50\t-0.50\t-100.00\tEUR\tUSD 12.50 (1)", $lines[3]);
         self::assertCount(4, $lines);
     }
 

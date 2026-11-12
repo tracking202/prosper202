@@ -28,13 +28,13 @@ final class ClickUrlTokensInstanceTest extends TestCase
         . 'Chrome/120.0 Safari/537.36';
     private const TOKENS = [
         'subid', 't202kw', 'c1', 'c2', 'c3', 'c4', 'gclid', 'gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid',
-        'utm_source', 'utm_term', 'country', 'country_code', 'region', 'city', 'cpc', 'cpc2', 'cpa', 'payout',
+        'oppref', 'utm_source', 'utm_term', 'country', 'country_code', 'region', 'city', 'cpc', 'cpc2', 'cpa', 'payout',
         'sourceid',
     ];
 
     /**
      * Google's iOS click ids, TikTok's, Microsoft's and Meta's, the lengths
-     * of real ones (34, 87, 313, 32 and 200 characters).
+     * of real ones (34, 87, 313, 32 and 200 characters), and OpenAI's.
      */
     private const AD_CLICK_IDS = [
         'gbraid' => '0AAAAAgbraid-Shape_0123456789abcde',
@@ -47,6 +47,8 @@ final class ClickUrlTokensInstanceTest extends TestCase
         'fbclid' => 'IwY2xjawfbclid-Shape_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
             . 'fbclid-Shape_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
             . '_aem_fbclid-Shape_0123456789abcdefghijklmn',
+        // OpenAI documents no shape or length for its oppref.
+        'oppref' => 'op_Q2hhdEdQVC1vcHByZWYtU2hhcGUtMDEyMzQ1Njc4OQ',
     ];
 
     private static string $base = '';

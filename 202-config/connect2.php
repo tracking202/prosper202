@@ -719,7 +719,7 @@ function p202ClickPublisher(mysqli $db, int $ownerUserId, array $query): ?array
  * record_simple.php). Values are raw; replaceTokens() URL-encodes them.
  *
  * @param array<string, scalar|null> $click keyword, t202pubid, c1-c4, gclid,
- *     gbraid, wbraid, ttclid, msclkid, fbclid, utm_source, utm_medium,
+ *     gbraid, wbraid, ttclid, msclkid, fbclid, oppref, utm_source, utm_medium,
  *     utm_campaign, utm_term, utm_content, country, country_code, region,
  *     city, cpc, cpa, payout, ppc_account_id
  * @return array<string, scalar|null>
@@ -753,6 +753,7 @@ function p202ClickUrlTokens(string $clickId, array $click): array
         'ttclid' => $text('ttclid'),
         'msclkid' => $text('msclkid'),
         'fbclid' => $text('fbclid'),
+        'oppref' => $text('oppref'),
         'utm_source' => $text('utm_source'),
         'utm_medium' => $text('utm_medium'),
         'utm_campaign' => $text('utm_campaign'),
@@ -877,7 +878,7 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
     // No such click (a page reading an earlier one by a subid it was sent):
     // its tokens are blank, as they always were.
     $click_row ??= [];
-    // The ids 1.9.79 added, read apart (AdClickIdColumns::of()) and only for
+    // The ids 1.9.79 and 1.9.80 added, read apart (AdClickIdColumns::of()) and only for
     // a URL that asks for one, from a click the read above found the owner's.
     // The msclkid and fbclid among them: 202_bing and 202_facebook, read here
     // before, were written by no version in this repository's history.
@@ -914,6 +915,7 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
         'ttclid' => $click_row['ttclid'] ?? null,
         'msclkid' => $click_row['msclkid'] ?? null,
         'fbclid' => $click_row['fbclid'] ?? null,
+        'oppref' => $click_row['oppref'] ?? null,
         'utm_source' => $click_row['utm_source'] ?? null,
         'utm_medium' => $click_row['utm_medium'] ?? null,
         'utm_campaign' => $click_row['utm_campaign'] ?? null,
@@ -1487,6 +1489,7 @@ function getPrePopVars($vars, bool $toOwnLandingPage = false)
         'gclid',
         'msclkid',
         'fbclid',
+        'oppref',
         'utm_source',
         'utm_medium',
         'utm_campaign',

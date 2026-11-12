@@ -152,6 +152,7 @@ $tokens = [
     "ttclid" => $adClickIds['ttclid'],
     "msclkid" => $adClickIds['msclkid'],
     "fbclid" => $adClickIds['fbclid'],
+    "oppref" => $adClickIds['oppref'],
     "utm_source" => $mysql['utm_source'],
     "utm_medium" => $mysql['utm_medium'],
     "utm_campaign" => $mysql['utm_campaign'],
@@ -251,6 +252,7 @@ if (is_numeric($mysql['click_id'])) {
 			? $conversionResult['transaction_id']
 			: $conversionResult['dedupe_key'];
 		$tokens['payout'] = $conversionResult['payout'];
+		$tokens['row_currency'] = $conversionResult['currency'];
 		$tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId(
 			new \Prosper202\Database\Connection($db),
 			$tokens,

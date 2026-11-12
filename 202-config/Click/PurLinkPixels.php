@@ -88,8 +88,11 @@ final class PurLinkPixels
             return ['status' => 'refused', 'markup' => '', 'conversions' => 0];
         }
 
+        // The row's currency, once the upgrade has added the column: this runs
+        // for a visitor, who is not kept waiting for the upgrade.
+        $currency = \Prosper202\Conversion\Ledger\RowCurrency::columnsPresent($this->conn) ? ', cl.currency' : '';
         $stmt = $this->conn->prepareWrite(
-            'SELECT cl.conv_id, cl.transaction_id, cl.dedupe_key, cl.click_payout'
+            'SELECT cl.conv_id, cl.transaction_id, cl.dedupe_key, cl.click_payout' . $currency
             . ' FROM 202_conversion_logs AS cl'
             . ' LEFT JOIN 202_purlink_pixel_fires AS f ON f.conv_id = cl.conv_id AND f.user_id = cl.user_id'
             . ' WHERE cl.click_id = ? AND cl.user_id = ? AND cl.deleted = 0 AND cl.payable = 1'
@@ -129,6 +132,8 @@ final class PurLinkPixels
                     ? (string) $conversion['transaction_id']
                     : (string) $conversion['dedupe_key'];
                 $tokens['payout'] = (string) $conversion['click_payout'];
+                // The currency the row recorded, for a pixel that states one.
+                $tokens['row_currency'] = \Prosper202\Conversion\Ledger\RowCurrency::read($conversion['currency'] ?? null);
                 $tokens = TrafficSourcePixels::withConversionEventId(
                     $this->conn,
                     $tokens,

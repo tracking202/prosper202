@@ -53,7 +53,7 @@ final class TrafficSourcePixels
     private const TOKENS = [
         'c1' => ['c1'], 'c2' => ['c2'], 'c3' => ['c3'], 'c4' => ['c4'],
         't202pubid' => ['t202pubid'], 'gclid' => ['gclid'], 'gbraid' => ['gbraid'], 'wbraid' => ['wbraid'],
-        'ttclid' => ['ttclid'], 'msclkid' => ['msclkid'], 'fbclid' => ['fbclid'],
+        'ttclid' => ['ttclid'], 'msclkid' => ['msclkid'], 'fbclid' => ['fbclid'], 'oppref' => ['oppref'],
         'utm_source' => ['utm_source'], 'utm_medium' => ['utm_medium'], 'utm_campaign' => ['utm_campaign'],
         'utm_term' => ['utm_term'], 'utm_content' => ['utm_content'],
         'subid' => ['subid'], 't202kw' => ['t202kw'], 'payout' => ['payout'], 'random' => ['random'],
@@ -250,7 +250,10 @@ final class TrafficSourcePixels
                 if (!$mayTrack) {
                     continue;
                 }
-                $currency ??= self::accountCurrency($conn, $ppcAccountId);
+                // The currency the conversion's row recorded, when the caller
+                // has it; else the account's, which a row just written is in.
+                $rowCurrency = is_string($tokens['row_currency'] ?? null) ? $tokens['row_currency'] : '';
+                $currency ??= preg_match('/^[A-Z]{3}$/D', $rowCurrency) === 1 ? $rowCurrency : self::accountCurrency($conn, $ppcAccountId);
                 $markup = self::facebookPurchase($code, $tokens, $currency);
                 if ($markup === null) {
                     error_log('traffic source pixel ' . (int) ($pixel['pixel_id'] ?? 0) . ' of ppc account ' . $ppcAccountId
@@ -480,6 +483,7 @@ final class TrafficSourcePixels
                 'ttclid' => $adClickIds['ttclid'],
                 'msclkid' => $adClickIds['msclkid'],
                 'fbclid' => $adClickIds['fbclid'],
+                'oppref' => $adClickIds['oppref'],
                 'utm_source' => (string) ($row['utm_source'] ?? ''),
                 'utm_medium' => (string) ($row['utm_medium'] ?? ''),
                 'utm_campaign' => (string) ($row['utm_campaign'] ?? ''),

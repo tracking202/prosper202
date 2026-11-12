@@ -30,7 +30,7 @@ use Prosper202\Database\Connection;
  * TrafficSourceNotifier; an app install has no page). The URL is resolved
  * at queue time by TrafficSourcePixels (the tracker's rules) with the
  * click's tokens — [[subid]], [[c1]]–[[c4]], [[t202kw]], [[gclid]],
- * [[gbraid]], [[wbraid]], [[ttclid]], [[msclkid]], [[fbclid]], the utm_*
+ * [[gbraid]], [[wbraid]], [[ttclid]], [[msclkid]], [[fbclid]], [[oppref]], the utm_*
  * tokens, [[cpc]], [[referer]], [[timestamp]], [[random]] — and the
  * row's own: [[sourceid]], [[payout]] (this row's amount as a network reads
  * money, `4.00`, not the click's total), [[transactionid]] / [[t202txid]]

@@ -154,6 +154,53 @@ final class DestinationsIntegrationTest extends TestCase
         self::assertSame((string) $convId, self::deliveries($id)[0]['conv_id']);
     }
 
+    /**
+     * A platform is told the currency the conversion recorded. One with none
+     * recorded is held back, never sent under the account's, and goes out
+     * once the owner has recorded its currency (Personal settings), in that
+     * currency; another account's held rows are left alone.
+     */
+    public function testAConversionWithNoCurrencyRecordedIsHeldBackAndSentOnceTheOwnerRecordsOne(): void
+    {
+        $id = $this->destination();
+        $other = $this->destination(['measurement_id' => 'G-OTHER1'], 2);
+        $this->click(100);
+        $this->click(101);
+        $this->click(200, 40, 2);
+        $recorded = $this->record(100, 'ORD-A');
+        $unrecorded = $this->record(101, 'ORD-B');
+        $foreign = $this->record(200, 'ORD-C', 2);
+        self::fixture("UPDATE 202_conversion_logs SET currency='' WHERE conv_id IN ($unrecorded, $foreign)");
+        // The account counts in euros now; the row that recorded USD still goes out as USD.
+        self::fixture("UPDATE 202_users_pref SET user_account_currency='EUR' WHERE user_id=1");
+        $now = time() + 1;
+
+        $out = $this->worker()->sendDue(10, 5, $now);
+
+        self::assertSame([1, 2], [$out['sent'], $out['withheld']]);
+        self::assertSame(['USD', 'ORD-A'], [$this->bodies[0]['events'][0]['params']['currency'], $this->bodies[0]['events'][0]['params']['transaction_id']]);
+        $held = self::deliveries($id)[1];
+        self::assertSame(['withheld', DestinationQueue::NO_CURRENCY], [$held['status'], $held['last_error']]);
+        self::assertSame(0, array_sum($this->worker()->sendDue(10, 5, $now + 9999)), 'held back for good until its currency is recorded');
+
+        // The owner records the currency those conversions were in, and what was held goes out in it.
+        $conn = new Connection(self::$db);
+        self::assertSame(['stamped' => 1, 'left' => 0], \Prosper202\Conversion\Ledger\RowCurrency::recordBefore($conn, 1, 'GBP', 4102444800));
+        self::assertSame(1, (new DestinationQueue($conn))->releaseHeldForCurrency(1, $now + 10), 'this account\'s one held row');
+        self::assertSame('withheld', self::deliveries($other)[0]['status'], 'another account\'s is left as it is');
+
+        $out = $this->worker()->sendDue(10, 5, $now + 10);
+
+        self::assertSame([1, 0], [$out['sent'], $out['withheld']]);
+        self::assertSame(['GBP', 'ORD-B'], [$this->bodies[1]['events'][0]['params']['currency'], $this->bodies[1]['events'][0]['params']['transaction_id']]);
+        self::assertSame(['sent', null], [self::deliveries($id)[1]['status'], self::deliveries($id)[1]['last_error']]);
+
+        // A row released while its conversion still has no currency is held back again, not sent.
+        self::fixture("UPDATE 202_destination_deliveries SET status='pending', attempts=0, next_attempt_at=0 WHERE destination_id=$other");
+        self::assertSame(1, $this->worker()->sendDue(10, 5, $now + 20)['withheld']);
+        self::assertCount(2, $this->bodies);
+    }
+
     public function testARefusalFailsAtOnceAndAHostThatDoesNotAnswerIsSkippedForTheRun(): void
     {
         $id = $this->destination();
