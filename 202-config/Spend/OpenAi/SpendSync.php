@@ -151,7 +151,7 @@ final class SpendSync
     /**
      * Pull one connection now, whatever its schedule, and record the run.
      *
-     * @return array{rows: int, from: int, to: int, error: ?string, note: ?string}
+     * @return array{rows: int, from: int, to: int, error: ?string, note: ?string, refused: bool, rate_limited: bool}
      */
     public function run(SpendConnection $connection): array
     {
@@ -165,6 +165,7 @@ final class SpendSync
         $error = null;
         $note = null;
         $rateLimited = false;
+        $refused = false;
         try {
             $rows = $this->pull($connection, $ledger, $from, $now, $note);
             $more = $this->pullConversions($connection, $from, $now);
@@ -177,10 +178,12 @@ final class SpendSync
         } catch (SpendSyncRefused | \Prosper202\Spend\SpendLedgerRefused $e) {
             // A refused page wrote nothing; the pages before it stand.
             $error = $e->getMessage();
+            $refused = true;
         }
         $this->record($connection, $now, $rows, $error, $note, $rateLimited, $backfill && $error === null, (int) ($state['rate_limited'] ?? 0));
 
-        return ['rows' => $rows, 'from' => $from, 'to' => $now, 'error' => $error, 'note' => $note];
+        return ['rows' => $rows, 'from' => $from, 'to' => $now, 'error' => $error, 'note' => $note,
+            'refused' => $refused, 'rate_limited' => $rateLimited];
     }
 
     /**
