@@ -265,6 +265,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 		$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
 		$add_success = true;
 
+        // A campaign paid in another currency: the rate its postbacks'
+        // amounts are converted with is kept now, not at the cron job's next
+        // run (ExchangeRateCache). The campaign is saved either way.
+        if ($campaignStored['currency'] !== $accountCurrency) {
+            \Prosper202\Conversion\Ledger\ExchangeRateCache::refreshQuietly(
+                new \Prosper202\Database\Connection($db),
+                static fn (string $from, string $to, string $amount): ?string => \Prosper202\User\ExchangeRates::convert($from, $to, $amount, 10),
+                (int) $_SESSION['user_id']
+            );
+        }
+
         // A campaign moved to another category: its clicks' report rows keep
         // the category they were rolled up under until they are rolled up
         // again, so they are queued for the cron job (RollupRefresh). The

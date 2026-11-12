@@ -59,14 +59,13 @@ Everything the visitor or the visitor's browser wrote — keyword, URLs, locatio
 
 ### Ad click ids
 
-Direct links (`dl.php`) and simple and advanced landing pages record the seven
-click ids from the link's query (the landing page script sends them on from
-the page's URL); the redirector (`rtr.php`) records none, as it records no
-UTM values. Each is stored as sent, a byte that is not UTF-8 as `?`, and cut
+Direct links (`dl.php`), redirector links (`rtr.php`, from 1.9.80; a re-click
+keeps its first visit's) and simple and advanced landing pages record the
+seven click ids from the link's query (the landing page script sends them on
+from the page's URL). Each is stored as sent, a byte that is not UTF-8 as `?`, and cut
 to its column: 150 characters for `gclid`, `gbraid`, `wbraid` and `msclkid`,
 1,000 for `ttclid` (real ones run to about 340), `fbclid` (about 200) and
-`oppref` (OpenAI documents no length). One
-sent as a list (`?gbraid[]=x`) is none. `gbraid`, `wbraid`, `ttclid`,
+`oppref` (OpenAI documents no length). One sent as a list (`?gbraid[]=x`) is none. `gbraid`, `wbraid`, `ttclid`,
 `msclkid` and `fbclid` are recorded from 1.9.79: a click recorded before that
 has none of them (no version since at least 1.9.55 kept a click's msclkid
 or fbclid, although each had tables and tokens for them), and one recorded on
@@ -204,6 +203,7 @@ Each row (`data[]`) carries:
 | `source_ref`, `linked_to` | what that is, resolved: a goal and its version (`Goal "Level 3" v2`), a revenue upload and its file, the conversion a reversal nets, or the API key that wrote the row (named by when it was created — the reference is a digest, never the key) |
 | `match_method`, `match_method_label` | how the row's click was found: `click_id` (the request named it), `ad_click_id` (a global postback sent back an ad click id a click carries), `cookie`, `visitor_id` (the landing-page script's visitor id), `same_ip` (a guess from the visitor's address) or `unknown` (recorded before 1.9.79); see [Conversions](10-conversions.md#how-each-conversions-click-was-found) |
 | `event_name`, `transaction_id`, `reverses_conv_id` | the event that reached a goal, the network's id, and the sale a reversal reverses |
+| `currency`, `stated_amount`, `stated_currency` | the currency `amount` is in, as the row recorded it (`null` when none was recorded), and what a postback or pixel sent when `amount` is that converted into the account's currency; see [Currencies](../features/conversion-currency.md) |
 
 `click` holds the click's value as the reports show it (`click_payout`,
 `lead`) beside what its counted rows add up to (`ledger_value`), the
@@ -211,7 +211,9 @@ campaign's `payout_mode`, and `matches_click`, which is false only if the
 two disagree. A click that converted before the conversion ledger, and has
 had no conversion since, is `ledger_state: "pre_ledger"`: its value is the
 click's own figure until its next conversion carries it in as a
-`legacy_baseline` row.
+`legacy_baseline` row. `value_currency` is the currency of the rows that
+count when they share one, and `mixed_currencies` is true when they do not:
+the value then adds amounts in more than one currency, unconverted.
 
 A stored row is never a duplicate: a repeat of a conversion is answered as
 one and not recorded. The endpoint needs read scope on both `clicks` and

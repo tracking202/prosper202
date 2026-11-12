@@ -55,7 +55,7 @@ $slack = Slack::forAccount($db, (int) ($_SESSION['user_id'] ?? 0)) ?? false;
 // Account/key settings require the same permission that gates their UI; reject
 // forged requests from users who lack it (the password-change flow is excluded
 // because every user may change their own password).
-$personalSettingsPost = ['add_rest_api_key', 'remove_rest_api_key', 'replace_rest_api_key', 'stop_ai_watcher', 'update_account_currency', 'update_clickserver_api_key', 'change_user_api_key', 'change_user_stats202_app_key', 'update_p202_customer_api_key', 'update_click_filter', 'add_click_filter_entry', 'remove_click_filter_entry', 'update_money_loss_alerts', 'send_test_money_loss_alert'];
+$personalSettingsPost = ['add_rest_api_key', 'remove_rest_api_key', 'replace_rest_api_key', 'stop_ai_watcher', 'update_account_currency', 'record_earlier_currency', 'campaign_currency_notice', 'update_clickserver_api_key', 'change_user_api_key', 'change_user_stats202_app_key', 'update_p202_customer_api_key', 'update_click_filter', 'add_click_filter_entry', 'remove_click_filter_entry', 'update_money_loss_alerts', 'send_test_money_loss_alert'];
 $personalSettingsGet = ['customers_api_key', 'remove_user_stats202_app_key', 'remove_user_api_key', 'test_click_filter'];
 $wantsPersonalSettingsAction = false;
 foreach ($personalSettingsPost as $personalSettingsAction) {
@@ -631,10 +631,106 @@ if (!empty($_POST['update_account_currency']) && $_POST['update_account_currency
 		}
 
 		if ($currencySaved) {
-			p202_account_flash('ok', 'Account currency saved.');
+			$previousCurrency = \Api\V3\Controllers\UsersController::normalizeCurrency($user_row['user_account_currency'] ?? null);
+			if ($previousCurrency !== $postedCurrency) {
+				// The rates the campaigns' postback amounts are converted with, now rather than at the cron job's next run.
+				\Prosper202\Conversion\Ledger\ExchangeRateCache::refreshQuietly(
+					new \Prosper202\Database\Connection($db),
+					static fn (string $from, string $to, string $amount): ?string => \Prosper202\User\ExchangeRates::convert($from, $to, $amount, 10),
+					(int) $_SESSION['user_id']
+				);
+			}
+			p202_account_flash('ok', $previousCurrency === $postedCurrency
+				? 'Account currency saved.'
+				: 'Account currency saved. New conversions are recorded in ' . $postedCurrency . '. The conversions already recorded keep'
+					. ' the currency each was recorded in (' . $previousCurrency . ' until now), unconverted: reports say how much of a period is in each currency.');
 			p202_account_redirect('202-account/account.php#currency');
 		}
 		$pageFlashes[] = ['kind' => 'bad', 'text' => 'The account currency could not be saved, and no campaign was re-priced; try again.'];
+	}
+}
+
+// Conversions recorded before 1.9.80 kept no currency of their own: the upgrade
+// labelled them with the account's currency then, or left them unrecorded when
+// it could not tell (RowCurrency). The owner says which currency those before a
+// date were in; a conversion recorded with its currency is never changed.
+if (!empty($_POST['record_earlier_currency']) && $_POST['record_earlier_currency'] == '1') {
+	if (!AUTH::check_csrf_token()) {
+		p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
+		p202_account_redirect('202-account/account.php#currency');
+	}
+	$earlierCurrency = (string) ($_POST['earlier_currency'] ?? '');
+	$earlierZone = new DateTimeZone(\Prosper202\Report\AccountZone::normalize((string) ($user_row['user_timezone'] ?? '')));
+	// A day's midnight in the account's zone (CLAUDE.md #26).
+	$earlierDay = static function (string $field) use ($earlierZone): ?int {
+		$day = trim((string) ($_POST[$field] ?? ''));
+		$at = preg_match('/\A\d{4}-\d{2}-\d{2}\z/', $day) === 1 ? DateTimeImmutable::createFromFormat('!Y-m-d', $day, $earlierZone) : false;
+		return $at !== false && $at->format('Y-m-d') === $day ? $at->getTimestamp() : null;
+	};
+	$earlierBefore = $earlierDay('earlier_before');
+	$earlierSinceGiven = trim((string) ($_POST['earlier_since'] ?? '')) !== '';
+	$earlierSince = $earlierSinceGiven ? $earlierDay('earlier_since') : null;
+	if (!in_array($earlierCurrency, \Api\V3\Controllers\UsersController::SUPPORTED_CURRENCIES, true)) {
+		$keyErrors['earlier_currency'] = 'Choose a currency from the list.';
+	}
+	if ($earlierBefore === null) {
+		$keyErrors['earlier_before'] = 'Enter the date of the change, as YYYY-MM-DD.';
+	}
+	if ($earlierSinceGiven && $earlierSince === null) {
+		$keyErrors['earlier_since'] = 'Enter a date as YYYY-MM-DD, or leave it empty.';
+	} elseif ($earlierSince !== null && $earlierBefore !== null && $earlierSince >= $earlierBefore) {
+		$keyErrors['earlier_since'] = 'This date must be before the date of the change.';
+	}
+	if (!isset($keyErrors['earlier_currency']) && !isset($keyErrors['earlier_before']) && !isset($keyErrors['earlier_since'])) {
+		try {
+			$recorded = \Prosper202\Conversion\Ledger\RowCurrency::recordBefore(
+				new \Prosper202\Database\Connection($db), (int) $_SESSION['user_id'], $earlierCurrency, $earlierBefore, $earlierSince
+			);
+			// What was held back from the ad platforms for want of a currency goes out at the worker's next run.
+			(new \Prosper202\Destinations\DestinationQueue(new \Prosper202\Database\Connection($db)))
+				->releaseHeldForCurrency((int) $_SESSION['user_id'], time());
+			p202_account_flash($recorded['left'] === 0 ? 'ok' : 'warn', ($recorded['stamped'] === 0
+				? 'No conversion changed: every one in that range was already recorded in ' . $earlierCurrency . ', or was recorded with its own currency.'
+				: number_format($recorded['stamped']) . ' earlier conversion' . ($recorded['stamped'] === 1 ? ' is' : 's are')
+					. ' now recorded in ' . $earlierCurrency . '.')
+				. ($recorded['left'] > 0 ? ' ' . number_format($recorded['left']) . ' are still to do: save again to continue.' : ''));
+			p202_account_redirect('202-account/account.php#currency');
+		} catch (Throwable $failed) {
+			error_log('account.php: the earlier conversions were not given a currency: ' . $failed->getMessage());
+			$pageFlashes[] = ['kind' => 'bad', 'text' => 'The earlier conversions could not be updated; try again.'];
+		}
+	}
+}
+
+// The campaigns the 1.9.80 upgrade found paid in another currency, whose
+// postback amounts are converted from it since (User\CampaignCurrencyNotice):
+// switched to the account's currency, or kept, on the owner's word.
+if (isset($_POST['campaign_currency_notice'])) {
+	if (!AUTH::check_csrf_token()) {
+		p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
+		p202_account_redirect('202-account/account.php#currency');
+	}
+	$noticeAnswer = (string) $_POST['campaign_currency_notice'];
+	if ($noticeAnswer !== 'switch' && $noticeAnswer !== 'keep') {
+		$pageFlashes[] = ['kind' => 'bad', 'text' => 'Choose whether to switch those campaigns to your account\'s currency or keep them as they are.'];
+	} else {
+		try {
+			$noticeConn = new \Prosper202\Database\Connection($db);
+			$noticeAccount = \Api\V3\Controllers\UsersController::normalizeCurrency($user_row['user_account_currency'] ?? null);
+			if ($noticeAnswer === 'switch') {
+				$switched = \Prosper202\User\CampaignCurrencyNotice::switchToAccount($noticeConn, (int) $_SESSION['user_id'], $noticeAccount);
+				p202_account_flash('ok', number_format($switched) . ' campaign' . ($switched === 1 ? ' is' : 's are') . ' now paid in '
+					. $noticeAccount . ': their postback amounts are recorded as sent, and their payouts stay as shown.');
+			} else {
+				\Prosper202\User\CampaignCurrencyNotice::keep($noticeConn, (int) $_SESSION['user_id']);
+				p202_account_flash('ok', 'Those campaigns keep their currency: their postback amounts are converted into '
+					. $noticeAccount . '. Change one under Setup › Campaigns at any time.');
+			}
+			p202_account_redirect('202-account/account.php#currency');
+		} catch (Throwable $failed) {
+			error_log('account.php: the campaign currency notice was not answered: ' . $failed->getMessage());
+			$pageFlashes[] = ['kind' => 'bad', 'text' => 'Those campaigns could not be updated; nothing was changed. Try again.'];
+		}
 	}
 }
 
@@ -980,6 +1076,22 @@ $keyScope = static function (mixed $raw): array {
 
 $currencyValue = (string)($_POST['account_currency'] ?? ($user_row['user_account_currency'] ?? 'USD'));
 $sel = static fn (string $code): string => $currencyValue === $code ? ' selected' : '';
+// Ledger rows the upgrade could give no currency (RowCurrency), and the
+// account's recorded changes of currency: the Currency panel shows both.
+$unrecordedConversions = $canPersonal
+	? \Prosper202\Conversion\Ledger\RowCurrency::unrecorded(new \Prosper202\Database\Connection($db), (int) $_SESSION['user_id'])
+	: 0;
+$currencyChanges = $canPersonal
+	? \Prosper202\User\CurrencyChange::history(new \Prosper202\Database\Connection($db), (int) $_SESSION['user_id'])
+	: [];
+$campaignCurrencyNotice = $canPersonal
+	? \Prosper202\User\CampaignCurrencyNotice::listed(
+		new \Prosper202\Database\Connection($db),
+		(int) $_SESSION['user_id'],
+		(string) ($user_row['user_account_currency'] ?? '')
+	)
+	: ['campaigns' => [], 'more' => 0];
+$currencyChangeZone = new DateTimeZone(\Prosper202\Report\AccountZone::normalize((string) ($user_row['user_timezone'] ?? '')));
 $currentTimezone = $profileValue('user_timezone', 'user_timezone');
 // The select offers PHP's list, which leaves out the backward-compatible
 // names a renamed zone keeps (Europe/Kiev, Europe/Kyiv since 2022). An
@@ -1222,7 +1334,7 @@ echo p202_account_render_flashes($extraFlashes);
 			<section class="p202-panel mt-4" id="currency">
 				<div class="p202-panel__head">
 					<h2 class="p202-panel__title">Account currency</h2>
-					<span class="p202-panel__sub">the currency every amount is shown in</span>
+					<span class="p202-panel__sub">the currency new conversions are recorded in and totals are shown in</span>
 				</div>
 				<div class="p202-panel__body">
 					<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php#currency'); ?>">
@@ -1261,8 +1373,71 @@ echo p202_account_render_flashes($extraFlashes);
 							</select>
 							<button class="btn btn-secondary" type="submit">Save currency</button>
 						</div>
-						<div class="form-text">Changing it converts your campaign payouts to the new currency (a paid feature).</div>
+						<div class="form-text">Changing it converts your campaign payouts to the new currency (a paid feature). Conversions already recorded are not converted: each keeps the currency it was recorded in, new ones are recorded in the new currency, and reports say how much of a period is in each.</div>
 						<?php echo p202_account_field_error($keyErrors, 'account_currency'); ?>
+					</form>
+					<?php if ($campaignCurrencyNotice['campaigns'] !== []) {
+						$noticeShown = $campaignCurrencyNotice['campaigns'];
+						$noticeCount = count($noticeShown) + $campaignCurrencyNotice['more'];
+						$noticeAccount = \Api\V3\Controllers\UsersController::normalizeCurrency($user_row['user_account_currency'] ?? null); ?>
+					<div class="alert alert-warning p202-flash mt-3" role="status" id="campaign-currency-notice"><i class="bi bi-exclamation-triangle"></i><div class="p202-flash__body">
+						<p class="mb-2"><strong><?php echo $e(number_format($noticeCount)); ?> campaign<?php echo $noticeCount === 1 ? ' is' : 's are'; ?> paid in another currency than your account's.</strong>
+							A postback amount on <?php echo $noticeCount === 1 ? 'it' : 'them'; ?> is converted from that currency into <?php echo $e($noticeAccount); ?>, as paid 1.9.56 did (1.9.57 to 1.9.79 recorded it as sent).
+							If a change of your account's currency left <?php echo $noticeCount === 1 ? 'it' : 'them'; ?> so and the network<?php echo $noticeCount === 1 ? ' reports' : 's report'; ?> in <?php echo $e($noticeAccount); ?> now, switch <?php echo $noticeCount === 1 ? 'it' : 'them'; ?>.</p>
+						<p class="mb-2"><?php echo $e(implode(', ', array_map(static fn (array $c): string => $c['name'] . ' (' . $c['currency'] . ')', $noticeShown))
+							. ($campaignCurrencyNotice['more'] > 0 ? ', and ' . number_format($campaignCurrencyNotice['more']) . ' more' : '') . '.'); ?></p>
+						<form method="post" class="d-inline" action="<?php echo $e(get_absolute_url() . '202-account/account.php#currency'); ?>">
+							<?php echo p202_account_token_field(); ?>
+							<input type="hidden" name="campaign_currency_notice" value="switch">
+							<button class="btn btn-primary btn-sm" type="submit">Their networks report in <?php echo $e($noticeAccount); ?>: switch <?php echo $noticeCount === 1 ? 'it' : 'them'; ?></button>
+						</form>
+						<form method="post" class="d-inline ms-2" action="<?php echo $e(get_absolute_url() . '202-account/account.php#currency'); ?>">
+							<?php echo p202_account_token_field(); ?>
+							<input type="hidden" name="campaign_currency_notice" value="keep">
+							<button class="btn btn-outline-secondary btn-sm" type="submit">Keep converting</button>
+						</form>
+					</div></div>
+					<?php } ?>
+					<?php if ($currencyChanges !== []) { ?>
+					<div class="form-text mt-3">Changes of currency:
+						<?php echo implode('; ', array_map(
+							static fn (array $c): string => $e((new DateTimeImmutable('@' . $c['changed_at']))->setTimezone($currencyChangeZone)->format('Y-m-d')
+								. ' from ' . $c['from'] . ' to ' . $c['to']),
+							$currencyChanges
+						)); ?>.
+					</div>
+					<?php } ?>
+					<form method="post" class="mt-3" action="<?php echo $e(get_absolute_url() . '202-account/account.php#currency'); ?>">
+						<input type="hidden" name="record_earlier_currency" value="1">
+						<?php echo p202_account_token_field(); ?>
+						<span class="form-label d-block" id="earlier_label"><?php echo $unrecordedConversions > 0
+							? $e(number_format($unrecordedConversions)) . ' earlier conversion' . ($unrecordedConversions === 1 ? ' has' : 's have') . ' no currency recorded'
+							: 'Conversions recorded before 1.9.80'; ?></span>
+						<div class="input-group" role="group" aria-labelledby="earlier_label">
+							<span class="input-group-text">Before</span>
+							<input type="date" class="form-control<?php echo p202_account_invalid($keyErrors, 'earlier_before'); ?>" name="earlier_before" id="earlier_before" aria-label="The date of the change" required value="<?php echo $e((string) ($_POST['earlier_before'] ?? '')); ?>">
+							<span class="input-group-text">they were in</span>
+							<select class="form-select<?php echo p202_account_invalid($keyErrors, 'earlier_currency'); ?>" name="earlier_currency" id="earlier_currency" aria-label="Their currency" required>
+								<?php // None is offered as the answer: only the owner knows which it was. ?>
+								<option value="" selected disabled>Choose a currency</option>
+								<?php foreach (\Api\V3\Controllers\UsersController::SUPPORTED_CURRENCIES as $code) {
+									echo '<option value="' . $e($code) . '">' . $e($code) . '</option>';
+								} ?>
+							</select>
+							<button class="btn btn-secondary" type="submit">Record</button>
+						</div>
+						<div class="form-text">Before 1.9.80 a conversion kept no currency of its own. The upgrade labelled each with your account's currency then<?php echo $unrecordedConversions > 0 ? ', and left these without one because it could not tell' : ''; ?>. If you changed your account currency before the upgrade, give the date of the change and the currency you counted in before it. Only those conversions change, with their refunds: one recorded with its own currency, as every conversion has been since the upgrade, keeps it.</div>
+						<?php echo p202_account_field_error($keyErrors, 'earlier_before'); ?>
+						<?php echo p202_account_field_error($keyErrors, 'earlier_currency'); ?>
+						<details class="p202-disclosure mt-2"<?php echo isset($keyErrors['earlier_since']) ? ' open' : ''; ?>>
+							<summary>Advanced <span class="p202-disclosure__hint">changed more than once</span></summary>
+							<div class="p202-disclosure__body">
+								<label class="form-label" for="earlier_since">From</label>
+								<input type="date" class="form-control<?php echo p202_account_invalid($keyErrors, 'earlier_since'); ?>" name="earlier_since" id="earlier_since" value="<?php echo $e((string) ($_POST['earlier_since'] ?? '')); ?>">
+								<div class="form-text">Only the conversions on or after this date. If you changed currency twice, record each period: the first change's date and the currency before it, with this empty; then the second change's date and the currency between the two, with the first change's date here.</div>
+								<?php echo p202_account_field_error($keyErrors, 'earlier_since'); ?>
+							</div>
+						</details>
 					</form>
 				</div>
 			</section>

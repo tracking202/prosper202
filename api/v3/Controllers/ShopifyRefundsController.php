@@ -54,6 +54,7 @@ final class ShopifyRefundsController
                 'amount' => (float) $refund['amount'],
                 'currency' => $refund['currency'] !== '' ? $refund['currency'] : null,
                 'other_currency' => $refund['other_currency'],
+                'amount_currency' => $refund['amount_currency'],
                 'click_ids' => $refund['clicks'],
             ];
         }

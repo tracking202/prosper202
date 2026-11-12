@@ -2790,6 +2790,17 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/MatchMethod"
+                  currency:
+                    type: string
+                    description: The account's currency, which `income` is in unless `other_currencies` lists more.
+                  other_currencies:
+                    type: array
+                    description: >-
+                      Of the conversions the filters select, those the ledger
+                      recorded in another currency than `currency`: `income`
+                      adds their amounts as recorded.
+                    items:
+                      $ref: "#/components/schemas/OtherCurrencyRevenue"
                   masked:
                     type: boolean
         "422":
@@ -3082,8 +3093,14 @@ paths:
                         other_currency:
                           type: boolean
                           description: >-
-                            The refund is stated in another currency than the
-                            account's, so amount is not what to record.
+                            The refund is stated in another currency than
+                            amount_currency, so amount is not what to record.
+                        amount_currency:
+                          type: string
+                          description: >-
+                            The currency a recorded amount is stated in: its
+                            sale's, which is the account's unless the sale was
+                            recorded before the account's currency changed.
                         click_ids:
                           type: array
                           description: >-
@@ -3102,7 +3119,7 @@ paths:
                       never settled by itself.
                   account_currency:
                     type: string
-                    description: The currency the account counts in, which a recorded amount is stated in
+                    description: The currency the account counts in (each refund's amount_currency says what a recorded amount is stated in)
         "403":
           $ref: "#/components/responses/Forbidden"
         "422":
@@ -3117,10 +3134,11 @@ paths:
         what is left of it, and closes the refund, as Record refund does
         under Setup › Inbound Log. It is recorded once under the refund's
         id, so Shopify settling the refund later records nothing more.
-        Nothing converts money: for a refund Shopify states in another
-        currency than the account's (`other_currency`), send the amount
-        converted with `currency` naming the account's, or the answer is a
-        422 on `currency`. Asks for the role's access to the Setup and
+        Nothing converts money: a refund is recorded in its sale's
+        currency (`amount_currency` in the list). For a refund Shopify
+        states in another currency (`other_currency`), send the amount
+        converted with `currency` naming that one, or the answer is a 422
+        on `currency`. Asks for the role's access to the Setup and
         Update sections.
       operationId: recordShopifyRefund
       parameters:
@@ -3142,14 +3160,14 @@ paths:
                 amount:
                   type: number
                   description: >-
-                    What the refund returned, in the account's currency. More
-                    than 0; a decimal string is read too.
+                    What the refund returned, in its sale's currency
+                    (amount_currency). More than 0; a decimal string is read too.
                 currency:
                   type: string
                   description: >-
                     The currency amount is stated in, which must be the
-                    account's (account_currency). Required for a refund
-                    Shopify states in another currency.
+                    refund's amount_currency. Required for a refund Shopify
+                    states in another currency.
                 click_id:
                   type: integer
                   description: >-
@@ -3271,8 +3289,9 @@ paths:
         issues, and is 6 hours to 90 days old, its value is not negative, and
         it has a conversion name (its campaign's, or the account's default,
         set on the Setup page; `conversion_name` names every line instead).
-        The value is the conversion's amount in the account's currency, which
-        is what the ledger records. Lines are newest first; a Microsoft file
+        The value is the conversion's amount in the currency its ledger row
+        recorded, which the line names; a conversion with no currency
+        recorded is left out. Lines are newest first; a Microsoft file
         stops at Microsoft's 100,000 rows. `X-P202-Rows` and `X-P202-Left-Out`
         say how many conversions are in the file and how many were left out;
         `GET /conversions/offline-export/summary` says why. A role without
@@ -3702,6 +3721,19 @@ paths:
                               the account has none set). Servers before 1.9.79
                               do not answer it; a client adding two servers'
                               money adds it only when both state the same one.
+                  other_currencies:
+                    type: array
+                    description: >-
+                      The period's revenue that the ledger recorded in another
+                      currency than `data.currency` (the account's currency was
+                      changed, or an amount was recorded as sent in another).
+                      The summary's money adds these amounts as recorded; empty
+                      when all of it is in `data.currency`. The account's for
+                      the period (by click time), whatever else the report
+                      filters by. Every other report answer carries it too,
+                      beside `currency`.
+                    items:
+                      $ref: "#/components/schemas/OtherCurrencyRevenue"
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -7443,6 +7475,20 @@ paths:
                 properties:
                   data:
                     $ref: "#/components/schemas/UserPreferences"
+                  currency_change:
+                    type: object
+                    description: >-
+                      Present when the request changed user_account_currency:
+                      what the change does to what is already recorded.
+                    properties:
+                      from: {type: string}
+                      to: {type: string}
+                      earlier_conversions:
+                        type: string
+                        description: >-
+                          Conversions already recorded keep the currency they
+                          were recorded in, unconverted; new ones are recorded
+                          in the new currency.
         "403":
           $ref: "#/components/responses/Forbidden"
         "422":
@@ -15626,8 +15672,9 @@ components:
           maxLength: 150
           description: >-
             The Google Ads click id the click arrived with (`?gclid=`), as
-            stored; null when it came with none. Recorded by direct links and
-            landing pages; a redirector click records none of these six.
+            stored; null when it came with none. Recorded by direct links,
+            redirector links (from 1.9.80; a re-click keeps its first visit's)
+            and landing pages.
         gbraid:
           type: string
           nullable: true
@@ -15781,6 +15828,44 @@ components:
         goal_version:
           type: integer
           nullable: true
+        currency:
+          type: string
+          nullable: true
+          example: USD
+          description: >-
+            The currency click_payout is in, as the row recorded it when it was
+            written (from 1.9.80). A later change of the account's currency does
+            not alter it. Null when none was recorded.
+        stated_amount:
+          type: number
+          nullable: true
+          description: >-
+            What a postback or pixel sent, when click_payout is that amount
+            converted into the account's currency (a campaign paid in another
+            currency). Null on every other row.
+        stated_currency:
+          type: string
+          nullable: true
+          description: The currency stated_amount is in; null when stated_amount is.
+
+    OtherCurrencyRevenue:
+      type: object
+      description: >-
+        Revenue the ledger recorded in a currency other than the account's.
+        A total beside it adds these amounts as recorded; nothing converts them.
+      properties:
+        currency:
+          type: string
+          nullable: true
+          description: The currency the rows recorded; null for rows that recorded none.
+        conversions:
+          type: integer
+          nullable: true
+          description: Conversions that count, reversals not counted. Null for a role that is not shown campaign figures.
+        amount:
+          type: number
+          nullable: true
+          description: What those rows add up to, reversals netted. Null for a role that is not shown campaign figures.
 
     ConversionSource:
       type: string
@@ -15849,7 +15934,11 @@ components:
           description: The zone the file's times are written in (UTC for microsoft).
         currency:
           type: string
-          description: The account's currency, every value's.
+          description: >-
+            The account's currency now. Each line of the file carries the
+            currency its own conversion recorded, which is this one unless the
+            account's currency was changed since or an amount was recorded in
+            another.
         conversions:
           type: integer
           description: Conversions in the window, reversals not counted.
@@ -15871,6 +15960,7 @@ components:
             not_accounts_click: {type: integer}
             click_too_recent: {type: integer}
             negative_value: {type: integer}
+            no_currency: {type: integer}
             no_conversion_name: {type: integer}
             over_row_limit: {type: integer}
         left_out_total:
@@ -15893,6 +15983,17 @@ components:
           type: number
           description: The row's amount, exact to five decimals (negative for a reversal).
           example: 5
+        currency:
+          type: string
+          nullable: true
+          description: The currency the amount is in, as the row recorded it; null when none was recorded.
+        stated_amount:
+          type: number
+          nullable: true
+          description: What a postback or pixel sent, when amount is that converted into the account's currency.
+        stated_currency:
+          type: string
+          nullable: true
         payable:
           type: boolean
         deleted:
@@ -15993,6 +16094,13 @@ components:
             matches_click:
               type: boolean
               description: Whether the reports' value is what the counted rows add up to.
+            value_currency:
+              type: string
+              nullable: true
+              description: The currency of the rows that count, when they share one; null when they do not, none was recorded, or no row counts.
+            mixed_currencies:
+              type: boolean
+              description: True when the counted rows are in more than one currency, so the value adds amounts nothing converted.
             rows:
               type: integer
             counted_rows:

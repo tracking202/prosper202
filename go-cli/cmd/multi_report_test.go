@@ -747,3 +747,50 @@ func TestSummaryTotalFollowsTheServersSQL(t *testing.T) {
 		}
 	}
 }
+
+// A table says, under an answer whose money is not all in one currency, how
+// much of the period is in each other one; any other answer says nothing.
+func TestOtherCurrenciesNote(t *testing.T) {
+	summary := `{"data":{"total_income":40.0,"currency":"EUR"},"other_currencies":[{"currency":"USD","conversions":3,"amount":37.5},{"currency":null,"conversions":1,"amount":4}]}`
+	note := otherCurrenciesNote([]byte(summary))
+	for _, want := range []string{"not all revenue in this period is in EUR", "USD 37.5 (3 conversions)", "4 with no currency recorded (1 conversions)", "nothing converts them"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("note %q does not say %q", note, want)
+		}
+	}
+	breakdown := `{"data":[],"currency":"GBP","other_currencies":[{"currency":"USD","conversions":1,"amount":5}]}`
+	if note := otherCurrenciesNote([]byte(breakdown)); !strings.Contains(note, "is in GBP") {
+		t.Errorf("a list answer states its currency beside data, got %q", note)
+	}
+	for _, none := range []string{`{"data":{"currency":"EUR"},"other_currencies":[]}`, `{"data":[]}`, `not json`} {
+		if note := otherCurrenciesNote([]byte(none)); note != "" {
+			t.Errorf("%s: want no note, got %q", none, note)
+		}
+	}
+}
+
+// A profile whose own revenue is in more than one currency (the server
+// lists the others beside its summary) has its money added to no other's,
+// though both state the same account currency.
+func TestSummaryTotalNeverAddsAProfileWhoseOwnMoneyIsMixed(t *testing.T) {
+	usd := `{"data":{"total_clicks":10,"total_click_throughs":10,"total_leads":1,"total_income":30.0,"total_cost":10.0,"total_net":20.0,"epc":3.0,"avg_cpc":1.0,"conv_rate":10.0,"roi":200.0,"cpa":10.0,"currency":"USD"}`
+	summaryServers(t, map[string]string{
+		"prod": usd + `}`,
+		"shop": usd + `,"other_currencies":[{"currency":"EUR","conversions":2,"amount":14.5}]}`,
+	})
+	got, _ := runMultiSummary(t, "report", "summary", "--all-profiles", "--json")
+	for _, field := range []string{"total_income", "total_cost", "total_net", "epc", "roi"} {
+		if _, ok := got.Aggregated[field]; ok {
+			t.Errorf("TOTAL has %s = %v though shop's money is in two currencies", field, got.Aggregated[field])
+		}
+	}
+	if _, ok := got.Aggregated["currency"]; ok {
+		t.Errorf("the TOTAL states a currency: %v", got.Aggregated["currency"])
+	}
+	if got.Aggregated["total_clicks"] != 20.0 {
+		t.Errorf("counts are still totalled, got %v", got.Aggregated)
+	}
+	if len(got.Meta.Warnings) != 1 || !strings.Contains(got.Meta.Warnings[0], "shop") || !strings.Contains(got.Meta.Warnings[0], "more than one currency") {
+		t.Errorf("want one warning naming shop and why, got %v", got.Meta.Warnings)
+	}
+}

@@ -62,7 +62,11 @@ $backfillEvent = function (array $row, int $customerId) use ($conn, $customers):
     $deleted = (int) $row['deleted'] === 1;
 
     return $conn->transaction(function () use ($conn, $customers, $row, $customerId, $userId, $convId, $convTime, $payout, $deleted): bool {
-        $currency = $customers->accountCurrency($userId);
+        // The currency the conversion's row recorded; the account's for a row with none.
+        $currency = \Prosper202\Conversion\Ledger\RowCurrency::read($row['currency'] ?? null);
+        if ($currency === \Prosper202\Conversion\Ledger\RowCurrency::UNKNOWN) {
+            $currency = $customers->accountCurrency($userId);
+        }
         // Mirror live ingest: a negative historical payout is a correction
         // and must not import as an order — recording it as a 'purchase'
         // would inflate order_count while draining revenue, and a later
@@ -127,7 +131,7 @@ try {
         while (true) {
             // Keyset pagination on conv_id; only conversions whose click has a
             // non-empty cN value can be linked.
-            $sql = "SELECT cl.conv_id, cl.click_id, cl.user_id, cl.conv_time, cl.click_payout,
+            $sql = "SELECT cl.conv_id, cl.click_id, cl.user_id, cl.conv_time, cl.click_payout, cl.currency,
                            cl.transaction_id, cl.deleted, t.{$column} AS ref
                     FROM 202_conversion_logs cl
                     JOIN 202_clicks_tracking ct ON ct.click_id = cl.click_id
@@ -199,7 +203,7 @@ try {
     $userWhere2 = $onlyUser > 0 ? "AND cl.user_id = {$onlyUser}" : '';
     $lastConvId = 0;
     while (true) {
-        $sql = "SELECT cl.conv_id, cl.click_id, cl.user_id, cl.conv_time, cl.click_payout,
+        $sql = "SELECT cl.conv_id, cl.click_id, cl.user_id, cl.conv_time, cl.click_payout, cl.currency,
                        cl.transaction_id, cl.deleted, cl.customer_id
                 FROM 202_conversion_logs cl
                 LEFT JOIN 202_revenue_events re ON re.conv_id = cl.conv_id

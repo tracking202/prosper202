@@ -49,6 +49,12 @@ const summaryMoneyScale = 5
 // is in (from 1.9.79; older servers do not say).
 const summaryCurrencyField = "currency"
 
+// summaryOtherCurrenciesField is the summary's list of the period's revenue
+// its ledger recorded in another currency than the account's. A profile
+// with any holds amounts in more than one currency, so its money is added
+// to no other's.
+const summaryOtherCurrenciesField = "other_currencies"
+
 var (
 	summaryDecimal  = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]{1,3})?$`)
 	summaryCurrency = regexp.MustCompile(`^[A-Z]{3}$`)
@@ -217,7 +223,11 @@ func totalSummaries(rows map[string]map[string]interface{}) (summaryTotal, error
 	out := summaryTotal{row: map[string]interface{}{}, notTotalled: map[string]string{}, currencies: map[string]interface{}{}}
 	stated := map[string]bool{}
 	unstated := false
+	var mixed []string
 	for _, name := range names {
+		if others, ok := rows[name][summaryOtherCurrenciesField].([]interface{}); ok && len(others) > 0 {
+			mixed = append(mixed, name)
+		}
 		c := profileCurrency(rows[name])
 		if c == "" {
 			out.currencies[name] = nil
@@ -228,7 +238,7 @@ func totalSummaries(rows map[string]map[string]interface{}) (summaryTotal, error
 		stated[c] = true
 	}
 	// One profile adds nothing to anything, whatever it states.
-	oneCurrency := len(names) == 1 || (!unstated && len(stated) == 1)
+	oneCurrency := len(names) == 1 || (!unstated && len(stated) == 1 && len(mixed) == 0)
 	if oneCurrency && len(stated) == 1 {
 		for c := range stated {
 			out.row[summaryCurrencyField] = c
@@ -245,6 +255,9 @@ func totalSummaries(rows map[string]map[string]interface{}) (summaryTotal, error
 			}
 		}
 		currencyReason = fmt.Sprintf("the profiles' money is in different currencies (%s), and amounts in different currencies are not added", strings.Join(parts, ", "))
+		if len(mixed) > 0 && !unstated && len(stated) == 1 {
+			currencyReason = fmt.Sprintf("the money of %s is in more than one currency (its other_currencies lists them: `p202 report summary --profile <name>`), and amounts in different currencies are not added", strings.Join(mixed, ", "))
+		}
 		if unstated {
 			currencyReason = fmt.Sprintf("the profiles' money is not known to be in one currency (%s), and amounts in different currencies are not added; "+
 				"a server before 1.9.79 does not state its currency, so upgrade it to total its money", strings.Join(parts, ", "))
@@ -346,7 +359,7 @@ func totalSummaries(rows map[string]map[string]interface{}) (summaryTotal, error
 		out.row[ratio.field] = f
 	}
 
-	known := map[string]bool{summaryCurrencyField: true, "profile": true}
+	known := map[string]bool{summaryCurrencyField: true, summaryOtherCurrenciesField: true, "profile": true}
 	for _, f := range append(append([]string{}, summaryCounts...), summaryMoney...) {
 		known[f] = true
 	}

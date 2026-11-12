@@ -252,6 +252,7 @@ if (is_numeric($mysql['click_id'])) {
 			? $conversionResult['transaction_id']
 			: $conversionResult['dedupe_key'];
 		$tokens['payout'] = $conversionResult['payout'];
+		$tokens['row_currency'] = $conversionResult['currency'];
 		$tokens = \Prosper202\Conversion\TrafficSourcePixels::withConversionEventId(
 			new \Prosper202\Database\Connection($db),
 			$tokens,

@@ -63,6 +63,12 @@ $reportView = p202_report_view_begin(array_keys(p202_overview_groupings()));
 	ReportBasicForm::echoRow();
 	ReportBasicForm::echoCell($summary_form->getRanOn());
 	ReportBasicForm::echoRow();
+	// The file is read without its page: it says which currency its money is
+	// in, and what else the period holds that its figures add as recorded.
+	$money = \Prosper202\Conversion\Ledger\RevenueCurrencies::forExport($db, \Prosper202\DataEngine\DataScope::userId() ?? 0, (int) $time['from'], (int) $time['to']);
+	ReportBasicForm::echoCell('Currency: ' . $money['currency']
+		. ($money['others'] === '' ? '' : '. Other currencies in this period, added as recorded and not converted: ' . $money['others']));
+	ReportBasicForm::echoRow();
 	ReportBasicForm::echoRow();
 
 	if (count($summary_form->getReportData()->getChildArrayBySort()) > 0) {

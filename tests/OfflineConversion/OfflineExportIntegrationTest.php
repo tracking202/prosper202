@@ -127,7 +127,7 @@ final class OfflineExportIntegrationTest extends TestCase
     private function campaign(int $id, string $mode = 'replace', int $user = self::USER): void
     {
         self::fixture("INSERT INTO 202_aff_campaigns SET aff_campaign_id=$id, user_id=$user, aff_network_id=1, aff_campaign_name='Camp $id',
-            aff_campaign_url='http://x', aff_campaign_payout=10, aff_campaign_time=1, aff_campaign_foreign_payout=10, payout_mode='$mode'");
+            aff_campaign_url='http://x', aff_campaign_payout=10, aff_campaign_time=1, aff_campaign_foreign_payout=0, payout_mode='$mode'");
     }
 
     /** @param array<string, string> $ids 202_google's columns */
@@ -175,6 +175,35 @@ final class OfflineExportIntegrationTest extends TestCase
             ConversionNames::GOOGLE => [0 => 'Sale', 8 => 'Accumulated, "8"'],
             ConversionNames::MICROSOFT => [8 => 'MS Sale'],
         ], $this->now);
+    }
+
+    /**
+     * A line names the currency its conversion recorded, whatever the
+     * account counts in now, and a conversion with none recorded is left
+     * out, never sent under the account's.
+     */
+    public function testALineNamesTheCurrencyItsConversionRecorded(): void
+    {
+        $this->click(100, 7, ['gclid' => 'EAIaIQ_100']);
+        $this->click(101, 7, ['gclid' => 'EAIaIQ_101']);
+        $this->click(102, 7, ['gclid' => 'EAIaIQ_102']);
+        $this->names();
+        $before = $this->record(100, MatchMethod::CLICK_ID, ['payout' => '12.50', 'conv_time' => $this->now - 86400]);
+        self::fixture("UPDATE 202_users_pref SET user_account_currency='GBP' WHERE user_id=" . self::USER);
+        $after = $this->record(101, MatchMethod::CLICK_ID, ['payout' => '8', 'conv_time' => $this->now - 86399]);
+        $unrecorded = $this->record(102, MatchMethod::CLICK_ID, ['payout' => '5', 'conv_time' => $this->now - 86398]);
+        self::fixture("UPDATE 202_conversion_logs SET currency='' WHERE conv_id=$unrecorded");
+
+        [$lines, $summary] = $this->file(new ExportOptions(Format::GOOGLE, 30, $this->now));
+
+        $currencies = [];
+        foreach (array_slice($lines, 1) as $line) {
+            $cells = explode(',', $line);
+            $currencies[$cells[7]] = $cells[6];
+        }
+        self::assertSame(['P202-' . $after => 'GBP', 'P202-' . $before => 'EUR'], $currencies);
+        self::assertSame(1, $summary->leftOut['no_currency']);
+        self::assertSame('GBP', $summary->currency, 'the summary states the account\'s currency now');
     }
 
     /** Every shape a conversion takes, and each line the files send or the reason they leave it out. */
@@ -236,8 +265,8 @@ final class OfflineExportIntegrationTest extends TestCase
         self::assertSame([
             'not_counted' => 3, 'visitor_id' => 1, 'same_ip' => 1, 'match_unknown' => 0, 'no_click_id' => 1,
             'gbraid_wbraid_only' => 0, 'malformed_click_id' => 1, 'click_too_old' => 1, 'before_click' => 0,
-            'not_accounts_click' => 1, 'click_too_recent' => 1, 'negative_value' => 0, 'no_conversion_name' => 0,
-            'over_row_limit' => 0,
+            'not_accounts_click' => 1, 'click_too_recent' => 1, 'negative_value' => 0, 'no_currency' => 0,
+            'no_conversion_name' => 0, 'over_row_limit' => 0,
         ], $summary->leftOut);
         self::assertSame(['EUR', 'America/New_York'], [$summary->currency, $summary->zone]);
 
@@ -455,9 +484,9 @@ final class OfflineExportIntegrationTest extends TestCase
         self::fixture("INSERT INTO 202_google (click_id, gclid, msclkid, utm_source_id, utm_medium_id, utm_campaign_id, utm_term_id, utm_content_id)"
             . " SELECT n + 1, '', LPAD(HEX(n + 1), 32, '0'), 0, 0, 0, 0, 0 FROM p202_seq");
         self::fixture('INSERT INTO 202_conversion_logs (click_id, campaign_id, click_payout, user_id, click_time, conv_time,'
-            . ' time_difference, ip, pixel_type, user_agent, deleted, source, payable, dedupe_key, match_method)'
+            . ' time_difference, ip, pixel_type, user_agent, deleted, source, payable, dedupe_key, match_method, currency)'
             . ' SELECT n + 1, 7, 1.5, ' . self::USER . ", $clickTime, " . ($this->now - 200000) . " + n, '', '', 0, '', 0, 'api', 1,"
-            . " CONCAT('row:', n), 'click_id' FROM p202_seq");
+            . " CONCAT('row:', n), 'click_id', 'EUR' FROM p202_seq");
         (new ConversionNames(new Connection(self::$db)))->save(self::USER, [ConversionNames::MICROSOFT => [0 => 'MS']], $this->now);
 
         $before = memory_get_usage();
