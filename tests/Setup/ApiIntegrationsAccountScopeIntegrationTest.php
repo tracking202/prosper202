@@ -615,6 +615,63 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
         }
     }
 
+    /**
+     * The postback card's "who would be refused" notes link Setup › Inbound
+     * Log only for a role that opens it: a role with API Integrations and no
+     * Setup would land on the page that shows it the Shopify refunds alone.
+     * 51 senders that came without the token, each its own campaign, so the
+     * card both says they are refused and that more are not listed.
+     */
+    public function testTheReadinessNotesLinkTheLogOnlyForASetupRole(): void
+    {
+        self::requireScratch();
+        $campaigns = [];
+        $now = time();
+        try {
+            self::q('INSERT INTO 202_postback_auth SET user_id = ' . self::USER
+                . ", auth_mode = 'token', updated_at = $now ON DUPLICATE KEY UPDATE auth_mode = 'token'");
+            for ($i = 0; $i <= \Prosper202\Conversion\PostbackAuth\PostbackAuthReadiness::MAX_SENDERS; $i++) {
+                $public = 99008700 + $i;
+                $campaigns[] = self::insert('INSERT INTO 202_aff_campaigns SET user_id = ' . self::USER
+                    . ", aff_network_id = 0, aff_campaign_name = 'Demo store offer $i'"
+                    . ", aff_campaign_url = 'https://shop.example.com/', aff_campaign_payout = 0, aff_campaign_time = 1"
+                    . ", aff_campaign_foreign_payout = 0, aff_campaign_id_public = $public");
+                self::q('INSERT INTO 202_inbound_log SET user_id = ' . self::USER
+                    . ", received_at = $now, endpoint = 'pb',"
+                    . " method = 'GET', http_status = 403, outcome = 'unauthenticated', auth = 'none',"
+                    . ' fields = ' . self::str((string) json_encode(['acip' => (string) $public])));
+            }
+
+            $integrationsOnly = self::page(self::PAGE);
+            self::assertStringContainsString('data-postback-ready="no"', $integrationsOnly, 'sanity: refused');
+            $more = 'more with fewer requests are not listed';
+            self::assertStringContainsString($more, $integrationsOnly, 'sanity: more than are listed');
+            self::assertStringNotContainsString('inbound_log.php?outcome=unauthenticated', $integrationsOnly);
+            self::assertStringNotContainsString('setup/inbound_log.php"', $integrationsOnly);
+
+            $grant = "permission_description = 'access_to_setup_section'";
+            $found = self::$db->query("SELECT permission_id FROM 202_permissions WHERE $grant");
+            $setup = $found instanceof \mysqli_result ? ($found->fetch_row()[0] ?? null) : null;
+            if ($setup === null) {
+                $setup = self::insert("INSERT INTO 202_permissions SET $grant");
+                self::$addedPermissions[] = $setup;
+            }
+            self::row('202_role_permission', ['role_id' => self::ROLE, 'permission_id' => (int) $setup]);
+            $withSetup = self::page(self::PAGE);
+            self::assertStringContainsString('inbound_log.php?outcome=unauthenticated', $withSetup);
+            self::assertStringContainsString('setup/inbound_log.php">Inbound Log</a> has every request', $withSetup);
+        } finally {
+            self::q('DELETE FROM 202_role_permission WHERE role_id = ' . self::ROLE . ' AND permission_id IN'
+                . ' (SELECT permission_id FROM 202_permissions'
+                . " WHERE permission_description = 'access_to_setup_section')");
+            self::q('DELETE FROM 202_inbound_log WHERE user_id = ' . self::USER);
+            self::q('DELETE FROM 202_postback_auth WHERE user_id = ' . self::USER);
+            if ($campaigns !== []) {
+                self::q('DELETE FROM 202_aff_campaigns WHERE aff_campaign_id IN (' . implode(', ', $campaigns) . ')');
+            }
+        }
+    }
+
     public function testTheProgressEndpointAsksAboutTheAccountsOwnNetworks(): void
     {
         $endpoint = '202-account/ajax/dni.php';

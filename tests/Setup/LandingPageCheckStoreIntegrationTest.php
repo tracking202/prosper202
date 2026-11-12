@@ -323,6 +323,7 @@ final class LandingPageCheckStoreIntegrationTest extends TestCase
         self::assertCount(1, $this->fetched, 'a repeat inside the cooldown fetches nothing');
         self::assertSame([false, $now, 1], [$again['fetched'], $again['checked_at'], $again['fetch_again_in_seconds']]);
         self::assertStringContainsString('checked ' . ($cooldown - 1) . ' seconds ago', $again['note']);
+        self::assertStringContainsString('Ask again in 1 second to', $again['note'], 'one second is said as one');
         foreach (['status', 'found', 'message', 'other_landing_page_ids_public', 'landing_page_url'] as $field) {
             self::assertSame($first[$field], $again[$field], "the stored answer gives the same $field");
         }

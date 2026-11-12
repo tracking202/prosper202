@@ -201,10 +201,11 @@ final class SetupCodeController
         ];
         if ($fetchAgainIn !== null) {
             $data['fetch_again_in_seconds'] = $fetchAgainIn;
-            $data['note'] = 'This page was checked ' . ($clock() - $checkedAt) . ' seconds ago,'
+            $seconds = static fn (int $n): string => $n . ($n === 1 ? ' second' : ' seconds');
+            $data['note'] = 'This page was checked ' . $seconds($clock() - $checkedAt) . ' ago,'
                 . ' and that check is the answer:'
                 . ' a page is fetched at most once every ' . LandingPageCheckLimit::COOLDOWN . ' seconds. Ask again in '
-                . $fetchAgainIn . ' seconds to have it fetched now.';
+                . $seconds($fetchAgainIn) . ' to have it fetched now.';
         }
 
         return ['data' => $data];
