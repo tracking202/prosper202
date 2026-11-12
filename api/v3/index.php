@@ -818,6 +818,20 @@ try {
             $r->post('/{id}/backfill', fn($ctx) => $crud($cls)->backfill(PathId::of($ctx), $payload));
         }, [$setupSection]);
 
+        // ── Ad connections: ad platform accounts reached through their API ─
+        // Setup's, like the destinations they set up. Not stageable: a body
+        // carries a key, and a check or setup is a call to the platform.
+        $router->group('/ad-connections', function (Router $r) use ($crud, $payload) {
+            $cls = \Api\V3\Controllers\AdConnectionsController::class;
+            $r->get('',              fn() => $crud($cls)->list());
+            $r->get('/{id}',         fn($ctx) => $crud($cls)->get(PathId::of($ctx)));
+            $r->post('',             fn() => ['_status' => 201] + $crud($cls)->create($payload));
+            $r->patch('/{id}',       fn($ctx) => $crud($cls)->update(PathId::of($ctx), $payload));
+            $r->delete('/{id}',      fn($ctx) => tap($crud($cls), fn($c) => $c->delete(PathId::of($ctx))));
+            $r->post('/{id}/check',  fn($ctx) => $crud($cls)->check(PathId::of($ctx)));
+            $r->post('/{id}/setup',  fn($ctx) => $crud($cls)->setup(PathId::of($ctx), $payload));
+        }, [$setupSection]);
+
         // ── API capabilities ────────────────────────────────────────────
         // The principal is who the key acts as and what it may do: the probe
         // an agent makes first, and the only way a key holder learns its own
@@ -1434,6 +1448,7 @@ try {
                 'apps'          => '/apps/{id|skan-encodings|postbacks|report|notifications|verify|schema|installs}[/installs|/install-token|/store-link|/integrity|/integrity-credential]',
                 'goals'         => '/goals/{id|validate|evaluate}',
                 'destinations'  => '/destinations[/{id}][/test|/deliveries[/resend]|/backfill|/oauth/start|/google-ads/accounts|/google-ads/conversion-actions|/google-ads/pick]',
+                'ad_connections' => '/ad-connections[/{id}][/check|/setup]',
                 'events'        => '/events',
                 'users'         => '/users',
                 'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations|integrations/record-held|traffic-source-owners|traffic-source-owners/repair|traffic-source-owners/split}',
@@ -1459,6 +1474,7 @@ try {
             $previewRouter->delete("/$resource/{id}", fn($ctx) => $crud($class)->deletePreview(PathId::of($ctx)));
         }
         $previewRouter->delete('/destinations/{id}', fn($ctx) => $crud(\Api\V3\Controllers\DestinationsController::class)->deletePreview(PathId::of($ctx)));
+        $previewRouter->delete('/ad-connections/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AdConnectionsController::class)->deletePreview(PathId::of($ctx)));
         $previewRouter->delete('/conversions/{id}', fn($ctx) => $crud(\Api\V3\Controllers\ConversionsController::class)->deletePreview(PathId::of($ctx)));
         $previewRouter->delete('/rotators/{id}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deletePreview(PathId::of($ctx)));
         $previewRouter->delete('/rotators/{id}/rules/{ruleId}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deleteRulePreview(PathId::of($ctx), PathId::of($ctx, 'ruleId')));

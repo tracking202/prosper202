@@ -14,7 +14,12 @@ if (!$userObj->hasPermission('access_to_setup_section')) {
 require_once __DIR__ . '/_includes/setup_ui.php';
 require_once __DIR__ . '/_includes/google_ads_picker.php';
 require_once __DIR__ . '/_includes/destination_panels.php';
+require_once __DIR__ . '/_includes/ad_connection_panel.php';
 
+use Prosper202\AdPlatforms\AdConnectionInputException;
+use Prosper202\AdPlatforms\AdConnectionStore;
+use Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi;
+use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsConnections;
 use Prosper202\Destinations\DestinationForm;
 use Prosper202\Destinations\DestinationInputException;
 use Prosper202\Destinations\DestinationQueue;
@@ -37,6 +42,8 @@ use Prosper202\Destinations\GoogleAdsOAuth;
 $userId = (int) $_SESSION['user_id'];
 $conn = new \Prosper202\Database\Connection($db);
 $store = new DestinationStore($conn);
+$adStore = new AdConnectionStore($conn);
+$adConnections = static fn (): OpenAiAdsConnections => new OpenAiAdsConnections($adStore, new AdvertiserApi(), $store, \Prosper202\Database\InstallId::of($db));
 $base = get_absolute_url();
 $self = $base . 'tracking202/setup/destinations.php';
 $redirectUri = GoogleAdsOAuth::redirectUri($_SERVER);
@@ -59,7 +66,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $tokenRefused = true;
     } else {
         try {
-            if ($action === 'create_ga4') {
+            $connectionId = \Prosper202\Http\PostedId::read($_POST['connection_id'] ?? null) ?? 0;
+            $postedText = static fn (string $k): ?string => is_string($_POST[$k] ?? null) && trim($_POST[$k]) !== '' ? trim($_POST[$k]) : null;
+            if ($action === 'ad_connect') {
+                $ppcAccountId = $postedText('ppc_account_id') === null ? null : \Prosper202\Http\PostedId::read($_POST['ppc_account_id']);
+                if ($postedText('ppc_account_id') !== null && $ppcAccountId === null) {
+                    throw new AdConnectionInputException('ppc_account_id', 'The form named no traffic source account; pick one or None.');
+                }
+                $made = $adConnections()->connect($userId, OpenAiAdsConnections::advertiserKey($_POST['api_key'] ?? null), $ppcAccountId, time());
+                header('location: ' . $self . '?done=ad_connected#ac' . (int) $made['connection_id']);
+                die();
+            } elseif ($action === 'ad_check') {
+                if ($adConnections()->check($userId, $connectionId, time()) === null) {
+                    $errors['destination'] = 'That connection is not one of yours, or was deleted.';
+                } else {
+                    header('location: ' . $self . '?done=ad_checked#ac' . $connectionId);
+                    die();
+                }
+            } elseif ($action === 'ad_setup') {
+                $steps = is_array($_POST['steps'] ?? null) ? array_values(array_filter($_POST['steps'], 'is_string')) : [];
+                $events = is_array($_POST['event_types'] ?? null) ? array_values(array_filter($_POST['event_types'], 'is_string')) : [];
+                $options = array_filter([
+                    'skip' => array_values(array_diff(OpenAiAdsConnections::STEPS, $steps)),
+                    'event_types' => $events,
+                    'pixel_source_id' => $postedText('pixel_source_id'),
+                    'pixel_id' => $postedText('pixel_id'),
+                    'source_id' => $postedText('source_id'),
+                    'conversions_api_key' => $postedText('conversions_api_key'),
+                ], static fn (mixed $v): bool => $v !== null && $v !== []);
+                $ran = $adConnections()->setup($userId, $connectionId, $options, time());
+                if ($ran === null) {
+                    $errors['destination'] = 'That connection is not one of yours, or was deleted.';
+                } else {
+                    $_SESSION['p202_ad_setup'] = ['id' => $connectionId, 'steps' => array_map(static fn (array $step): array => array_intersect_key($step, array_flip(['step', 'outcome', 'detail'])), $ran['steps'])];
+                    header('location: ' . $self . '?done=ad_setup#ac' . $connectionId);
+                    die();
+                }
+            } elseif ($action === 'ad_delete') {
+                if ($adStore->delete($userId, $connectionId, time())) {
+                    header('location: ' . $self . '?done=ad_deleted#chatgpt-ads');
+                    die();
+                }
+                $errors['destination'] = 'That connection is not one of yours, or was deleted.';
+            } elseif ($action === 'create_ga4') {
                 $str = static fn (string $k): string => is_string($_POST[$k] ?? null) ? trim($_POST[$k]) : '';
                 $settings = [
                     'measurement_id' => $str('measurement_id'),
@@ -185,7 +234,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 $errors['action'] = 'The form did not say what to do; nothing was changed.';
             }
-        } catch (DestinationInputException $e) {
+        } catch (DestinationInputException | AdConnectionInputException $e) {
             $errors[$e->field] = $e->getMessage();
         } catch (\Throwable $e) {
             error_log(p202UncaughtLogLine('Setup › Destinations: ' . $action . ' failed', $e));
@@ -204,12 +253,23 @@ if (isset($_SESSION['p202_destination_test']) && is_array($_SESSION['p202_destin
     $test = $_SESSION['p202_destination_test'];
     unset($_SESSION['p202_destination_test']);
 }
+$adSetup = null;
+if (isset($_SESSION['p202_ad_setup']) && is_array($_SESSION['p202_ad_setup'])) {
+    $adSetup = $_SESSION['p202_ad_setup'];
+    unset($_SESSION['p202_ad_setup']);
+}
 $queuedNotice = null;
 if (isset($_SESSION['p202_destination_queued']) && is_array($_SESSION['p202_destination_queued'])) {
     $queuedNotice = $_SESSION['p202_destination_queued'];
     unset($_SESSION['p202_destination_queued']);
 }
 $destinations = $store->list($userId);
+$adConnectionList = $adStore->list($userId);
+$ppcAccountNames = [];
+foreach (p202_setup_rows($db, 'SELECT a.ppc_account_id, a.ppc_account_name, n.ppc_network_name FROM 202_ppc_accounts a JOIN 202_ppc_networks n ON n.ppc_network_id = a.ppc_network_id AND n.user_id = a.user_id'
+    . ' WHERE a.user_id = ' . $userId . ' AND a.ppc_account_deleted = 0 AND n.ppc_network_deleted = 0 ORDER BY n.ppc_network_name, a.ppc_account_name') as $row) {
+    $ppcAccountNames[(int) $row['ppc_account_id']] = $row['ppc_network_name'] . ' › ' . $row['ppc_account_name'];
+}
 // The destination whose account or conversion action is being changed.
 $choose ??= \Prosper202\Http\PostedId::read($_GET['choose'] ?? null) ?? 0;
 $googleAccounts = new GoogleAdsAccounts();
@@ -270,7 +330,7 @@ $gadsIdFields = [
     ['gads_login_customer_id', 'settings.login_customer_id', 'Manager account ID', '', 'Only when your access to that account is through a manager account.'],
     ['gads_conversion_action', 'settings.conversion_action', 'Conversion action ID', '', 'Goals › Conversions › your action (source Import, clicks): the number after ctId= in its address.'],
 ];
-$formFields = ['name', 'settings.measurement_id', 'settings.event_name', 'settings.client_id_source', 'credentials.api_secret', 'settings.consent.ad_user_data', 'settings.consent.ad_personalization',
+$formFields = ['api_key', 'ppc_account_id', 'name', 'settings.measurement_id', 'settings.event_name', 'settings.client_id_source', 'credentials.api_secret', 'settings.consent.ad_user_data', 'settings.consent.ad_personalization',
     'settings.customer_id', 'settings.login_customer_id', 'settings.conversion_action', 'credentials.developer_token', 'credentials.oauth_client_id', 'credentials.oauth_client_secret'];
 
 AUTH::set_timezone($_SESSION['user_timezone'] ?? date_default_timezone_get());
@@ -294,6 +354,10 @@ $doneText = [
     'enabled' => 'Destination on: new conversions are queued for it.',
     'disabled' => 'Destination off: it queues nothing, and what it queued waits.',
     'deleted' => 'Destination deleted. What it had not sent is cancelled.',
+    'ad_connected' => 'ChatGPT Ads connected: OpenAI accepted the key. Run setup to make the pixel, Conversions API key and event settings.',
+    'ad_checked' => 'ChatGPT Ads account read again.',
+    'ad_setup' => 'Setup ran; what each step did is under the connection.',
+    'ad_deleted' => 'ChatGPT Ads connection deleted. Its keys are erased here; nothing was removed at OpenAI.',
     'updated' => 'Changes saved. Conversions that were waiting for this destination go out with the next run; send a test to check it. Conversions that failed before the change stay failed until you send them again, below.',
 ][is_string($_GET['done'] ?? null) ? $_GET['done'] : ''] ?? null;
 if ($doneText !== null) {
@@ -456,6 +520,8 @@ if ($logDestination !== null) {
                 </div>
             </div>
         </form>
+
+        <?php echo p202_ad_connections_panel($adConnectionList, $ppcAccountNames, $adSetup, $formErrors('ad_connect'), $self, (string) ($_SESSION['token'] ?? '')); ?>
 
         <form class="p202-panel mt-4" id="add-google-ads" method="post" action="<?php echo p202_setup_e($self); ?>#add-google-ads" autocomplete="off">
             <?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>

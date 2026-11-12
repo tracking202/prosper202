@@ -254,6 +254,7 @@ final readonly class Auth
         'goals',
         'events',
         'destinations',
+        'ad-connections',
         'users',
         'system',
         'sync',

@@ -125,6 +125,7 @@ final class TableRegistry
     public const string POSTBACK_AUTH = '202_postback_auth';
     public const string DESTINATIONS = '202_destinations';
     public const string DESTINATION_DELIVERIES = '202_destination_deliveries';
+    public const string AD_CONNECTIONS = '202_ad_connections';
     public const string INBOUND_LOG = '202_inbound_log';
     public const string HELD_PAYMENT_NOTIFICATIONS = '202_held_payment_notifications';
     public const string SHOPIFY_PENDING_REFUNDS = '202_shopify_pending_refunds';
