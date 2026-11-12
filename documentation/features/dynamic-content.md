@@ -40,7 +40,7 @@ Welcome, reader from <span name="t202Country" t202Default="your country">your co
 | `t202DayOfWeek`, `t202DayOfWeekShort`, `t202MonthOfYear`, `t202MonthOfYearShort`, `t202DayOfMonth`, `t202Year`, `t202YearShort` | Today, in your account's time zone (`Tuesday`, `Tue`, `November`, `Nov`, `3`, `2026`, `26`) |
 | `t202kw` / `t202Kw`, `t202c1`…`t202c4` / `t202C1`…`t202C4` | The page URL's `t202kw` and `c1`–`c4` |
 | `t202utm_source`… / `t202Utm_source`… | The page URL's `utm_source`, `utm_medium`, `utm_term`, `utm_content`, `utm_campaign` |
-| `t202GCLID`, `t202GBRAID`, `t202WBRAID`, `t202TTCLID`, `t202FBCLID`, `t202MSCLKID` | The page URL's ad click ids |
+| `t202GCLID`, `t202GBRAID`, `t202WBRAID`, `t202TTCLID`, `t202FBCLID`, `t202MSCLKID`, `t202OPPREF` | The page URL's ad click ids |
 | `t202Pci`, `t202Id` | The page URL's `pci` and `t202id` |
 | `t202Referrer` | The page's referrer |
 | `t202Random` | A random seven-digit number, one per pageview |
@@ -94,7 +94,8 @@ a value; otherwise the value set in `t202Settings` is used, and otherwise the
 usual parameter (`t202kw`, `c2`).
 
 The keyword, c1–c4, the UTM values and the ad click ids (`t202GCLID`,
-`t202GBRAID`, `t202WBRAID`, `t202TTCLID`, `t202MSCLKID`, `t202FBCLID`) are
+`t202GBRAID`, `t202WBRAID`, `t202TTCLID`, `t202MSCLKID`, `t202FBCLID`,
+`t202OPPREF`) are
 recorded on the click with these values, shown on the page and used in
 PurLinks. `t202Pubid` is recorded on the click and used in PurLinks
 (`[[t202pubid]]`); no element shows it. The click is recorded with them from

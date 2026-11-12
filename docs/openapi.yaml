@@ -14560,6 +14560,14 @@ components:
             Meta's click id (`?fbclid=`), as stored, cut to 1,000 characters
             (real ones run to about 200); null for none. Recorded since 1.9.79:
             clicks before it have none.
+        oppref:
+          type: string
+          nullable: true
+          maxLength: 1000
+          description: >-
+            OpenAI's click id on a ChatGPT ad's landing URL (`?oppref=`), as
+            stored, cut to 1,000 characters; null for none. Recorded since
+            1.9.80: clicks before it have none.
 
     ClickDetail:
       allOf:
@@ -14680,7 +14688,7 @@ components:
         How the conversion's click was found. click_id is the request naming
         it (a subid or sid, ClickBank's tracking code, the API's or an upload
         line's click id, an app install's token); ad_click_id an ad platform's
-        click id (gclid, gbraid, wbraid, ttclid, msclkid, fbclid) that a
+        click id (gclid, gbraid, wbraid, ttclid, msclkid, fbclid, oppref) that a
         global postback with no SubID sent back and a click carries (one
         visitor's latest click on one campaign); cookie a tracking cookie
         naming it; visitor_id the landing-page script's visitor id, on the
@@ -16867,7 +16875,7 @@ components:
             by the global postback when its SubID is empty or unfilled, and
             looked up among this account's clicks as every kind of ad click
             id (match_method ad_click_id). gclid, gbraid, wbraid, msclkid,
-            fbclid and ttclid are read under their own names without being
+            fbclid, ttclid and oppref are read under their own names without being
             listed, and are refused here, as are the parameters a postback
             already reads.
         user_pref_cloak_referer: {type: string, enum: [origin, never]}
