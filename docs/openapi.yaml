@@ -14784,8 +14784,9 @@ components:
           maxLength: 150
           description: >-
             The Google Ads click id the click arrived with (`?gclid=`), as
-            stored; null when it came with none. Recorded by direct links and
-            landing pages; a redirector click records none of these six.
+            stored; null when it came with none. Recorded by direct links,
+            redirector links (from 1.9.80; a re-click keeps its first visit's)
+            and landing pages.
         gbraid:
           type: string
           nullable: true

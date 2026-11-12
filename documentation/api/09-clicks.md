@@ -59,14 +59,13 @@ Everything the visitor or the visitor's browser wrote — keyword, URLs, locatio
 
 ### Ad click ids
 
-Direct links (`dl.php`) and simple and advanced landing pages record the seven
-click ids from the link's query (the landing page script sends them on from
-the page's URL); the redirector (`rtr.php`) records none, as it records no
-UTM values. Each is stored as sent, a byte that is not UTF-8 as `?`, and cut
+Direct links (`dl.php`), redirector links (`rtr.php`, from 1.9.80; a re-click
+keeps its first visit's) and simple and advanced landing pages record the
+seven click ids from the link's query (the landing page script sends them on
+from the page's URL). Each is stored as sent, a byte that is not UTF-8 as `?`, and cut
 to its column: 150 characters for `gclid`, `gbraid`, `wbraid` and `msclkid`,
 1,000 for `ttclid` (real ones run to about 340), `fbclid` (about 200) and
-`oppref` (OpenAI documents no length). One
-sent as a list (`?gbraid[]=x`) is none. `gbraid`, `wbraid`, `ttclid`,
+`oppref` (OpenAI documents no length). One sent as a list (`?gbraid[]=x`) is none. `gbraid`, `wbraid`, `ttclid`,
 `msclkid` and `fbclid` are recorded from 1.9.79: a click recorded before that
 has none of them (no version since at least 1.9.55 kept a click's msclkid
 or fbclid, although each had tables and tokens for them), and one recorded on
