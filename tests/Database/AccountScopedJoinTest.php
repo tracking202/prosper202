@@ -117,6 +117,7 @@ final class AccountScopedJoinTest extends TestCase
     private const AUTH_KEY = 'the comma join\'s WHERE ties it: `2u.user_id = 2a.user_id`, with `2a.user_id` the signed-in account';
     private const LEDGER_PARTS = 'the counted conversion rows of the report\'s own clicks: LedgerReportSql::partsTable() selects `lp.click_id IN (SELECT s.click_id FROM 202_dataengine s WHERE <the report\'s owner condition and window>)`, its goal join is tied, and a conversion is recorded only on its own account\'s click';
     private const DATA_SCOPE = 'ranks an install-wide region or ISP by the clicks the report reads: `2st.user_id = ` the integer DataScope::userId() returns, or every account\'s for the session that sees every campaign (DataScope); it names nothing an account owns';
+    private const LEDGER_CLICKS = '; $table is 202_dataengine or LedgerClicks::table(), one account\'s clicks';
     private const REPORT_AGGREGATE_SCOPE = 'ReportAggregation retains the caller-built account/date/filter WHERE; '
         . 'ReportIntegrationTest and LegacyReportAccountScopeIntegrationTest execute its account-scoped readers, '
         . 'and testReportAggregationKeepsTheCallersScopeBeforeLabelJoins() checks both output aliases';
@@ -170,9 +171,20 @@ final class AccountScopedJoinTest extends TestCase
                 . ' answers nothing to the visitor',
         ],
         '202-config/DataEngine/ReportAggregation.php' => [
-            'subquery without a WHERE | 202_dataengine | 202_dataengine' => self::REPORT_AGGREGATE_SCOPE,
-            'subquery with runtime text before its WHERE | 202_dataengine | '
-                . '($groups === [] ? \'\' : \' GROUP BY \' . implode(\', \', $groups))' => self::REPORT_AGGREGATE_SCOPE,
+            'subquery table built at runtime | $table | SELECT * FROM {$table} AS `2st` {$where} ) AS `2st`'
+                => self::REPORT_AGGREGATE_SCOPE . self::LEDGER_CLICKS,
+            'subquery table built at runtime | $table | SELECT {implode(\', \', $select)} FROM {$table}'
+                . ' AS {$alias} {$where} {($groups === [] ? \'\' : \' GROUP BY \'.implode(\', \', $groups))}'
+                . ' ) AS {$resultAlias}'
+                => self::REPORT_AGGREGATE_SCOPE . self::LEDGER_CLICKS,
+        ],
+        '202-config/DataEngine/LedgerClicks.php' => [
+            'subquery table built at runtime | self::TABLE | AS cost FROM {self::TABLE} AS de '
+                . '{self::inline($db, $ledger->join, $ledger->types, $ledger->binds)} WHERE de.user_id = {$userId} AND'
+                => 'self::TABLE is 202_dataengine, read for one account (de.user_id = the account) in the window; the'
+                . ' ledger join is LedgerCost::forReport()\'s, which ties the variable sets to the account\'s'
+                . ' own traffic sources; LedgerPagesIntegrationTest runs it beside another account\'s ledger'
+                . ' and clicks',
         ],
         '202-config/class-dataengine.php' => [
             'subquery table built at runtime | {{$this->overviewTable}} | '

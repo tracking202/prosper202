@@ -37,6 +37,8 @@ class ReportSummaryForm extends ReportBasicForm
 	private $tabIndexArray = [];
 	protected $start_time;
 	protected $end_time;
+    /** The spend ledger's part in the last query built (getQuery()), null for none. */
+    private ?\Prosper202\DataEngine\LedgerClicks $spendLedger = null;
 
 	// Missing properties used throughout the class
 	protected $currency = 'USD';
@@ -576,6 +578,17 @@ class ReportSummaryForm extends ReportBasicForm
 		];
 	}
 
+    /**
+     * What the page says beside figures the last getQuery() costed from the
+     * spend ledger (LedgerCost::meta(), in the page's zone); null for none.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function getSpendLedger(): ?array
+    {
+        return $this->spendLedger?->meta(date_default_timezone_get());
+    }
+
 	/**
 	 * Returns query in a string
 	 * @return String
@@ -589,6 +602,15 @@ class ReportSummaryForm extends ReportBasicForm
 		// Whose clicks: the rule every report page reads (DataScope).
 		$dataUserId = \Prosper202\DataEngine\DataScope::userId();
 		$user_id_query = $dataUserId === null ? " != '0' " : " = '" . $dataUserId . "' ";
+        // The clicks costed from the spend ledger, as the REST reports cost
+        // them; 202_dataengine itself when the ledger has nothing here.
+        $this->spendLedger = \Prosper202\DataEngine\LedgerClicks::forPage(
+            $db,
+            $dataUserId,
+            (int) $this->getStartTime(),
+            (int) $this->getEndTime()
+        );
+        $clicks = \Prosper202\DataEngine\LedgerClicks::table($this->spendLedger);
 
 		$info_sql = '';
 		//select regular setup
@@ -842,7 +864,7 @@ class ReportSummaryForm extends ReportBasicForm
 
 		$info_sql .= "
 			FROM
-				202_dataengine AS 2c";
+				" . $clicks . " AS 2c";
 
 		// Every account-owned record is named only within the click's own
 		// account (CLAUDE.md #27): a click naming another account's campaign,
@@ -1164,9 +1186,10 @@ class ReportSummaryForm extends ReportBasicForm
                 $dimensions,
                 $where,
                 $metrics,
-                '2c'
+                '2c',
+                $clicks
             );
-            $info_sql = str_replace("FROM\n\t\t\t\t202_dataengine AS 2c", ltrim($source), $info_sql);
+            $info_sql = str_replace("FROM\n\t\t\t\t" . $clicks . " AS 2c", ltrim($source), $info_sql);
         }
 		return $info_sql;
 	}

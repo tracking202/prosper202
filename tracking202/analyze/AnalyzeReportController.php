@@ -326,6 +326,10 @@ final class AnalyzeReportController
             if (!is_array($data)) {
                 throw new \RuntimeException('DataEngine returned no report for ' . $this->type);
             }
+            $ledger = p202_spend_ledger_text($engine->spendLedger(), \Prosper202\Report\CampaignDataMask::hidden());
+            if ($ledger !== '') {
+                $this->flash('info', $ledger);
+            }
             if ($this->type === 'variable') {
                 return ['result' => self::variableReport($data)];
             }
