@@ -49,6 +49,8 @@ final class DestinationsIntegrationTest extends TestCase
         self::fixture("INSERT INTO 202_users SET user_id=1, user_name='store-owner', user_email='owner@example.com', user_active=1, user_deleted=0");
         self::fixture("INSERT INTO 202_users SET user_id=2, user_name='saas-owner', user_email='saas@example.com', user_active=1, user_deleted=0");
         self::fixture('DELETE FROM 202_users_pref WHERE user_id IN (1, 2)');
+        // A currency change another test recorded would relabel this one's conversions (RowCurrency).
+        self::fixture('DELETE FROM 202_currency_changes WHERE user_id IN (1, 2)');
         self::fixture("INSERT INTO 202_users_pref SET user_id=1, user_pref_privacy='disabled', user_account_currency='USD'");
         self::fixture("INSERT INTO 202_users_pref SET user_id=2, user_pref_privacy='disabled', user_account_currency='USD'");
         $this->campaign(31, null);

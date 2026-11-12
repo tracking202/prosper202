@@ -42,6 +42,7 @@
 - [Conversions](api/10-conversions.md)
 - [Update: past clicks' CPC, subids, revenue reports](api/26-update.md)
 - [Setup: landing-page code, pixels and postbacks, traffic-source variables and pixels](api/27-setup.md)
+- [Ad connections: ChatGPT Ads through its Advertiser API](api/28-ad-connections.md)
 - [Spend ledger: what each ad platform billed, per ad per hour](api/28-spend-ledger.md)
 - [Reports](api/11-reports.md)
 - [Rotators](api/12-rotators.md)
