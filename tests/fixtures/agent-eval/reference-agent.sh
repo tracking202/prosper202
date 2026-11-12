@@ -919,6 +919,11 @@ EOF
             "$(if [ -n "$rows" ]; then printf 'these traffic sources lose money: %s' "$rows"; else printf 'no traffic source loses money'; fi)"
         ;;
     *)
+        # An ask with no branch of its own. scripts/check-eval-reference-answers.py
+        # sends every case's ask through here and refuses any that land.
+        if [ -n "${P202_REFERENCE_AGENT_FALLTHROUGH:-}" ]; then
+            : > "$P202_REFERENCE_AGENT_FALLTHROUGH"
+        fi
         summary=$(p202 report summary --period today --json)
         clicks=$(printf '%s' "$summary" | jq -r '.data.total_clicks')
         net=$(printf '%s' "$summary" | jq -r '.data.total_net')
