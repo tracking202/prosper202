@@ -44,7 +44,10 @@ tracking template puts on each click, on a traffic source account linked to
 an [ad connection](../api/28-ad-connections.md)), the alert names those
 ChatGPT Ads campaigns and says where to pause them: Setup › Destinations ›
 ChatGPT Ads › campaigns, or `p202 ad-campaign pause`. The webhook payload
-carries them as `chatgpt_connection_id` and `chatgpt_campaign_ids`.
+carries them as `chatgpt_connection_id` and `chatgpt_campaign_ids`, and the
+alert on Home has a **Pause … in ChatGPT Ads** button for each: it shows the
+campaign's status at OpenAI and what pausing changes, and pauses only when
+you confirm.
 
 **Postback refusals jumped.** This alert watches the [inbound
 log](../api/00-api-integrations.md) (Setup › Inbound Log): every postback and
