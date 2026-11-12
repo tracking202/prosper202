@@ -136,8 +136,7 @@ type mcpToolSpec struct {
 	Required []string
 	// Note is added to the command's own summary in the description.
 	Note string
-	// NotStaged: the tool acts on proposed changes themselves, or runs a
-	// route that cannot be staged (destination_test), so a server
+	// NotStaged: the tool acts on proposed changes themselves, so a server
 	// that only proposes (--staged) does not offer it. Applying a proposal
 	// is a person's decision; a model that could stage a write and then
 	// apply it would make --staged mean nothing (CLAUDE.md #14).
@@ -192,7 +191,7 @@ var rareFilters = []string{"browser-id", "device-type", "ip", "isp-id", "method-
 
 // deleteNote is on every delete tool: the call deletes once approved, so the
 // model is told to show the user the preview first.
-const deleteNote = "It deletes once the call is approved: call it with dry_run: true first and show the user what it would remove."
+const deleteNote = "It deletes as soon as the call is approved: call it with dry_run: true first and show the user what it would remove."
 
 // setupParentDeleteNote: a traffic source or a category is removed alone, as
 // its Setup page removes it; what it holds stays, under a removed parent.
@@ -203,7 +202,7 @@ func setupParentDeleteNote(parent, children, tool string) string {
 // textAdNote: an ad is used through a tracker, which names it.
 const textAdNote = "To use it on a tracker, set the tracker's text_ad_id (tracker_update)."
 
-const reportFilterNote = "Filter with the *_id arguments (ids from the list tools); the window is period, or time_from and time_to."
+const reportFilterNote = "Filter with the *_id arguments (ids from the list tools) and choose the window with period, or time_from and time_to."
 
 // pageNote is on the tools that answer one page: truncated: true says rows
 // remain. (winners and losers say it too, past 5000 rows, which few reach.)
@@ -212,7 +211,7 @@ const pageNote = "truncated: true: more rows at offset + limit."
 var mcpToolSpecs = []mcpToolSpec{
 	// Reports
 	{Name: "report_summary", Command: []string{"report", "summary"}, Title: "Performance totals", Kind: mcpRead, Note: reportFilterNote},
-	{Name: "report_breakdown", Command: []string{"report", "breakdown"}, Title: "Performance by dimension", Kind: mcpRead, Note: "The Overview and Analyze pages; the dimension is breakdown. " + reportFilterNote + " " + pageNote},
+	{Name: "report_breakdown", Command: []string{"report", "breakdown"}, Title: "Performance by dimension", Kind: mcpRead, Note: "The Overview and Analyze pages: choose the dimension with breakdown (campaign, ppc_account, country, keyword, landing_page, device, ...). " + reportFilterNote + " " + pageNote},
 	{Name: "report_timeseries", Command: []string{"report", "timeseries"}, Title: "Performance over time", Kind: mcpRead, Note: reportFilterNote, Omit: rareFilters},
 	{Name: "report_daypart", Command: []string{"report", "daypart"}, Title: "Performance by hour of day", Kind: mcpRead, Omit: rareFilters},
 	{Name: "report_weekpart", Command: []string{"report", "weekpart"}, Title: "Performance by day of week", Kind: mcpRead, Omit: rareFilters},
@@ -318,14 +317,6 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "settings_get", Command: []string{"user", "prefs", "get"}, Title: "Get the account's settings", Kind: mcpRead, NotHosted: true,
 		Args: []mcpArg{idArg("user_id", "User id (whoami's user_id).", true)},
 		Note: "Personal settings, report defaults, integrations and LTV settings; a secret only as whether one is stored."},
-
-	// Destinations (Setup › Destinations): where conversions are sent from this server.
-	{Name: "destination_list", Command: []string{"destination", "list"}, Title: "Destinations and their status", Kind: mcpRead, NotHosted: true,
-		Note: "GA4, Google Ads, ChatGPT Ads: settings, status, what waits for you."},
-	{Name: "destination_deliveries", Command: []string{"destination", "deliveries"}, Title: "A destination's delivery log", Kind: mcpRead, NotHosted: true,
-		Args: []mcpArg{idArg("id", "Destination id (from destination_list).", true)}, Omit: []string{"conv-id"}, Note: "Why each failed or was withheld. " + pageNote},
-	{Name: "destination_test", Command: []string{"destination", "test"}, Title: "Test a destination", Kind: mcpCreate, NotHosted: true, NotStaged: true,
-		Args: []mcpArg{idArg("id", "Destination id (from destination_list).", true)}},
 }
 
 // rotatorRulesSchema is rotator_set_rules' rules: a rule set as rotator_get
