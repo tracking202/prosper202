@@ -571,9 +571,16 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   secret only as whether one is stored). The hosted server below does not
   offer these: its connections do not reach account settings. `click_get`
   says why a click was filtered (`filter_reason`) on both.
+- `destination_list`, `destination_deliveries` and `destination_test` show
+  where conversions are sent from this server (GA4, Google Ads, ChatGPT Ads)
+  with each destination's status, its delivery log with why a conversion
+  failed or was withheld, and a test fire to the platform's validation
+  endpoint (`p202 destination list|deliveries|test`). They are local only:
+  the hosted server's connections do not reach destinations, and a server
+  started with `--staged` does not offer the test fire.
 - With `--staged`, a write returns a change id and changes nothing; you apply
   it with `p202 change apply <id>`. The assistant is not offered the apply and
-  discard tools.
+  discard tools, nor `destination_test`, whose route cannot be staged.
 - A redirector's rules are one tool, `rotator_set_rules` (`p202 rotator
   set-rules`): it takes the whole rule set as a JSON list, as `rotator_get`
   answers it under `data.rules`, and the install writes it in one
