@@ -18,7 +18,7 @@ final class ClickByAdClickIdTest extends TestCase
     {
         $request = [];
         foreach (array_keys(ClickRecord::AD_CLICK_IDS) as $name) {
-            $request[$name] = "id-of-$name";
+            $request[$name] = "id-of-$name-0123";
         }
         $sent = ClickByAdClickId::sent($request + ['subid' => '[[subid]]', 'amount' => '5', 'clickid' => 'x']);
 
@@ -29,10 +29,10 @@ final class ClickByAdClickIdTest extends TestCase
     public function testAnAbsentBlankOrUnfilledIdSendsNone(): void
     {
         $sent = ClickByAdClickId::sent(
-            ['gclid' => '', 'gbraid' => '  ', 'wbraid' => '{aff_sub3}', 'fbclid' => ' Fb.1 ']
+            ['gclid' => '', 'gbraid' => '  ', 'wbraid' => '{aff_sub3}', 'fbclid' => ' IwAR0-Demo.1 ']
         );
 
-        self::assertSame(['fbclid' => 'Fb.1'], $sent['ids'], 'trimmed, case kept');
+        self::assertSame(['fbclid' => 'IwAR0-Demo.1'], $sent['ids'], 'trimmed, case kept');
         self::assertNull($sent['unreadable']);
     }
 
@@ -44,14 +44,21 @@ final class ClickByAdClickIdTest extends TestCase
     public function testAValueNoPlatformIssuesSendsNone(): void
     {
         $notIds = ['undefined', 'NULL', 'None', 'NaN', 'false', '0', '(not set)', '[object Object]', '__CLICKID__',
-            '__GCLID__', '-', '--', '.'];
+            '__GCLID__', '-', '--', '.',
+            // A template's own placeholder, which every visitor of the page carries.
+            'gclid', 'GCLID', '{{ gclid }}', '{ gclid }', '{gclid}', '{{gclid}}', '$gclid', '%gclid%', '[gclid]',
+            '<gclid>', '{ifmobile:x}', '{lpurl}?gclid=1', 'null;', 'undefined undefined',
+            // Too short, or without a letter and a digit, to be any platform's id.
+            '123', '00', '-1', 'test', 'xxx', '12345678901234', 'abcdefghijklmnop', 'E.1', 'ab1', 'Cj0-x'];
         foreach ($notIds as $value) {
             self::assertTrue(ClickByAdClickId::notAnId($value), $value);
             self::assertSame([], ClickByAdClickId::sent(['gclid' => $value])['ids'], $value);
             self::assertSame([], ClickByAdClickId::sent(['aff_sub3' => " $value "], ['aff_sub3'])['ids'], $value);
         }
-        $ids = ['Cj0KCQiA-demo_Shop', '0123456789abcdef0123456789abcdef', 'IwAR0-demo', 'E.1', 'nullable-1',
-            '__x', 'x__'];
+        // Each platform's shape: gclid, gbraid, wbraid, msclkid (32 hex), fbclid, ttclid (E.C.P.), a Meta _fbc.
+        $ids = ['Cj0KCQiA-demo_Shop', 'EAIaIQobChMI-demo_1', '0AAAAADemo_gbraid1', '1t3demo-wbraid_9',
+            '0123456789abcdef0123456789abcdef', 'IwAR0-demo', 'IwZXh0bgNhZW0CMTAAAR0demo-_x',
+            'E.C.P.CsYBDemo0ttclid', 'fb.1.1700000000.IwAR0demo', 'nullable-1', 'x__1demo'];
         foreach ($ids as $value) {
             self::assertFalse(ClickByAdClickId::notAnId($value), $value);
         }
