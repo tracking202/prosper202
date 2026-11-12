@@ -132,6 +132,11 @@ id>`), and a returning visitor's links are ready at once, with no request for
 a new SubID. A value 1.9.56 stored is not a signed SubID and is replaced by
 the visit's own.
 
+This is the PurLink SubID only. The first click's plain id that a page can
+show (`t202SubidOrig`, the `_t202SubidOrig` cookie) is kept on every landing
+page, setting or not; see
+[Dynamic content](dynamic-content.md#the-visitors-first-click-and-the-traffic-source-account).
+
 It is kept only for a visitor who has not refused tracking and whom the
 account's privacy setting does not hold back; `p202.consent(false)` removes
 it. If the first click has been deleted (automatic click deletion), a sale on

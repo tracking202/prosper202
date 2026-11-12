@@ -25,12 +25,16 @@ final class PurLinkDeepLinkServedIntegrationTest extends TestCase
     private const CAMPAIGN = 7511;
     private const ROTATING = 7512;
     private const PAGE = 7521;
+    /** A simple page whose campaign is cloaked: lp.php sends the visitor through lpc.php. */
+    private const CLOAKED = 7513;
+    private const CLOAKED_PAGE = 7522;
     private const PUBLIC = 100000;
     /** One click per way in: each exit rewrites its click. */
     private const PAGE_CLICK = 7501001;
     private const OFFER_CLICK = 7501002;
     private const NAMED_CLICK = 7501003;
     private const NAMED_CLICK_PUBLIC = '175010033';
+    private const CLOAKED_CLICK = 7501004;
     private const PLACE = 'http://shop.example/go';
     /** The campaign's URL holds [[subid]] and [[t202kw]], and no other token. */
     private const CAMPAIGN_URL = self::PLACE . '?sid=[[subid]]&kw=[[t202kw]]';
@@ -98,7 +102,7 @@ final class PurLinkDeepLinkServedIntegrationTest extends TestCase
 
     private static function cleanUp(): void
     {
-        $range = 'BETWEEN ' . self::PAGE_CLICK . ' AND ' . self::NAMED_CLICK;
+        $range = 'BETWEEN ' . self::PAGE_CLICK . ' AND ' . self::CLOAKED_CLICK;
         $tables = [
             '202_clicks', '202_clicks_spy', '202_clicks_advance', '202_clicks_tracking', '202_clicks_variable',
             '202_google', '202_clicks_rotator', '202_clicks_record', '202_clicks_site',
@@ -107,7 +111,8 @@ final class PurLinkDeepLinkServedIntegrationTest extends TestCase
         foreach ($tables as $table) {
             self::q("DELETE FROM $table WHERE click_id $range");
         }
-        self::q('DELETE FROM 202_rotations WHERE aff_campaign_id IN (' . self::CAMPAIGN . ', ' . self::ROTATING . ')');
+        $campaigns = self::CAMPAIGN . ', ' . self::ROTATING . ', ' . self::CLOAKED;
+        self::q('DELETE FROM 202_rotations WHERE aff_campaign_id IN (' . $campaigns . ')');
         self::q('DELETE FROM 202_landing_pages WHERE user_id = ' . self::OWNER);
         self::q('DELETE FROM 202_aff_campaigns WHERE user_id = ' . self::OWNER);
         self::q('DELETE FROM 202_tracking_c1 WHERE c1 = ' . self::str(self::C1));
@@ -137,6 +142,18 @@ final class PurLinkDeepLinkServedIntegrationTest extends TestCase
             'aff_campaign_url_2' => 'http://two.example/b?sid=[[subid]]', 'aff_campaign_payout' => 5,
             'aff_campaign_foreign_payout' => 0, 'aff_campaign_time' => time(),
         ]);
+        self::row('202_aff_campaigns', [
+            'aff_campaign_id' => self::CLOAKED, 'aff_campaign_id_public' => self::CLOAKED + self::PUBLIC,
+            'user_id' => self::OWNER, 'aff_network_id' => 0, 'aff_campaign_name' => 'cloaked',
+            'aff_campaign_url' => self::CAMPAIGN_URL, 'aff_campaign_cloaking' => 1, 'aff_campaign_payout' => 5,
+            'aff_campaign_foreign_payout' => 0, 'aff_campaign_time' => time(),
+        ]);
+        self::row('202_landing_pages', [
+            'landing_page_id' => self::CLOAKED_PAGE, 'user_id' => self::OWNER,
+            'landing_page_id_public' => self::CLOAKED_PAGE + self::PUBLIC,
+            'aff_campaign_id' => self::CLOAKED, 'landing_page_nickname' => 'cloaked',
+            'landing_page_url' => 'https://lp.example/cloaked', 'landing_page_type' => 0, 'landing_page_time' => time(),
+        ]);
         self::row('202_landing_pages', [
             'landing_page_id' => self::PAGE, 'user_id' => self::OWNER,
             'landing_page_id_public' => self::PAGE + self::PUBLIC,
@@ -146,14 +163,16 @@ final class PurLinkDeepLinkServedIntegrationTest extends TestCase
         $keyword = self::insert('INSERT INTO 202_keywords SET keyword = ' . self::str(self::KEYWORD));
         $c1 = self::insert('INSERT INTO 202_tracking_c1 SET c1 = ' . self::str(self::C1));
         $repo = new MysqlClickRepository(new Connection(self::$db));
-        $clicks = [self::PAGE_CLICK => '0', self::OFFER_CLICK => '0', self::NAMED_CLICK => self::NAMED_CLICK_PUBLIC];
+        $clicks = [self::PAGE_CLICK => '0', self::OFFER_CLICK => '0', self::NAMED_CLICK => self::NAMED_CLICK_PUBLIC,
+            self::CLOAKED_CLICK => '0'];
         foreach ($clicks as $id => $public) {
+            $cloaked = $id === self::CLOAKED_CLICK;
             $repo->recordClick(new ClickRecord(
                 clickId: $id,
                 userId: self::OWNER,
                 clickTime: time() - 60,
-                affCampaignId: self::CAMPAIGN,
-                landingPageId: self::PAGE,
+                affCampaignId: $cloaked ? self::CLOAKED : self::CAMPAIGN,
+                landingPageId: $cloaked ? self::CLOAKED_PAGE : self::PAGE,
                 clickCpc: '1.37',
                 clickPayout: '5',
                 keywordId: $keyword,
@@ -333,6 +352,48 @@ final class PurLinkDeepLinkServedIntegrationTest extends TestCase
                 'https://lp.example/page?t202kw=shoes&x=1'
             )
         );
+    }
+
+    /** The URL lpc.php's page sends the visitor to (its meta refresh). */
+    private function cloakedPageSendsTo(string $lpc): string
+    {
+        $ch = curl_init($lpc);
+        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20,
+            CURLOPT_COOKIE => 'tracking202subid=' . self::CLOAKED_CLICK,
+            CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0 Safari/537.36',
+            CURLOPT_HTTPHEADER => ['X-Forwarded-For: 198.51.100.61']]);
+        $body = (string) curl_exec($ch);
+        $log = "\nserver log:\n" . (string) @file_get_contents(self::$log);
+        self::assertSame(200, (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE), $body . $log);
+        self::assertSame(1, preg_match('~http-equiv="refresh"\s+content="1; url=([^"]*)"~', $body, $m), $body . $log);
+
+        return html_entity_decode($m[1], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    }
+
+    /** A cloaked simple page: lp.php hands the link to lpc.php, which keeps it under the same rule. */
+    public function testACloakedSimplePageKeepsTheDeepLinkThroughItsCloakedHop(): void
+    {
+        $query = 'lpip=' . (self::CLOAKED_PAGE + self::PUBLIC);
+        $cookie = 'tracking202subid_a_' . self::CLOAKED . '=' . self::CLOAKED_CLICK;
+        $lpc = self::$base . '/tracking202/redirect/lpc.php?lpip=' . (self::CLOAKED_PAGE + self::PUBLIC);
+        $deep = self::PLACE . '?sid=[[subid]]&kw=[[t202kw]]&u=deep';
+
+        $hop = $this->location($query . '&p202_to=' . rawurlencode($deep), $cookie);
+        self::assertSame($lpc . '&p202_to=' . rawurlencode($deep), $hop, 'lp.php hands the link to lpc.php');
+        self::assertSame(self::campaignUrlFor(self::CLOAKED_CLICK) . '&u=deep', $this->cloakedPageSendsTo($hop));
+
+        self::assertSame($lpc, $this->location($query, $cookie), 'no link, nothing handed on');
+        self::assertSame(self::campaignUrlFor(self::CLOAKED_CLICK), $this->cloakedPageSendsTo($lpc));
+        $others = [
+            'http://evil.example/go?u=deep', self::PLACE . '/more?u=deep', 'http://shop.example@evil.example/go',
+        ];
+        foreach ($others as $other) {
+            self::assertSame(
+                self::campaignUrlFor(self::CLOAKED_CLICK),
+                $this->cloakedPageSendsTo($lpc . '&p202_to=' . rawurlencode($other)),
+                $other
+            );
+        }
     }
 
     /** Only the link names a destination: the page's address does not. */
