@@ -646,6 +646,54 @@ final class ShopifyWebhookIntegrationTest extends TestCase
             ShopifyAdapterTest::refund(['id' => 9100003, 'refund_line_items' => []])));
     }
 
+    /**
+     * Each partial refund is in the currency its sale recorded, and they net
+     * to the sale, whatever the account counts in by then: a sale recorded
+     * in dollars is refunded in dollars after the account moved to euros.
+     * A refund stated in any other currency than its sale's is refused, and
+     * nets against nothing. (A Shopify sale is never a converted amount:
+     * an order in another currency than the account's is refused.)
+     */
+    public function testPartialRefundsAreInTheirSalesCurrencyAndNetToItAfterTheAccountsCurrencyChanged(): void
+    {
+        $this->deliver('orders/paid', self::order());
+        self::q("UPDATE 202_users_pref SET user_account_currency = 'EUR' WHERE user_id = " . self::ACCOUNT);
+        try {
+            $euros = ShopifyAdapterTest::refund(['id' => 9100009, 'refund_line_items' => [], 'transactions' => [
+                ['id' => 77009, 'kind' => 'refund', 'status' => 'success', 'amount' => '20.00', 'currency' => 'EUR'],
+            ]]);
+            $refused = $this->deliver('refunds/create', $euros);
+            self::assertOutcome(OutcomeKind::CURRENCY_MISMATCH, 422, $refused);
+            self::assertStringContainsString('the sale it takes back was recorded in USD', $refused->message);
+            self::assertCount(1, self::conversions(), 'euros are not taken from a sale in dollars');
+
+            $first = $this->deliver('refunds/create', ShopifyAdapterTest::refund(['refund_line_items' => []]));
+            self::assertOutcome(OutcomeKind::REVERSED, 200, $first);
+            self::assertStringContainsString('the currency the sale it takes back was recorded in; this account counts in EUR now', $first->message);
+            self::assertOutcome(OutcomeKind::REVERSED, 200, $this->deliver('refunds/create',
+                ShopifyAdapterTest::refund(['id' => 9100002, 'refund_line_items' => []])));
+            self::assertOutcome(OutcomeKind::REVERSED, 200, $this->deliver('refunds/create',
+                ShopifyAdapterTest::refund(['id' => 9100003, 'refund_line_items' => []])));
+
+            $rows = self::requireScratch()->query('SELECT click_payout, currency, stated_amount FROM 202_conversion_logs'
+                . ' WHERE click_id = ' . self::CLICK . ' ORDER BY conv_id')->fetch_all();
+            self::assertSame(
+                [['59.00000', 'USD', null], ['-20.00000', 'USD', null], ['-20.00000', 'USD', null], ['-19.00000', 'USD', null]],
+                $rows,
+                'every refund in its sale\'s currency, the last capped at what was left'
+            );
+            self::assertSame(
+                [['currency' => 'USD', 'conversions' => 1, 'amount' => '0.00000']],
+                \Prosper202\Conversion\Ledger\RevenueCurrencies::others(new Connection(self::requireScratch()), self::ACCOUNT, 'EUR', null, null),
+                'the refunds net to the sale: the one conversion in dollars is worth nothing'
+            );
+            $click = (new \Prosper202\Conversion\Ledger\ClickBreakdown(new Connection(self::requireScratch())))->forClick(self::CLICK, self::ACCOUNT);
+            self::assertFalse($click['click']['mixed_currencies']);
+        } finally {
+            self::q("UPDATE 202_users_pref SET user_account_currency = 'USD' WHERE user_id = " . self::ACCOUNT);
+        }
+    }
+
     public function testARefundOfAnOrderOnTwoClicksIsRefused(): void
     {
         $this->deliver('orders/paid', self::order());

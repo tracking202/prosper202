@@ -334,6 +334,20 @@ final class MatchMethodIntegrationTest extends TestCase
         }
     }
 
+    public function testOtherCurrenciesCountTheConversionsTheIncomeCounts(): void
+    {
+        $this->campaign(1, 'replace');
+        $this->click(100, 1);
+        // Two sales on one click of a replace-mode campaign: the later one counts, as in the income.
+        $this->record(100, MatchMethod::CLICK_ID, ['payout' => '5', 'transaction_id' => 'A1', 'conv_time' => 1700000100]);
+        $this->record(100, MatchMethod::CLICK_ID, ['payout' => '8', 'transaction_id' => 'A2', 'conv_time' => 1700000200]);
+        self::$db->query("UPDATE 202_conversion_logs SET currency = 'EUR' WHERE click_id = 100");
+
+        $others = (new ConversionsController(self::$db, 1))->matchMethods([])['other_currencies'];
+
+        self::assertSame([['currency' => 'EUR', 'conversions' => 1, 'amount' => 8.0]], $others);
+    }
+
     public function testGroupOverviewsMatchMethodLevelSplitsACampaignWithoutChangingIt(): void
     {
         require_once dirname(__DIR__, 2) . '/202-config/ReportSummaryForm.class.php';

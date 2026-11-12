@@ -109,6 +109,8 @@ if (array_key_exists('chart_time_range', $_POST)) {
         'json' => $chart,
         'categories' => $categories,
         'title' => 'From ' . date('d/m/Y', $from) . ' to ' . date('d/m/Y', $to),
+        // As the Overview draws it: what the money lines add that is not in the account's currency.
+        'subtitle' => \Prosper202\Conversion\Ledger\RevenueCurrencies::chartNote($db, \Prosper202\DataEngine\DataScope::userId() ?? 0, $from, $to),
     ], JSON_NUMERIC_CHECK);
 }
 

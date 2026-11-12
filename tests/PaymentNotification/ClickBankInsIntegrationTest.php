@@ -482,6 +482,72 @@ final class ClickBankInsIntegrationTest extends TestCase
     }
 
     /**
+     * The USD amount of an account that counts in euros is recorded as USD,
+     * its refund with it, and every reader says so: the click's breakdown,
+     * the conversions API, what the reports' totals hold in another
+     * currency, and the offline conversion file's line.
+     */
+    public function testAUsdAmountOnAnAccountThatCountsInEurosIsRecordedAndShownAsUsd(): void
+    {
+        $db = self::requireScratch();
+        $conn = new Connection($db);
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $this->post(['trackingCodes' => [(string) self::EUROS_CLICK]], self::EUROS_KEY));
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $this->post(
+            ['trackingCodes' => [(string) self::EUROS_CLICK], 'transactionType' => 'RFND', 'totalAccountAmount' => '-10.00'],
+            self::EUROS_KEY
+        ));
+
+        $rows = $db->query('SELECT conv_id, click_payout, currency, stated_amount, stated_currency FROM 202_conversion_logs'
+            . ' WHERE click_id = ' . self::EUROS_CLICK . ' ORDER BY conv_id')->fetch_all(MYSQLI_ASSOC);
+        self::assertSame(
+            [['37.62000', 'USD', null, null], ['-10.00000', 'USD', null, null]],
+            array_map(static fn (array $r): array => [$r['click_payout'], $r['currency'], $r['stated_amount'], $r['stated_currency']], $rows),
+            'as sent, in the currency ClickBank states, and the refund in its sale\'s'
+        );
+
+        $breakdown = (new \Prosper202\Conversion\Ledger\ClickBreakdown($conn))->forClick(self::EUROS_CLICK, self::EUROS);
+        self::assertSame(['USD', 'USD'], array_column($breakdown['rows'], 'currency'));
+        self::assertSame(['USD', false], [$breakdown['click']['value_currency'], $breakdown['click']['mixed_currencies']]);
+
+        $api = (new \Api\V3\Controllers\ConversionsController($db, self::EUROS))->get((int) $rows[0]['conv_id'])['data'];
+        self::assertSame(['USD', 37.62], [$api['currency'], $api['click_payout']]);
+
+        self::assertSame(
+            [['currency' => 'USD', 'conversions' => 1, 'amount' => '27.62000']],
+            \Prosper202\Conversion\Ledger\RevenueCurrencies::others($conn, self::EUROS, 'EUR', null, null),
+            'the reports\' notice: one conversion, net of its refund, in USD on an account that counts in EUR'
+        );
+        $summary = (new \Api\V3\Controllers\ReportsController($db, self::EUROS))->summary([]);
+        self::assertSame('EUR', $summary['data']['currency']);
+        self::assertSame([['currency' => 'USD', 'conversions' => 1, 'amount' => 27.62]], $summary['other_currencies']);
+
+        // The offline file, read once the click is old enough for the platforms to take it.
+        self::q('DELETE FROM 202_google WHERE click_id = ' . self::EUROS_CLICK);
+        self::q('INSERT INTO 202_google SET click_id = ' . self::EUROS_CLICK . ", gclid = 'EAIaIQ_clickbank', gbraid = '', wbraid = '',"
+            . " ttclid = '', msclkid = '', fbclid = '', utm_source_id = 0, utm_medium_id = 0, utm_campaign_id = 0, utm_term_id = 0, utm_content_id = 0");
+        $later = time() + 7 * 3600;
+        (new \Prosper202\OfflineConversion\ConversionNames($conn))->save(self::EUROS, [
+            \Prosper202\OfflineConversion\ConversionNames::GOOGLE => [0 => 'Sale'],
+        ], $later);
+        [$handle, $file] = \Prosper202\OfflineConversion\OfflineFile::write(
+            $conn,
+            self::EUROS,
+            new \Prosper202\OfflineConversion\ExportOptions(\Prosper202\OfflineConversion\Format::GOOGLE, 30, $later)
+        );
+        rewind($handle);
+        $lines = explode("\r\n", trim((string) stream_get_contents($handle)));
+        fclose($handle);
+        try {
+            self::assertCount(2, $lines, 'the header and the sale');
+            self::assertSame(['27.62', 'USD'], array_slice(explode(',', $lines[1]), 5, 2), 'the value net of the refund, in USD');
+            self::assertSame('EUR', $file->currency, 'the summary states the account\'s currency now');
+        } finally {
+            self::q('DELETE FROM 202_google WHERE click_id = ' . self::EUROS_CLICK);
+            self::q('DELETE FROM 202_offline_conversion_names WHERE user_id = ' . self::EUROS);
+        }
+    }
+
+    /**
      * 1.9.56 credited a ClickBank sale on the click alone and wrote no row
      * under its receipt. A refund of it takes its amount back from the value
      * the click carried over, once per receipt and never below 0.
