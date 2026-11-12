@@ -203,10 +203,13 @@ What it will and will not match:
   postback is answered `409` and nothing is recorded; when the clicks are
   all your account's, your Setup › Inbound Log says which of those it was.
   Send the SubID to settle those.
-- **An id, not a placeholder.** A value no platform issues, written where
-  the id was meant to go (`undefined`, `null`, `(not set)`, an unfilled
-  `__GCLID__`), is not looked up: every visitor whose page wrote it shares
-  it.
+- **An id, not a placeholder.** Only a value with an id's shape is looked
+  up: at least 8 letters, digits and `.` `_` `~` `-`, with a letter and a
+  digit among them, as every gclid, gbraid, wbraid, ttclid, msclkid and
+  fbclid is. What a page or template writes where the id was meant to go
+  (`undefined`, `null`, `(not set)`, an unfilled `__GCLID__`, a `{{ gclid }}`
+  or `$gclid` it left, the parameter's own name, `test`) is not: every
+  visitor whose page wrote it shares it.
 - **Exactly.** An id's case is part of it: `Cj0KCQ...` and `cj0kcq...` are
   different ids.
 - **The last 30 days.** The click must have been visited in the last 30 days.
