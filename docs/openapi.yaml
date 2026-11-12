@@ -2993,7 +2993,8 @@ paths:
                   type: number
                   description: >-
                     What the refund returned, in the account's currency. More
-                    than 0; a decimal string is read too.
+                    than 0, with at most 5 decimals (a sixth is refused, not
+                    rounded); a decimal string is read too.
                 currency:
                   type: string
                   description: >-

@@ -75,8 +75,9 @@ final class ShopifyRefundsController
         PayloadKeys::refuseUnknown($payload, ['amount', 'click_id', 'currency'], 'a Shopify refund to record');
         $errors = [];
         $amount = $payload['amount'] ?? null;
-        // A decimal string or a JSON number; a float is read at the five decimals a payout holds.
-        if (is_int($amount) || is_float($amount)) {
+        // A decimal string or a JSON number with at most the five decimals a
+        // payout holds: a sixth is refused, never rounded away (#4).
+        if (is_int($amount) || (is_float($amount) && is_finite($amount) && round($amount, 5) == $amount)) {
             $amount = rtrim(rtrim(number_format((float) $amount, 5, '.', ''), '0'), '.');
         }
         if (!is_string($amount) || preg_match('/^\d{1,6}(?:\.\d{1,5})?$/D', $amount) !== 1 || (float) $amount <= 0) {

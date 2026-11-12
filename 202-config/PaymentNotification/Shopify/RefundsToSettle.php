@@ -201,7 +201,15 @@ final class RefundsToSettle
             $request
         );
         if (in_array($outcome->kind, [OutcomeKind::REVERSED, OutcomeKind::DUPLICATE], true)) {
-            (new RefundSettlementStore($this->conn))->settledByHand($account, $refundId, time());
+            // The reversal has landed (#13): a failure here leaves the refund
+            // listed, and recording it again answers DUPLICATE and closes it.
+            try {
+                (new RefundSettlementStore($this->conn))->settledByHand($account, $refundId, time());
+                (new \Prosper202\PaymentNotification\HeldNotifications($this->db))->dropRefund($account, ConversionSource::SHOPIFY->value, $refundId);
+            } catch (\Throwable $e) {
+                error_log('Shopify refund ' . $refundId . ' was recorded for account ' . $account
+                    . ' but could not be closed in the list: ' . $e->getMessage());
+            }
         }
         $this->log($account, $outcome, 'Recorded by hand from ' . $from . '. ', $refundId, $click);
 
@@ -211,12 +219,17 @@ final class RefundsToSettle
     /** Closes the refund with nothing recorded (no money was returned, or it is handled elsewhere). */
     public function close(int $account, string $refundId, string $from = self::THE_PAGE): bool
     {
+        // Only a refund list() shows: one whose order's sale is on file. One
+        // waiting for its order stays, to be recorded when the sale arrives.
+        $row = $this->listed($account, $refundId);
         if (
-            $this->listed($account, $refundId) === null
+            $row === null || (int) $row['order_on_file'] !== 1
+            || ($this->clicksByOrder($account, [(string) $row['order_id']])[(string) $row['order_id']] ?? []) === []
             || !(new RefundSettlementStore($this->conn))->settledByHand($account, $refundId, time())
         ) {
             return false;
         }
+        (new \Prosper202\PaymentNotification\HeldNotifications($this->db))->dropRefund($account, ConversionSource::SHOPIFY->value, $refundId);
         $this->log(
             $account,
             new Outcome(OutcomeKind::IGNORED, 'Nothing was recorded.', null, $account),
@@ -251,7 +264,7 @@ final class RefundsToSettle
             return null;
         }
         $stmt = $this->conn->prepareWrite(
-            'SELECT order_id, occurred_at, transactions FROM 202_shopify_pending_refunds'
+            'SELECT order_id, occurred_at, transactions, order_on_file FROM 202_shopify_pending_refunds'
             . ' WHERE user_id = ? AND refund_id = ?'
             . ' AND (completed_at IS NULL OR refused_reason IS NOT NULL)'
         );

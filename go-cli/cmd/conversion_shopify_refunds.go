@@ -14,7 +14,8 @@ import (
 
 // refundAmountPattern is what POST /conversions/shopify-refunds/{id}/record
 // reads as an amount: at most six whole digits and five decimals.
-var refundAmountPattern = regexp.MustCompile(`^[0-9]{1,6}(\.[0-9]{1,5})?$`)
+// No leading zero before another digit: 007 is no JSON number, and the body sends it as one.
+var refundAmountPattern = regexp.MustCompile(`^(0|[1-9][0-9]{0,5})(\.[0-9]{1,5})?$`)
 
 var currencyCodePattern = regexp.MustCompile(`^[A-Za-z]{3}$`)
 

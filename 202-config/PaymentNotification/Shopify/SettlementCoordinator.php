@@ -181,6 +181,12 @@ final class SettlementCoordinator
             return;
         }
         $account = $outcome->accountId;
+        // Refused because it is on file already, at another amount: it is
+        // recorded, and listing it as not recorded would say otherwise.
+        if ($outcome->kind === OutcomeKind::CONFLICT && $this->isLiveReversal($account, $outcome->conversionId)) {
+            return;
+        }
+        $onFile = $this->clicksOf($account, $refund['order_id']) !== [];
         $this->store->refuse(
             $account,
             $refund['id'],
@@ -189,9 +195,29 @@ final class SettlementCoordinator
             $refund['amount'],
             $refund['currency'],
             $outcome->message,
-            $this->clicksOf($account, $refund['order_id']) !== [],
+            $onFile,
             time()
         );
+        // A sale that landed between the read and the insert marked no row
+        // (afterSale() runs once it has committed): read again, now the row is there.
+        if (!$onFile && $this->clicksOf($account, $refund['order_id']) !== []) {
+            $this->store->orderOnFile($account, $refund['order_id']);
+        }
+    }
+
+    /** Whether $conversionId is a reversal of the account's still on file. */
+    private function isLiveReversal(int $account, ?int $conversionId): bool
+    {
+        if ($conversionId === null || $conversionId <= 0) {
+            return false;
+        }
+        $stmt = $this->conn->prepareWrite(
+            'SELECT 1 FROM 202_conversion_logs WHERE conv_id = ? AND user_id = ? AND reverses_conv_id IS NOT NULL'
+            . ' AND deleted = 0 LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'ii', [$conversionId, $account]);
+
+        return $this->conn->fetchOne($stmt) !== null;
     }
 
     /**

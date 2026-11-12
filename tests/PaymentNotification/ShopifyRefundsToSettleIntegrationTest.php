@@ -105,6 +105,7 @@ final class ShopifyRefundsToSettleIntegrationTest extends TestCase
         }
         self::q("DELETE FROM 202_shopify_pending_refunds WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_shopify_refund_transactions WHERE user_id IN ($users)");
+        self::q("DELETE FROM 202_held_payment_notifications WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_inbound_log WHERE endpoint = 'shopify' AND user_id IN (0, $users)");
     }
 
@@ -474,6 +475,59 @@ final class ShopifyRefundsToSettleIntegrationTest extends TestCase
         self::assertSame([], self::desk()->list(self::ACCOUNT)['refunds']);
         $this->settle(71001, '10.00');
         self::assertSame(['59.00000'], self::payouts());
+    }
+
+    public function testARefundOnFileSentAgainAtAnotherAmountIsNotListedAsNotRecorded(): void
+    {
+        $this->deliver('orders/paid', self::order());
+        $first = $this->deliver('refunds/create', self::refundIn('USD'));
+        self::assertSame(OutcomeKind::REVERSED, $first->kind, $first->message);
+
+        $again = $this->deliver('refunds/create', ShopifyAdapterTest::refund(['refund_line_items' => [], 'transactions' => [
+            ['id' => 77001, 'kind' => 'refund', 'status' => 'success', 'amount' => '9.00', 'currency' => 'USD'],
+        ]]));
+
+        self::assertSame(OutcomeKind::CONFLICT, $again->kind, $again->message);
+        self::assertSame([], self::desk()->list(self::ACCOUNT)['refunds'], 'it is recorded: nothing to settle');
+        self::assertSame(['59.00000', '-10.00000'], self::payouts());
+    }
+
+    public function testARefundWaitingForItsOrderCannotBeClosedAndIsRecordedWhenTheSaleArrives(): void
+    {
+        $this->pending(9100001, 71001, '10.00');
+        self::assertSame([], self::desk()->list(self::ACCOUNT)['refunds'], 'no sale on file: not listed');
+
+        self::assertFalse(self::desk()->close(self::ACCOUNT, '9100001'), 'so it cannot be closed either');
+
+        $this->deliver('orders/paid', self::order());
+        $this->settle(71001, '10.00');
+        self::assertSame(['59.00000', '-10.00000'], self::payouts());
+    }
+
+    public function testARefundRecordedOrClosedByHandLeavesNoHeldCopyToBeRecordedLater(): void
+    {
+        $db = self::requireScratch();
+        $held = static fn (): int => (int) $db->query('SELECT COUNT(*) FROM 202_held_payment_notifications WHERE user_id = '
+            . self::ACCOUNT . " AND source = 'shopify' AND kind = 'refund'")->fetch_row()[0];
+        $this->deliver('orders/paid', self::order());
+        $refused = $this->deliver('refunds/create', self::refundIn('EUR'));
+        self::assertSame(OutcomeKind::CURRENCY_MISMATCH, $refused->kind, $refused->message);
+        self::assertSame(1, $held(), 'held for the account counting in EUR, and listed');
+        self::assertCount(1, self::desk()->list(self::ACCOUNT)['refunds']);
+
+        $outcome = self::desk()->takeBack(self::ACCOUNT, '9100001', '11.60', null, self::byHand(), RefundsToSettle::THE_PAGE, 'USD');
+
+        self::assertSame(OutcomeKind::REVERSED, $outcome->kind, $outcome->message);
+        self::assertSame(0, $held(), 'recorded by hand: the held copy goes');
+
+        // Closed by hand instead: the same.
+        self::cleanRows();
+        self::recordClick(self::CLICK);
+        $this->deliver('orders/paid', self::order());
+        $this->deliver('refunds/create', self::refundIn('EUR'));
+        self::assertSame(1, $held());
+        self::assertTrue(self::desk()->close(self::ACCOUNT, '9100001'));
+        self::assertSame(0, $held(), 'closed by hand: the held copy goes');
     }
 
     public function testTheStatusSaysWhatArrivedAndWhatDidNotVerify(): void
