@@ -582,7 +582,10 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   only. Today they are `destination_list`, `destination_deliveries` and
   `destination_test` (Setup › Destinations: each destination's status, its
   delivery log with why a conversion failed or was withheld, and a test
-  fire; the test fire is not offered with `--staged`).
+  fire; the test fire is not offered with `--staged`), and `ad_connection_list`
+  and `ad_connection_check` (Setup › Destinations › ChatGPT Ads: each
+  connected ad account, and a fresh read of it from OpenAI; the check is not
+  offered with `--staged`).
 - With `--staged`, a write returns a change id and changes nothing; you apply
   it with `p202 change apply <id>`. The assistant is not offered the apply and
   discard tools.

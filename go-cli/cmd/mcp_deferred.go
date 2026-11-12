@@ -40,6 +40,14 @@ var mcpDeferredToolSpecs = []mcpToolSpec{
 	{Name: "destination_test", Command: []string{"destination", "test"}, Title: "Test a destination", Kind: mcpCreate, NotHosted: true, NotStaged: true,
 		Args:  []mcpArg{idArg("id", "Destination id (from destination_list).", true)},
 		Words: []string{"test destination", "test fire", "validate destination", "destinations"}},
+	// ChatGPT Ads connections (Setup › Destinations › ChatGPT Ads): an ad account reached with its Advertiser API key.
+	{Name: "ad_connection_list", Command: []string{"ad-connection", "list"}, Title: "ChatGPT Ads connections", Kind: mcpRead, NotHosted: true,
+		Note:  "Each ad account's id, name, currency, time zone, status and what setup made; keys are never shown.",
+		Words: []string{"chatgpt ads connection", "openai ads account", "advertiser api key", "chatgpt ads"}},
+	{Name: "ad_connection_check", Command: []string{"ad-connection", "check"}, Title: "Check a ChatGPT Ads connection", Kind: mcpUpdate, NotHosted: true, NotStaged: true,
+		Args:  []mcpArg{idArg("id", "Ad connection id (from ad_connection_list).", true)},
+		Note:  "Reads the ad account from OpenAI again: name, currency, time zone, and whether the key still works.",
+		Words: []string{"is my chatgpt ads key working", "check chatgpt ads connection", "chatgpt ads"}},
 }
 
 // mcpAllToolSpecs is every tool `p202 mcp call` can run.
