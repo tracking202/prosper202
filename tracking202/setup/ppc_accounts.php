@@ -69,7 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		} catch (\RuntimeException | \mysqli_sql_exception $e) {
 			record_mysql_error($db, 'INSERT INTO 202_ppc_networks (Add ChatGPT Ads)', $e->getMessage());
 		}
-		$changed = $chatGpt['source_created'] || $chatGpt['account_created'] || $chatGpt['variables_added'] !== [];
+		$changed = $chatGpt['source_created'] || $chatGpt['source_adopted'] || $chatGpt['account_created'] || $chatGpt['variables_added'] !== [];
 		if ($changed) {
 			\Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
 		}
@@ -83,7 +83,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if ($chatGpt['source_created'] && $chatGpt['account_created'] && $slack) {
 			$slack->push('traffic_source_account_created', ['account_name' => \Prosper202\Setup\ChatGptAdsSource::ACCOUNT_NAME, 'network_name' => \Prosper202\Setup\ChatGptAdsSource::SOURCE_NAME, 'user' => $user_row['username']]);
 		}
-		$flash = $chatGpt['source_created'] ? 'chatgpt_added' : ($changed ? 'chatgpt_completed' : 'chatgpt_exists');
+		$flash = $chatGpt['source_created'] ? 'chatgpt_added'
+			: ($chatGpt['source_adopted'] ? 'chatgpt_adopted' : ($changed ? 'chatgpt_completed' : 'chatgpt_exists'));
 		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php?' . $flash . '=1');
 		exit;
 	}
@@ -611,6 +612,7 @@ echo p202_setup_query_flashes([
 	'variables_saved' => 'Custom variables saved. New tracking links for this source carry them.',
 	'chatgpt_added' => 'ChatGPT Ads added, with an account and the campaign_id and ad_id variables. On Get Links, pick it as the traffic source: you get the destination URL and the tracking template to paste into Ads Manager.',
 	'chatgpt_completed' => 'ChatGPT Ads was already set up, so no second source was made. The account or variables it was missing were added back; nothing you changed was touched.',
+	'chatgpt_adopted' => 'Your traffic source named ChatGPT Ads is now set up as ChatGPT Ads: it kept its links and reports, and was given what it was missing (an account, the campaign_id and ad_id variables). Get Links now gives its destination URL and tracking template.',
 	'chatgpt_exists' => 'ChatGPT Ads is already set up, so nothing was added. Get Links gives its destination URL and tracking template.',
 ], $_GET);
 if ($error) {

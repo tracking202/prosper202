@@ -23,7 +23,7 @@ import (
 func newPpcNetworkChatGptAdsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "add-chatgpt-ads",
-		Short: "Add ChatGPT Ads as a traffic source, with an account and its campaign_id/ad_id variables",
+		Short: "Add ChatGPT Ads as a traffic source, with an account and its variables",
 		Long: "Makes the traffic source ChatGPT Ads, an account on it, and the custom variables\n" +
 			"campaign_id={campaign_id} and ad_id={ad_id} that Ads Manager fills in. Safe to run\n" +
 			"again: an account that already has the ChatGPT Ads source gets no second one, only\n" +

@@ -1171,6 +1171,12 @@ class SyncEngine
             }
             $out[$k] = $v;
         }
+        // A source on no platform is every source a target before 1.9.80
+        // has, which would refuse the field it does not know; '' is the
+        // field's default, so leaving it out loses nothing.
+        if ($entity === 'ppc-networks' && ($out['ppc_network_platform'] ?? null) === '') {
+            unset($out['ppc_network_platform']);
+        }
         return $out;
     }
 

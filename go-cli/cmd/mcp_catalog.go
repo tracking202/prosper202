@@ -238,7 +238,7 @@ var mcpToolSpecs = []mcpToolSpec{
 	// Trackers
 	{Name: "tracker_list", Command: []string{"tracker", "list"}, Title: "List trackers", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "tracker_get", Command: []string{"tracker", "get"}, Title: "Get a tracker", Kind: mcpRead, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list).", true)}},
-	{Name: "tracker_get_url", Command: []string{"tracker", "get-url"}, Title: "Get a tracking link", Kind: mcpRead, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list).", true)}},
+	{Name: "tracker_get_url", Command: []string{"tracker", "get-url"}, Title: "Get a tracking link", Kind: mcpRead, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list).", true)}, Note: "chatgpt_ads: what to paste into ChatGPT Ads Manager."},
 	{Name: "tracker_create_with_url", Command: []string{"tracker", "create-with-url"}, Title: "Create a tracking link", Kind: mcpCreate},
 	{Name: "tracker_update", Command: []string{"tracker", "update"}, Title: "Update a tracker", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list).", true)}},
 	{Name: "tracker_delete", Command: []string{"tracker", "delete"}, Title: "Delete a tracker", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list); or give ids for several.", false)}, Note: "Its tracking links stop working, including any running in ads. " + deleteNote},
@@ -255,6 +255,7 @@ var mcpToolSpecs = []mcpToolSpec{
 	// Traffic sources and categories
 	{Name: "ppc_network_list", Command: []string{"ppc-network", "list"}, Title: "List traffic sources", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "ppc_network_create", Command: []string{"ppc-network", "create"}, Title: "Create a traffic source", Kind: mcpCreate},
+	{Name: "ppc_network_add_chatgpt_ads", Command: []string{"ppc-network", "add-chatgpt-ads"}, Title: "Add ChatGPT Ads", Kind: mcpCreate, Note: "Safe to repeat."},
 	{Name: "ppc_network_update", Command: []string{"ppc-network", "update"}, Title: "Update a traffic source", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Traffic source id (from ppc_network_list).", true)}},
 	{Name: "ppc_network_delete", Command: []string{"ppc-network", "delete"}, Title: "Delete a traffic source", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Traffic source id (from ppc_network_list); or give ids for several.", false)}, Note: setupParentDeleteNote("traffic source", "accounts", "ppc_account_delete")},
 	{Name: "ppc_account_list", Command: []string{"ppc-account", "list"}, Title: "List traffic source accounts", Kind: mcpRead, HostedOmit: mcpEveryPage},

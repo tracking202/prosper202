@@ -639,9 +639,23 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
     }
 
     // A tracker on the ChatGPT Ads source (by the platform Add ChatGPT Ads
-    // stored, never its name): the two values Ads Manager takes, first.
+    // stored, never its name): the two values Ads Manager takes, first. The
+    // account decides, as GET /trackers/{id}/url decides it.
+    // The link is saved by now: a failed read says so above the link rather
+    // than answering the request as failed (CLAUDE.md #13).
     $chatGptLinks = null;
-    if (isset($ownedRows['ppc_network_id']) && \Prosper202\Setup\ChatGptAdsSource::isSourceRow($ownedRows['ppc_network_id'])) {
+    $onChatGpt = false;
+    if (isset($ownedRows['ppc_account_id'])) {
+        try {
+            $onChatGpt = (new \Prosper202\Setup\ChatGptAdsSource($ownedConn))
+                ->isAccountOnSource((int) $_SESSION['user_id'], (int) $ownedRows['ppc_account_id']['ppc_account_id']);
+        } catch (\Throwable $e) {
+            error_log('generate_tracking_link.php: traffic source platform read failed: ' . $e->getMessage());
+            echo p202_flash('warn', 'Your link is saved, but whether its traffic source is ChatGPT Ads could not be read just now,'
+                . ' so its ChatGPT Ads tracking template is not shown. Get the link again to see it.');
+        }
+    }
+    if ($onChatGpt) {
         $onLandingPage = (($_POST['method_of_promotion'] ?? '') == 'landingpage') || (($_POST['tracker_type'] ?? '') == 1);
         $chatGptLinks = \Prosper202\Setup\ChatGptAdsSource::links(
             $linkBase,

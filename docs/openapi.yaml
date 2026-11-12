@@ -12511,8 +12511,13 @@ paths:
         nothing the user changed (its name, a placeholder) is touched. The
         answer is `201` when the source was made and `200` when it was
         already there. The source is found by what this call stored on it,
-        never by its name. The body is empty; any field is refused. Needs
-        `access_to_setup_section`, as adding a traffic source does.
+        never by its name; but when no source is marked and exactly one live
+        source is named ChatGPT Ads (made by hand), that one is marked instead
+        of making a second (`source_adopted`). What it makes is listed in the
+        change feed. The body is empty; any field is refused. Needs
+        `access_to_setup_section`, as adding a traffic source does, and a key
+        scoped to both `ppc-networks:write` and `ppc-accounts:write` (it makes
+        an account).
       operationId: addChatGptAdsSource
       responses:
         "201":
@@ -13609,6 +13614,11 @@ components:
               description: Its account (the first live one when it already had one)
             source_created:
               type: boolean
+            source_adopted:
+              type: boolean
+              description: >-
+                The account's one live source named ChatGPT Ads, made by hand, became
+                the ChatGPT Ads source (its name, accounts and links kept)
             account_created:
               type: boolean
             variables_added:
@@ -14240,6 +14250,14 @@ components:
         ppc_network_name:
           type: string
           maxLength: 50
+        ppc_network_platform:
+          type: string
+          enum: ["", chatgpt_ads]
+          description: >-
+            The ad platform the source is: chatgpt_ads for the ChatGPT Ads source
+            (POST /ppc-networks/chatgpt-ads sets it up), else empty. Its links get
+            that platform's tracking template (GET /trackers/{id}/url). Writable so
+            sync and import carry it; defaults to empty.
         ppc_network_deleted:
           type: integer
           readOnly: true
@@ -14254,6 +14272,14 @@ components:
         ppc_network_name:
           type: string
           maxLength: 50
+        ppc_network_platform:
+          type: string
+          enum: ["", chatgpt_ads]
+          description: >-
+            The ad platform the source is: chatgpt_ads for the ChatGPT Ads source
+            (POST /ppc-networks/chatgpt-ads sets it up), else empty. Its links get
+            that platform's tracking template (GET /trackers/{id}/url). Writable so
+            sync and import carry it; defaults to empty.
 
     PpcNetworkUpdate:
       type: object
@@ -14261,6 +14287,14 @@ components:
         ppc_network_name:
           type: string
           maxLength: 50
+        ppc_network_platform:
+          type: string
+          enum: ["", chatgpt_ads]
+          description: >-
+            The ad platform the source is: chatgpt_ads for the ChatGPT Ads source
+            (POST /ppc-networks/chatgpt-ads sets it up), else empty. Its links get
+            that platform's tracking template (GET /trackers/{id}/url). Writable so
+            sync and import carry it; defaults to empty.
 
     PpcNetworkResponse:
       type: object

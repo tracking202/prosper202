@@ -118,6 +118,7 @@ final class ChatGptAdsSourceIntegrationTest extends TestCase
             'ppc_network_id' => $first['ppc_network_id'],
             'ppc_account_id' => $first['ppc_account_id'],
             'source_created' => false,
+            'source_adopted' => false,
             'account_created' => false,
             'variables_added' => [],
         ], $second);
@@ -158,17 +159,41 @@ final class ChatGptAdsSourceIntegrationTest extends TestCase
         self::assertNotSame($first['ppc_network_id'], $second['ppc_network_id']);
     }
 
-    /** A source the user named ChatGPT Ads by hand is not the one: only the stored platform decides. */
-    public function testASourceNamedChatGptAdsByHandIsNotTheOne(): void
+    /**
+     * Until the button marks it, a source the user named ChatGPT Ads by hand
+     * is not the one: only the stored platform decides. The button then
+     * takes that one source over (its account and links stay), rather than
+     * making a second of the same name; with two such sources it cannot tell
+     * which, and makes its own.
+     */
+    public function testTheButtonTakesOverTheOneSourceNamedChatGptAdsByHand(): void
     {
-        $hand = self::exec('INSERT INTO 202_ppc_networks SET user_id = ' . self::USER . ", ppc_network_name = 'ChatGPT Ads', ppc_network_time = 0");
+        $hand = self::exec('INSERT INTO 202_ppc_networks SET user_id = ' . self::USER . ", ppc_network_name = 'chatgpt ads', ppc_network_time = 0");
         $handAccount = self::exec('INSERT INTO 202_ppc_accounts SET user_id = ' . self::USER . ", ppc_network_id = $hand, ppc_account_name = 'mine', ppc_account_time = 0");
-
         self::assertFalse(self::source()->isAccountOnSource(self::USER, $handAccount));
+
         $made = self::source()->add(self::USER);
+
+        self::assertSame([$hand, $handAccount, false, true, false], [
+            $made['ppc_network_id'], $made['ppc_account_id'], $made['source_created'], $made['source_adopted'], $made['account_created'],
+        ]);
+        self::assertSame(['campaign_id', 'ad_id'], $made['variables_added']);
+        self::assertTrue(self::source()->isAccountOnSource(self::USER, $handAccount));
+        self::assertSame('chatgpt ads', self::row("SELECT ppc_network_name FROM 202_ppc_networks WHERE ppc_network_id = $hand")['ppc_network_name'], 'its name is kept');
+        self::assertFalse(self::source()->add(self::USER)['source_adopted'], 'once');
+    }
+
+    public function testTwoSourcesNamedChatGptAdsByHandAreLeftAlone(): void
+    {
+        $first = self::exec('INSERT INTO 202_ppc_networks SET user_id = ' . self::USER . ", ppc_network_name = 'ChatGPT Ads', ppc_network_time = 0");
+        $second = self::exec('INSERT INTO 202_ppc_networks SET user_id = ' . self::USER . ", ppc_network_name = 'ChatGPT Ads', ppc_network_time = 0");
+        $other = self::exec('INSERT INTO 202_ppc_networks SET user_id = ' . self::OTHER . ", ppc_network_name = 'ChatGPT Ads', ppc_network_time = 0");
+
+        $made = self::source()->add(self::USER);
+
         self::assertTrue($made['source_created']);
-        self::assertNotSame($hand, $made['ppc_network_id']);
-        self::assertTrue(self::source()->isAccountOnSource(self::USER, $made['ppc_account_id']));
+        self::assertNotContains($made['ppc_network_id'], [$first, $second, $other]);
+        self::assertSame(0, self::rowCount("SELECT COUNT(*) AS n FROM 202_ppc_networks WHERE ppc_network_platform <> '' AND ppc_network_id IN ($first, $second, $other)"));
     }
 
     public function testAnotherAccountsSourceIsNeitherFoundNorTouched(): void

@@ -247,6 +247,36 @@ final class ChatGptAdsPagesIntegrationTest extends TestCase
         self::assertStringStartsWith('https://shop.example.com/sale?t202id=', (string) self::box($out, 'Destination URL'));
     }
 
+    /** The saved-links list gives a ChatGPT link the pair Get Links gave it; another link keeps its one copy. */
+    public function testTheSavedLinksListGivesThePairToo(): void
+    {
+        $made = $this->addChatGptAds();
+        $direct = self::page('tracking202/ajax/generate_tracking_link.php', [], $this->link('directlink', $made));
+        $onPage = self::page('tracking202/ajax/generate_tracking_link.php', [], $this->link('landingpage', $made) + ['landing_page_id' => (string) self::PAGE]);
+        self::page('tracking202/ajax/generate_tracking_link.php', [], $this->link('directlink', ['source' => self::PLAIN_SOURCE, 'account' => self::PLAIN_ACCOUNT]));
+        $ids = array_map('intval', array_column(self::$db->query('SELECT tracker_id FROM 202_trackers WHERE user_id = ' . self::USER . ' ORDER BY tracker_id')->fetch_all(), 0));
+        self::assertCount(3, $ids);
+
+        $list = self::page('tracking202/setup/get_trackers.php');
+        $item = static function (int $id) use ($list): string {
+            self::assertSame(1, preg_match('~data-tracker-id="' . $id . '">(.*?)</li>~s', $list, $m), "tracker $id is listed");
+
+            return $m[1];
+        };
+        $copied = static function (string $item, string $which): ?string {
+            return preg_match('~data-p202-copy="([^"]*)" data-chatgpt-ads="' . $which . '"~', $item, $m) === 1
+                ? html_entity_decode($m[1], ENT_QUOTES, 'UTF-8') : null;
+        };
+        foreach ([[$ids[0], $direct], [$ids[1], $onPage]] as [$id, $shown]) {
+            self::assertSame(self::box($shown, 'Destination URL'), $copied($item($id), 'destination_url'), "tracker $id");
+            self::assertSame(self::box($shown, 'Tracking template'), $copied($item($id), 'tracking_template'), "tracker $id");
+            self::assertStringContainsString('>ChatGPT Ads</span>', $item($id));
+        }
+        self::assertNull($copied($item($ids[2]), 'tracking_template'));
+        self::assertStringNotContainsString('ChatGPT Ads', $item($ids[2]));
+        self::assertStringContainsString('>copy</button>', $item($ids[2]));
+    }
+
     /** @param array{source: int, account: int} $on */
     private function link(string $promotion, array $on): array
     {

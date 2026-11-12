@@ -79,8 +79,10 @@ carries `t202id` and `t202kw` for the page's landing page code. Any other
 tracker's destination is its `dl.php` or `rtr.php` link with only `t202id`
 (`destination` `tracking_link`), since ChatGPT fills its macros in the template
 only. The link's other variables and tokens (`c1`, a custom variable) follow
-in the template; what the template already sets (`utm_source`, `campaign_id`,
-...) is not written twice.
+in the template; what the template already sets (`utm_source`, `oppref`, ...)
+is not written twice. The source's own `campaign_id` and `ad_id` variables give
+those two parameters, so a placeholder you change on Traffic Sources reaches
+the template; `utm_campaign` and `utm_content` keep `{campaign_id}` and `{ad_id}`.
 
 **Which link.** A tracker with a landing page links to the landing page's own
 URL with `t202id` added to its query (the parameters go before any `#fragment`,

@@ -28,7 +28,12 @@ final class ChatGptAdsSource
     public const SOURCE_NAME = 'ChatGPT Ads';
     public const ACCOUNT_NAME = 'ChatGPT Ads account';
 
-    /** The macros OpenAI documents for landing_page_configuration.query_string_template. */
+    /**
+     * The click's campaign and ad, by the macros OpenAI's Ads API (OpenAPI
+     * 2.3.0, landing_page_configuration.query_string_template) and its
+     * campaign-management example name: {campaign_id}, {ad_id} ({oppref},
+     * the click id, is read by the click path itself: ClickRecord::AD_CLICK_IDS).
+     */
     public const VARIABLES = [
         ['name' => 'Campaign ID', 'parameter' => 'campaign_id', 'placeholder' => '{campaign_id}'],
         ['name' => 'Ad ID', 'parameter' => 'ad_id', 'placeholder' => '{ad_id}'],
@@ -38,11 +43,14 @@ final class ChatGptAdsSource
     public const TEMPLATE = 'utm_source=chatgpt&utm_medium=paid&utm_campaign={campaign_id}&utm_content={ad_id}'
         . '&campaign_id={campaign_id}&ad_id={ad_id}&oppref={oppref}';
 
-    /** OpenAI's limit on query_string_template. */
+    /** query_string_template's maxLength in OpenAI's Ads API (OpenAPI 2.3.0). */
     public const TEMPLATE_MAX_LENGTH = 2048;
 
     /** The parameters TEMPLATE sets, which a link's own variables do not repeat. */
     private const TEMPLATE_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'campaign_id', 'ad_id', 'oppref', 't202id'];
+
+    /** TEMPLATE's parameters whose value the source's own variable of that name gives, when it has one. */
+    private const SOURCE_SET_KEYS = ['campaign_id', 'ad_id'];
 
     public function __construct(private readonly Connection $conn)
     {
@@ -51,7 +59,10 @@ final class ChatGptAdsSource
     /**
      * Sets ChatGPT Ads up for $userId, or completes the setup already there.
      *
-     * @return array{ppc_network_id: int, ppc_account_id: int, source_created: bool, account_created: bool, variables_added: list<string>}
+     * source_adopted: an unmarked source named SOURCE_NAME was there and is
+     * now the ChatGPT Ads source (see add()'s comment).
+     *
+     * @return array{ppc_network_id: int, ppc_account_id: int, source_created: bool, source_adopted: bool, account_created: bool, variables_added: list<string>}
      * @throws \Prosper202\Database\Exceptions\QueryException when a statement fails; nothing is written then
      * @throws \RuntimeException when $userId is no account
      */
@@ -74,6 +85,28 @@ final class ChatGptAdsSource
                 . ' ORDER BY ppc_network_id LIMIT 1');
             $this->conn->bind($find, 'is', [$userId, self::PLATFORM]);
             $found = $this->conn->fetchOne($find);
+            $sourceAdopted = false;
+            if ($found === null) {
+                // A source the user made by hand under this name, before the
+                // button existed (or synced from an install before 1.9.80):
+                // the one live, unmarked source of that name becomes the
+                // ChatGPT Ads source, so its links and reports carry on under
+                // it rather than beside a second source of the same name.
+                // Two or more are ambiguous, and a new source is made.
+                $named = $this->conn->prepareWrite('SELECT ppc_network_id FROM 202_ppc_networks'
+                    . " WHERE user_id = ? AND ppc_network_name = ? AND ppc_network_platform = '' AND ppc_network_deleted = 0"
+                    . ' ORDER BY ppc_network_id LIMIT 2');
+                $this->conn->bind($named, 'is', [$userId, self::SOURCE_NAME]);
+                $candidates = $this->conn->fetchAll($named);
+                if (count($candidates) === 1) {
+                    $mark = $this->conn->prepareWrite('UPDATE 202_ppc_networks SET ppc_network_platform = ?'
+                        . ' WHERE ppc_network_id = ? AND user_id = ?');
+                    $this->conn->bind($mark, 'sii', [self::PLATFORM, (int) $candidates[0]['ppc_network_id'], $userId]);
+                    $this->conn->executeUpdate($mark);
+                    $found = $candidates[0];
+                    $sourceAdopted = true;
+                }
+            }
             $sourceCreated = $found === null;
             if ($found === null) {
                 $insert = $this->conn->prepareWrite('INSERT INTO 202_ppc_networks'
@@ -121,6 +154,7 @@ final class ChatGptAdsSource
                 'ppc_network_id' => $sourceId,
                 'ppc_account_id' => $accountId,
                 'source_created' => $sourceCreated,
+                'source_adopted' => $sourceAdopted,
                 'account_created' => $accountCreated,
                 'variables_added' => $added,
             ];
@@ -150,7 +184,17 @@ final class ChatGptAdsSource
             . ' INNER JOIN 202_ppc_networks n ON n.ppc_network_id = a.ppc_network_id AND n.user_id = a.user_id'
             . ' WHERE a.ppc_account_id = ? AND a.user_id = ? LIMIT 1');
         $this->conn->bind($stmt, 'ii', [$ppcAccountId, $userId]);
-        $row = $this->conn->fetchOne($stmt);
+        try {
+            $row = $this->conn->fetchOne($stmt);
+        } catch (\Throwable $e) {
+            // Between the code's deploy and the upgrade that adds the column
+            // no source can be the ChatGPT Ads one, which only the button
+            // (after the upgrade) marks; any other failure is not "no".
+            if (Connection::isMysqlError($e, 1054, 'Unknown column')) {
+                return false;
+            }
+            throw $e;
+        }
 
         return $row !== null && self::isSourceRow($row);
     }
@@ -164,7 +208,10 @@ final class ChatGptAdsSource
      * The template is TEMPLATE, then (on a landing page, where the page's
      * script finds the tracker by it) t202id and the publisher, then the
      * link's own variables that TEMPLATE does not already set; an empty
-     * t202kw only on a landing page.
+     * t202kw only on a landing page. The source's campaign_id and ad_id
+     * variables give those two parameters' values, so a placeholder the user
+     * changed on Traffic Sources reaches the template; utm_campaign and
+     * utm_content keep OpenAI's macros.
      *
      * @param string $linkBase the links' base, `scheme://host/…/` (TrackingBaseUrl)
      * @param string $publisherQuery '&t202pubid=…' for a publisher's link, or ''
@@ -183,20 +230,28 @@ final class ChatGptAdsSource
         $parsed = $page === '' ? false : parse_url($page);
         $onPage = is_array($parsed) && ($parsed['host'] ?? '') !== '';
 
-        $parts = [self::TEMPLATE];
-        if ($onPage) {
-            $parts[] = 't202id=' . $trackerIdPublic . $publisherQuery;
-        }
+        $template = self::TEMPLATE;
+        $rest = [];
         foreach (explode('&', $variableQuery) as $pair) {
             if ($pair === '') {
                 continue;
             }
-            $key = explode('=', $pair, 2)[0];
+            [$key, $value] = explode('=', $pair, 2) + [1 => ''];
+            if (in_array($key, self::SOURCE_SET_KEYS, true) && $value !== '') {
+                // The source's own placeholder, as the user set it on Traffic Sources.
+                $template = str_replace('&' . $key . '={' . $key . '}', '&' . $key . '=' . $value, $template);
+                continue;
+            }
             if (in_array($key, self::TEMPLATE_KEYS, true) || (!$onPage && $pair === 't202kw=')) {
                 continue;
             }
-            $parts[] = $pair;
+            $rest[] = $pair;
         }
+        $parts = [$template];
+        if ($onPage) {
+            $parts[] = 't202id=' . $trackerIdPublic . $publisherQuery;
+        }
+        array_push($parts, ...$rest);
 
         if ($onPage) {
             return ['destination' => 'landing_page', 'destination_url' => $page, 'tracking_template' => implode('&', $parts)];

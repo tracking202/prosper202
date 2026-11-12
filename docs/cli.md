@@ -520,6 +520,14 @@ Sources does; its accounts are not deleted with it, so delete them first
 same for a category and its campaigns, and `ppc-account delete` for an account
 and the trackers that name it.
 
+`p202 ppc-network add-chatgpt-ads` is Setup › Traffic Sources' **Add ChatGPT
+Ads**: it makes the source ChatGPT Ads, an account on it and the variables
+`campaign_id={campaign_id}` and `ad_id={ad_id}`. Run again, it adds only what is
+missing; a source you named ChatGPT Ads yourself (the only one of that name)
+becomes the ChatGPT Ads source rather than gaining a twin. `tracker get-url`
+then answers `chatgpt_ads` for a tracker on its account: the destination URL
+and the tracking template to paste into Ads Manager.
+
 A traffic source's custom variables — the extra `parameter=placeholder` pairs
 its tracking links carry, edited in Setup › Traffic Sources › variables:
 

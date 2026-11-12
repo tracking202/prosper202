@@ -80,7 +80,8 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 	// click filter's five tools (user_id and ids left out, no entry update) and
 	// settings_get add about 5,100; the publisher dimension and its filter
 	// (on report_summary, report_breakdown and click_list) about 800;
-	// landing_page_check about 700.
+	// landing_page_check about 700; ppc_network_add_chatgpt_ads about 330,
+	// paid for by a shorter help line on the link-token flags.
 	const budget = 100500
 	if len(body) > budget {
 		t.Fatalf("the tool list is %d characters, over its %d budget; trim notes or omit flags", len(body), budget)

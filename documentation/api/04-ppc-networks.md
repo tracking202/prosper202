@@ -23,6 +23,7 @@ Manage pay-per-click ad networks (Google Ads, Bing Ads, Facebook, etc.).
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
 | `ppc_network_name` | string | Yes | Network name (max 50) |
+| `ppc_network_platform` | string | No | `chatgpt_ads` for the ChatGPT Ads source, else `''` (the default). Set up the source with [Add ChatGPT Ads](#add-chatgpt-ads); the field is writable so `p202 sync` and `p202 import` carry it, and a source on no platform is sent without it |
 
 A traffic source's custom variables are the extra `parameter=placeholder`
 pairs its tracking links carry; they are edited under
@@ -46,6 +47,7 @@ there (its name, a placeholder) is touched. `201` when the source was made,
     "ppc_network_id": 12,
     "ppc_account_id": 30,
     "source_created": true,
+    "source_adopted": false,
     "account_created": true,
     "variables_added": ["campaign_id", "ad_id"]
   }
@@ -53,7 +55,13 @@ there (its name, a placeholder) is touched. `201` when the source was made,
 ```
 
 The source is recognised by what this call stored on it, not by its name, so
-renaming it is fine and a source you named "ChatGPT Ads" yourself is not it.
+renaming it afterwards is fine. A source you named "ChatGPT Ads" yourself is
+not it until you call this: then, when it is the only live source of that name,
+it becomes the ChatGPT Ads source (`source_adopted: true`; its name, accounts
+and links are kept) instead of gaining a second source of the same name. The
+source and account it makes are in the change feed (`GET /changes/ppc-networks`,
+`/changes/ppc-accounts`) as a POST's are. It makes an account, so a scoped key
+needs `ppc-accounts:write` as well as `ppc-networks:write`.
 `GET /trackers/{id}/url` answers `chatgpt_ads` for a tracker on its account
 ([Trackers](06-trackers.md#get-tracking-url)). The CLI is
 `p202 ppc-network add-chatgpt-ads`.

@@ -84,6 +84,19 @@ final class ChatGptAdsSourceTest extends TestCase
         self::assertSame('chatgpt', $query['utm_source']);
     }
 
+    /** A placeholder the user changed on Traffic Sources reaches the template; OpenAI's macros stay on the utm values. */
+    public function testTheSourcesOwnPlaceholdersGiveTheirParameters(): void
+    {
+        $links = ChatGptAdsSource::links(self::BASE, '5', '', '&campaign_id={campaignid}&ad_id={ad_id}&t202kw=', '', false);
+
+        self::assertSame(
+            'utm_source=chatgpt&utm_medium=paid&utm_campaign={campaign_id}&utm_content={ad_id}&campaign_id={campaignid}&ad_id={ad_id}&oppref={oppref}',
+            $links['tracking_template']
+        );
+        $none = ChatGptAdsSource::links(self::BASE, '5', '', '&t202kw=', '', false);
+        self::assertSame(self::TEMPLATE, $none['tracking_template'], 'a source without the variables keeps the macros');
+    }
+
     public function testASourceIsTheChatGptOneOnlyByItsStoredPlatform(): void
     {
         self::assertTrue(ChatGptAdsSource::isSourceRow(['ppc_network_name' => 'Anything', 'ppc_network_platform' => 'chatgpt_ads']));
