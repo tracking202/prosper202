@@ -111,11 +111,13 @@ by an earlier change of your account's currency:
 Either answer clears the notice. You can change any campaign's currency
 under Setup › Campaigns at any time.
 
-A campaign paid only by its postbacks' amounts (a payout of 0) from before
-1.9.80 cannot be told apart from one an earlier change left in the old
-currency, so the upgrade keeps it in your account's currency, as its amounts
-were recorded before; set its currency under Setup › Campaigns if its
-network reports in another.
+A campaign paid only by its postbacks' amounts (a payout of 0), such as a
+store's, keeps no payout to show which currency it is in. On an account
+that shows an earlier change of currency (another campaign kept its payout
+in the old one), the upgrade keeps such a campaign's currency and lists it
+with the others above, to switch or keep. On an account that shows none it
+is in your account's currency, as its amounts were recorded before; set its
+currency under Setup › Campaigns if its network reports in another.
 
 ## Conversions from before 1.9.80
 

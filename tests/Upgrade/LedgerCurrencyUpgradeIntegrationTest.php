@@ -120,6 +120,14 @@ final class LedgerCurrencyUpgradeIntegrationTest extends TestCase
         self::q('INSERT INTO 202_aff_campaigns SET user_id = ' . self::STEADY . ", aff_network_id = 1, aff_campaign_name = 'store',"
             . " aff_campaign_url = 'http://x', aff_campaign_payout = 8.00, aff_campaign_currency = 'USD',"
             . ' aff_campaign_foreign_payout = 0, aff_campaign_time = 1');
+        // Campaigns paid only by their postbacks' amounts: on the account that shows a change of currency the
+        // old label may be the currency its network still reports in; on the steady one it is the column default.
+        self::q('INSERT INTO 202_aff_campaigns SET user_id = ' . self::CHANGED . ", aff_network_id = 1, aff_campaign_name = 'shop',"
+            . " aff_campaign_url = 'http://x', aff_campaign_payout = 0, aff_campaign_currency = 'USD',"
+            . ' aff_campaign_foreign_payout = 0, aff_campaign_time = 1');
+        self::q('INSERT INTO 202_aff_campaigns SET user_id = ' . self::STEADY . ", aff_network_id = 1, aff_campaign_name = 'shop',"
+            . " aff_campaign_url = 'http://x', aff_campaign_payout = 0, aff_campaign_currency = 'USD',"
+            . ' aff_campaign_foreign_payout = 0, aff_campaign_time = 1');
         self::conversion(978710001, self::STEADY);
         self::conversion(978710002, self::STEADY);
         self::conversion(978720001, self::CHANGED);
@@ -162,12 +170,17 @@ final class LedgerCurrencyUpgradeIntegrationTest extends TestCase
         self::assertInstanceOf(\mysqli_result::class, $starts);
         self::assertSame([[(string) self::STEADY, 'EUR', 'EUR'], [(string) self::UNREADABLE, 'USD', 'USD']], $starts->fetch_all());
         // A campaign saved before the field returned (the column default, no foreign payout) says the account's currency.
-        $steady = self::$db->query('SELECT aff_campaign_currency FROM 202_aff_campaigns WHERE user_id = ' . self::STEADY);
-        self::assertInstanceOf(\mysqli_result::class, $steady);
-        self::assertSame([['EUR']], $steady->fetch_all());
+        $shops = self::$db->query("SELECT user_id, aff_campaign_name, aff_campaign_currency, aff_campaign_currency_notice FROM 202_aff_campaigns"
+            . ' WHERE user_id IN (' . self::STEADY . ', ' . self::CHANGED . ') ORDER BY user_id, aff_campaign_name');
+        self::assertInstanceOf(\mysqli_result::class, $shops);
+        self::assertSame([
+            [(string) self::STEADY, 'shop', 'EUR', '0'], [(string) self::STEADY, 'store', 'EUR', '0'],
+            [(string) self::CHANGED, 'shop', 'USD', '1'], [(string) self::CHANGED, 'store', 'USD', '1'],
+        ], $shops->fetch_all(), 'the steady account\'s campaigns say its currency; on the one that changed, a campaign paid by'
+            . ' its postbacks keeps its old currency and is listed with the others');
         // The campaigns paid in another currency are listed on Personal settings; a deleted one is not.
         $marked = self::$db->query('SELECT user_id, aff_campaign_deleted, aff_campaign_currency_notice FROM 202_aff_campaigns WHERE user_id IN ('
-            . self::STEADY . ', ' . self::CHANGED . ', ' . self::DELETED_CAMPAIGN . ') ORDER BY user_id');
+            . self::STEADY . ', ' . self::CHANGED . ', ' . self::DELETED_CAMPAIGN . ") AND aff_campaign_name <> 'shop' ORDER BY user_id");
         self::assertInstanceOf(\mysqli_result::class, $marked);
         self::assertSame(
             [[(string) self::STEADY, '0', '0'], [(string) self::CHANGED, '0', '1'], [(string) self::DELETED_CAMPAIGN, '1', '0']],

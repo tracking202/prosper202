@@ -419,21 +419,30 @@ if (!function_exists('_upgrade_campaign_currency_notice')) {
             return false;
         }
         // A campaign saved before the field returned carries the column
-        // default (USD) with no foreign payout: it is in the account's
-        // currency, so it says so, as every save since writes it. One paid by
-        // its postbacks' amounts (payout 0) cannot be told from one an earlier
-        // change of currency left in the old one, and is kept as recorded
-        // before: in the account's currency (Setup › Campaigns changes it).
+        // default (USD) with no foreign payout. With a payout it is in the
+        // account's currency, so it says so, as every save since writes it.
+        // One paid by its postbacks' amounts (payout 0) cannot be told from
+        // one an earlier change of currency left in the old one: on an
+        // account that shows such a change (a campaign keeping a payout in
+        // another currency, the backfill's sign) it keeps its currency and
+        // is listed with the others, to be switched or kept; elsewhere it is
+        // in the account's, as its amounts were recorded before.
         $supported = "'" . implode("', '", \Api\V3\Controllers\UsersController::SUPPORTED_CURRENCIES) . "'";
         $accountSql = "CASE WHEN UPPER(TRIM(p.`user_account_currency`)) IN ($supported) THEN UPPER(TRIM(p.`user_account_currency`)) ELSE 'USD' END";
+        // DISTINCT makes the server keep the derived table apart, so the
+        // statement may read the table it updates.
         if (_upgrade_query('UPDATE `202_aff_campaigns` c JOIN `202_users_pref` p ON p.`user_id` = c.`user_id`'
-            . " SET c.`aff_campaign_currency` = $accountSql WHERE c.`aff_campaign_foreign_payout` = 0") === false) {
+            . ' LEFT JOIN (SELECT DISTINCT `user_id` FROM `202_aff_campaigns` WHERE `aff_campaign_foreign_payout` <> 0) s'
+            . ' ON s.`user_id` = c.`user_id`'
+            . " SET c.`aff_campaign_currency` = $accountSql WHERE c.`aff_campaign_foreign_payout` = 0"
+            . ' AND (c.`aff_campaign_payout` <> 0 OR s.`user_id` IS NULL)') === false) {
             _upgrade_note('failed to give the campaigns in the account\'s currency that currency; the campaign currency step will retry.');
             return false;
         }
         if (_upgrade_query('UPDATE `202_aff_campaigns` c JOIN `202_users_pref` p ON p.`user_id` = c.`user_id`'
             . ' SET c.`aff_campaign_currency_notice` = 1 WHERE c.`aff_campaign_deleted` = 0'
-            . " AND c.`aff_campaign_currency` <> $accountSql AND c.`aff_campaign_foreign_payout` <> 0") === false) {
+            . " AND c.`aff_campaign_currency` <> $accountSql"
+            . ' AND (c.`aff_campaign_foreign_payout` <> 0 OR c.`aff_campaign_payout` = 0)') === false) {
             _upgrade_note('failed to mark the campaigns paid in another currency; the campaign currency step will retry.');
             return false;
         }
