@@ -893,8 +893,9 @@ converts money: for a refund Shopify states in another currency
 `--currency` with the account's currency. `close`
 removes a refund with nothing recorded and asks first (`--force` skips the
 question). These are the panel above Setup › Inbound Log; `list` needs a role
-with access to the Setup section, `record` and `close` the Update section
-too.
+with access to the Setup section or to Account › API Integrations, `record`
+and `close` the Setup and Update sections together, or API Integrations
+alone (the role that runs the Shopify connection).
 
 ### Offline conversion files for Google Ads and Microsoft Advertising
 
@@ -1919,10 +1920,15 @@ takes only ids of the importing account's own live records, so a file exported f
 account or server is refused row by row with the field named. To copy between servers use
 `p202 sync`, which maps each linked id to the target's. Without `--skip-errors` the first
 refused record stops the import with that record's number, how many were imported before it,
-and the API error's category, exit code and hint (a bad key exits 2; a 5xx, 4). With
+and the API error's category, exit code and hint (a bad key exits 2; a 5xx, 4; a 429, 7). When
+records were imported before it, the hint names the records to send next (a file of the stopped
+one to the last, and any `--skip-errors` refused before it, each named with its error), since the
+whole file again would create the first ones twice; a record whose create failed with a 5xx or on
+the connection may exist already, so the hint says to check `p202 <entity> list` first. Every item
+of the file must be an object: one that is not is refused before anything is sent, naming it. With
 `--skip-errors` the rest are sent, the summary lists each refusal under `errors`, and the command
-exits 5 when any record failed; a 401 or 403 still stops it, since every later record would fail
-the same way.
+exits 5 when any record failed; a 401, 403 or 429 still stops it, since every later record would
+fail the same way.
 
 ## Multi-server workflows
 
@@ -1953,7 +1959,7 @@ p202 re-sync --from prod --to staging --force-update --json
 | Flag | Description |
 |------|-------------|
 | `--dry-run` | Compute actions without writes |
-| `--skip-errors` | Continue on record-level errors; exits 5 when any record failed (a 401 or 403 still stops the sync) |
+| `--skip-errors` | Continue on record-level errors; exits 5 when any record failed (a 401, 403 or 429 still stops the sync) |
 | `--force-update` | Update mismatched target records instead of skipping |
 
 Sync state is stored in `~/.p202/sync/<source>-<target>.json`.
@@ -2232,6 +2238,8 @@ p202 report daypart --period last30 --csv
 | 3    | network  | Connection timeout, DNS failure, unreachable server |
 | 4    | server   | API returned a 5xx error |
 | 5    | partial_failure | Bulk operation completed with some failures, or a check found a problem (its rows stay on stdout) |
+| 6    | licence  | The install refuses the Go CLI: its ClickServer API key has no active Pro subscription (HTTP 402); the hint links the trial |
+| 7    | rate_limited | The server answered 429; nothing in the request is wrong. Wait `retry_after_seconds` (in the `--json` envelope and the hint). A single request: run it again. `p202 import` stopped part-way: send only the records its hint names |
 
 Errors go to stderr; stdout stays empty on failure. In human mode:
 

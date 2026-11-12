@@ -178,8 +178,10 @@ rounded. The refund is recorded once under its id, so Shopify settling it
 later records nothing more. `POST /conversions/shopify-refunds/{id}/close`
 removes a refund from the list with nothing recorded, for one that returned
 no money, whose sale is gone, or that Shopify's settlement refused before
-its order arrived. Both need the role's access to the Setup and Update
-sections, answer `404` for a refund that is not listed for the account, and
+its order arrived. Listing needs the role's access to the Setup section or
+to Account › API Integrations (the role that runs the Shopify connection);
+recording and closing need the Setup and Update sections together, or API
+Integrations alone. Both answer `404` for a refund that is not listed for the account, and
 write a line to the inbound log. Recording answers `409` with the reason
 when the sale is gone, the order is not on file and the refund was refused,
 or the refund is on file at another amount; both answer `409` for a refund

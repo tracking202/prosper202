@@ -3045,8 +3045,9 @@ paths:
         The account's Shopify refunds still counted in a sale: the ones
         waiting for Shopify to say a transaction settled, and the ones
         refused for good, oldest first (at most 200). The same list as the
-        panel above Setup › Inbound Log, asked with the role's access to
-        the Setup section. `amount` is what the refund returns as far as
+        panel above Setup › Inbound Log. Asks for the role's access to the
+        Setup section, or to Account › API Integrations (the role that runs
+        the Shopify connection). `amount` is what the refund returns as far as
         is known, less every transaction Shopify reported as failed.
       operationId: listShopifyRefunds
       responses:
@@ -3137,7 +3138,7 @@ paths:
         states in another currency (`other_currency`), send the amount
         converted with `currency` naming that one, or the answer is a 422
         on `currency`. Asks for the role's access to the Setup and
-        Update sections.
+        Update sections together, or to Account › API Integrations.
       operationId: recordShopifyRefund
       parameters:
         - name: id
@@ -3218,7 +3219,7 @@ paths:
         returned no money. Its amount stays counted in the sale. A refund
         still waiting for its order's sale is not closed: it is recorded
         when the sale arrives (409). Asks for the role's access to the
-        Setup and Update sections.
+        Setup and Update sections together, or to Account › API Integrations.
       operationId: closeShopifyRefund
       parameters:
         - name: id
@@ -12148,6 +12149,15 @@ paths:
         otherwise). Takes no body and no parameters; either is a 422. Not
         stageable, and it has no dry run. Needs `access_to_setup_section`
         and `landing-pages:read`: it changes no setup.
+
+        A page checked less than 30 seconds ago, for the URL it has now, is
+        answered from that check: `fetched` is false, `checked_at` says when
+        it was made, `fetch_again_in_seconds` when the page is fetched again,
+        and `note` says so in words. Nothing is fetched or counted for it.
+        Otherwise each API key may have 10 pages fetched a minute (a fixed
+        window that starts at the key's first fetch in it), counted by
+        the key the request authenticated with; past that the answer is a
+        429 with `Retry-After`, and nothing is fetched.
       operationId: checkLandingPageCode
       responses:
         "200":
@@ -12165,6 +12175,30 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "429":
+          description: >-
+            This API key has had its 10 page fetches for this minute; nothing
+            was fetched. `Retry-After` and `retry_after_seconds` say when to
+            ask again, and `rate_limit` names the limit. A page checked in the
+            last 30 seconds is still answered from that check.
+          headers:
+            Retry-After:
+              description: Seconds until the key may have a page fetched again
+              schema: {type: integer}
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Error"
+                  - type: object
+                    properties:
+                      retry_after_seconds: {type: integer}
+                      rate_limit:
+                        type: object
+                        properties:
+                          limit: {type: integer}
+                          window_seconds: {type: integer}
+                          per: {type: string, enum: [api_key]}
 
   /conversions/postback-code:
     get:
@@ -14417,6 +14451,12 @@ components:
           type: array
           items: {type: string}
           description: "The other landing pages' public ids the page carries code for (mixed, wrong_id)."
+        checked_at: {type: integer, description: "When the check this answer is was made (unix seconds)."}
+        fetched:
+          type: boolean
+          description: "True when this request fetched the page; false when the page was checked less than 30 seconds ago and that check is the answer."
+        fetch_again_in_seconds: {type: integer, description: "Only when fetched is false: seconds until the page is fetched again."}
+        note: {type: string, description: "Only when fetched is false: that the answer is the last check, and when to ask again."}
 
     LandingPageCreate:
       type: object

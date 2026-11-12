@@ -96,7 +96,8 @@ with `landing-pages:read` may call it: it changes no setup.
           "landing_page_url": "https://lp.example.com/spring",
           "status": "absent", "found": false,
           "message": "The code was not found on your page at https://lp.example.com. …",
-          "other_landing_page_ids_public": []}}
+          "other_landing_page_ids_public": [],
+          "checked_at": 1794300000, "fetched": true}}
 ```
 
 `status` is `present`, `legacy` (the older `landing.js` code, which still
@@ -112,6 +113,24 @@ opened, and the cron job checks each page again about once a day.
 Only public addresses are fetched, each redirect is checked, and the fetch
 stops at 10 seconds or 2 MB. Code a tag manager adds after the page loads is
 not seen. Not stageable; no dry run.
+
+Every answer has `checked_at` (when the check was made) and `fetched`. A
+page checked less than 30 seconds ago, for the URL it has now, is answered
+from that check without fetching it: `fetched` is false,
+`fetch_again_in_seconds` says when the page is fetched again, and `note` says
+so. That answer costs nothing. Otherwise each API key may have 10 pages
+fetched a minute (a fixed window that starts at the key's first fetch in
+it, so a key can have up to 20 fetched across the end of one window and the
+start of the next), counted by the key the request authenticated with; past
+that the answer is a `429` with `Retry-After`, `retry_after_seconds` and
+`rate_limit`, and nothing is fetched:
+
+```json
+{"error": true, "status": 429,
+ "message": "This API key has had the 10 landing page fetches it may have this minute: nothing was fetched. Try again in 37 seconds.",
+ "retry_after_seconds": 37,
+ "rate_limit": {"limit": 10, "window_seconds": 60, "per": "api_key"}}
+```
 
 ## Pixels and postback URLs — `GET /conversions/postback-code`
 

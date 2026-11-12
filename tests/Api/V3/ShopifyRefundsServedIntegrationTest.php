@@ -30,6 +30,10 @@ final class ShopifyRefundsServedIntegrationTest extends TestCase
     private const ROLE = 990541;
     private const SETUP_ONLY = 990543;
     private const SETUP_ONLY_ROLE = 990543;
+    /** The role that runs the Shopify connection on Account › API Integrations, without Setup or Update. */
+    private const INTEGRATIONS_ROLE = 990544;
+    /** A role with campaign data and nothing the refunds ask for. */
+    private const NEITHER_ROLE = 990545;
     private const CLICK = 99054101;
     private const CAMPAIGN = 990591;
     private const SECRET = 'demo-store-webhook-secret-0041';
@@ -136,7 +140,7 @@ final class ShopifyRefundsServedIntegrationTest extends TestCase
                 self::q("DELETE FROM $table WHERE user_id = $user");
             }
         }
-        foreach ([self::ROLE, self::SETUP_ONLY_ROLE] as $role) {
+        foreach ([self::ROLE, self::SETUP_ONLY_ROLE, self::INTEGRATIONS_ROLE, self::NEITHER_ROLE] as $role) {
             self::q('DELETE FROM 202_role_permission WHERE role_id = ' . $role);
             self::q('DELETE FROM 202_roles WHERE role_id = ' . $role);
         }
@@ -159,6 +163,15 @@ final class ShopifyRefundsServedIntegrationTest extends TestCase
             . ", role_name = 'shopify setup only test'");
         self::q('INSERT INTO 202_role_permission (role_id, permission_id) SELECT ' . self::SETUP_ONLY_ROLE
             . ", permission_id FROM 202_permissions WHERE permission_description = 'access_to_setup_section'");
+        $roles = [
+            self::INTEGRATIONS_ROLE => 'access_to_api_integrations',
+            self::NEITHER_ROLE => 'access_to_campaign_data',
+        ];
+        foreach ($roles as $role => $permission) {
+            self::q("INSERT INTO 202_roles SET role_id = $role, role_name = 'shopify refunds role $role'");
+            self::q("INSERT INTO 202_role_permission (role_id, permission_id) SELECT $role, permission_id"
+                . " FROM 202_permissions WHERE permission_description = '$permission'");
+        }
         foreach ([self::USER => 'mine', self::OTHER => 'theirs', self::SETUP_ONLY => 'setup_only'] as $user => $name) {
             self::user($user);
             self::q("INSERT INTO 202_users_pref SET user_id = $user, user_account_currency = 'USD'");
@@ -414,6 +427,55 @@ final class ShopifyRefundsServedIntegrationTest extends TestCase
         [, $body, $raw] = self::request('GET', '/conversions/shopify-refunds', self::$keys['mine']);
         self::assertSame([], $body['data'] ?? null, $raw);
         self::assertSame(['59.00000'], self::payouts());
+    }
+
+    /**
+     * RefundAccess, as the routes ask it: the role that runs the Shopify
+     * connection sees, records and closes with neither Setup nor Update; a
+     * role with neither is refused all three; Setup alone only sees (above).
+     */
+    public function testTheIntegrationsRoleSettlesAndARoleWithNeitherIsRefused(): void
+    {
+        self::order();
+        self::waitingRefund();
+        self::deliver('refunds/create', ShopifyAdapterTest::refund(['id' => 9100002, 'refund_line_items' => [],
+            'transactions' => [
+                ['id' => 71003, 'kind' => 'refund', 'status' => 'pending', 'amount' => '3.00', 'currency' => 'USD'],
+            ]]));
+        $as = static function (int $role): void {
+            self::q('UPDATE 202_user_role SET role_id = ' . $role . ' WHERE user_id = ' . self::USER);
+        };
+        try {
+            $as(self::NEITHER_ROLE);
+            [$status, $body, $raw] = self::request('GET', '/conversions/shopify-refunds', self::$keys['mine']);
+            self::assertSame(403, $status, $raw);
+            self::assertStringContainsString("'access_to_api_integrations' permission", $body['message'] ?? '', $raw);
+            foreach (['record' => ['amount' => '10'], 'close' => []] as $action => $payload) {
+                $path = "/conversions/shopify-refunds/9100001/$action";
+                [$status, $body, $raw] = self::request('POST', $path, self::$keys['mine'], $payload);
+                self::assertSame(403, $status, $raw);
+                $said = $body['message'] ?? '';
+                self::assertStringContainsString('may not record or close a Shopify refund', $said, $raw);
+            }
+            self::assertSame(['59.00000'], self::payouts());
+
+            $as(self::INTEGRATIONS_ROLE);
+            [$status, $body, $raw] = self::request('GET', '/conversions/shopify-refunds', self::$keys['mine']);
+            self::assertSame(200, $status, $this->context($raw));
+            self::assertSame(['9100001', '9100002'], array_column($body['data'], 'refund_id'), $raw);
+            $close = '/conversions/shopify-refunds/9100002/close';
+            [$status, $body, $raw] = self::request('POST', $close, self::$keys['mine'], []);
+            self::assertSame([200, true], [$status, $body['data']['closed'] ?? null], $this->context($raw));
+            $record = '/conversions/shopify-refunds/9100001/record';
+            [$status, $body, $raw] = self::request('POST', $record, self::$keys['mine'], ['amount' => '10']);
+            self::assertSame([200, 'reversed'], [$status, $body['data']['outcome'] ?? null], $this->context($raw));
+            self::assertSame(['59.00000', '-10.00000'], self::payouts());
+            // The rest of the Inbound Log stays Setup's.
+            [$status, , $raw] = self::request('GET', '/conversions/inbound-log', self::$keys['mine']);
+            self::assertSame(403, $status, $raw);
+        } finally {
+            $as(self::ROLE);
+        }
     }
 
     public function testARefundWaitingForItsOrderIsAConflictToCloseNotGone(): void

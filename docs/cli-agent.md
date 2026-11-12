@@ -206,13 +206,14 @@ On failure nothing is written to stdout. With `--json` or `--ndjson`, and whenev
 
 | Field | Present | Use it for |
 |-------|---------|------------|
-| `category` | always | Branching: `validation`, `auth`, `network`, `server`, `partial_failure`, `licence` |
+| `category` | always | Branching: `validation`, `auth`, `network`, `server`, `partial_failure`, `licence`, `rate_limited` |
 | `message` | always | What failed (includes the API's own text when there is one) |
 | `hint` | when there is a next step | **Do this before retrying.** It names the command that produces the right value, the flag to change, or the order to follow |
 | `exit_code` | always | Same value the process exits with |
 | `command` | always | The command that ran, e.g. `p202 rotator create` |
 | `http_status` | API errors | The server's status code |
 | `field_errors` | 422 responses | `{field: message}` from the server; fix these fields and retry |
+| `retry_after_seconds` | 429 responses that say | Seconds to wait; then a single request is run again unchanged, and a run that stopped part-way (`import`, a shell batch, `exec`) runs only what the hint names |
 
 In table mode (including `--table`, `--csv` and `-q`) the same information is two text lines: `Error [category]: message` and, when available, `Hint: ...`.
 
@@ -221,20 +222,22 @@ In table mode (including `--table`, `--csv` and `-q`) the same information is tw
 | Exit code | Category | Meaning | Typical hint |
 |-----------|----------|---------|--------------|
 | 0 | | Success | |
-| 1 | validation | Bad input, missing flags, invalid arguments, or a 4xx other than auth and 402 | Lists valid values, or `Run <command> --help` |
+| 1 | validation | Bad input, missing flags, invalid arguments, or a 4xx other than auth, 402 and 429 | Lists valid values, or `Run <command> --help` |
 | 2 | auth | Authentication or authorization failure (401/403) | Check the key with `p202 config show` / `p202 config set-key`. A 403 for a scope the key lacks names the scope and what grants it: a new key with that scope (`p202 user apikey create <user_id> --scope ...`; a key's scope cannot be changed), or for an AI app's connection, connecting the app again with the access the install names |
 | 3 | network | Connection timeout, DNS failure, unreachable server | Check the URL; `p202 config test` |
 | 4 | server | API returned a 5xx error, or a 402 that is not the install's licence refusal (a proxy, WAF or host in front of the install answered it) | Retry after a wait; `p202 system health` (for that 402, check what serves the URL in `p202 config show`) |
 | 5 | partial_failure | Bulk operation completed with some failures, or a check found a problem (`system health`, `system cron`, `rotator check`, `campaign check-urls`) | stderr lists the failed items; a check still prints its rows on stdout |
 | 6 | licence | The install's ClickServer API key has no active Pro subscription, so the install refuses the Go CLI (HTTP 402). The install recognises the Go CLI by its User-Agent; the API itself stays open to other clients with the same key, and `GET /capabilities` reports the verdict as `cli`. When the install cannot get an answer from Tracking202, it allows the Go CLI only if Tracking202 confirmed the Pro licence within the last 30 days; otherwise the message says the licence could not be checked. An install with no ClickServer API key is also refused. A key the install cannot read (a missing row or failed read) is the install's own error, not a missing answer from Tracking202, and the Go CLI is allowed. A run that aggregates several requests (a shell batch, a multi-profile report, `exec`) exits 6 only when every failure in it was the refusal; with any other failure among them it is a generic failure (exit 1), and each item's own error says what it needs | If no ClickServer key is stored, set the account owner's ClickServer API key on the install. If the message says the licence could not be checked, the server running Prosper202 must reach my.tracking202.com over HTTPS; retry once it can (support@tracking202.com or the support chat for help). Otherwise start the 7-day trial at the link in the hint, then retry (the install re-checks a refusal within five minutes). Keep the CLI's REST API key and URL unchanged |
+| 7 | rate_limited | The server answered 429: a limit's window is spent (sync or bulk-upsert per minute, Google Ads reads, landing page checks per key). Nothing in the request is wrong | Wait `retry_after_seconds` (the envelope's field; the error text and the hint name it too). A single request: run the same command again, unchanged. A run that stopped part-way: only what the hint names. `sync --skip-errors`, `conversion import` and `import` stop at a 429; `import`'s hint names the records still to send (the first ones were imported, and the whole file again would send them twice). A shell batch or `exec` whose every failure was a 429 exits 7 too, naming the commands or profiles to run again, and so does a `shell --stop-on-error` batch a 429 stopped, naming the command it stopped at and the ones after it |
 
 Decision procedure for an agent:
 
 1. Exit code 0: parse stdout as JSON.
 2. Otherwise read the envelope on stderr. If `hint` is present, it is the intended next action: follow it, then retry. Do not guess at flags.
 3. `category: auth`, `network` and `licence` are environment problems, not input problems; do not vary the command, fix what the hint names (for `licence`, set the account owner's ClickServer key on the install if none is stored, or activate Pro on the stored key; keep the CLI's REST API key and URL unchanged). An unreadable ClickServer key counts as no answer and allows the Go CLI.
-4. `category: server`: safe to retry read-only commands (list, get, report, forecast) after a short wait; do not retry creates blindly (see Idempotency).
-5. `field_errors`: change exactly those fields.
+4. `category: rate_limited`: wait `retry_after_seconds` (a minute when it is absent), then do what the hint says: for a single request, run the same command unchanged; for a run that stopped part-way (`p202 import`, a shell batch, `exec`), only what the hint names, since the rest already ran. Do not vary flags or loop faster.
+5. `category: server`: safe to retry read-only commands (list, get, report, forecast) after a short wait; do not retry creates blindly (see Idempotency).
+6. `field_errors`: change exactly those fields.
 
 Exit codes are stable across error wrapping: a 401 surfaced as "fetching historical data: API error (401)" still exits 2.
 
@@ -821,6 +824,7 @@ Landing page code (Setup > Get LP Code):
 ```
 p202 landing-page code <id> [--offer campaign:N|rotator:N]... [--json]
 p202 landing-page check <id> [--json]   # the server fetches the page: data.found, data.status, data.message
+                                        # checked <30 s ago: that check, data.fetched false; 10 fetches/min per key, then 429
 ```
 
 `data`: `landing_page_type` (`simple`/`advanced`), `base_url`, `loader`,
@@ -913,7 +917,8 @@ p202 conversion inbound-log record <inbound_id> [--json]
                        # record a refused postback's or pixel's conversion or event from the log (rows with can_record);
                        # run twice, it records once
 p202 conversion shopify-refunds list [--json]
-                       # Shopify refunds still counted in a sale: waiting to settle or refused (Setup › Inbound Log)
+                       # Shopify refunds still counted in a sale: waiting to settle or refused (Setup › Inbound Log);
+                       # Setup or Account › API Integrations lists them; Setup+Update or API Integrations records and closes
 p202 conversion shopify-refunds record <refund-id> --amount F [--click-id N] [--currency CODE] [--json]
                        # reverse the order's sale by the refund, at most what is left; --click-id when the order is on several clicks;
                        # a refund in another currency (other_currency): convert --amount yourself and pass --currency <amount_currency>
@@ -1303,7 +1308,7 @@ Linked ids in an import file are sent as they are, and the server accepts only i
 own live records (422 naming the field otherwise): an export from another account or server
 imports with `p202 sync`, which maps them, not with `import`.
 
-`import` stops at the first record that fails and exits with that record's category. `--skip-errors` skips a record the server rejects and goes on, but a refused key, no connection or the licence refusal still stop it, since every later record would meet the same failure.
+`import` stops at the first record that fails and exits with that record's category. `--skip-errors` skips a record the server rejects and goes on, but a refused key, no connection, the licence refusal or a rate limit (429) still stop it, since every later record would meet the same failure. When records were imported before the stop, the hint names the records to send next; do not run the whole file again, which creates the first ones twice.
 
 ### Multi-server workflows
 
