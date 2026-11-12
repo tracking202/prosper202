@@ -483,7 +483,7 @@ final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
     public function testAnIdThatFillsItsColumnNamesNoClick(): void
     {
         // The column may have cut it: it then stands for every id that starts so.
-        $filled = str_repeat('w', \Prosper202\Click\ClickRecord::AD_CLICK_IDS['gbraid']);
+        $filled = str_repeat('w', \Prosper202\Click\ClickRecord::AD_CLICK_IDS['gbraid'] - 1) . '0';
         self::carries(self::CLICK, ['gbraid' => $filled]);
         [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', 'gbraid' => $filled]);
         self::assertSame(404, $status, $body);
@@ -582,10 +582,14 @@ final class GlobalPostbackAdClickIdIntegrationTest extends TestCase
     public function testAValueNoPlatformIssuesNamesNoClick(): void
     {
         $campaign = self::$campaigns[self::USER][0];
-        self::click(self::ADDED[0], self::USER, $campaign, 0, ['gclid' => 'undefined'], [600]);
-        self::click(self::ADDED[0] + 1, self::USER, $campaign, 0, ['gclid' => 'undefined'], [500]);
+        // Two visitors whose page wrote the same thing where the id goes, for each form a page writes.
+        $values = ['undefined', '__GCLID__', '{{ gclid }}', '{gclid}', '$gclid', 'gclid', 'test', '123'];
+        foreach ($values as $i => $value) {
+            self::click(self::ADDED[0] + 2 * $i, self::USER, $campaign, 0, ['gclid' => $value], [600]);
+            self::click(self::ADDED[0] + 2 * $i + 1, self::USER, $campaign, 0, ['gclid' => $value], [500]);
+        }
 
-        foreach (['undefined', '__GCLID__'] as $value) {
+        foreach ($values as $value) {
             [$status, $body] = self::gpb(['subid' => '[[subid]]', 'amount' => '5', 'gclid' => $value]);
             self::assertSame(404, $status, $body);
             self::assertSame('SubID not found', json_decode($body, true)['msg'] ?? null, $value);

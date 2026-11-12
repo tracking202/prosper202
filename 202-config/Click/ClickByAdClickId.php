@@ -36,7 +36,8 @@ use Prosper202\Goals\GoalSubject;
  * - an id as long as its column or longer may be one the column cut, which
  *   names every id sharing that start, so it names no click.
  * An id that no click carries is left out of the decision, and a value no
- * platform issues (`undefined`, an unfilled __GCLID__: notAnId()) is not
+ * platform issues (`undefined`, an unfilled __GCLID__, a {{ gclid }} the page
+ * left: notAnId()) is not
  * looked up, since every visitor whose page wrote it shares it.
  *
  * An id may also arrive in a parameter of the network's own naming that an
@@ -66,6 +67,9 @@ final class ClickByAdClickId
      */
     private const NOT_AN_ID = ['undefined', 'null', 'nil', 'none', 'nan', 'false', 'true', '0', 'n/a', 'na',
         '(none)', '(not set)', '(not provided)', '[object object]', 'unknown', 'empty'];
+
+    /** The fewest characters a platform's ad click id has (notAnId()). */
+    public const MIN_ID_CHARS = 8;
 
     public const NONE = 'none';
     public const ONE = 'one';
@@ -115,13 +119,20 @@ final class ClickByAdClickId
     /**
      * Whether $value is what was written where an id was meant to go and
      * none was there: a word for nothing (NOT_AN_ID), a macro in the form
-     * __NAME__ that the network did not fill, or no letter or digit at all.
+     * __NAME__ that the network did not fill, or anything without an id's
+     * shape. Every platform's id (gclid, gbraid, wbraid, ttclid, msclkid,
+     * fbclid) is at least MIN_ID_CHARS of letters, digits and . _ ~ -, with
+     * a letter and a digit among them; a placeholder a page writes for
+     * every visitor ({{ gclid }}, $gclid, the parameter's own name, test,
+     * 123) is not, and looked up it would make many visitors' clicks one.
      */
     public static function notAnId(string $value): bool
     {
         return in_array(strtolower($value), self::NOT_AN_ID, true)
             || preg_match('/\A__[A-Za-z][A-Za-z0-9_]*__\z/D', $value) === 1
-            || preg_match('/[A-Za-z0-9]/', $value) !== 1;
+            || preg_match('/\A[A-Za-z0-9._~-]{' . self::MIN_ID_CHARS . ',}\z/D', $value) !== 1
+            || preg_match('/[A-Za-z]/', $value) !== 1
+            || preg_match('/[0-9]/', $value) !== 1;
     }
 
     /**
