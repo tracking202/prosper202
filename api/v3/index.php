@@ -695,10 +695,20 @@ try {
         // Update section as POST /clicks/cpc does; `?dry_run=1` previews.
         // Reading it shows money and clicks, masked as the reports' are.
         $spendFigures = \Api\V3\Support\CampaignFigures::SPEND;
+        $platformConversionFigures = \Api\V3\Support\CampaignFigures::PLATFORM_CONVERSIONS;
         $router->group('/spend-ledger', function (Router $r) use ($crud, $payload, $queryParams) {
             $r->post('', fn() => $crud(\Api\V3\Controllers\SpendLedgerController::class)->write($payload, writeDryRunRequested($queryParams)));
         }, [$updateSection]);
         $router->get('/spend-ledger', fn() => $campaignFigures($crud(\Api\V3\Controllers\SpendLedgerController::class)->read($queryParams), $spendFigures));
+        $router->get('/spend-ledger/conversions', fn() => $campaignFigures($crud(\Api\V3\Controllers\PlatformConversionsController::class)->list($queryParams), $platformConversionFigures));
+        // Each ChatGPT Ads connection's hourly spend pull (off until turned
+        // on): Setup's, like the connections themselves.
+        $router->group('/spend-ledger/sync', function (Router $r) use ($crud, $payload) {
+            $cls = \Api\V3\Controllers\SpendSyncController::class;
+            $r->get('',                    fn() => $crud($cls)->list());
+            $r->put('/{id}',               fn($ctx) => $crud($cls)->update(PathId::of($ctx), $payload));
+            $r->post('/{id}/run',          fn($ctx) => $crud($cls)->run(PathId::of($ctx), $payload));
+        }, [$setupSection]);
         $router->group('/conversions', function (Router $r) use ($crud, $payload, $queryParams, $auth, $db) {
             $cls = \Api\V3\Controllers\UpdateController::class;
             $r->post('/subids',        fn() => $crud($cls)->markSubids($payload, writeDryRunRequested($queryParams)));
@@ -1530,7 +1540,7 @@ try {
                 'conversions'   => '/conversions',
                 'update'        => '/clicks/cpc, /conversions/{subids|subids/delete|subids/reset|uploads}',
                 'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart|groups}',
-                'spend_ledger'  => '/spend-ledger',
+                'spend_ledger'  => '/spend-ledger[/conversions|/sync[/{id}[/run]]]',
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}[/{id}][/deliveries]',
                 'rotators'      => '/rotators[/{id}/rules|/{id}/stats]',
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',

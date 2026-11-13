@@ -212,6 +212,27 @@ case "$ask" in
     # The inbound log (inbound-log.json): a refused postback is found by the
     # order number the network names and recorded from its own row, never
     # typed in by hand and never let through by opening the gate.
+    # What ChatGPT Ads cost (ad-spend.json): read from the spend ledger, never
+    # guessed from the clicks' CPCs; nothing is connected or turned on unasked.
+    *"What did my ChatGPT Ads cost yesterday"*)
+        hours=$(p202 spend list --period yesterday --platform openai_ads --json)
+        if [ "$(printf '%s' "$hours" | jq '.data | length')" = 0 ]; then
+            printf 'No ChatGPT Ads spend is recorded for yesterday: `p202 spend list --period yesterday --platform openai_ads` finds none in the spend ledger, so there is no billed figure to give (the clicks'"'"' CPCs are not what OpenAI billed). To have it, connect the ad account (`p202 ad-connection create`) and turn on its spend sync (`p202 spend sync enable <connection-id>`); I have done neither.\n'
+        else
+            printf 'Per `p202 spend list --period yesterday --platform openai_ads`, ChatGPT Ads billed %s %s yesterday.\n' \
+                "$(printf '%s' "$hours" | jq -r '[.data[] | (.spend | tonumber)] | add | . * 100 | round / 100 | tostring')" \
+                "$(printf '%s' "$hours" | jq -r '.currency')"
+        fi
+        ;;
+    # Whether the spend sync works (ad-spend.json): its status, read; nothing run or turned on.
+    *"spend sync working"*)
+        sync=$(p202 spend sync list --json)
+        if [ "$(printf '%s' "$sync" | jq '.data | length')" = 0 ]; then
+            printf 'No ChatGPT Ads connection has a spend sync: `p202 spend sync list` lists none, so nothing has run. Connect the ad account (`p202 ad-connection create`) and turn its sync on (`p202 spend sync enable <connection-id>`); I have done neither.\n'
+        else
+            printf 'Per `p202 spend sync list`: %s.\n' "$(printf '%s' "$sync" | jq -r '[.data[] | "connection \(.connection_id): \(if .enabled then "on" else "off" end), last run \(.last_run_at // "never"), last error \(.last_error // "none")"] | join("; ")')"
+        fi
+        ;;
     # A spend export (spend-ledger.json): record it, then read the ad's
     # hours back from the ledger and add them up.
     *"exported yesterday's hourly spend"*"Put it into Prosper202"*)

@@ -141,7 +141,7 @@ var adCampaignListCmd = &cobra.Command{
 
 var adCampaignGetCmd = &cobra.Command{
 	Use:   "get <connection-id> <id>",
-	Short: "Show one ChatGPT Ads campaign, ad group or ad as OpenAI has it",
+	Short: "One ChatGPT Ads campaign, ad group or ad, as OpenAI has it",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := adCampaignArgs(args); err != nil {
@@ -176,7 +176,7 @@ func adCampaignStatusCmd(action, short string) *cobra.Command {
 
 var (
 	adCampaignPauseCmd    = adCampaignStatusCmd("pause", "Pause a ChatGPT Ads campaign, ad group or ad")
-	adCampaignActivateCmd = adCampaignStatusCmd("activate", "Activate (resume) a ChatGPT Ads campaign, ad group or ad")
+	adCampaignActivateCmd = adCampaignStatusCmd("activate", "Resume a ChatGPT Ads campaign, ad group or ad")
 )
 
 var adCampaignSetTemplateCmd = &cobra.Command{

@@ -28,12 +28,12 @@ var spendIntervals = []string{"day", "hour"}
 
 var spendCmd = &cobra.Command{
 	Use:   "spend",
-	Short: "What each ad platform billed, per ad per hour (the spend ledger)",
+	Short: "What each ad platform billed per ad per hour (the spend ledger): list, import, the ChatGPT Ads sync",
 }
 
 var spendListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "Ad platform spend per ad per day or hour, with the clicks it matched",
+	Short: "Ad spend per ad per day or hour, with the clicks it matched",
 	Long: "Lists the spend ledger summed per day (in the account's timezone) or per hour, and per\n" +
 		"platform, ad account, campaign, ad group and ad, newest first: impressions, the platform's\n" +
 		"clicks, spend, matched_clicks (the clicks it was shared over) and\n" +
@@ -92,7 +92,7 @@ var spendListCmd = &cobra.Command{
 
 var spendImportCmd = &cobra.Command{
 	Use:   "import <file|->",
-	Short: "Record ad platform spend per ad per hour from a JSON file",
+	Short: "Record ad spend per ad per hour from a JSON file",
 	Long: "Sends the rows in a JSON file (- for stdin) to the spend ledger in one write: a list of\n" +
 		"rows, or {\"rows\": [...]}, 1 to 2000 rows. Each row is one UTC hour of one ad:\n" +
 		"platform, account_ref, campaign_ref, ad_group_ref, ad_ref, hour_start (the unix second\n" +

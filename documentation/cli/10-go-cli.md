@@ -560,6 +560,30 @@ The writes take `--idempotency-key` (create) and `--staged`; the deletes take
 `--dry-run`, `--force` and `--ids`. Under `--json` each command prints the
 API's answer as sent.
 
+## Ad Spend
+
+`p202 spend list` reads the spend ledger: what ChatGPT Ads (or any platform writing
+it) billed per ad, by day in your time zone or by hour, with how many of your
+clicks carried each ad and the spend no click carried. `p202 spend sync`
+turns the hourly ChatGPT Ads pull on or off for a connection made with
+`p202 ad-connection create`; it is off until you enable it.
+
+```
+p202 spend list --period yesterday
+p202 spend sync list
+p202 spend sync enable 1
+p202 spend sync run 1
+p202 spend conversions --period last7   # OpenAI's conversions beside yours
+```
+
+`p202 spend sync run` exits 7 when OpenAI is limiting requests (wait the
+hint's seconds), 4 when OpenAI could not be reached or answered something
+unusable, and 1 for a refused key (replace it with `p202 ad-connection
+update`), a sync that is off, another currency, a request OpenAI refused
+(`request`: sending it again gets the same answer) or a page of spend the
+ledger refused (`spend`). A run that stops at its budget or leaves a row out
+says "Not complete"; the next run goes on.
+
 ## Config Defaults
 
 Set per-profile defaults for frequently used flags.
@@ -625,13 +649,17 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   take `--real`, which sends an event the platform counts),
   `ad_connection_list` and `ad_connection_check` (Setup › Destinations ›
   ChatGPT Ads: each connected ad account, and a fresh read of it from
-  OpenAI; the check is not offered with `--staged`), and `ad_campaign_list`,
+  OpenAI; the check is not offered with `--staged`), `ad_campaign_list`,
   `ad_campaign_pause`, `ad_campaign_activate` and `ad_campaign_spend` (its
   campaigns live at OpenAI; pause and activate change them at once, so call
-  them with `dry_run: true` first; with `--staged` they propose). The
-  destination tools and `ad_connection_check` are local only; the four
-  campaign tools and `ad_connection_list` are offered by the hosted server
-  too. `p202 mcp tools --deferred`
+  them with `dry_run: true` first; with `--staged` they propose), and
+  `ad_spend` (`p202 spend list`: what ad platforms billed per ad per day or
+  hour, your clicks that carried each ad, the spend no click carried, and
+  `reaches`) and `ad_spend_sync_status` (`p202 spend sync list`: each
+  ChatGPT Ads connection's spend sync, on or off, its last run and error).
+  The destination tools, `ad_connection_check` and the two spend tools are
+  local only; the four campaign tools and `ad_connection_list` are offered
+  by the hosted server too. `p202 mcp tools --deferred`
   answers `tools`, `hosted_excludes` (the local-only ones),
   `staged_excludes` (the ones `--staged` does not offer), `hosted_omits`
   (arguments the hosted server leaves out) and `words` (the words each tool

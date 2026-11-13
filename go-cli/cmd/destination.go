@@ -323,7 +323,7 @@ func destinationClient(name string) (*api.Client, error) {
 
 var destinationListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List destinations (credentials are never shown, only whether they are stored)",
+	Short: "List destinations (credentials never shown)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
@@ -483,7 +483,7 @@ func createGoogleAdsDestination(cmd *cobra.Command) error {
 
 var destinationConnectCmd = &cobra.Command{
 	Use:   "connect <id>",
-	Short: "Connect a Google Ads destination to your Google account (prints the consent link to open)",
+	Short: "Connect a Google Ads destination to your Google account (prints a consent link)",
 	Long: "Prints the link to Google's consent screen for the destination's OAuth client. Open it within 10\n" +
 		"minutes in a browser signed in to Prosper202 as the same user; Google sends it back to this install,\n" +
 		"which stores the refresh token. Register the redirect_uri it prints on the OAuth client first.",
@@ -509,7 +509,7 @@ const destinationPickHint = "`p202 destination accounts <id>` lists the accounts
 
 var destinationAccountsCmd = &cobra.Command{
 	Use:   "accounts <id>",
-	Short: "List the Google Ads accounts a connected destination can send conversions to",
+	Short: "Google Ads accounts a connected destination can send to",
 	Long: "Reads, from Google, the accounts the Google user you connected can open: each with its customer ID,\n" +
 		"its name and, when it is reached through a manager account, that manager (its login customer ID).\n" +
 		"`p202 destination pick <id> --account <name or ID>` sets one.",
@@ -582,7 +582,7 @@ var destinationConversionActionsCmd = &cobra.Command{
 
 var destinationPickCmd = &cobra.Command{
 	Use:   "pick <id> [--account <name or ID>] [--action <name or ID>]",
-	Short: "Set a Google Ads destination's account and conversion action by name, from your Google Ads account",
+	Short: "Set a Google Ads destination's account and conversion action by name",
 	Long: "Chooses from what Google lists for the connected Google user, so no ID has to be looked up:\n\n" +
 		"  p202 destination pick 2 --account \"Online Store\" --action \"Store purchase\"\n" +
 		"  p202 destination pick 2                      (one account and one action: both are taken)\n" +
@@ -621,7 +621,7 @@ var destinationPickCmd = &cobra.Command{
 
 var destinationUpdateCmd = &cobra.Command{
 	Use:   "update <id>",
-	Short: "Update a destination: name, on/off, settings, or its API secret",
+	Short: "Update a destination's name, on/off, settings or API secret",
 	Long: "Only the flags you give are applied; the rest of the settings stay as they are.\n\n" +
 		"  p202 destination update 1 --disable\n" +
 		"  p202 destination update 1 --campaign-id 12 --campaign-id 14 --send-user-data\n" +
@@ -723,7 +723,7 @@ var destinationUpdateCmd = &cobra.Command{
 
 var destinationDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
-	Short: "Delete a destination (its unsent conversions are cancelled; the log stays)",
+	Short: "Delete a destination (unsent conversions cancelled; the log stays)",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		for _, a := range args {
@@ -740,7 +740,7 @@ var destinationDeleteCmd = &cobra.Command{
 
 var destinationTestCmd = &cobra.Command{
 	Use:   "test <id>",
-	Short: "Send a made-up conversion to the platform's validation endpoint and show its verdict",
+	Short: "Send a made-up conversion to the platform's validation endpoint",
 	Long: "Without --real nothing is saved: GA4's /debug/mp/collect, Google Ads' validateOnly, ChatGPT Ads' validate_only.\n\n" +
 		"--real (ChatGPT Ads, with an ad connection to the pixel's account) sends a real event, which OpenAI saves and\n" +
 		"counts as a conversion, then reads the account's recent events and says whether it arrived (arrived: true).",
@@ -774,7 +774,7 @@ var destinationTestCmd = &cobra.Command{
 
 var destinationDeliveriesCmd = &cobra.Command{
 	Use:   "deliveries <id>",
-	Short: "A destination's delivery log: sent, pending (retrying), failed, withheld, cancelled",
+	Short: "A destination's delivery log: sent, pending, failed, withheld, cancelled",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := destinationArg(args[0]); err != nil {
@@ -809,7 +809,7 @@ var destinationResendStatuses = newEnum([]string{"failed", "withheld"})
 
 var destinationResendCmd = &cobra.Command{
 	Use:   "resend <id> (--delivery-id <n> | --status failed|withheld)",
-	Short: "Send failed or withheld conversions again, with all their tries: one delivery, or every one of a status",
+	Short: "Resend failed or withheld conversions: one delivery, or every one of a status",
 	Long: "After you fix what the platform refused (a token, an account, a conversion action), the conversions\n" +
 		"that ran out of tries stay failed until they are sent again. --status takes the deliveries of the last\n" +
 		"90 days, 5,000 a call (the answer's `more` says to run it again); a withheld one is checked again and\n" +
@@ -852,7 +852,7 @@ var destinationResendCmd = &cobra.Command{
 
 var destinationBackfillCmd = &cobra.Command{
 	Use:   "backfill <id> --days <n>",
-	Short: "Queue the conversions of the last days a destination has no delivery for (recorded before it existed)",
+	Short: "Queue recent conversions a destination has no delivery for",
 	Long: "Queues each paid conversion of the last --days that this destination's campaigns take and its log has no\n" +
 		"row for, oldest first, 5,000 a call (the answer's `more` says to run it again). GA4 takes 1 to 3 days\n" +
 		"(it refuses an event more than 72 hours old); Google Ads 1 to 90. They go out with the cron job's runs.\n\n" +

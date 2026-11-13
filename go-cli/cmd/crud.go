@@ -82,6 +82,9 @@ type crudEntity struct {
 	// ExampleFields are optional fields the create example gives too (the
 	// link Check asks for).
 	ExampleFields []string
+	// ListPage is the page `list` shows the same records as ("Setup ›
+	// Landing Pages"), said in its help so `p202 search` finds it by name.
+	ListPage string
 }
 
 // resolvePublicID treats id as a public id and returns the matching internal id
@@ -913,6 +916,14 @@ func resolveForeignKeyNames(c *api.Client, rows []map[string]interface{}) error 
 	return nil
 }
 
+// crudListLong is `list`'s help: its summary, and the page it mirrors.
+func crudListLong(entity crudEntity) string {
+	if entity.ListPage == "" {
+		return ""
+	}
+	return fmt.Sprintf("Lists %s: the same records as %s.", entity.Plural, entity.ListPage)
+}
+
 func registerCRUD(entity crudEntity) *cobra.Command {
 	parentCmd := &cobra.Command{
 		Use:     entity.Name,
@@ -924,6 +935,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: fmt.Sprintf("List %s", entity.Plural),
+		Long:  crudListLong(entity),
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("list", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
@@ -1400,6 +1412,7 @@ var crudEntities = []crudEntity{
 	{
 		Name:          "landing-page",
 		Plural:        "landing pages (pre-sell pages visitors see before the offer)",
+		ListPage:      "Setup › Landing Pages",
 		Endpoint:      "landing-pages",
 		IDField:       "landing_page_id",
 		PublicIDField: "landing_page_id_public",

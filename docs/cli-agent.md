@@ -1020,6 +1020,22 @@ feature off for the account; report the `detail` and ask the person for the pixe
 Conversions API key from Ads Manager. `currency_matches_account` false means the ad account bills in another
 currency than the Prosper202 account; spend is not converted. `--staged` is refused.
 
+### Ad spend (the spend ledger)
+
+```
+p202 spend list [--period P | --time-from T --time-to T] [--interval day|hour] [--platform openai_ads] [--limit N] [--json]
+p202 spend conversions [--period P] [--platform openai_ads] [--limit N] [--json]   # OpenAI's conversions per ad per day beside prosper202_conversions
+p202 spend sync list [--json]              # each ChatGPT Ads connection: enabled, backfilled_at, last run, last_error / last_note, left_out
+p202 spend sync enable <connection-id>     # off until enabled; first run reads 30 days, later runs the trailing 72 hours
+p202 spend sync disable <connection-id>    # what the ledger holds stays
+p202 spend sync run <connection-id>        # the hourly pull now (sync must be on); exit 7 OpenAI's limit, 4 its outage or unusable answer, 1 a refused key
+```
+
+`p202 spend list` answers what the platform billed per ad per day (account zone) or hour, with `matched_clicks`
+(clicks carrying the ad through their `ad_id` variable) and `unallocated_spend`. `p202 report …` costs those
+clicks at their share of each hour's spend and carries `spend_ledger.reaches`; say how far spend data reaches
+when you quote ROI from it. An ad account in another currency is refused by name (`last_error`).
+
 ### ChatGPT Ads campaigns (live at OpenAI, through an ad connection)
 
 ```
@@ -1504,10 +1520,13 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
   does and its input schema. A deferred tool called by name before that is
   loaded and run. Today they are `destination_list`, `destination_deliveries`
   and `destination_test` (Setup › Destinations), `ad_connection_list` and
-  `ad_connection_check`, and `ad_campaign_list`, `ad_campaign_pause`,
-  `ad_campaign_activate` and `ad_campaign_spend`; `--read-only` and `--staged`
-  leave out `destination_test` and `ad_connection_check`. The destination
-  tools and the check are local only: the hosted server below refuses them.
+  `ad_connection_check`, `ad_campaign_list`, `ad_campaign_pause`,
+  `ad_campaign_activate` and `ad_campaign_spend`, and `ad_spend` and
+  `ad_spend_sync_status` (what ad platforms billed per ad, and each ChatGPT
+  Ads connection's hourly spend pull); `--read-only` and `--staged` leave out
+  `destination_test` and `ad_connection_check`. The destination tools, the
+  check and the two spend tools are local only: the hosted server below
+  refuses them.
 - `p202 mcp tools` prints the tool list as JSON (`--deferred`: the tools
   `get_more_tools` loads); `p202 mcp call <tool> --input '<json>'` runs one
   tool as the app would, deferred ones included, with the server's

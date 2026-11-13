@@ -180,6 +180,25 @@ final class AdvertiserApi
         return $method . ' ' . (string) preg_replace('#/[a-z]+_(?=[A-Za-z0-9-]*[0-9])[A-Za-z0-9-]+(?=/|$)#', '/{id}', '/' . trim($path, '/'));
     }
 
+    /**
+     * A Retry-After header (RFC 9110: delay-seconds or an HTTP-date) as
+     * seconds from $now, at least 0; null when there is none or it reads as
+     * neither.
+     */
+    public static function retryAfterSeconds(?string $header, float $now): ?int
+    {
+        $header = trim((string) $header);
+        if (preg_match('/^[0-9]{1,10}$/D', $header) === 1) {
+            return (int) $header;
+        }
+        $date = \DateTimeImmutable::createFromFormat('!D, d M Y H:i:s \G\M\T', $header, new \DateTimeZone('UTC'));
+        if ($date === false || $date->format('D, d M Y H:i:s \G\M\T') !== $header) {
+            return null;
+        }
+
+        return max(0, $date->getTimestamp() - (int) floor($now));
+    }
+
     /** OpenAI's own words from an error body, cut short; '' when it has none. */
     public static function failureText(string $body): string
     {
@@ -244,7 +263,12 @@ final class AdvertiserApi
                 default => AdvertiserAnswer::REFUSED,
             };
 
-            return $failed($kind, $status, $said . ($kind === AdvertiserAnswer::RATE_LIMITED || $kind === AdvertiserAnswer::UNAVAILABLE ? '. Try again in a minute' : ''));
+            return AdvertiserAnswer::failed(
+                $kind,
+                $status,
+                GoogleAdsOAuth::redact($said . ($kind === AdvertiserAnswer::RATE_LIMITED || $kind === AdvertiserAnswer::UNAVAILABLE ? '. Try again in a minute' : ''), [$key]),
+                self::retryAfterSeconds($sent['retry_after'], ($this->clock)()),
+            );
         }
         if ($sent['error'] !== null) {
             return $failed(AdvertiserAnswer::UNAVAILABLE, $status, 'OpenAI\'s answer was cut off (' . $sent['error'] . ')');

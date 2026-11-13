@@ -95,8 +95,17 @@ var mcpDeferredToolSpecs = []mcpToolSpec{
 		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true), adObjectArg()}, Note: adWriteNote,
 		Words: []string{"activate chatgpt ads campaign", "resume a chatgpt campaign", "chatgpt ads"}},
 	{Name: "ad_campaign_spend", Command: []string{"ad-campaign", "spend"}, Title: "ChatGPT Ads spend by campaign", Kind: mcpRead, OpenWorld: true,
-		Args:  []mcpArg{idArg("connection_id", "Ad connection id.", true)},
-		Words: []string{"chatgpt ads spend", "what did chatgpt ads cost", "openai ads spend", "chatgpt ads"}},
+		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true)},
+		// Live per-campaign figures; "what did ChatGPT Ads cost" is ad_spend, the ledger reports cost from.
+		Words: []string{"chatgpt ads spend by campaign", "campaign spend at openai", "live campaign spend", "chatgpt ads"}},
+
+	// The spend ledger: what ad platforms billed (ChatGPT Ads' hourly pull).
+	{Name: "ad_spend", Command: []string{"spend", "list"}, Title: "What ad platforms billed, per ad", Kind: mcpRead, NotHosted: true, Keep: []string{"interval"},
+		Note: "Per day or hour and ad: impressions, clicks, spend, your clicks that carried the ad, and spend no click carried (unallocated); reaches says how far it goes. No rows: the ad account's hourly pull may be off.",
+		Words: []string{"ad spend", "what did chatgpt ads cost", "openai ads spend", "spend per ad", "cost per ad", "ad platform billed",
+			"unallocated spend", "spend ledger"}},
+	{Name: "ad_spend_sync_status", Command: []string{"spend", "sync", "list"}, Title: "ChatGPT Ads spend sync status", Kind: mcpRead, NotHosted: true,
+		Words: []string{"spend sync", "is my spend sync working", "spend sync status", "last spend pull", "spend sync error", "chatgpt ads sync", "openai ads sync"}},
 }
 
 // destinationDeliveriesNote names only keys the install's answer carries
