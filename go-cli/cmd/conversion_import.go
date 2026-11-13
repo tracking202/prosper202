@@ -1129,7 +1129,7 @@ func runConversionImport(cmd *cobra.Command, args []string) (retErr error) {
 	if refused := licenceRefusal(stopErr); refused != nil {
 		// `p202 config test` answers "Connection successful!" on an install that
 		// refuses the CLI (/system is not gated), so this stop keeps the licence
-		// contract: exit 6 and the trial, then the same re-run.
+		// contract: exit 6 and the licence hint, then the same re-run.
 		return withHint(fmt.Errorf("failed to record %d of %d row(s): the import stopped at row %d: %w", counts[importFailed], len(rows), stoppedAt, refused),
 			"%s A re-run of the same command sends only the rest: rows already recorded come back as duplicate.", api.HintFor(refused))
 	}

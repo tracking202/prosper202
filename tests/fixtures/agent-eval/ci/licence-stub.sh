@@ -10,8 +10,12 @@
 # verification stays fully on and no product code knows about the stub.
 # The licence check answers "Key valid" + paid:true for a non-empty key and
 # 404 "Key not found" for an empty one; a key ending in one of the suffixes
-# in Stub.ANSWERS (and -outage, -redirect...) gets that answer instead;
-# tests/live/cli-free.sh uses -unpaid, -invalid, -refused and -outage. Every other path answers 200 {}.
+# in Stub.ANSWERS (and -outage, -undecided, -redirect...) gets that answer
+# instead; tests/live/cli-free.sh uses -unpaid, -invalid, -refused, -outage
+# and -undecided. "-undecided" is the service that cannot decide: it answers
+# "Key not checked" to a request carrying X-P202-Licence-Grace: 1 and the
+# legacy "Key valid" (no paid) to one without, as the service and its edge
+# do. Every other path answers 200 {}. The log notes each request's header.
 #
 #   licence-stub.sh start <dir>   start it, and prove PHP's curl verifies it
 #   licence-stub.sh stop <dir>    stop it, and list the requests it answered
@@ -70,8 +74,10 @@ class Stub(http.server.BaseHTTPRequestHandler):
     # Every answer the real service gives, plus three it never does,
     # chosen by the key's suffix; "-redirect", "-redirect-away" and
     # "-redirect-loop" (in do_POST) exercise the validator's own
-    # redirect handling. tests/live/cli-free.sh sets the install's key
-    # to -unpaid, -invalid, -refused and -outage keys.
+    # redirect handling, and "-outage" and "-undecided" (in do_POST)
+    # the service without an answer. tests/live/cli-free.sh sets the
+    # install's key to -unpaid, -invalid, -refused, -outage and
+    # -undecided keys.
     ANSWERS = {
         "-unpaid":   (200, {"code": 200, "msg": "Key valid", "paid": False}),
         "-no-paid":  (200, {"code": 200, "msg": "Key valid"}),
@@ -103,6 +109,10 @@ class Stub(http.server.BaseHTTPRequestHandler):
                 return self.send_json(404, {"code": 404, "msg": "Key not found"})
             if key.endswith("-outage"):
                 return self.send_raw(503, "text/html", b"<html><body>Service Unavailable</body></html>")
+            if key.endswith("-undecided"):
+                if self.headers.get("X-P202-Licence-Grace") == "1":
+                    return self.send_json(200, {"code": 200, "msg": "Key not checked", "checked": False})
+                return self.send_json(200, {"code": 200, "msg": "Key valid"})
             if key.endswith("-redirect"):
                 return self.redirect("https://my.tracking202.com/api/v2/validate-customers-key/moved")
             if key.endswith("-redirect-away"):
@@ -119,7 +129,8 @@ class Stub(http.server.BaseHTTPRequestHandler):
         self.send_json(200, {})
 
     def log_message(self, fmt, *args):
-        sys.stderr.write("%s %s\n" % (self.command, self.path.split("?")[0]))
+        grace = "grace header" if self.headers.get("X-P202-Licence-Grace") == "1" else "no grace header"
+        sys.stderr.write("%s %s (%s)\n" % (self.command, self.path.split("?")[0], grace))
         sys.stderr.flush()
 
 with open(sys.argv[3], "w") as pid:

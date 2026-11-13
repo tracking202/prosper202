@@ -30,6 +30,9 @@ class CapabilitiesController
         . 'Make sure this server can reach my.tracking202.com over HTTPS; the CLI and AI assistants work again once it can. '
         . 'For help, contact support@tracking202.com or the support chat.';
 
+    /** Where a customer gets or reactivates the free licence, the newsletter included. */
+    public const LICENCE_SUPPORT_URL = 'https://my.tracking202.com/api/customers/subscriptions/support';
+
     /**
      * The refusal when Tracking202 does not accept the install's ClickServer
      * key as an active licence. $what names what is free but needs it ("The
@@ -38,9 +41,6 @@ class CapabilitiesController
      * no CPM* newsletter subscription; the verdict does not say which, so the
      * message says what to do for both.
      */
-    /** Where a customer gets or reactivates the free licence, the newsletter included. */
-    public const LICENCE_SUPPORT_URL = 'https://my.tracking202.com/api/customers/subscriptions/support';
-
     public static function notLicensedMessage(string $what): string
     {
         return $what . ', but it needs an active free ClickServer licence on this install, and Tracking202 '
@@ -439,7 +439,7 @@ class CapabilitiesController
             // checkKey() recorded the hold-off, if this was an outage.
             return $this->withinGrace($customerKey);
         }
-        return $result['valid'];
+        return ShellAccessCache::admits($result);
     }
 
     /** The CLI gate's refusal: the licence could not be checked, or the key is not an active licence. */

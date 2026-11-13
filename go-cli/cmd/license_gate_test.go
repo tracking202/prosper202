@@ -1,37 +1,59 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
 	"p202/internal/api"
 )
 
-// The install answers 402 to p202-cli when its ClickServer key is not an
-// active free licence; the CLI must say what a free licence needs, not blame
-// the API key (the CLI's REST key is fine).
-func TestCliExplainsProLicenceRefusal(t *testing.T) {
-	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+// freeLicenceRefusal is the 402 message a 1.9.80 install gives the Go CLI
+// (CapabilitiesController::notLicensedMessage('The Prosper202 CLI is free')).
+const freeLicenceRefusal = "The Prosper202 CLI is free, but it needs an active free ClickServer licence on this install, and Tracking202 did not accept the install's ClickServer API key as one. No paid subscription is needed. Get or reactivate your free licence at https://my.tracking202.com/api/customers/subscriptions/support (for accounts made since October 2026 it stays active with a CPM* newsletter subscription), then try again (the install checks a refusal again within five minutes). An install with no ClickServer API key enters a valid one on its api-key-required.php page."
+
+// paidLicenceRefusal is the message installs before 1.9.80 gave.
+const paidLicenceRefusal = "The Prosper202 CLI requires a Prosper202 ClickServer Pro licence on this install's ClickServer API key. Start a Pro trial or subscription at https://my.tracking202.com/api/customers/subscriptions/support"
+
+func refusingServer(t *testing.T, message string) *httptest.Server {
+	t.Helper()
+	body, err := json.Marshal(map[string]interface{}{"error": true, "status": 402, "category": "licence", "message": message})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.Header.Get("User-Agent"), "p202-cli/") {
 			t.Errorf("request without the p202-cli User-Agent the install gates on: %q", r.Header.Get("User-Agent"))
 		}
 		w.WriteHeader(402)
-		w.Write([]byte(`{"error":true,"status":402,"category":"licence","message":"The Prosper202 CLI requires a Prosper202 ClickServer Pro licence. Start a Pro trial or subscription at https://my.tracking202.com/api/customers/subscriptions/support"}`))
+		w.Write(body)
 	}))
+}
+
+// The install answers 402 to p202-cli when its ClickServer key is not an
+// active free licence; the CLI must say what a free licence needs, not blame
+// the API key (the CLI's REST key is fine).
+func TestCliExplainsTheFreeLicenceRefusal(t *testing.T) {
+	srv := refusingServer(t, freeLicenceRefusal)
 	defer srv.Close()
 	tmp := t.TempDir()
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 	_, _, err := executeCommand("user", "list")
-	if err == nil || !strings.Contains(err.Error(), "Pro licence") {
-		t.Fatalf("want the Pro licence refusal, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "active free ClickServer licence") {
+		t.Fatalf("want the free licence refusal, got %v", err)
 	}
-	if h := hintFor(err); !strings.Contains(h, "active free ClickServer licence") || !strings.Contains(h, "https://my.tracking202.com/api/customers/subscriptions/support") || strings.Contains(h, "Verify your API key") {
+	h := hintFor(err)
+	if !strings.Contains(h, "active free ClickServer licence") || !strings.Contains(h, api.LicenceSupportURL) || strings.Contains(h, "Verify your API key") {
 		t.Errorf("hint %q should say what a free licence needs, not blame the key", h)
+	}
+	if strings.Contains(h, "1.9.80") {
+		t.Errorf("hint %q tells a 1.9.80 install to upgrade to 1.9.80", h)
 	}
 	// A stable contract for agents: its own category and exit code, not
 	// "validation"/1 (bad input) and not "auth"/2 (bad key).
@@ -43,8 +65,96 @@ func TestCliExplainsProLicenceRefusal(t *testing.T) {
 	}
 }
 
+// An install older than 1.9.80 refuses the CLI without a paid subscription:
+// the hint says that upgrading the install is what makes the free licence
+// enough, rather than describing a free licence the install will not take.
+func TestAnOlderInstallsPaidRefusalAsksForTheUpgrade(t *testing.T) {
+	srv := refusingServer(t, paidLicenceRefusal)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	_, _, err := executeCommand("user", "list")
+	if err == nil {
+		t.Fatal("want the refusal")
+	}
+	h := hintFor(err)
+	if !strings.Contains(h, "older than Prosper202 1.9.80") || !strings.Contains(h, "Upgrade it") || !strings.Contains(h, api.LicenceSupportURL) {
+		t.Errorf("hint %q should ask for the upgrade that makes the free licence enough", h)
+	}
+	if got := exitCodeForError(err); got != ExitLicence {
+		t.Errorf("exit code = %d, want %d (ExitLicence)", got, ExitLicence)
+	}
+}
+
+// The exit codes are a contract agents and scripts branch on
+// (documentation/cli/10-go-cli.md, "Exit Codes"): a renumbering is a
+// breaking change, not a refactor.
+func TestExitCodesAreTheDocumentedContract(t *testing.T) {
+	got := map[string]int{
+		"ok": ExitOK, "validation": ExitValidation, "auth": ExitAuth, "network": ExitNetwork,
+		"server": ExitServer, "partial_failure": ExitPartialFailure, "licence": ExitLicence,
+		"rate_limited": ExitRateLimited,
+	}
+	want := map[string]int{
+		"ok": 0, "validation": 1, "auth": 2, "network": 3,
+		"server": 4, "partial_failure": 5, "licence": 6, "rate_limited": 7,
+	}
+	for name, code := range want {
+		if got[name] != code {
+			t.Errorf("exit code for %s = %d, want %d", name, got[name], code)
+		}
+	}
+	refused := &api.APIError{Status: http.StatusPaymentRequired, Category: "licence", Message: freeLicenceRefusal}
+	if code := exitCodeForError(refused); code != 6 {
+		t.Errorf("a licence refusal exits %d, want 6", code)
+	}
+}
+
+// The CLI and AI assistants are free from 1.9.80: no hint the CLI prints for
+// any status or category names a paid tier ("Pro", a trial). By word, not
+// substring: "Prosper202" is not "Pro" (CLAUDE.md #21).
+func TestNoHintOffersAPaidTier(t *testing.T) {
+	paidTier := regexp.MustCompile(`(?i)\b(pro|trials?)\b`)
+	if !paidTier.MatchString("Start a Pro trial") || paidTier.MatchString("The Prosper202 CLI") {
+		t.Fatal("the probe must see the word and only the word")
+	}
+	messages := []string{
+		"", freeLicenceRefusal, paidLicenceRefusal,
+		"This install's licence could not be checked with Tracking202. Make sure this server can reach my.tracking202.com over HTTPS; the CLI and AI assistants work again once it can.",
+		"scope", "' permission", "Admin access required", "deactivated", "still in flight", "idempotency-key",
+		"apply_interrupted", "chg_", "Version mismatch", "staged is not supported",
+	}
+	checked := 0
+	for status := 400; status < 600; status++ {
+		for _, category := range []string{"", "licence", "rate_limited", "validation", "auth", "server"} {
+			for _, message := range messages {
+				err := &api.APIError{Status: status, Category: category, Message: message}
+				for _, h := range []string{api.HintFor(err), hintFor(err)} {
+					checked++
+					if paidTier.MatchString(h) {
+						t.Fatalf("status %d, category %q, message %q: hint %q names a paid tier", status, category, message, h)
+					}
+				}
+			}
+		}
+	}
+	for _, kind := range []string{"network", "timeout", "tls", "decode", "request"} {
+		err := &api.RequestError{Kind: kind, Op: "request", Err: errors.New("x")}
+		if h := hintFor(err); paidTier.MatchString(h) {
+			t.Errorf("request error %s: hint %q names a paid tier", kind, h)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no hint was checked")
+	}
+	if h := hintFor(licenceRefusalError(freeLicenceRefusal)); h == "" || paidTier.MatchString(h) {
+		t.Errorf("exec's parent refusal hint %q", h)
+	}
+}
+
 // A refusal because the install could not confirm its licence points at
-// reaching Tracking202, not at buying a trial the user may already have.
+// reaching Tracking202, not at a licence the user may already have.
 func TestCliExplainsAnUnconfirmedLicence(t *testing.T) {
 	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(402)
@@ -58,8 +168,8 @@ func TestCliExplainsAnUnconfirmedLicence(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "could not be checked") {
 		t.Fatalf("want the unconfirmed-licence refusal, got %v", err)
 	}
-	if h := hintFor(err); !strings.Contains(h, "my.tracking202.com over HTTPS") || !strings.Contains(h, "support@tracking202.com") || strings.Contains(h, "Pro trial") {
-		t.Errorf("hint %q should point at reaching Tracking202, not at a trial", h)
+	if h := hintFor(err); !strings.Contains(h, "my.tracking202.com over HTTPS") || !strings.Contains(h, "support@tracking202.com") || strings.Contains(h, "active free ClickServer licence") {
+		t.Errorf("hint %q should point at reaching Tracking202, not at the licence page", h)
 	}
 	if got := exitCodeForError(err); got != ExitLicence {
 		t.Errorf("exit code = %d, want %d (ExitLicence)", got, ExitLicence)
@@ -194,7 +304,7 @@ func TestExecFailureKeepsARateLimitWhenEveryChildWasLimited(t *testing.T) {
 }
 
 // A 402 is the licence refusal only with the install's own envelope: a bare
-// 402 from a proxy is a server error (exit 4, retry), not a trip to the trial.
+// 402 from a proxy is a server error (exit 4, retry), not a trip to the licence page.
 func TestABare402IsNotALicenceRefusal(t *testing.T) {
 	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(402)
@@ -216,7 +326,7 @@ func TestABare402IsNotALicenceRefusal(t *testing.T) {
 	}
 	h := hintFor(err)
 	if strings.Contains(h, "active free ClickServer licence") {
-		t.Errorf("hint %q must not send the user to the trial", h)
+		t.Errorf("hint %q must not send the user to the licence page", h)
 	}
 	// It is still a failure with a next step: retry it as the server error it
 	// is, and look at what answers in front of the install.
@@ -281,7 +391,7 @@ func TestALicenceRefusalAbortsAnImport(t *testing.T) {
 
 // A run that aggregates several failures is the licence refusal only when a
 // licence is what every one of them needs: one profile refused and another
-// unreachable is not fixed by a trial.
+// unreachable is not fixed by a licence.
 func TestLicenceRefusalRequiresEveryFailureToBeOne(t *testing.T) {
 	refused := &api.APIError{Status: 402, Category: "licence", Message: "requires a Pro licence"}
 	other := &api.APIError{Status: 402, Category: "licence", Message: "the second profile's refusal"}
@@ -304,7 +414,7 @@ func TestLicenceRefusalRequiresEveryFailureToBeOne(t *testing.T) {
 }
 
 // Every profile failed, but only one for the licence: the run is not the
-// licence refusal (no exit 6, no trial hint), whichever profile answers first.
+// licence refusal (no exit 6, no licence hint), whichever profile answers first.
 func TestMultiProfileReportIsNotALicenceRefusalWhenAnotherProfileFailedOtherwise(t *testing.T) {
 	hits := 0
 	refusing := licenceServer(t, &hits)
@@ -332,7 +442,7 @@ func TestMultiProfileReportIsNotALicenceRefusalWhenAnotherProfileFailedOtherwise
 		t.Errorf("exit code = %d (ExitLicence) for a run one licence cannot fix", got)
 	}
 	if h := hintFor(err); strings.Contains(h, "active free ClickServer licence") {
-		t.Errorf("hint %q sends the user to the trial for a failure it cannot fix", h)
+		t.Errorf("hint %q sends the user to the licence page for a failure it cannot fix", h)
 	}
 }
 
@@ -364,7 +474,7 @@ func TestShellBatchIsNotALicenceRefusalWhenAnotherCommandFailedOtherwise(t *test
 
 // p202 import <entity> sends one POST per record. Once the install refuses
 // the CLI every record meets the same 402, so the import stops at the first
-// one and reports the refusal (exit 6, the trial hint), --skip-errors or not.
+// one and reports the refusal (exit 6, the licence hint), --skip-errors or not.
 func TestEntityImportStopsOnTheLicenceRefusal(t *testing.T) {
 	file := writeImportFile(t, "campaigns.json", `[{"aff_campaign_name":"a"},{"aff_campaign_name":"b"},{"aff_campaign_name":"c"}]`)
 	for _, extra := range [][]string{nil, {"--skip-errors"}} {

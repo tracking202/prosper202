@@ -14,10 +14,16 @@
 #   -outage   503, a valid answer 2 days   served (the 30-day grace period)
 #             old in 202_licence_answers
 #   -outage   503, nothing recorded        402 licence, "could not be checked"
+#   -undecided "Key not checked" to a      402 licence, "could not be checked"
+#             request carrying the grace   (served on a valid answer 2 days
+#             header, the legacy "Key      old); without the header the stub
+#             valid" to one without        answers "Key valid" and the case
+#                                          would be served instead
+#   no key on the install at all           402 licence, api-key-required.php
 # and the built CLI (P202_BIN) on the unpaid key: exit 0 with JSON.
 # Without the stub it does nothing: the real service would refuse made-up keys.
 #
-# Restores the install's ClickServer key and drops the answers it recorded.
+# Restores the install's ClickServer keys and drops the answers it recorded.
 #
 # --- environment -------------------------------------------------------
 BASE=${P202_BASE:-http://127.0.0.1:8097}
@@ -82,8 +88,12 @@ if ! ORIGINAL_KEY=$(mysql_q "SELECT COALESCE(p202_customer_api_key, '') FROM 202
     exit 2
 fi
 KEYS_TOUCHED=()
+OTHER_KEYS=() # "user_id<TAB>key" of the other users on the install, blanked by the no-key case
 restore() {
     mysql_q "UPDATE 202_users SET p202_customer_api_key = $( [ -n "$ORIGINAL_KEY" ] && printf "'%s'" "$ORIGINAL_KEY" || echo NULL ) WHERE user_id = $USER_ID" || true
+    for row in "${OTHER_KEYS[@]}"; do
+        mysql_q "UPDATE 202_users SET p202_customer_api_key = '${row#*$'\t'}' WHERE user_id = ${row%%$'\t'*}" || true
+    done
     for k in "${KEYS_TOUCHED[@]}"; do
         mysql_q "DELETE FROM 202_licence_answers WHERE key_sha256 = SHA2('$k', 256)" || true
     done
@@ -103,14 +113,22 @@ use_key() { # use_key <suffix>: a fresh key with that suffix becomes the install
 expect_served() { # $1 = case name
     if [ "$STATUS" = 200 ]; then ok "$1: 200"; else ko "$1: expected 200" "got $STATUS: $BODY"; fi
 }
+names_paid_tier() { # true when $1 offers a paid tier: the word "Pro" or "trial", not "Prosper202"
+    [[ "$1" =~ (^|[^[:alnum:]])([Pp][Rr][Oo]|[Tt][Rr][Ii][Aa][Ll][Ss]?)([^[:alnum:]]|$) ]]
+}
+# The probe sees the word and only the word, or no refusal below is checked.
+if ! names_paid_tier 'Start a Pro plan.' || names_paid_tier 'The Prosper202 CLI is free'; then
+    echo "names_paid_tier does not tell the word from Prosper202" >&2
+    exit 2
+fi
 expect_refused() { # $1 = case name, $2 = words the message must hold
     local category message
     category=$(printf '%s' "$BODY" | jget category)
     message=$(printf '%s' "$BODY" | jget message)
-    if [ "$STATUS" = 402 ] && [ "$category" = licence ] && [[ "$message" == *"$2"* ]] && [[ "$message" != *Pro* ]]; then
+    if [ "$STATUS" = 402 ] && [ "$category" = licence ] && [[ "$message" == *"$2"* ]] && ! names_paid_tier "$message"; then
         ok "$1: 402, category licence, \"$2\""
     else
-        ko "$1: expected 402 + category licence + \"$2\" (and no \"Pro\")" "got $STATUS: $BODY"
+        ko "$1: expected 402 + category licence + \"$2\" (and no paid tier named)" "got $STATUS: $BODY"
     fi
 }
 
@@ -150,6 +168,24 @@ request /campaigns; expect_served "unreachable, a valid answer 2 days old"
 
 use_key outage
 request /campaigns; expect_refused "unreachable, nothing recorded" "could not be checked"
+
+use_key undecided
+request /campaigns; expect_refused "Key not checked, nothing recorded" "could not be checked"
+
+use_key undecided
+mysql_q "INSERT INTO 202_licence_answers (key_sha256, valid_yes, valid_at) VALUES (SHA2('$KEY', 256), 1, UNIX_TIMESTAMP() - 2 * 86400)"
+request /campaigns; expect_served "Key not checked, a valid answer 2 days old"
+
+# No key: the user's, and every other on the install (the owner's key would
+# decide for a user without one).
+while IFS= read -r row; do
+    [ -n "$row" ] && OTHER_KEYS+=("$row")
+done < <(mysql_q "SELECT o.user_id, o.p202_customer_api_key FROM 202_users o JOIN 202_users u ON u.user_id = $USER_ID AND o.install_hash = u.install_hash WHERE o.user_id != $USER_ID AND o.p202_customer_api_key IS NOT NULL AND o.p202_customer_api_key != ''")
+for row in "${OTHER_KEYS[@]}"; do
+    mysql_q "UPDATE 202_users SET p202_customer_api_key = NULL WHERE user_id = ${row%%$'\t'*}"
+done
+mysql_q "UPDATE 202_users SET p202_customer_api_key = NULL WHERE user_id = $USER_ID"
+request /campaigns; expect_refused "no key on the install" "api-key-required.php"
 
 echo
 echo "$pass passed, $fail failed"

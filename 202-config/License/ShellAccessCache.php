@@ -23,8 +23,8 @@ class ShellAccessCache
 
     /**
      * How long a refusal is believed. Shorter than an allow: a customer who
-     * starts the trial after a "not paid" is served within this, not after
-     * TTL_SECONDS, and nothing else invalidates the entry when they pay.
+     * gets or reactivates the free licence after a refusal is served within
+     * this, not after TTL_SECONDS, and nothing else invalidates the entry.
      */
     public const int DENIAL_TTL_SECONDS = 300;
 
@@ -237,6 +237,21 @@ class ShellAccessCache
     protected static function licenceQuestion(): string
     {
         return self::QUESTION_VALID;
+    }
+
+    /**
+     * Which of ClickServerKeyValidator's answers admit the Go CLI and an AI
+     * connection: the one place that decides it (CapabilitiesController's
+     * gate and AiConnect through it). What this cache and the durable
+     * record keep is the answer to licenceQuestion(), which this rule
+     * equals; a rule asking more than "valid" also needs a question of its
+     * own there, since the dashboard sign-in shares QUESTION_VALID.
+     *
+     * @param array{valid: bool, paid: ?bool} $licence
+     */
+    public static function admits(array $licence): bool
+    {
+        return $licence['valid'];
     }
 
     public static function write(string $key, bool $valid): void

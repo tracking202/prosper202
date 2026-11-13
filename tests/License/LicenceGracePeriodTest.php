@@ -401,7 +401,26 @@ final class LicenceGracePeriodTest extends TestCase
         self::assertStringContainsString('could not be checked with Tracking202', $message);
         self::assertStringContainsString('reach my.tracking202.com over HTTPS', $message);
         self::assertStringContainsString('support@tracking202.com or the support chat', $message);
-        self::assertStringNotContainsString('Pro', $message);
+    }
+
+    /**
+     * The CLI and AI connections are free: no refusal offers a paid tier.
+     * By word, not substring (CLAUDE.md #21): "Prosper202" is not "Pro".
+     */
+    public function testNoRefusalOffersAPaidTier(): void
+    {
+        $paidTier = '/\b(Pro|trials?)\b/i';
+        self::assertMatchesRegularExpression($paidTier, 'Start a Pro trial', 'the probe sees the word');
+        self::assertDoesNotMatchRegularExpression($paidTier, 'The Prosper202 CLI', 'and only the word');
+        $messages = [
+            'unconfirmed' => CapabilitiesController::LICENCE_UNCONFIRMED_MESSAGE,
+            'CLI' => CapabilitiesController::notLicensedMessage('The Prosper202 CLI is free'),
+            'AI connect' => CapabilitiesController::notLicensedMessage('Connecting an AI assistant is free'),
+        ];
+        foreach ($messages as $name => $message) {
+            self::assertDoesNotMatchRegularExpression($paidTier, $message, $name);
+        }
+        self::assertStringContainsString('No paid subscription is needed', $messages['CLI']);
     }
 
     public function testTheSignInPageSaysTheSame(): void

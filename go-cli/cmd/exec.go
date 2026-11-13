@@ -166,7 +166,7 @@ var execCmd = &cobra.Command{
 }
 
 // execFailure is the parent's error for a run with failed children: the
-// licence refusal (category licence, exit 6, the trial hint) when every
+// licence refusal (category licence, exit 6, the licence hint) when every
 // failed child exited for it, so the contract the children honoured survives
 // the process boundary; the generic failure otherwise.
 func execFailure(results map[string]execResult) error {

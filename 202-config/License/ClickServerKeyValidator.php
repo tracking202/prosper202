@@ -43,13 +43,15 @@ class ClickServerKeyValidator
     /**
      * Full licence answer for a key.
      *
-     * 'paid' is true when the key's account has an active Prosper202
-     * ClickServer subscription (trials count). It is null when the answer
-     * carried no 'paid' field (older backend, or the edge fallback that
-     * answers while the backend is unreachable); callers must treat null as
-     * "unknown", not as "not paid".
+     * 'paid' is the service's word on whether the key's account pays for
+     * ClickServer. Nothing in Prosper202 is gated on it: the Go CLI and AI
+     * connections need a valid key (ShellAccessCache::admits()). It is null
+     * when the answer carried no boolean 'paid' (an older service, or the
+     * edge fallback that answers while the service is unreachable), which
+     * is "unknown", never "not paid".
      *
-     * @return array{valid: bool, paid: ?bool}|null null = network failure
+     * @return array{valid: bool, paid: ?bool}|null null = no usable answer (an
+     *         outage, or one interpret() does not recognise)
      */
     public static function check(string $key, int $connectTimeoutSeconds = 5, int $timeoutSeconds = 10): ?array
     {
@@ -213,11 +215,9 @@ class ClickServerKeyValidator
      * Everything else is an outage or somebody else's answer and returns
      * null: a 5xx, a redirect, an HTML error page, malformed JSON, JSON
      * without the envelope, a 200 or a 404 whose message the service never
-     * sends. A 'paid' that is not a
-     * boolean is unknown too ('paid' => null) rather than "not paid": a
-     * malformed value must never resolve to the answer that happens to be a
-     * denial (CLAUDE.md #11). A licence gate then counts the key as licensed
-     * only on a yes within the grace period
+     * sends. A 'paid' that is not a boolean is unknown ('paid' => null),
+     * never read as either answer (CLAUDE.md #11). On null a licence gate
+     * counts the key as licensed only on a yes within the grace period
      * (ShellAccessCache::validWithinGrace()), and nothing is cached from it.
      *
      * @return array{valid: bool, paid: ?bool}|null

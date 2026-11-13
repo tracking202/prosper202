@@ -118,7 +118,7 @@ final class AiConnectExchangeTest extends TestCase
         self::assertStringContainsString('active free ClickServer licence', $body['message']);
         self::assertStringContainsString('CPM* newsletter', $body['message'], 'how to keep a free licence active');
         self::assertStringContainsString('https://my.tracking202.com/api/customers/subscriptions/support', $body['message']);
-        self::assertStringNotContainsString('Pro', $body['message']);
+        self::assertDoesNotMatchRegularExpression('/\b(Pro|trials?)\b/i', $body['message'], 'no paid tier is offered');
         self::assertSame([], $db->statementsContaining('INSERT INTO 202_api_keys'));
     }
 
@@ -170,7 +170,7 @@ final class AiConnectExchangeTest extends TestCase
             ['code' => $code, 'code_verifier' => $verifier]
         );
         // The install's own error is not a missing licence: it connects, and
-        // the hosted MCP server, which no longer needs the hash, gets none.
+        // the answer carries no hash.
         self::assertSame(200, $status, (string) json_encode($body));
         self::assertArrayNotHasKey('licence_key_sha256', $body['data']);
         self::assertCount(1, $db->statementsContaining('INSERT INTO 202_api_keys'));
