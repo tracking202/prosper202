@@ -295,7 +295,8 @@ ledger holds, clicks with no `ad_id`, and ads the ledger has no row for.
 On an account with a traffic source marked as ChatGPT Ads
 (`ppc_network_platform` `chatgpt_ads`, set by Setup › Traffic Sources' **Add
 ChatGPT Ads**, which makes one or marks yours when it is the only source named
-ChatGPT Ads), ChatGPT Ads spend (platform `openai_ads`) goes only to the
+ChatGPT Ads, or by a source's edit form under Advanced, which marks any
+source and clears the mark), ChatGPT Ads spend (platform `openai_ads`) goes only to the
 clicks of marked sources, all of them if there are several, so a click of
 another source that happens to carry the same ad id keeps its CPC. A marked
 source that was removed still marks the account: its clicks still carry the
