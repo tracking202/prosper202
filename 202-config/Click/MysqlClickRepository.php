@@ -63,9 +63,9 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                 self::arrivalOf($click),
                 ['click_lead' => 0, 'click_payout' => $click->clickPayout]
             );
-            // Consent the request withheld is stored with the click's rows,
-            // or not at all: it holds for the whole visit (ConsentRefusal).
-            if ($click->identity?->withheld === true) {
+            // A visitor's refusal is stored with the click's rows, or not at
+            // all: it holds for the whole visit (ConsentRefusal).
+            if ($click->identity?->refused === true) {
                 ConsentRefusal::record($this->conn, $click->clickId, $click->clickTime);
             }
             $this->write(
@@ -175,9 +175,9 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             if (!($click->identity?->bringsBrowserSignal() ?? false)) {
                 IdentityGraph::withdrawBrowserSignals($this->conn, $click->clickId);
             }
-            // One that withheld consent holds it back for the whole visit,
-            // whatever a later request of the visit carries (ConsentRefusal).
-            if ($click->identity?->withheld === true) {
+            // One the visitor refused holds for the whole visit, whatever a
+            // later request of the visit carries (ConsentRefusal).
+            if ($click->identity?->refused === true) {
                 ConsentRefusal::recordForStoredClick($this->conn, $click->clickId, $click->clickTime);
             }
             // The redirector records no text ad: the click's is kept unless

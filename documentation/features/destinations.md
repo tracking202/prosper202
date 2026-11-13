@@ -119,18 +119,45 @@ once.
   without the `+`, as OpenAI hashes them, and the visitor's IP address is
   sent too, only when the campaign captures identity, the visitor did not
   refuse consent (`p202_consent`), and the click stored the address
-  unmasked (a masked address names a network, not the visitor). A refusal
-  holds for the whole visit: once the tracking link, a click through a
-  rotator or the landing page's pageview carries `p202_consent=0`, no later
-  request of that visit gives consent back, also one that carries no
-  `p202_consent` at all. A later visit, when the visitor clicks through
-  again, is read on its own. A conversion whose own request carries
-  `p202_consent=0` (a conversion pixel on the thank-you page, or a postback
-  that relays the visitor's refusal) is still recorded and sent, with its
-  value and click id, but with none of the visitor's data: no address, no
-  hashed email or phone, no customer id. That holds for that conversion
-  only, whatever the click's visit gave. The raw values are never written
-  to the queue, the log or an error.
+  unmasked (a masked address names a network, not the visitor). The raw
+  values are never written to the queue, the log or an error.
+- **A visitor who refused consent is sent to no destination.** When a
+  visitor refuses (`p202_consent` with any value but `1`), none of their
+  conversions goes to GA4, Google Ads or ChatGPT Ads: not the event, not
+  the click's ids (`gclid`, `oppref` and the rest), not user data. The
+  delivery is still listed, as *withheld*, with the reason "the visitor
+  refused consent", and sending it again checks again and withholds it
+  again. Your own reports still count the conversion, and the conversion
+  log keeps what it always kept, the request's IP address and user agent
+  included: the rule is about what is sent, not what your install records.
+  A refusal counts when it arrives:
+  - on the click's visit: the tracking link, a click through a rotator, or
+    the landing page's pageview (`p202.consent(false)`). It holds
+    for the whole visit, so a later request of that visit that carries no
+    `p202_consent`, or `1`, does not give it back. A click-through in the
+    same second is the same visit. A later visit, when the visitor clicks
+    through again in a later second, is read on its own: its conversions
+    are sent unless it refuses too;
+  - on the conversion's own request: a conversion pixel (`px.php`,
+    `gpx.php`, `upx.php`), a postback (`pb.php`, `gpb.php`) that passes on
+    the visitor's `p202_consent=0`, or an `event=` that reaches a goal. A
+    repeat of the same conversion that refuses (a reloaded thank-you page)
+    withholds it from then on; a repeat that consents does not undo a
+    refusal. A delivery already sent before the refusal arrived stays sent;
+  - on a conversion a replacing one goes by: on a campaign that pays the
+    latest conversion, a sale that replaces a refused one is withheld too.
+
+  What cannot carry a refusal, and so reads as consent given: a conversion
+  sent with the API (`POST /conversions`), a CSV or SubID import, a payment
+  provider's notification or webhook, and an Android app install.
+  Conversions and clicks recorded before the 1.9.80 upgrade, and in the
+  time between deploying 1.9.80 and running its upgrade, carry no stored
+  refusal either. A campaign whose identity capture is off is not a refusal:
+  its conversions are sent, without the visitor's address.
+
+  This applies to destinations only. Your traffic sources' pixels and
+  postbacks and the Meta Purchase pixel follow their own rules and are not
+  changed by it.
 - **Consent signals** (`ad_user_data`, `ad_personalization`) are what you
   state, per destination, from your consent banner: Prosper202 does not
   record a visitor's consent. Hashed data (and `user_id`) go only when

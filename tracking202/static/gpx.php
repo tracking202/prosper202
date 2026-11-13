@@ -182,7 +182,7 @@ if (is_numeric($mysql['click_id'])) {
 				// it under the click lock so two concurrent id-less pixels
 				// record one conversion, not two.
 				'once_per_click'  => p202ExtractTransactionId($_GET) === '',
-                // A refusal on this request: its destinations get no user data.
+                // A refusal on this request: no destination is sent it.
                 'consent_withheld' => !\Prosper202\Identity\RequestSignals::consentGiven($_GET),
 			],
 			$matchedBy,

@@ -116,7 +116,7 @@ if ($click_id > 0) {
 			'ip'         => p202StoredVisitorIp(),
 			'user_agent' => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
 			'event_name' => $webEvent['event_name'] ?? null,
-            // A refusal on this request: its destinations get no user data.
+            // A refusal on this request: no destination is sent it.
             'consent_withheld' => !\Prosper202\Identity\RequestSignals::consentGiven($_GET),
 		]);
 		if ($outcome['recorded'] || ($outcome['duplicate'] ?? false)) {

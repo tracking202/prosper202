@@ -5490,6 +5490,10 @@ class UPGRADE
                 \Prosper202\Database\Tables\ClickTables::purLinkExitOrder(),
                 \Prosper202\Database\Tables\ClickTables::purLinkPixelFires(),
                 \Prosper202\Database\Tables\GoalTables::purLinkGoalSubjects(),
+                // 202_goal_events gains consent_withheld, its request's refusal,
+                // which every ledger row its outcomes write carries
+                // (Ledger\ConsentWithheld); every event already there is 0.
+                \Prosper202\Database\Tables\GoalTables::goalEvents(),
                 // The Bot202 Facebook Pixel Assistant's lookup rows, as a fresh
                 // install seeds them (DataSeeder); a paid install's are kept.
                 \Prosper202\Database\Tables\MiscTables::bot202FacebookPixelContentType(),

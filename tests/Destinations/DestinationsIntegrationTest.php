@@ -610,33 +610,38 @@ final class DestinationsIntegrationTest extends TestCase
         $marks = self::$db->query('SELECT COUNT(*) FROM 202_identity_observations WHERE click_id=112'
             . " AND signal_type='vid' AND observed_at >= $foreign")->fetch_row()[0];
         self::assertGreaterThan(0, (int) $marks, 'the mark is there to be read');
-        self::assertSame(23, $queue()->sendDue(30, 5, time() + 1)['sent']);
+        $run = $queue()->sendDue(30, 5, time() + 1);
         $by = [];
         foreach ($facts as $f) {
             $by[$f->clickId] = $f;
         }
+        // A visitor who refused, on the visit or on a request of it, is sent nothing: the delivery is
+        // withheld and says why. Reports still count the conversion.
+        $refusedVisits = [113, 114, 115, 116, 117, 118, 119, 121, 122, 123];
+        self::assertSame(['sent' => 13, 'withheld' => 10], ['sent' => $run['sent'], 'withheld' => $run['withheld']]);
+        $why = self::$db->query('SELECT c.click_id, d.status, d.last_error FROM 202_destination_deliveries d'
+            . ' JOIN 202_conversion_logs c ON c.conv_id = d.conv_id WHERE d.destination_id = ' . $on
+            . ' AND c.click_id IN (' . implode(',', $refusedVisits) . ') ORDER BY c.click_id')->fetch_all(MYSQLI_ASSOC);
+        self::assertSame($refusedVisits, array_map('intval', array_column($why, 'click_id')));
+        foreach ($why as $row) {
+            $what = 'nothing of click ' . $row['click_id'] . ' is sent';
+            self::assertArrayNotHasKey((int) $row['click_id'], $by, $what);
+            self::assertSame('withheld', $row['status']);
+            $what = 'and it says the visitor refused';
+            self::assertStringStartsWith(DestinationQueue::REFUSED, (string) $row['last_error'], $what);
+        }
         self::assertSame('198.51.100.7', $by[100]->ipAddress, 'the positive control: an unmasked address, user data on');
         self::assertNull($by[101]->ipAddress, 'an address stored masked is not the visitor\'s');
         self::assertNull($by[103]->ipAddress, 'a private address names no one a platform could match');
-        self::assertNull($by[104]->ipAddress, 'a click whose own request refused consent sends no address, even once a customer id links it');
+        self::assertNull($by[104]->ipAddress, 'a click whose request left no browser mark sends no address, even once a customer id links it');
         self::assertNull($by[107]->ipAddress, 'a shared (carrier-grade NAT) address names no visitor');
         self::assertNull($by[108]->ipAddress, 'a campaign of another account is no campaign');
         self::assertNull($by[109]->ipAddress, 'nor is a campaign that is gone');
         self::assertSame('198.51.100.7', $by[100]->ipAddress, 'the positive control for the visitor cookie');
-        self::assertNull($by[110]->ipAddress, 'a re-click that refused consent sends no address, whatever an earlier visit gave');
+        self::assertNull($by[110]->ipAddress, 'a re-click that left no mark sends no address, whatever an earlier visit gave');
         self::assertSame('198.51.100.7', $by[111]->ipAddress, 'and a re-click that gave it sends the address');
         self::assertNull($by[112]->ipAddress, 'another account\'s latest visit is no visit of it, whatever its mark');
-        self::assertNull($by[113]->ipAddress, 'a refusing re-click in a consenting visit\'s second sends no address');
-        self::assertNull($by[114]->ipAddress, 'a consenting re-click in a refusing visit\'s second is that visit');
-        self::assertNull($by[119]->ipAddress, 'a link that refused holds for its visit, whatever its page sends');
         self::assertSame('198.51.100.7', $by[120]->ipAddress, 'a later visit that consents is read on its own');
-        self::assertNull($by[121]->ipAddress, 'a page that withheld holds for its visit, whatever it sends next');
-        self::assertNull($by[122]->ipAddress, 'a re-click that refused holds for its visit, whatever its page sends');
-        self::assertNull($by[123]->ipAddress, 'a refusal stamped before the latest visit recorded covers that visit');
-        self::assertNull($by[115]->ipAddress, 'a landing page that withheld consent takes back its click\'s mark');
-        self::assertNull($by[116]->ipAddress, 'a mark the landing page id left is taken back as the cookie\'s is');
-        self::assertNull($by[117]->ipAddress, 'a withdrawal that met a lock was made once the lock cleared');
-        self::assertNull($by[118]->ipAddress, 'a refusal holds though the mark it could not take back still stands');
         self::assertNull($by[105]->ipAddress, 'nor one whose campaign has identity capture off');
         self::assertSame('198.51.100.7', $by[102]->ipAddress, 'and for the landing page id');
         self::assertSame('https://shop.example.com/spring', $by[100]->pageUrl, 'the landing page, without what its query and fragment carry');
@@ -668,12 +673,14 @@ final class DestinationsIntegrationTest extends TestCase
 
     /**
      * A conversion whose own request withheld consent (a thank-you page's
-     * pixel with p202_consent=0, after a click that consented) is sent with
-     * none of the visitor's data: no address, no hashed email or phone, no
-     * customer id. The refusal is the conversion's, so a later visit that
-     * consents, before the send or after, changes neither conversion.
+     * pixel with p202_consent=0, after a click that consented) is sent to no
+     * destination: its delivery is withheld and says the visitor refused, a
+     * send again checks again, and the install still records it. The
+     * refusal is the conversion's, so a later visit that consents, before
+     * the send or after, changes neither conversion. A repeat of the same
+     * conversion that refuses tightens it; nothing loosens it.
      */
-    public function testAConversionWhoseOwnRequestWithheldConsentIsSentWithNoUserData(): void
+    public function testAConversionWhoseOwnRequestRefusedConsentIsSentToNoDestination(): void
     {
         foreach (['202_clicks_visitor', '202_identity_observations', '202_click_consent_refusals'] as $t) {
             self::fixture("DELETE FROM $t WHERE click_id BETWEEN 140 AND 149");
@@ -684,7 +691,7 @@ final class DestinationsIntegrationTest extends TestCase
             first_seen_time=1, last_activity_time=1, created_at=1, updated_at=1");
         $conn = new Connection(self::$db);
         $cookie = ['p202vid' => str_repeat('c9', 16)];
-        foreach ([140, 141, 142, 143] as $click) {
+        foreach ([140, 141, 142, 143, 144, 145] as $click) {
             self::fixture("INSERT INTO 202_clicks_advance SET click_id=$click, ip_id=5");
             $this->click($click);
             // The click's own request consented.
@@ -694,7 +701,9 @@ final class DestinationsIntegrationTest extends TestCase
         $facts = [];
         $store = new DestinationStore($conn, [Ga4Destination::TYPE => $this->capturing($facts)]);
         $settings = ['measurement_id' => 'G-ABC123', 'send_user_data' => true, 'user_id_source' => 'customer'];
-        $store->create(1, Ga4Destination::TYPE, 'Store GA4', $settings, ['api_secret' => self::SECRET], time());
+        $secret = ['api_secret' => self::SECRET];
+        $created = $store->create(1, Ga4Destination::TYPE, 'Store GA4', $settings, $secret, time());
+        $on = (int) $created['destination_id'];
         $queue = static fn (): DestinationQueue
             => new DestinationQueue($conn, $store, static fn (string $ip): bool => false);
         $repo = new MysqlConversionRepository($conn);
@@ -724,9 +733,18 @@ final class DestinationsIntegrationTest extends TestCase
         \Prosper202\Identity\ClickIdentity::fromRequest([], $cookie, true, false)
             ->attach($conn, 1, 143, self::CLICK_TIME + 100);
         $later = $record(143, 'ORD-W5');
+        // A repeat tightens and never loosens: 144 consents, then the same sale is reported again refusing
+        // (a reloaded thank-you page) and again consenting; 145 refuses first, then consents.
+        $tightened = $record(144, 'ORD-D1');
+        self::assertSame($tightened, $record(144, 'ORD-D1', ['consent_withheld' => true]), 'the same conversion');
+        $record(144, 'ORD-D1', ['consent_withheld' => false]);
+        $kept = $record(145, 'ORD-D2', ['consent_withheld' => true]);
+        $record(145, 'ORD-D2');
+        $flags = [$stored($tightened), $stored($kept)];
+        self::assertSame(['1', '1'], $flags, 'a refusing repeat tightens; nothing loosens');
 
-        $sent = $queue()->sendDue(10, 5, time() + 1)['sent'];
-        self::assertSame(5, $sent, 'every conversion is sent, the refused one too');
+        $run = $queue()->sendDue(10, 5, time() + 1);
+        self::assertSame(['sent' => 3, 'withheld' => 4], ['sent' => $run['sent'], 'withheld' => $run['withheld']]);
         $by = [];
         foreach ($facts as $f) {
             $by[$f->convId] = $f;
@@ -746,39 +764,172 @@ final class DestinationsIntegrationTest extends TestCase
         $withheld = [
             $refused => 'a conversion whose request refused',
             $early => 'one sent after a later visit consented',
+            $tightened => 'one a refusing repeat tightened',
+            $kept => 'one a consenting repeat did not loosen',
         ];
+        $status = static fn (int $convId): array => self::$db->query(
+            "SELECT status, last_error FROM 202_destination_deliveries WHERE destination_id=$on AND conv_id=$convId"
+        )->fetch_assoc();
         foreach ($withheld as $convId => $what) {
-            self::assertNull($by[$convId]->ipAddress, "$what sends no address");
-            self::assertSame([], $by[$convId]->emailHashes, "$what sends no hashed email");
-            self::assertSame([], $by[$convId]->phoneHashes, "$what sends no hashed phone");
-            self::assertNull($by[$convId]->customerId, "$what sends no customer id");
-            self::assertSame($by[$given]->value, $by[$convId]->value, "$what is sent all the same, its value too");
+            self::assertArrayNotHasKey($convId, $by, "$what sends nothing, not the event nor its click ids");
+            self::assertSame('withheld', $status($convId)['status'], "$what is withheld");
+            self::assertSame(
+                DestinationQueue::REFUSED . ' on the conversion\'s request',
+                $status($convId)['last_error'],
+                "$what says the visitor refused"
+            );
         }
+        // Sent again, each is checked again and stays withheld.
+        self::assertSame(4, $queue()->resend(1, $on, null, 'withheld', time() + 2)['queued']);
+        $again = $queue()->sendDue(10, 5, time() + 3);
+        self::assertSame(['sent' => 0, 'withheld' => 4], ['sent' => $again['sent'], 'withheld' => $again['withheld']]);
+        self::assertCount(3, $facts, 'nothing more was sent');
+        $counted = (int) self::$db->query('SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id BETWEEN 140 AND 145'
+            . ' AND deleted = 0')->fetch_row()[0];
+        self::assertSame(7, $counted, 'the install records every conversion, the refused ones too');
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('consent_withheld must be true or false');
-        $record(144, 'ORD-W6', ['consent_withheld' => '0']);
+        $record(146, 'ORD-W6', ['consent_withheld' => '0']);
+    }
+
+    /**
+     * A refusal on the click's visit keeps its conversions from every
+     * destination, read against the visit the conversion credits: a conversion of a refused visit is withheld though
+     * a later visit consents before the send, and one of a consenting visit
+     * is withheld when a later visit refuses before the send. A campaign
+     * whose identity capture is off is no refusal: its conversion is sent.
+     */
+    public function testARefusalOnTheClicksVisitIsSentToNoDestination(): void
+    {
+        foreach (['202_identity_observations', '202_click_consent_refusals'] as $t) {
+            self::fixture("DELETE FROM $t WHERE click_id BETWEEN 155 AND 159");
+        }
+        self::fixture("INSERT INTO 202_ips SET ip_id=5, ip_address='198.51.100.7'");
+        $this->campaign(33, null);
+        self::fixture('UPDATE 202_aff_campaigns SET identity_signals=0 WHERE aff_campaign_id=33');
+        $conn = new Connection(self::$db);
+        $repo = new \Prosper202\Click\MysqlClickRepository($conn);
+        $visit = static function (
+            int $click,
+            array $get,
+            int $time,
+            bool $again,
+            int $campaign = 30
+        ) use ($repo): void {
+            $record = new \Prosper202\Click\ClickRecord(
+                clickId: $click,
+                userId: 1,
+                clickTime: $time,
+                affCampaignId: $campaign,
+                ppcAccountId: 70,
+                clickPayout: '2.5',
+                ipId: 5,
+                recordsCampaignRows: false,
+                rotator: $again ? new \Prosper202\Click\RotatorRoute(1, 1, 1) : null,
+                identity: \Prosper202\Identity\ClickIdentity::fromRequest($get, [], $campaign !== 33, false),
+            );
+            $again ? $repo->recordReClick($record, static fn (): int => 0) : $repo->recordClick($record);
+        };
+        $facts = [];
+        $store = new DestinationStore($conn, [Ga4Destination::TYPE => $this->capturing($facts)]);
+        $ga4 = ['measurement_id' => 'G-ABC123'];
+        $created = $store->create(1, Ga4Destination::TYPE, 'Store GA4', $ga4, ['api_secret' => self::SECRET], time());
+        $on = (int) $created['destination_id'];
+        // 155 refuses, converts, and clicks again consenting before the send.
+        $visit(155, ['p202_consent' => '0'], self::CLICK_TIME, false);
+        $refusedVisit = $this->record(155, 'ORD-V1');
+        $visit(155, [], self::CLICK_TIME + 100, true);
+        $laterVisit = $this->record(155, 'ORD-V2');
+        // 156 consents, converts, and clicks again refusing before the send.
+        $visit(156, [], self::CLICK_TIME, false);
+        $consentedVisit = $this->record(156, 'ORD-V3');
+        $visit(156, ['p202_consent' => '0'], self::CLICK_TIME + 100, true);
+        // 157 is on a campaign with identity capture off, and names no p202_consent.
+        $visit(157, [], self::CLICK_TIME, false, 33);
+        $captureOff = $this->record(157, 'ORD-V4');
+        $stored = self::$db->query('SELECT click_id FROM 202_click_consent_refusals WHERE click_id = 157')->fetch_all();
+        self::assertSame([], $stored, 'capture off stores no refusal');
+
+        (new DestinationQueue($conn, $store, static fn (string $ip): bool => false))->sendDue(10, 5, time() + 1);
+        $sent = array_map(static fn ($f): int => (int) $f->convId, $facts);
+        $why = static fn (int $convId): string => (string) self::$db->query(
+            "SELECT last_error FROM 202_destination_deliveries WHERE destination_id=$on AND conv_id=$convId"
+        )->fetch_row()[0];
+        $what = 'a refused visit\'s conversion is not sent after a later visit consents';
+        self::assertNotContains($refusedVisit, $sent, $what);
+        self::assertSame(DestinationQueue::REFUSED . ' on the click\'s visit', $why($refusedVisit));
+        self::assertNotContains($consentedVisit, $sent, 'a conversion is not sent once a later visit has refused');
+        self::assertSame(DestinationQueue::REFUSED . ' on the click\'s visit', $why($consentedVisit));
+        $what = 'the positive control: the later consenting visit\'s conversion is sent';
+        self::assertContains($laterVisit, $sent, $what);
+        self::assertContains($captureOff, $sent, 'a campaign with capture off is no refusal');
+    }
+
+    /**
+     * On a campaign that pays the latest conversion, one that replaces a
+     * refused conversion would be sent under the refused one's event id
+     * (DestinationEventId): it is withheld too. One that replaces a
+     * consenting conversion is sent.
+     */
+    public function testAConversionThatReplacesARefusedOneIsSentToNoDestination(): void
+    {
+        $this->campaign(34, null, 'replace');
+        $facts = [];
+        $conn = new Connection(self::$db);
+        $store = new DestinationStore($conn, [Ga4Destination::TYPE => $this->capturing($facts)]);
+        $ga4 = ['measurement_id' => 'G-ABC123'];
+        $created = $store->create(1, Ga4Destination::TYPE, 'Store GA4', $ga4, ['api_secret' => self::SECRET], time());
+        $on = (int) $created['destination_id'];
+        $queue = static fn (): DestinationQueue
+            => new DestinationQueue($conn, $store, static fn (string $ip): bool => false);
+        $repo = new MysqlConversionRepository($conn);
+        $record = static fn (int $click, string $tx, bool $refuses): int => (int) $repo->record(1, [
+            'click_id' => $click, 'payout' => '19.90', 'transaction_id' => $tx, 'source' => 'pixel',
+            'consent_withheld' => $refuses,
+        ], MatchMethod::CLICK_ID)['convId'];
+        $this->click(150, 34);
+        $this->click(151, 34);
+        $record(150, 'ORD-R1', true);
+        $replacing = $record(150, 'ORD-R2', false);
+        $record(151, 'ORD-R3', false);
+        $control = $record(151, 'ORD-R4', false);
+        $queue()->sendDue(10, 5, time() + 1);
+        $sent = array_map(static fn ($f): int => (int) $f->convId, $facts);
+        self::assertNotContains($replacing, $sent, 'a replacement of a refused sale is not sent under its name');
+        self::assertContains($control, $sent, 'the positive control: a replacement of a consenting sale is');
+        $why = (string) self::$db->query('SELECT last_error FROM 202_destination_deliveries'
+            . " WHERE destination_id=$on AND conv_id=$replacing")->fetch_row()[0];
+        self::assertSame(DestinationQueue::REFUSED . ' on a conversion this one replaced', $why);
     }
 
     /**
      * An event (`event=` on a pixel or postback) that reaches a goal: the
-     * request's p202_consent goes to the ledger row its outcome writes, on
-     * a subject's first event, a later one, and one older than the last
-     * (a replay, which evaluates every stored event again).
+     * request's p202_consent is stored with the event, and every ledger row
+     * its outcomes write carries it, first or again: a subject's first
+     * event, a later one, a replay (an event older than the last), a replay
+     * that renumbers events of one second, and a re-evaluation under a new
+     * goal version. None of those rows is sent; the consenting ones are.
      */
-    public function testAGoalReachedByARefusingRequestIsSentWithNoUserData(): void
+    public function testAGoalReachedByARefusingRequestIsSentToNoDestinationHoweverItIsWrittenAgain(): void
     {
         self::fixture("INSERT INTO 202_ips SET ip_id=5, ip_address='198.51.100.7'");
         $conn = new Connection(self::$db);
-        foreach ([147, 148, 149] as $click) {
+        foreach ([147, 148, 149, 152] as $click) {
             self::fixture("INSERT INTO 202_clicks_advance SET click_id=$click, ip_id=5");
             $this->click($click);
             \Prosper202\Identity\ClickIdentity::fromRequest([], [], true)->attach($conn, 1, $click, self::CLICK_TIME);
         }
-        $goal = static fn (string $name, string $event, int $amount): array
-            => ['name' => $name, 'trigger' => ['event' => $event], 'value' => ['type' => 'fixed', 'amount' => $amount]];
+        $facts = [];
+        $store = new DestinationStore($conn, [Ga4Destination::TYPE => $this->capturing($facts)]);
+        $ga4 = ['measurement_id' => 'G-ABC123'];
+        $store->create(1, Ga4Destination::TYPE, 'Store GA4', $ga4, ['api_secret' => self::SECRET], time());
+        $goal = static fn (string $name, string $event, int $amount, array $more = []): array
+            => ['name' => $name, 'trigger' => ['event' => $event], 'value' => ['type' => 'fixed', 'amount' => $amount]]
+                + $more;
         $this->campaignGoal(30, $goal('Signup', 'signup', 3));
-        $this->campaignGoal(30, $goal('Purchase', 'purchase', 10));
+        $purchase = $this->campaignGoal(30, $goal('Purchase', 'purchase', 10));
+        $this->campaignGoal(30, $goal('Buy', 'buy', 2, ['repeat' => ['mode' => 'each', 'max' => 10]]));
         $engine = new \Prosper202\Goals\GoalEngine($conn);
         $ingest = static function (int $click, string $event, array $get, int $at) use ($engine): void {
             $engine->ingest(1, $engine->clickSubject(1, $click), [
@@ -792,17 +943,94 @@ final class DestinationsIntegrationTest extends TestCase
         // trial older than both (a replay).
         $ingest(149, 'signup', [], $now + 20);
         $ingest(149, 'purchase', ['p202_consent' => '0'], $now + 30);
-        $withheld = static fn (int $click, string $event): array => array_map('intval', array_column(self::$db->query(
-            'SELECT consent_withheld FROM 202_conversion_logs'
-                . " WHERE click_id=$click AND event_name='$event' AND deleted=0"
-        )->fetch_all(MYSQLI_NUM), 0));
-        self::assertSame([1], $withheld(147, 'purchase'), 'a first event that refused');
-        self::assertSame([0], $withheld(148, 'purchase'), 'the positive control: one that consented');
-        self::assertSame([0], $withheld(149, 'signup'), 'an earlier event\'s outcome keeps its own consent');
-        self::assertSame([1], $withheld(149, 'purchase'), 'a later event that refused');
         $this->campaignGoal(30, $goal('Trial', 'trial', 1));
         $ingest(149, 'trial', ['p202_consent' => '0'], $now + 10);
-        self::assertSame([1], $withheld(149, 'trial'), 'an older event, evaluated again with the stored ones');
+        // 152: a refusing pixel and then a consenting one in the same second; the tie is broken by event id,
+        // so the second sorts first and the refusing one is renumbered and written again.
+        $ingest(152, 'buy', ['event_id' => 'b-refusing', 'p202_consent' => '0'], $now);
+        $ingest(152, 'buy', ['event_id' => 'a-consenting'], $now);
+        // A new version of Purchase, applied: 147's and 148's rows are retired and written again.
+        $definition = \Prosper202\Goals\GoalDefinition::parse($goal('Purchase', 'purchase', 11));
+        $this->goals->addVersion(1, $purchase, $definition, 2);
+        self::assertTrue($engine->reevaluate(1, $purchase, null, true)['applied']);
+
+        $live = static fn (int $click): array => array_column(self::$db->query(
+            'SELECT o.event_id, c.consent_withheld FROM 202_goal_outcomes o'
+                . ' JOIN 202_conversion_logs c ON c.conv_id = o.conversion_id'
+                . " WHERE c.click_id = $click AND c.deleted = 0 AND o.superseded_by IS NULL ORDER BY o.event_id"
+        )->fetch_all(MYSQLI_ASSOC), 'consent_withheld', 'event_id');
+        $stored = static fn (int $click): array => array_column(self::$db->query(
+            "SELECT event_id, consent_withheld FROM 202_goal_events WHERE subject_type = 'click'"
+                . " AND subject_id = $click"
+                . ' ORDER BY event_id'
+        )->fetch_all(MYSQLI_ASSOC), 'consent_withheld', 'event_id');
+        self::assertSame(['1'], array_values($stored(147)), 'the refusal is stored with its event');
+        self::assertSame(['1'], array_values($live(147)), 'a re-evaluation writes the refused sale again refused');
+        self::assertSame(['0'], array_values($live(148)), 'the positive control: a consenting one stays consenting');
+        $byName = array_column(self::$db->query(
+            'SELECT event_name, consent_withheld FROM 202_conversion_logs WHERE click_id = 149 AND deleted = 0'
+                . ' AND superseded_by IS NULL'
+        )->fetch_all(MYSQLI_ASSOC), 'consent_withheld', 'event_name');
+        ksort($byName);
+        self::assertSame(['purchase' => '1', 'signup' => '0', 'trial' => '1'], $byName, 'a later event and a replay');
+        $what = 'a renumbering replay keeps each event\'s own';
+        self::assertSame(['a-consenting' => '0', 'b-refusing' => '1'], $live(152), $what);
+
+        $queue = new DestinationQueue($conn, $store, static fn (string $ip): bool => false);
+        $queue->sendDue(30, 5, time() + 1);
+        $sent = array_map(static fn ($f): int => (int) $f->convId, $facts);
+        $refusedRows = array_map('intval', array_column(self::$db->query(
+            'SELECT conv_id FROM 202_conversion_logs WHERE click_id IN (147, 148, 149, 152) AND deleted = 0'
+                . ' AND superseded_by IS NULL'
+                . ' AND consent_withheld = 1'
+        )->fetch_all(MYSQLI_NUM), 0));
+        $consentingRows = array_map('intval', array_column(self::$db->query(
+            'SELECT conv_id FROM 202_conversion_logs WHERE click_id IN (147, 148, 149, 152) AND deleted = 0'
+                . ' AND superseded_by IS NULL'
+                . ' AND consent_withheld = 0'
+        )->fetch_all(MYSQLI_NUM), 0));
+        self::assertCount(4, $refusedRows, 'one live row per refused event');
+        self::assertSame([], array_values(array_intersect($refusedRows, $sent)), 'no refused row is sent');
+        sort($sent);
+        sort($consentingRows);
+        self::assertSame($consentingRows, $sent, 'every consenting one is');
+    }
+
+    /**
+     * Before the 1.9.80 upgrade adds 202_conversion_logs.consent_withheld a
+     * refusal has nowhere to be kept with its row: the conversion is still
+     * recorded, but queued for no destination (CLAUDE.md #11). A consenting
+     * one is queued as before.
+     */
+    public function testARefusalThatCannotBeKeptWithItsRowQueuesNoDelivery(): void
+    {
+        $destination = $this->destination();
+        $this->click(153);
+        $this->click(154);
+        // A connection of its own: the column's presence is remembered per connection.
+        $db = new \mysqli(
+            (string) getenv('P202_TEST_DB_HOST'),
+            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+            (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+        );
+        self::fixture('ALTER TABLE 202_conversion_logs DROP COLUMN consent_withheld');
+        try {
+            $repo = new MysqlConversionRepository(new Connection($db));
+            $refused = (int) $repo->record(1, ['click_id' => 153, 'payout' => '19.90', 'transaction_id' => 'ORD-U1',
+                'source' => 'pixel', 'consent_withheld' => true], MatchMethod::CLICK_ID)['convId'];
+            $given = (int) $repo->record(1, ['click_id' => 154, 'payout' => '19.90', 'transaction_id' => 'ORD-U2',
+                'source' => 'pixel'], MatchMethod::CLICK_ID)['convId'];
+        } finally {
+            self::fixture('ALTER TABLE 202_conversion_logs ADD COLUMN consent_withheld'
+                . " tinyint(1) unsigned NOT NULL DEFAULT '0' AFTER currency_basis");
+            $db->close();
+        }
+        self::assertGreaterThan(0, $refused, 'the refused conversion is recorded');
+        $queued = array_map('intval', array_column(self::deliveries($destination), 'conv_id'));
+        self::assertNotContains($refused, $queued, 'and queued for no destination');
+        self::assertContains($given, $queued, 'the positive control: a consenting one is queued');
     }
 
     /**

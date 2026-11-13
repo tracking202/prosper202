@@ -76,13 +76,15 @@ Then no cookie is set or read, the landing-page id is deleted, and each click
 is a journey of one.
 
 A refusal holds for the whole visit: once the tracking link, a click through
-a rotator or the landing page's pageview refuses, a
-[destination](destinations.md) is not sent that visitor's IP address,
-whatever a later request of the same visit carries. The next visit, when the
-visitor clicks through again, is read on its own. A conversion pixel or
-postback that carries `p202_consent=0` itself withholds the visitor's address,
-hashed email and phone and customer id from destinations for that conversion;
-the conversion is still recorded and sent.
+a rotator or the landing page's pageview refuses, no conversion of that visit
+is sent to a [destination](destinations.md) (GA4, Google Ads, ChatGPT Ads),
+whatever a later request of the same visit carries. A conversion pixel or
+postback that itself carries `p202_consent=0` keeps that conversion from every
+destination too. The next visit, when the visitor clicks through again in a
+later second, is read on its own. Your reports still count those conversions;
+traffic source pixels and postbacks and the Meta Purchase pixel are not
+changed by this. [Destinations](destinations.md#privacy-and-personal-data)
+lists which requests can carry a refusal and which cannot.
 
 The privacy setting ([`user_pref_privacy`](../api/14-users.md#privacy-user_pref_privacy))
 withholds the `p202vid` cookie too: a visitor it holds back is neither given

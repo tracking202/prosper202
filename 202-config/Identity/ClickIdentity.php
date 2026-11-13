@@ -42,6 +42,12 @@ final class ClickIdentity
         public readonly ?string $cookieValue,
         /** The request refused consent (p202_consent=0) or its campaign's capture is off. */
         public readonly bool $withheld = false,
+        /**
+         * The visitor refused (p202_consent other than 1), whatever the
+         * campaign says: what ConsentRefusal stores. A campaign's capture
+         * switched off withholds the visitor's data, not the conversion.
+         */
+        public readonly bool $refused = false,
     ) {
     }
 
@@ -63,7 +69,7 @@ final class ClickIdentity
     public static function fromRequest(array $get, array $cookies, bool $campaignAllows, bool $mayMint = true): self
     {
         if (!RequestSignals::consentGiven($get, $campaignAllows)) {
-            return new self([], [], null, true);
+            return new self([], [], null, true, !RequestSignals::consentGiven($get));
         }
         $vid = RequestSignals::visitorCookie($cookies) ?? ($mayMint ? RequestSignals::mintVisitorId() : null);
         $signals = $vid !== null ? [new IdentitySignal(SignalType::VISITOR_COOKIE, $vid)] : [];
@@ -119,10 +125,10 @@ final class ClickIdentity
     /**
      * A later request of a click that is already stored (a landing page's,
      * for the click its tracking template made, whose visit is the one at
-     * $visitTime) and that withheld consent holds it back for the whole
-     * visit (ConsentRefusal), and takes back the browser marks the click's
-     * earlier requests left (IdentityGraph::withdrawBrowserSignals()). The
-     * caller has shown the click is the account's.
+     * $visitTime) and that withheld consent takes back the browser marks the
+     * click's earlier requests left (IdentityGraph::withdrawBrowserSignals()),
+     * and, when the visitor refused, holds that for the whole visit
+     * (ConsentRefusal). The caller has shown the click is the account's.
      *
      * Unlike attach(), a failure is the caller's: a link that is not made
      * identifies no one, but a refusal not stored would send the address of
@@ -136,9 +142,11 @@ final class ClickIdentity
         if (!$this->withheld || $clickId <= 0) {
             return;
         }
-        self::onALockErrorAgain(
-            static fn () => ConsentRefusal::recordForStoredClick($conn, $clickId, $visitTime)
-        );
+        if ($this->refused) {
+            self::onALockErrorAgain(
+                static fn () => ConsentRefusal::recordForStoredClick($conn, $clickId, $visitTime)
+            );
+        }
         self::onALockErrorAgain(static fn () => IdentityGraph::withdrawBrowserSignals($conn, $clickId));
     }
 

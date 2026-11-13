@@ -99,7 +99,7 @@ try {
 		// The traffic source's server postbacks are queued with the row, as
 		// gpb.php's, and sent after the answer (below) or by the worker (QZ3M).
 		'notify_traffic_source' => true,
-        // The visitor's refusal, relayed: its destinations get no user data.
+        // The visitor's refusal, relayed: no destination is sent it.
         'consent_withheld' => !\Prosper202\Identity\RequestSignals::consentGiven($_GET),
 	] + p202ExtractReversal($_GET));
 } catch (\Prosper202\Conversion\PurLinkCampaignChanged $campaignError) {

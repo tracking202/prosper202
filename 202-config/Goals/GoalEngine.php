@@ -9,6 +9,7 @@ use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\Ledger\LedgerIntegrityException;
+use Prosper202\Conversion\Ledger\ConsentWithheld;
 use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\Ledger\SupersededReason;
@@ -605,9 +606,7 @@ final class GoalEngine
 
         $specs = $this->specsFor($userId, $subject);
         if ($count === 0 || $replay) {
-            // The stored events, with this request's own as it sent them: a
-            // request's consent is not stored with its event (GoalEvent).
-            $all = $count === 0 ? $new : self::withTheseRequests($this->loadEvents($subject), $new);
+            $all = $count === 0 ? $new : $this->loadEvents($subject);
             $evaluation = GoalEvaluator::evaluateAll($specs, $subject, $all);
             $plan = $this->plan($userId, $subject, $evaluation->outcomes, null, false);
             $counts = $this->execute($userId, $subject, $plan, $all, SupersededReason::REPLAY, $now, $post);
@@ -1476,7 +1475,8 @@ final class GoalEngine
             $data['transaction_id'] = $event->transactionId;
         }
         if ($event?->consentWithheld === true) {
-            // The request that reached it withheld consent: no user data goes with it.
+            // The request that reported the reaching event refused consent, as
+            // stored with the event: the row is never sent to a destination.
             $data['consent_withheld'] = true;
         }
         $recorded = $this->conversions->recordInTransaction($userId, $data, $matchedBy);
@@ -2087,21 +2087,20 @@ final class GoalEngine
         }
         $this->conn->bind($stmt, $named ? 'siissssisiiss' : 'siissssisiis', $row);
         $this->conn->executeUpdate($stmt);
-    }
-
-    /**
-     * @param list<GoalEvent> $stored
-     * @param list<GoalEvent> $new this request's events, already among $stored
-     * @return list<GoalEvent>
-     */
-    private static function withTheseRequests(array $stored, array $new): array
-    {
-        $byId = [];
-        foreach ($new as $event) {
-            $byId[$event->eventId] = $event;
+        // The request's refusal is stored with its event, in its transaction,
+        // for every later evaluation (a replay, a re-evaluation) to carry.
+        // Before the 1.9.80 upgrade adds the column no destination exists.
+        if ($event->consentWithheld && ConsentWithheld::columnPresent($this->conn, '202_goal_events')) {
+            $refused = $this->conn->prepareWrite('UPDATE 202_goal_events SET consent_withheld = 1'
+                . ' WHERE subject_type = ? AND subject_id = ? AND event_id = ?');
+            $this->conn->bind($refused, 'sis', [$subject->type, $subject->id, $event->eventId]);
+            if ($this->conn->executeUpdate($refused) !== 1) {
+                throw new GoalEngineException(
+                    'event "' . $event->eventId . '" was not stored with its refusal',
+                    GoalEngineException::INTEGRITY
+                );
+            }
         }
-
-        return array_map(static fn (GoalEvent $event): GoalEvent => $byId[$event->eventId] ?? $event, $stored);
     }
 
     /** @return list<GoalEvent> */
@@ -2166,6 +2165,8 @@ final class GoalEngine
             false,
             false,
             $matchMethod,
+            // A refusal stored with it; no column (before the 1.9.80 upgrade) is none.
+            consentWithheld: (string) ($row['consent_withheld'] ?? '0') !== '0',
         );
     }
 

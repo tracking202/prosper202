@@ -174,8 +174,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *        (true = store time_difference as the pixels' text, from the
      *        credited visit's time: legacyTimeDifference()).
      *        consent_withheld (true = the conversion's own request withheld
-     *        consent, RequestSignals::consentGiven(): its destinations are
-     *        sent no user data; ConsentWithheld).
+     *        consent, RequestSignals::consentGiven(): no destination is sent
+     *        it; a duplicate that refuses sets it on the row it repeats;
+     *        ConsentWithheld).
      *        LTV keys (all optional): customer_id, customer_ref +
      *        customer_ref_type, customer_crm, items; ltv_requires_customer
      *        (true = refuse items or customer_crm when no customer resolves,
@@ -465,6 +466,18 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         $this->conn->bind($dupStmt, 'is', [$clickId, $dedupeKey]);
         $dup = $this->conn->fetchOne($dupStmt);
         if ($dup !== null) {
+            // A repeat that refuses tightens the row it repeats, under the
+            // click's lock; nothing loosens it (ConsentWithheld). A delivery
+            // already sent stays sent.
+            if ($consentWithheld && ConsentWithheld::columnPresent($this->conn)) {
+                $tighten = $this->conn->prepareWrite(
+                    'UPDATE 202_conversion_logs SET consent_withheld = 1'
+                        . ' WHERE conv_id = ? AND user_id = ? AND consent_withheld = 0'
+                );
+                $this->conn->bind($tighten, 'ii', [(int) $dup['conv_id'], $userId]);
+                $this->conn->executeUpdate($tighten);
+            }
+
             return [
                 'convId' => (int) $dup['conv_id'],
                 'duplicate' => true,

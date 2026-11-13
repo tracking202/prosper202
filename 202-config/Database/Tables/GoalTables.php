@@ -195,6 +195,7 @@ final class GoalTables
                 `received_at` int(10) unsigned NOT NULL,
                 `fingerprint` char(64) NOT NULL,
                 `match_method` varchar(16) NOT NULL DEFAULT 'unknown',
+                `consent_withheld` tinyint(1) unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`event_row_id`),
                 UNIQUE KEY `subject_event` (`subject_type`,`subject_id`,`event_id`),
                 KEY `user_id` (`user_id`)

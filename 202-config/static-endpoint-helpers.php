@@ -641,7 +641,7 @@ if (!function_exists('p202RecordConversion')) {
         }
         if (array_key_exists('consent_withheld', $log)) {
             // The request's own refusal (RequestSignals::consentGiven()),
-            // stored with the row: its destinations are sent no user data.
+            // stored with the row: no destination is sent it.
             $data['consent_withheld'] = $log['consent_withheld'];
         }
         if ($log['once_per_click']) {
@@ -1282,7 +1282,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
      *     does not). A reversal never announces anything. items are the
      *     product lines of a request that carried them (p202ExtractItems()).
      *     consent_withheld: the request withheld consent
-     *     (!RequestSignals::consentGiven()); its destinations get no user data.
+     *     (!RequestSignals::consentGiven()); no destination is sent it.
      *     $matchedBy is how the endpoint found the click (match_method).
      * @return array{recorded: bool, duplicate: bool, conv_id: int, reason: string}
      *         reason is '' when recorded; otherwise one of unknown_click,

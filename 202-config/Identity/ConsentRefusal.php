@@ -9,14 +9,15 @@ use Prosper202\Database\Connection;
 use Prosper202\Database\Schema\TableRegistry;
 
 /**
- * A request of a click that withheld consent (ClickIdentity::$withheld)
+ * A request of a click whose visitor refused consent (ClickIdentity::$refused)
  * holds it back for the whole visit: 202_click_consent_refusals keeps, per
- * click, the time of the latest visit a request withheld it from. A
- * destination identifies no visitor whose click's latest visit is at or
- * before that time (standsAt()), whatever a later request of the same visit
- * carries: one that names no p202_consent does not give back what an earlier
- * one refused. A later visit (a re-click at a later time) that consents is
- * read on its own.
+ * click, the time of the latest visit a request refused it from. No
+ * destination is sent a conversion of a click whose latest visit is at or
+ * before that time (standsAt(), DestinationQueue::deliver()), whatever a
+ * later request of the same visit carries: one that names no p202_consent
+ * does not give back what an earlier one refused. A later visit (a re-click
+ * in a later second) that consents is read on its own. A campaign's
+ * identity capture switched off is no refusal and stores none.
  *
  * The row is written with the visit that withheld, in its transaction where
  * there is one, and only for such a visit: a consenting click costs no

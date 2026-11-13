@@ -52,6 +52,9 @@ final class MatchMethodUpgradeIntegrationTest extends TestCase
             if (!in_array('match_method', array_column(self::columns($table), 'COLUMN_NAME'), true)) {
                 self::q("ALTER TABLE $table ADD COLUMN `match_method` varchar(16) NOT NULL DEFAULT 'unknown'");
             }
+            if (!in_array('consent_withheld', array_column(self::columns($table), 'COLUMN_NAME'), true)) {
+                self::q("ALTER TABLE $table ADD COLUMN `consent_withheld` tinyint(1) unsigned NOT NULL DEFAULT '0'");
+            }
         }
         self::q('DELETE FROM 202_version');
         foreach (self::$versions ?? [] as $version) {
@@ -69,12 +72,15 @@ final class MatchMethodUpgradeIntegrationTest extends TestCase
             if (in_array('match_method', array_column(self::columns($table), 'COLUMN_NAME'), true)) {
                 self::q("ALTER TABLE $table DROP COLUMN match_method");
             }
+            // Nor the request's consent, which 1.9.80 adds after it.
+            if (in_array('consent_withheld', array_column(self::columns($table), 'COLUMN_NAME'), true)) {
+                self::q("ALTER TABLE $table DROP COLUMN consent_withheld");
+            }
         }
-        // A 1.9.78 ledger has no row currency or consent either (1.9.80 adds them after match_method).
+        // A 1.9.78 ledger has no row currency either (1.9.80 adds it after match_method).
         if (in_array('currency', array_column(self::columns('202_conversion_logs'), 'COLUMN_NAME'), true)) {
             self::q('ALTER TABLE 202_conversion_logs DROP INDEX user_currency_click_time, DROP COLUMN currency,'
-                . ' DROP COLUMN stated_amount, DROP COLUMN stated_currency, DROP COLUMN currency_basis,'
-                . ' DROP COLUMN consent_withheld');
+                . ' DROP COLUMN stated_amount, DROP COLUMN stated_currency, DROP COLUMN currency_basis');
         }
         self::q('DELETE FROM 202_version');
         self::row('202_version', ['version' => '1.9.78']);
