@@ -576,7 +576,7 @@ if ($logDestination !== null) {
                             <label class="form-label" for="oai_custom_event_name">Custom event name</label>
                             <input type="text" class="form-control<?php echo p202_setup_invalid($oaiErrors, 'settings.custom_event_name'); ?>" id="oai_custom_event_name" name="oai_custom_event_name" value="<?php echo $postedAction !== 'create_openai_ads' ? '' : p202_setup_e($value('oai_custom_event_name')); ?>">
                             <?php echo p202_setup_feedback($oaiErrors, 'settings.custom_event_name'); ?>
-                            <div class="form-text">Only with the event type custom: lowercase letters, digits, - and _.</div>
+                            <div class="form-text">Only with the event type custom: lowercase letters, digits, - and _, starting and ending with a letter or digit.</div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label" for="oai_scope">Which conversions</label>

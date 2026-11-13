@@ -19436,7 +19436,7 @@ components:
         custom_event_name:
           type: string
           description: >-
-            ChatGPT Ads, with event_type custom only: 1-64 lowercase letters, digits, - or _,
+            ChatGPT Ads, with event_type custom only: 1-64 lowercase letters, digits, - or _, starting and ending with a letter or digit,
             not a standard event type.
         event_types:
           type: object

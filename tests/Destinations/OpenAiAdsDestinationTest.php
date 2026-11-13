@@ -105,6 +105,7 @@ final class OpenAiAdsDestinationTest extends TestCase
 
     public function testEveryBadSettingIsRefusedNamingItsField(): void
     {
+        $custom = ['pixel_id' => 'p', 'event_type' => 'custom'];
         $refused = [
             ['settings.pixel_id', ['pixel_id' => '']],
             ['settings.pixel_id', ['pixel_id' => 'has space']],
@@ -114,6 +115,10 @@ final class OpenAiAdsDestinationTest extends TestCase
             ['settings.custom_event_name', ['pixel_id' => 'p', 'event_type' => 'custom', 'custom_event_name' => 'Demo Booked']],
             ['settings.custom_event_name', ['pixel_id' => 'p', 'event_type' => 'custom', 'custom_event_name' => 'order_created']],
             ['settings.custom_event_name', ['pixel_id' => 'p', 'event_type' => 'custom', 'custom_event_name' => str_repeat('a', 65)]],
+            ['settings.custom_event_name', $custom + ['custom_event_name' => '_demo']],
+            ['settings.custom_event_name', $custom + ['custom_event_name' => 'demo-']],
+            ['settings.custom_event_name', $custom + ['custom_event_name' => '-']],
+            ['settings.custom_event_name', $custom + ['custom_event_name' => 'demo_']],
             ['settings.custom_event_name', ['pixel_id' => 'p', 'custom_event_name' => 'demo_booked']],
             ['settings.scope', ['pixel_id' => 'p', 'scope' => 'everything']],
             ['settings.ppc_account_id', ['pixel_id' => 'p', 'scope' => 'source']],
@@ -126,6 +131,11 @@ final class OpenAiAdsDestinationTest extends TestCase
         ];
         foreach ($refused as [$field, $settings]) {
             self::refused(fn () => $this->oai()->validate($settings, null), $field);
+        }
+        // OpenAI's rule: 1-64 of letters, digits, _ or -, starting and ending with a letter or digit.
+        foreach (['a', '7', 'a_b', 'a-b', 'a1', str_repeat('a', 64)] as $name) {
+            $kept = $this->settings(['event_type' => 'custom', 'custom_event_name' => $name]);
+            self::assertSame($name, $kept['custom_event_name']);
         }
         self::refused(fn () => $this->oai()->validate(['pixel_id' => 'p'], ['conversions_api_key' => 'short']), 'credentials.conversions_api_key');
         self::refused(fn () => $this->oai()->validate(['pixel_id' => 'p'], ['conversions_api_key' => 'has a space in it 0123456789']), 'credentials.conversions_api_key');

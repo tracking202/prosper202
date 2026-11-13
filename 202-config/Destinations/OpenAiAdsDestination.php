@@ -46,7 +46,7 @@ final class OpenAiAdsDestination implements DestinationType
         'trial_started' => 'plan_enrollment',
         'custom' => 'custom',
     ];
-    private const CUSTOM_NAME = '/\A[a-z0-9_-]{1,64}\z/D';
+    private const CUSTOM_NAME = '/\A[a-z0-9]([a-z0-9_-]{0,62}[a-z0-9])?\z/D';
 
     public function __construct(private ?WebhookSender $sender = null)
     {
@@ -145,7 +145,7 @@ final class OpenAiAdsDestination implements DestinationType
         $custom = trim(self::text($settings, 'custom_event_name', '', 'settings.'));
         if ($type === 'custom') {
             if (preg_match(self::CUSTOM_NAME, $custom) !== 1 || isset(self::EVENT_TYPES[$custom])) {
-                throw new DestinationInputException('settings.custom_event_name', 'custom_event_name must be 1-64 lowercase letters, digits, - or _, and not one of OpenAI\'s standard event types.');
+                throw new DestinationInputException('settings.custom_event_name', 'custom_event_name must be 1-64 lowercase letters, digits, - or _, starting and ending with a letter or digit, and not one of OpenAI\'s standard event types.');
             }
         } elseif ($custom !== '') {
             throw new DestinationInputException('settings.custom_event_name', 'custom_event_name is set only with event_type custom.');
