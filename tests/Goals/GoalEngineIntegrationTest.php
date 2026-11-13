@@ -285,6 +285,52 @@ final class GoalEngineIntegrationTest extends TestCase
         self::assertCount(1, $this->ledger(100));
     }
 
+    /**
+     * A refusing event whose batch is refused (an event id reused with other
+     * content) records nothing, but the click's refusal is stored on its own:
+     * the visitor's answer stands whatever the sender got wrong. A consenting
+     * batch refused the same way stores none.
+     */
+    public function testARefusingEventInARefusedBatchStillRefusesItsClick(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+        $this->click(101, 7);
+        self::$db->query('DELETE FROM 202_click_consent_refusals WHERE click_id IN (100, 101)');
+        $this->goal(7, ['name' => 'Buy', 'trigger' => ['event' => 'buy'], 'repeat' => ['mode' => 'each'],
+            'value' => ['type' => 'fixed', 'amount' => 3]]);
+        $byId = \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID;
+        $refusing = function (int $click, bool $refuses) use ($byId): array {
+            $event = new \Prosper202\Goals\GoalEvent(
+                eventId: 'b1',
+                name: 'buy',
+                occurredAt: self::T + 1,
+                receivedAt: self::T + 50,
+                properties: ['sku' => 'B'],
+                revenue: null,
+                revenueTrusted: false,
+                transactionId: null,
+                matchMethod: $byId,
+                consentWithheld: $refuses,
+            );
+
+            return $this->engine->ingest(1, $this->engine->clickSubject(1, $click), [$event], $byId);
+        };
+        foreach ([100 => true, 101 => false] as $click => $refuses) {
+            $this->ingest($click, [$this->event('b1', 'buy', self::T + 1, ['sku' => 'A'])]);
+            try {
+                $refusing($click, $refuses);
+                self::fail('a reused event id with different content was accepted');
+            } catch (GoalEngineException $e) {
+                self::assertSame(GoalEngineException::EVENT_CONFLICT, $e->reason);
+            }
+            self::assertCount(1, $this->ledger($click), "click $click: nothing more recorded");
+        }
+        $refused = self::$db->query('SELECT click_id FROM 202_click_consent_refusals WHERE click_id IN (100, 101)')
+            ->fetch_all(MYSQLI_NUM);
+        self::assertSame([['100']], $refused, 'only the refusing request refused its click');
+    }
+
     public function testAGoalTheCampaignDoesNotPayForIsTrackedNotPaid(): void
     {
         $this->campaign(7);

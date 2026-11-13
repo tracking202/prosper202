@@ -38,6 +38,32 @@ final class ConsentRefusal
     {
     }
 
+    /**
+     * Click $clickId refused, by a request whose own write then failed and
+     * rolled back with the refusal (an amount out of range, an event id
+     * reused with other content): the visitor's answer stands whatever the
+     * sender got wrong, so it is stored on its own, under the click's lock
+     * and only for a click of $userId's. The caller rethrows its failure; a
+     * failure here is logged, never put in its place.
+     */
+    public static function recordAfterFailure(Connection $conn, int $clickId, int $userId, int $at): void
+    {
+        try {
+            (new \Prosper202\Conversion\Ledger\MysqlConversionLedger($conn))->clickTransaction(
+                $clickId,
+                $userId,
+                static function (?array $click) use ($conn, $clickId, $at): void {
+                    if ($click !== null) {
+                        self::record($conn, $clickId, $at);
+                    }
+                }
+            );
+        } catch (\Throwable $e) {
+            error_log('p202 consent: click ' . $clickId . '\'s refusal, on a request that failed, could not be stored: '
+                . $e->getMessage());
+        }
+    }
+
     /** Click $clickId refused, by a request at $at (a visit, or a conversion's own request). */
     public static function record(Connection $conn, int $clickId, int $at): void
     {

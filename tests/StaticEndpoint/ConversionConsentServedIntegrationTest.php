@@ -169,6 +169,69 @@ final class ConversionConsentServedIntegrationTest extends TestCase
         }
     }
 
+    /**
+     * The campaign pays in accumulate mode. After a sale with a transaction
+     * id made the click a lead, an id-less repeat records nothing more on
+     * px, pb and gpx; one that refuses consent records nothing more either,
+     * and refuses the click.
+     */
+    public function testARefusingIdLessRepeatAfterAKeyedSaleRecordsNoMoreThanAConsentingOne(): void
+    {
+        self::requireScratch();
+        $cookie = ['tracking202subid' => (string) self::CLICK];
+        $naming = [
+            'pb' => 'acip=' . self::CAMPAIGN . '&subid=' . self::CLICK,
+            'gpx' => 'subid=' . self::CLICK,
+            'px' => 'acip=' . self::CAMPAIGN,
+        ];
+        foreach ($naming as $endpoint => $query) {
+            self::unconvert();
+            self::q('DELETE FROM 202_click_consent_refusals WHERE click_id = ' . self::CLICK);
+            [$status, $body] = self::runQuery('gpb', 'subid=' . self::CLICK . '&txid=' . $this->tx());
+            self::assertContains($status, [200, 202], "the keyed sale: $body");
+            $cookies = $endpoint === 'px' ? $cookie : [];
+            foreach (['&p202_consent=1', '', '&p202_consent=0'] as $i => $consent) {
+                [$status, $body] = self::runQuery($endpoint, $query . $consent, $cookies);
+                self::assertContains($status, [200, 202], "$endpoint '$consent': $body");
+                self::assertSame(1, self::conversions(), "$endpoint '$consent': nothing more is recorded");
+                self::assertSame($i < 2 ? 0 : 1, self::refusals(), "$endpoint '$consent': refused only by a refusal");
+            }
+        }
+    }
+
+    /**
+     * A refusing request whose conversion is refused (an amount no row can
+     * hold) records nothing, and its click is refused all the same; a
+     * consenting one refused the same way refuses nothing.
+     */
+    public function testARefusingRequestWhoseConversionFailsStillRefusesItsClick(): void
+    {
+        self::requireScratch();
+        $naming = [
+            // pb.php and px.php read no amount: they record the campaign's payout.
+            'gpb' => 'subid=' . self::CLICK,
+            'gpx' => 'subid=' . self::CLICK,
+            'upx' => 'subid=' . self::CLICK,
+        ];
+        foreach ($naming as $endpoint => $query) {
+            foreach (['&p202_consent=1' => 0, '&p202_consent=0' => 1] as $consent => $refused) {
+                self::unconvert();
+                self::q('DELETE FROM 202_click_consent_refusals WHERE click_id = ' . self::CLICK);
+                $request = $query . '&txid=' . $this->tx() . '&amount=99999999999999' . $consent;
+                [, $body] = self::runQuery($endpoint, $request);
+                self::assertSame(0, self::conversions(), "$endpoint '$consent': the amount is refused: $body");
+                $what = "$endpoint '$consent': the click refused only by a refusal";
+                self::assertSame($refused, self::refusals(), $what);
+            }
+        }
+    }
+
+    private static function conversions(): int
+    {
+        return (int) self::$db->query('SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id = '
+            . self::CLICK)->fetch_row()[0];
+    }
+
     private static function refusals(): int
     {
         return (int) self::$db->query('SELECT COUNT(*) FROM 202_click_consent_refusals WHERE click_id = '

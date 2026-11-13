@@ -160,19 +160,22 @@ once.
     that converted already, and a request with no transaction id); a repeat
     that consents does not undo a refusal. A request recorded later from the
     inbound log keeps the answer it arrived with (the log keeps
-    `p202_consent` as given or not; a row logged before 1.9.80, which did
-    not keep it, is recorded as a refusal);
+    `p202_consent` as given or not; a row logged by an earlier version,
+    a 1.9.80 build before this was added included, did not keep it and
+    is recorded as a refusal);
   - on a conversion a replacing one goes by: on a campaign that pays the
     latest conversion, a sale that replaces a refused one is withheld too,
     and a goal conversion written again (a re-evaluation, a replay) keeps
     its event's refusal.
 
-  A request that fails records nothing, its refusal included, and its
-  sender is told it failed: a click that is not found or not your account's,
-  a postback naming a campaign the click never visited, a reversal with no
-  sale to reverse, a goal event refused as a conflict or past its cap. The
-  visitor's next request that refuses, or the same one sent again once it
-  can succeed, stores it.
+  A refusing request whose conversion or event is refused (an amount no
+  conversion can hold, a reversal with no sale to reverse, an event id
+  reused with other content, a click past its event cap) records nothing,
+  and its click is refused all the same: the visitor's answer stands
+  whatever the sender got wrong. A pixel answers its image either way. A
+  request that names no click of your account (one not found, another
+  account's, or a postback naming a campaign the click never visited)
+  refuses nothing, since it names no click of yours to refuse.
 
   What cannot carry a refusal, and so reads as consent given: a conversion
   sent with the API (`POST /conversions`) and goal events sent with the API

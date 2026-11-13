@@ -200,26 +200,37 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      */
     public function record(int $userId, array $data, MatchMethod $matchedBy, ?callable $clickSideUpdate = null): array
     {
-        $prepared = $this->prepareRecord($data, $matchedBy);
-        $ledger = new MysqlConversionLedger($this->conn);
-        // The click's lock opens the transaction, so what is read after it
-        // is current without locking it (clickTransaction()).
-        $work = fn (): array => $ledger->clickTransaction(
-            (int) $prepared['clickId'],
-            $userId,
-            fn (?array $click): array => $this->recordLocked($userId, $prepared, $clickSideUpdate, $click)
-        );
-
-        // Unique-key upserts on 202_customer_aliases under concurrency make a
-        // deadlock reachable, not theoretical. The transaction callback is a
-        // pure function of its arguments, so one full retry is safe.
         try {
-            $result = $work();
-        } catch (Throwable $e) {
-            if (!self::isRetryableLockError($e)) {
-                throw $e;
+            $prepared = $this->prepareRecord($data, $matchedBy);
+            $ledger = new MysqlConversionLedger($this->conn);
+            // The click's lock opens the transaction, so what is read after it
+            // is current without locking it (clickTransaction()).
+            $work = fn (): array => $ledger->clickTransaction(
+                (int) $prepared['clickId'],
+                $userId,
+                fn (?array $click): array => $this->recordLocked($userId, $prepared, $clickSideUpdate, $click)
+            );
+
+            // Unique-key upserts on 202_customer_aliases under concurrency make a
+            // deadlock reachable, not theoretical. The transaction callback is a
+            // pure function of its arguments, so one full retry is safe.
+            try {
+                $result = $work();
+            } catch (Throwable $e) {
+                if (!self::isRetryableLockError($e)) {
+                    throw $e;
+                }
+                $result = $work();
             }
-            $result = $work();
+        } catch (Throwable $failure) {
+            // A request that refused consent and then failed rolled its
+            // refusal back with it: the refusal is stored on its own.
+            $clickId = (int) ($data['click_id'] ?? 0);
+            if (($data[ConsentWithheld::COLUMN] ?? false) === true && $clickId > 0) {
+                $at = (int) ($data['conv_time'] ?? time());
+                ConsentRefusal::recordAfterFailure($this->conn, $clickId, $userId, $at);
+            }
+            throw $failure;
         }
 
         $this->afterRecordCommit($userId, $prepared, $result);

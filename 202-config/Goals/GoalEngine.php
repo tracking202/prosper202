@@ -467,12 +467,22 @@ final class GoalEngine
         $events = array_map(static fn (GoalEvent $event): GoalEvent => $event->matchedBy($matchedBy), $events);
         $work = fn (): array => $this->ingestLocked($userId, $subject, $events, $onStored, $expectedCampaignId);
         try {
-            $done = $this->conn->transaction($work);
-        } catch (Throwable $e) {
-            if (!Connection::isRetryableLockError($e)) {
-                throw $e;
+            try {
+                $done = $this->conn->transaction($work);
+            } catch (Throwable $e) {
+                if (!Connection::isRetryableLockError($e)) {
+                    throw $e;
+                }
+                $done = $this->conn->transaction($work);
             }
-            $done = $this->conn->transaction($work);
+        } catch (Throwable $failure) {
+            // A refusing event whose batch failed (a conflict, the cap) rolled
+            // its refusal back with it: the click's refusal is stored on its own.
+            $refusing = array_filter($events, static fn (GoalEvent $event): bool => $event->consentWithheld);
+            if ($refusing !== [] && $subject->clickId !== null) {
+                ConsentRefusal::recordAfterFailure($this->conn, $subject->clickId, $userId, $this->now());
+            }
+            throw $failure;
         }
         $result = $done['result'];
         $result['outcomes'] = $done['post']['notices'];

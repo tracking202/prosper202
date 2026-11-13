@@ -523,7 +523,12 @@ if (!function_exists('p202RecordConversion')) {
      *        from pixel_type), reversal and reversal_ref (see
      *        p202ExtractReversal), consent_withheld (bool: the request
      *        withheld consent, !RequestSignals::consentGiven(); absent is
-     *        given). click_payout is read only when
+     *        given), once_per_click_strict (bool: with once_per_click, the
+     *        click converts once whatever keyed its earlier rows, the gate
+     *        px, pb and gpx apply before the writer; given for a request
+     *        that refuses consent, which passes that gate to have its
+     *        refusal stored, so it records no more than a consenting one
+     *        would). click_payout is read only when
      *        $usePixelPayout: without an explicit amount the writer applies
      *        the campaign's default.
      *        once_per_click has no default on purpose: without an id a
@@ -570,6 +575,9 @@ if (!function_exists('p202RecordConversion')) {
             throw new \InvalidArgumentException(
                 'p202RecordConversion: once_per_click must be given as a bool (true for an id-less hit that must convert a click once)'
             );
+        }
+        if (array_key_exists('once_per_click_strict', $log) && !is_bool($log['once_per_click_strict'])) {
+            throw new \InvalidArgumentException('p202RecordConversion: once_per_click_strict must be a bool');
         }
 
         // Delegate the transactional lock + idempotency + insert to the single
@@ -652,6 +660,10 @@ if (!function_exists('p202RecordConversion')) {
             // click that is a lead through keyed sales; a replace-mode one is
             // keyed by its own row, so the click's lead flag is the guard.
             $data['once_per_click_unkeyed'] = true;
+            if (($log['once_per_click_strict'] ?? false) === true) {
+                // The endpoint's own gate: a click that is a lead converts no more.
+                $data['once_per_click'] = true;
+            }
         }
 
         // LTV: customer identity + product line items ride the same
@@ -1345,7 +1357,8 @@ if (!function_exists('p202RecordLegacyConversion')) {
         // the click's refusal under that lock before the same rule turns it
         // away: a refusal is never skipped because the click is a lead.
         $transactionId = trim((string) ($opts['transaction_id'] ?? ''));
-        $blocked = !empty($opts['reversal']) || ($opts['consent_withheld'] ?? false) !== false
+        $refusing = ($opts['consent_withheld'] ?? false) !== false;
+        $blocked = !empty($opts['reversal']) || $refusing
             ? null
             : p202LegacyConversionGate((int) $click['click_lead'] === 1, $transactionId);
         if ($blocked !== null) {
@@ -1370,6 +1383,8 @@ if (!function_exists('p202RecordLegacyConversion')) {
                 'user_agent'      => (string) ($opts['user_agent'] ?? ''),
                 'click_payout'    => $payout,
                 'once_per_click'  => $transactionId === '' && empty($opts['reversal']),
+                // A refusing request passed the fast-path gate above; the writer applies it under the lock.
+                'once_per_click_strict' => $refusing && $transactionId === '' && empty($opts['reversal']),
                 'source'          => (string) ($opts['source'] ?? \Prosper202\Conversion\Ledger\ConversionSource::LEGACY_PIXEL->value),
                 'reversal'        => !empty($opts['reversal']),
                 'reversal_ref'    => (string) ($opts['reversal_ref'] ?? ''),

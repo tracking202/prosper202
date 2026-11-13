@@ -265,9 +265,11 @@ only when the value holds no email or IP address. Every other value,
 including signatures, keys, licence keys and the buyer's details, is
 `[redacted]`; a ClickBank notification's encrypted body is never kept. A
 postback's or pixel's `p202_consent` is kept as `1` when it gave consent
-and `0` when it carried anything else, so recording the request later
-from the log keeps its answer; a row logged before 1.9.80 holds
-`[redacted]` there, which is recorded as a refusal.
+and `0` when it carried any other value; sent empty it is kept empty, and
+a request without it has none. Recording the request later from the log
+keeps its answer (empty is a refusal, none is consent, as at the endpoint);
+a row logged by an earlier version holds `[redacted]` there, which is
+recorded as a refusal.
 
 ## Offline conversion files
 

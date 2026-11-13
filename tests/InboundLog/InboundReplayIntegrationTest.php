@@ -236,7 +236,7 @@ final class InboundReplayIntegrationTest extends TestCase
      * one refused, its click with it. A row logged before the log kept it
      * holds '[redacted]', which cannot say yes, so it reads as a refusal.
      *
-     * @return array<string, array{0: string, 1: string|null, 2: string, 3: int}>
+     * @return array<string, array{0: string, 1: mixed, 2: string, 3: int}>
      */
     public static function consentRows(): array
     {
@@ -244,13 +244,16 @@ final class InboundReplayIntegrationTest extends TestCase
             'consenting' => ['1', null, '0', 0],
             'refusing' => ['0', null, '1', 1],
             'logged before the log kept it' => ['0', \Prosper202\InboundLog\Redactor::REDACTED, '1', 1],
+            // A value no endpoint writes (a log edited by hand) cannot say yes.
+            'a number in the log' => ['1', 1, '1', 1],
+            'a list in the log' => ['1', ['1'], '1', 1],
         ];
     }
 
     /** @dataProvider consentRows */
     public function testARowGivenBackIsRecordedWithTheConsentItCarried(
         string $sent,
-        ?string $logAs,
+        mixed $logAs,
         string $withheld,
         int $refusals
     ): void {
@@ -272,6 +275,34 @@ final class InboundReplayIntegrationTest extends TestCase
         $count = self::$db->query('SELECT COUNT(*) FROM 202_click_consent_refusals WHERE click_id = ' . self::CLICK)
             ->fetch_row()[0];
         self::assertSame($refusals, (int) $count, 'its click refused only when it refused');
+    }
+
+    /**
+     * On a campaign that pays in accumulate mode, a click a sale with a
+     * transaction id made a lead: a row given back with no transaction id
+     * records nothing more whether it consented or refused, and only the
+     * refusing one refuses the click, as at pb.php.
+     */
+    public function testAnIdLessRowGivenBackAfterAKeyedSaleRecordsNothingMore(): void
+    {
+        self::q("UPDATE 202_aff_campaigns SET payout_mode = 'accumulate' WHERE aff_campaign_id = " . self::CAMPAIGN);
+        try {
+            $replay = new InboundReplay(self::requireScratch());
+            $sale = self::refused('gpb', ['subid' => (string) self::CLICK, 'txid' => 'NW-K1', 'p202_consent' => '1']);
+            self::assertSame('recorded', $replay->replay(self::ACCOUNT, $sale)['status']);
+            $refusals = static fn (): int => (int) self::$db->query(
+                'SELECT COUNT(*) FROM 202_click_consent_refusals WHERE click_id = ' . self::CLICK
+            )->fetch_row()[0];
+            foreach (['1' => 0, '0' => 1] as $consent => $refused) {
+                $row = self::refused('gpb', ['subid' => (string) self::CLICK, 'p202_consent' => (string) $consent]);
+                $answer = $replay->replay(self::ACCOUNT, $row);
+                self::assertSame('refused', $answer['status'], "'$consent': " . $answer['message']);
+                self::assertCount(1, self::conversions(), "'$consent': nothing more is recorded");
+                self::assertSame($refused, $refusals(), "'$consent': the click refused only by a refusal");
+            }
+        } finally {
+            self::q("UPDATE 202_aff_campaigns SET payout_mode = 'replace' WHERE aff_campaign_id = " . self::CAMPAIGN);
+        }
     }
 
     /**
