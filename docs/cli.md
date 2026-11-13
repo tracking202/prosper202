@@ -834,8 +834,9 @@ p202 conversion postback-auth set --mode token
 p202 conversion postback-auth rotate --credential signing_secret --grace-hours 168
 ```
 
-Authentication makes sure only your own networks and pages record or reverse
-a conversion. The postback and pixel URLs (`conversion
+Once required, authentication refuses postbacks and pixels that carry
+neither your account's token nor a valid signature. The postback and pixel
+URLs (`conversion
 postback-url`, `conversion pixel`) carry the account's token as
 `p202_token`; a sender that can sign sends `p202_ts` + `p202_sig` instead,
 keyed with the signing secret, which no URL carries (`get` prints both, and

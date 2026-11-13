@@ -251,8 +251,9 @@ before.
 
 ## Postback authentication
 
-Authentication makes sure only your own networks and pages can record or
-reverse a conversion. Each account has two credentials:
+Once your account requires it (its mode, below), authentication refuses
+postbacks and pixels that carry neither your account's token nor a valid
+signature. Each account has two credentials:
 
 - a **postback token**, 32 hex characters, which every pixel and postback URL
   Setup hands out carries as `p202_token`;
@@ -284,11 +285,9 @@ database's deployment secrets). The token is shown on Setup › Postback /
 Pixel; both are shown on Account › API Integrations › Postback
 authentication. The token is a URL parameter, so it lands in the logs of
 whoever relays the request; rotate it if it leaks. **A pixel runs in the
-visitor's browser, so its token can be read on the advertiser's page.** That
-still stops anyone forging conversions blind by counting click ids, which is
-the attack it is for; it does not stop someone who has seen the page. A
-sender that can sign should sign, and `signed` mode keeps a token read off a
-page from opening anything.
+visitor's browser, so anyone who sees a page with your pixel can read its
+token.** For senders that can sign, `signed` mode is the stronger choice: it
+accepts only signed requests.
 
 | Method | Path | Body | Permission and key scope |
 | ------ | ---- | ---- | ---------- |

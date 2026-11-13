@@ -940,13 +940,14 @@ template_top('API Integrations');
 							. '<option value="168" selected>for 7 days</option><option value="24">for 1 day</option>'
 							. '<option value="720">for 30 days</option><option value="0">not at all (it leaked)</option></select>';
 					}; ?>
-					<p class="text-secondary">Authentication makes sure only your own networks and pages can record or reverse
-						a conversion. Your postback URLs and pixels carry this account's token as
+					<p class="text-secondary">Once required, authentication refuses postbacks and pixels that carry neither
+						this account's token nor a valid signature. Your postback URLs and pixels carry this account's token as
 						<code>p202_token</code>. A sender that can compute an HMAC can instead sign each request with
 						<code>p202_ts</code> and <code>p202_sig</code>, keyed with the signing secret below, which no URL ever
 						carries. Unless authentication is off, a wrong token or signature is refused.</p>
-					<p class="text-secondary">A pixel runs in the visitor's browser, so its token is visible on the
-						page that carries it. A pixel cannot sign, so
+					<p class="text-secondary">A pixel runs in the visitor's browser, so anyone who sees a page with your
+						pixel can read its token: for senders that can sign, signed mode is the stronger choice. A pixel
+						cannot sign, so
 						<strong>Signed postbacks only</strong> refuses every pixel.</p>
 					<?php
 					$pbOff = $pbAuth->mode === \Prosper202\Conversion\PostbackAuth\PostbackAuthMode::OFF;
