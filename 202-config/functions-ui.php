@@ -230,6 +230,9 @@ function p202_spend_ledger_text(?array $meta, bool $masked = false): string
     if (($meta['other_currency_rows'] ?? 0) > 0) {
         $text .= ' Spend recorded in another currency than the account\'s is not counted.';
     }
+    if (isset($meta['tie_note']) && is_string($meta['tie_note'])) {
+        $text .= ' ' . $meta['tie_note'];
+    }
 
     return $text;
 }

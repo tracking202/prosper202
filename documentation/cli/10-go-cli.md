@@ -493,7 +493,8 @@ p202 spend list --period last7 --interval hour
 - **`spend list`** reads the ledger summed per `--interval day` (the
   default, in the account's time zone) or `hour`, per platform, ad account,
   campaign, ad group and ad, newest first, with `matched_clicks` (the
-  account's clicks that carried the ad) and `unallocated_spend` (spend in
+  account's clicks that carried the ad; for `openai_ads` on an account with a
+  marked ChatGPT Ads source, those sources' clicks only) and `unallocated_spend` (spend in
   hours no click carried it). The window is `--period` or
   `--time-from`/`--time-to`, as the reports take it; `--platform` and
   `--limit` (1 to 5000, default 500) narrow it. Needs `spend-ledger:read`.

@@ -36,7 +36,7 @@ var spendListCmd = &cobra.Command{
 	Short: "Ad platform spend per ad per day or hour, with the clicks it matched",
 	Long: "Lists the spend ledger summed per day (in the account's timezone) or per hour, and per\n" +
 		"platform, ad account, campaign, ad group and ad, newest first: impressions, the platform's\n" +
-		"clicks, spend, matched_clicks (this account's clicks that carried the ad) and\n" +
+		"clicks, spend, matched_clicks (the clicks it was shared over) and\n" +
 		"unallocated_spend (spend in hours no click carried it). reaches is the end of the latest\n" +
 		"hour the ledger holds. Reports read this spend as cost.",
 	Example: "  p202 spend list --period yesterday\n" +

@@ -37,9 +37,10 @@ POST /api/v3/spend-ledger
 - An ad id names one ad: a row whose `ad_ref` the account already holds under
   another platform or ad account is refused, since clicks carry only the ad id.
 - On an account with a traffic source marked as ChatGPT Ads (Setup › Traffic
-  Sources › Add ChatGPT Ads marks it), `openai_ads` rows are matched only to
-  that source's clicks; otherwise, and for any other platform, to the ad id on
-  any traffic source of the account
+  Sources › Add ChatGPT Ads marks it), rows of the platform `openai_ads`
+  (exactly that name) are matched only to the clicks of such sources;
+  otherwise, and for any other platform name, to the ad id on any traffic
+  source of the account
   ([Cost from the spend ledger](11-reports.md#cost-from-the-spend-ledger)).
 - An id must not start or end with a space, and `hour_start` is from 2000 on.
 - Up to 2000 rows per request, written in one transaction. Any refused row
@@ -56,6 +57,7 @@ reports do), `interval` (`day`, in the account's time zone with each hour
 converted at its own instant, or `hour`), `platform` and `limit` (1 to 5000,
 default 500). Each row is one period of one ad, newest first, with
 `impressions`, `platform_clicks`, `spend`, `matched_clicks` (this account's
-clicks carrying the ad in those hours) and `unallocated_spend` (the spend of
-the hours no click carried it in). `reaches` is the end of the latest hour
+clicks carrying the ad in those hours: for `openai_ads` on an account with a
+marked ChatGPT Ads source, those sources' clicks only) and `unallocated_spend`
+(the spend of the hours no click carried it in). `reaches` is the end of the latest hour
 the ledger holds.
