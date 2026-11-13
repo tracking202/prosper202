@@ -41,9 +41,13 @@ final class AdConnectionsIntegrationTest extends TestCase
     /** @var array<string, list<array<string, mixed>>> answers queued by "METHOD path" (the last one repeats) */
     private array $routes = [];
 
+    /** @var array<string, \Closure> what happens once while OpenAI is answering a route: another request's work */
+    private array $during = [];
+
     protected function setUp(): void
     {
         $this->databaseSetUp();
+        $this->during = [];
         foreach (['202_ad_connections', '202_destinations', '202_destination_deliveries'] as $t) {
             self::$db->query('TRUNCATE TABLE ' . $t);
         }
@@ -77,6 +81,11 @@ final class AdConnectionsIntegrationTest extends TestCase
             $route = $method . ' ' . ltrim($path, '/');
             $this->requests[] = ['method' => $method, 'url' => $url, 'route' => $route, 'body' => $method === 'POST' ? json_decode((string) $options[CURLOPT_POSTFIELDS], true) : null,
                 'headers' => array_values((array) $options[CURLOPT_HTTPHEADER])];
+            if (isset($this->during[$route])) {
+                $during = $this->during[$route];
+                unset($this->during[$route]);
+                $during();
+            }
             $queue = $this->routes[$route] ?? [['status' => 404, 'body' => '{"error":{"message":"Not found"}}']];
             $answer = count($queue) > 1 ? array_shift($this->routes[$route]) : $queue[0];
 
@@ -220,6 +229,90 @@ final class AdConnectionsIntegrationTest extends TestCase
 
         self::assertSame(['pixel' => 'kept', 'conversions_key' => 'kept', 'destination' => 'kept', 'event_settings' => 'found'], array_column($again['steps'], 'outcome', 'step'));
         self::assertSame([], array_filter($this->requests, static fn (array $r): bool => $r['method'] === 'POST'), 'nothing is made twice');
+    }
+
+    /** @return array<string, mixed> the destination step of a setup run */
+    private static function destinationStepOf(array $run): array
+    {
+        return array_column((array) $run['steps'], null, 'step')['destination'];
+    }
+
+    private static function destinationsOf(int $user): int
+    {
+        $sql = "SELECT COUNT(*) FROM 202_destinations WHERE user_id = $user AND deleted_at IS NULL";
+
+        return (int) self::$db->query($sql)->fetch_row()[0];
+    }
+
+    /**
+     * Two setups at once: the second runs whole while the first waits for OpenAI to make its key, after the first
+     * read the connection's setup. The first then finds the destination the second made and makes none.
+     */
+    public function testTwoSetupsAtOnceMakeOneDestination(): void
+    {
+        $id = $this->connect();
+        $other = null;
+        $this->during['POST conversions/api_keys'] = function () use ($id, &$other): void {
+            $other = $this->connections()->setup(1, $id, [], 1_800_000_100);
+        };
+        $first = $this->connections()->setup(1, $id, [], 1_800_000_100);
+
+        self::assertSame('created', self::destinationStepOf((array) $other)['outcome'], 'the run in between made it');
+        $step = self::destinationStepOf($first);
+        self::assertSame('kept', $step['outcome']);
+        self::assertSame(1, self::destinationsOf(1), 'one destination, so each conversion is sent once');
+        self::assertSame($first['connection']['setup']['destination_id'], $step['destination_id']);
+    }
+
+    /** A Conversions API key given on a later run reaches the destination that sends with it. */
+    public function testAKeyGivenLaterIsTheOneTheDestinationSendsWith(): void
+    {
+        $id = $this->connect();
+        $first = $this->connections()->setup(1, $id, [], 1_800_000_100);
+        $destination = (int) $first['connection']['setup']['destination_id'];
+        $destinations = new DestinationStore(new Connection(self::$db));
+        $sendsWith = static fn (): ?string
+            => $destinations->forSending(1, $destination)['credentials']['conversions_api_key'] ?? null;
+        self::assertSame(self::CAPI_KEY, $sendsWith());
+
+        $given = 'capi-from-ads-manager-0123456789';
+        $again = $this->connections()->setup(1, $id, ['conversions_api_key' => $given], 1_800_000_200);
+        $step = self::destinationStepOf($again);
+        self::assertSame('kept', $step['outcome']);
+        $detail = (string) $step['detail'];
+        self::assertStringContainsString('now sends with the Conversions API key given here', $detail);
+        self::assertSame($given, $sendsWith());
+    }
+
+    /**
+     * A connection deleted and made again (the way back from a refused key on the Setup page) takes over the
+     * destination that already sends to its pixel: setup makes no second one, and the first gets the new key.
+     */
+    public function testAReconnectedAccountTakesOverTheDestinationOfItsPixel(): void
+    {
+        // A destination for another pixel is no match: it is left alone.
+        $destinations = new DestinationStore(new Connection(self::$db));
+        $elsewhere = ['conversions_api_key' => 'capi-of-another-pixel-0123456789'];
+        $type = OpenAiAdsConnections::DESTINATION_TYPE;
+        $destinations->create(1, $type, 'Other pixel', ['pixel_id' => '999'], $elsewhere, 1);
+        $first = $this->connect();
+        $ran = $this->connections()->setup(1, $first, [], 1_800_000_100);
+        $made = (int) $ran['connection']['setup']['destination_id'];
+        self::assertTrue($this->store()->delete(1, $first, 1_800_000_150));
+        $second = $this->connect();
+        self::assertNotSame($first, $second);
+        $listed = ['object' => 'list', 'data' => [json_decode(self::answer('pixel_created.json'), true)],
+            'first_id' => 'clidsrc_123', 'last_id' => 'clidsrc_123', 'has_more' => false];
+        $this->routes['GET conversions/pixels'] = [['body' => (string) json_encode($listed)]];
+        $given = 'capi-after-reconnect-0123456789';
+        $run = $this->connections()->setup(1, $second, ['conversions_api_key' => $given], 1_800_000_200);
+
+        $step = self::destinationStepOf($run);
+        self::assertSame(['kept', $made], [$step['outcome'], $step['destination_id']]);
+        self::assertStringContainsString('already sends to this pixel', (string) $step['detail']);
+        self::assertSame(2, self::destinationsOf(1), 'no second destination for the pixel');
+        self::assertSame($made, $run['connection']['setup']['destination_id']);
+        self::assertSame($given, $destinations->forSending(1, $made)['credentials']['conversions_api_key'] ?? null);
     }
 
     public function testEachStepCanBeSkipped(): void

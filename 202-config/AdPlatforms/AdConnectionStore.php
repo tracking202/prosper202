@@ -173,22 +173,58 @@ final class AdConnectionStore
             if ($row === null) {
                 return false;
             }
-            $setup = self::setupOf((string) $row['setup']) ?? [];
-            foreach ($patch as $key => $value) {
-                if ($key === 'event_settings' && is_array($value)) {
-                    $setup['event_settings'] = array_replace(is_array($setup['event_settings'] ?? null) ? $setup['event_settings'] : [], $value);
-                } elseif ($value === null) {
-                    unset($setup[$key]);
-                } else {
-                    $setup[$key] = $value;
-                }
-            }
-            $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::AD_CONNECTIONS . '` SET setup = ?, updated_at = ? WHERE connection_id = ? AND user_id = ? AND deleted_at IS NULL');
-            $this->conn->bind($stmt, 'siii', [self::json($setup), $now, $connectionId, $userId]);
-            $this->conn->execute($stmt);
+            $this->writeSetup($row, $patch, $now);
 
             return true;
         });
+    }
+
+    /**
+     * Run $work with the connection's row locked and its setup as stored now, and merge the patch it answers in
+     * the same transaction: what $work reads cannot be changed by another setup before what it made is recorded,
+     * and what it made is not kept without its record. $work answers [its result, the patch]; its own writes join
+     * this transaction. Null when the account has no such connection.
+     *
+     * @template T
+     * @param callable(array<string, mixed>): array{0: T, 1: array<string, mixed>} $work
+     * @return T|null
+     */
+    public function withSetupLocked(int $userId, int $connectionId, callable $work, int $now): mixed
+    {
+        return $this->conn->transaction(function () use ($userId, $connectionId, $work, $now): mixed {
+            $row = $this->locked($userId, $connectionId);
+            if ($row === null) {
+                return null;
+            }
+            [$result, $patch] = $work(self::setupOf((string) $row['setup']) ?? []);
+            if ($patch !== []) {
+                $this->writeSetup($row, $patch, $now);
+            }
+
+            return $result;
+        });
+    }
+
+    /**
+     * @param array<string, mixed> $row the locked row
+     * @param array<string, mixed> $patch
+     */
+    private function writeSetup(array $row, array $patch, int $now): void
+    {
+        $setup = self::setupOf((string) $row['setup']) ?? [];
+        foreach ($patch as $key => $value) {
+            if ($key === 'event_settings' && is_array($value)) {
+                $setup['event_settings'] = array_replace(is_array($setup['event_settings'] ?? null) ? $setup['event_settings'] : [], $value);
+            } elseif ($value === null) {
+                unset($setup[$key]);
+            } else {
+                $setup[$key] = $value;
+            }
+        }
+        $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::AD_CONNECTIONS . '` SET setup = ?, updated_at = ? WHERE connection_id = ? AND user_id = ? AND deleted_at IS NULL');
+        $ids = [(int) $row['connection_id'], (int) $row['user_id']];
+        $this->conn->bind($stmt, 'siii', [self::json($setup), $now, ...$ids]);
+        $this->conn->execute($stmt);
     }
 
     /**

@@ -20,8 +20,11 @@ use Prosper202\Destinations\GoogleAdsOAuth;
  * is never retried here: the caller says "try again in a minute".
  *
  * Creates carry an Idempotency-Key the caller derives from what is being
- * created, so a retry after a lost answer returns the same resource instead
- * of a second one.
+ * created. OpenAI documents the header for campaign, ad group and ad
+ * creates; for pixels, Conversions API keys and event settings it is sent
+ * but nothing promises it is honoured, so those callers look for what
+ * exists before they create, and a key whose answer was lost may be made
+ * twice.
  *
  * The key is write-only everywhere: it is sent in the Authorization header
  * and taken out of every text this returns.

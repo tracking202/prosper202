@@ -65,9 +65,14 @@ Four steps run in order, each answered in `steps` with an `outcome` and a
 | `event_settings` | Finds or makes one event setting per event type on the pixel's source, 30-day click window | `created`, `found`, `needs_input`, `failed` |
 
 `skip` leaves steps out (`["destination"]`). What a step made is kept, so
-setup can be run again without making anything twice; every create carries
-an `Idempotency-Key` built from this install, the connection, the ad account
-and what is made, so a retry after a lost answer gets the same object back.
+setup run again makes nothing it already recorded: the pixel and event
+settings are looked for in the ad account first, and the destination is made
+and recorded under one lock. Every create carries an `Idempotency-Key` built
+from this install, the connection, the ad account and what is made, but
+OpenAI documents that header for campaigns, ad groups and ads, not for
+pixels, Conversions API keys or event settings, so do not rely on it there.
+If the answer to making a Conversions API key is lost (a timeout), the next
+run makes another, and the first stays in Ads Manager unused: delete it there.
 
 Pixel management and Conversions API key creation are switched on per ad
 account by OpenAI. Where they are off, OpenAI answers `404 Not found`, and

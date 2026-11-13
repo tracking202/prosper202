@@ -270,28 +270,85 @@ final class OpenAiAdsConnections
     private function destinationStep(int $userId, array $connection, array $setup, array $pixel, #[\SensitiveParameter] ?string $conversionsKey, array $options, int $now): array
     {
         $id = (int) $connection['connection_id'];
-        $existing = is_int($setup['destination_id'] ?? null) ? $this->destinations->get($userId, $setup['destination_id']) : null;
-        if ($existing !== null) {
-            return self::step('destination', 'kept', 'Conversions go to destination ' . $existing['destination_id'] . ' (' . $existing['name'] . '), set up before.', ['destination_id' => $existing['destination_id']]);
-        }
         if (!isset($this->destinations->types()[self::DESTINATION_TYPE])) {
             return self::step('destination', 'unavailable', 'This version of Prosper202 has no ChatGPT Ads destination yet, so none was made. The pixel and Conversions API key are kept on this connection for it.');
         }
         $pixelId = is_string($pixel['pixel_id'] ?? null) ? $pixel['pixel_id'] : null;
-        if ($pixelId === null || $conversionsKey === null || $conversionsKey === '') {
-            return self::step('destination', 'needs_input', 'A destination needs the pixel id and a Conversions API key; ' . ($pixelId === null ? 'there is no pixel yet' : 'there is no Conversions API key yet') . '. Run the step above, or give them from Ads Manager.');
-        }
-        try {
-            $made = $this->destinations->create($userId, self::DESTINATION_TYPE, mb_substr('ChatGPT Ads ' . (string) $connection['name'], 0, 100), [
-                'pixel_id' => $pixelId,
-                'event_type' => $options['event_types'][0] ?? self::DEFAULT_EVENT_TYPE,
-            ], ['conversions_api_key' => $conversionsKey], $now);
-        } catch (DestinationInputException $e) {
-            return self::step('destination', 'failed', 'No destination was made: ' . $e->getMessage());
-        }
-        $this->store->mergeSetup($userId, $id, ['destination_id' => (int) $made['destination_id']], $now);
+        $name = mb_substr('ChatGPT Ads ' . (string) $connection['name'], 0, 100);
+        $eventType = $options['event_types'][0] ?? self::DEFAULT_EVENT_TYPE;
+        $keyGiven = $options['conversions_api_key'] !== null && $conversionsKey !== null && $conversionsKey !== '';
+        $haveKey = $conversionsKey !== null && $conversionsKey !== '';
+        // The setup read before the earlier steps' calls to OpenAI is stale by now: whether a destination was made
+        // is read again under the connection's row lock, and the one made here is recorded in that transaction, so
+        // two setups at once, or a retry after a failure, make one destination.
+        $work = function (array $stored) use (
+            $userId,
+            $pixelId,
+            $conversionsKey,
+            $keyGiven,
+            $haveKey,
+            $name,
+            $eventType,
+            $now
+        ): array {
+            $sendsWith = fn (int $destinationId) => $this->destinations->update(
+                $userId,
+                $destinationId,
+                ['credentials' => ['conversions_api_key' => $conversionsKey]],
+                $now,
+                true
+            );
+            $recorded = $stored['destination_id'] ?? null;
+            $existing = is_int($recorded) ? $this->destinations->get($userId, $recorded) : null;
+            if ($existing !== null) {
+                $existingId = (int) $existing['destination_id'];
+                $said = 'Conversions go to destination ' . $existingId . ' (' . $existing['name'] . '), set up before.';
+                if ($keyGiven) {
+                    // The key given this run is the one the destination sends with, not only the connection's copy.
+                    $sendsWith($existingId);
+                    $said .= ' It now sends with the Conversions API key given here.';
+                }
 
-        return self::step('destination', 'created', 'Created destination ' . $made['destination_id'] . ' (' . $made['name'] . '): new conversions are sent to ChatGPT Ads.', ['destination_id' => (int) $made['destination_id']]);
+                return [self::step('destination', 'kept', $said, ['destination_id' => $existingId]), []];
+            }
+            if ($pixelId === null || !$haveKey) {
+                $missing = $pixelId === null ? 'there is no pixel yet' : 'there is no Conversions API key yet';
+                $said = 'A destination needs the pixel id and a Conversions API key; ' . $missing
+                    . '. Run the step above, or give them from Ads Manager.';
+
+                return [self::step('destination', 'needs_input', $said), []];
+            }
+            // A destination of this account that already sends to this pixel (one an earlier connection of the ad
+            // account made, since deleted) is taken over, with this connection's key: a second one would send
+            // every conversion twice.
+            foreach ($this->destinations->list($userId) as $destination) {
+                $samePixel = ($destination['type'] ?? null) === self::DESTINATION_TYPE
+                    && ($destination['settings']['pixel_id'] ?? null) === $pixelId;
+                if ($samePixel) {
+                    $foundId = (int) $destination['destination_id'];
+                    $sendsWith($foundId);
+                    $said = 'Destination ' . $foundId . ' (' . $destination['name'] . ') already sends to this pixel:'
+                        . ' it is used, now with this connection\'s Conversions API key, and no second one was made.';
+
+                    return [self::step('destination', 'kept', $said, ['destination_id' => $foundId]), ['destination_id' => $foundId]];
+                }
+            }
+            try {
+                $settings = ['pixel_id' => $pixelId, 'event_type' => $eventType];
+                $credentials = ['conversions_api_key' => $conversionsKey];
+                $made = $this->destinations->create($userId, self::DESTINATION_TYPE, $name, $settings, $credentials, $now);
+            } catch (DestinationInputException $e) {
+                return [self::step('destination', 'failed', 'No destination was made: ' . $e->getMessage()), []];
+            }
+            $madeId = (int) $made['destination_id'];
+            $said = 'Created destination ' . $madeId . ' (' . $made['name'] . '): new conversions are sent to ChatGPT Ads.';
+            $record = ['destination_id' => $madeId];
+
+            return [self::step('destination', 'created', $said, $record), $record];
+        };
+
+        return $this->store->withSetupLocked($userId, $id, $work, $now)
+            ?? throw new \RuntimeException('ad connection ' . $id . ' was deleted during its setup');
     }
 
     /**
@@ -454,8 +511,11 @@ final class OpenAiAdsConnections
     }
 
     /**
-     * Same install, connection, account and thing made: same key, so a retry after a lost answer returns what the
-     * first request made. Fields are length-prefixed, so no two inputs give one key (CLAUDE.md #17).
+     * Same install, connection, account and thing made: same key. Where OpenAI honours it a retry after a lost
+     * answer returns what the first request made; it documents that for campaigns, ad groups and ads only, so the
+     * steps here do not rest on it (pixels and event settings are looked for first; a Conversions API key whose
+     * answer was lost is made again and the first is left unused in Ads Manager). Fields are length-prefixed, so
+     * no two inputs give one key (CLAUDE.md #17).
      *
      * @param array<string, mixed> $connection
      */
