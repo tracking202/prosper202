@@ -130,6 +130,14 @@ func TestAdCampaignHintsAreScopedToTheAnswer(t *testing.T) {
 				continue
 			}
 			hint := hintFor(err)
+			write := args[1] == "pause" || args[1] == "attach-events"
+			if write && c.status != http.StatusTooManyRequests {
+				// A write may have landed: read it before sending it again.
+				if !strings.Contains(hint, "p202 ad-campaign get 3 cmpn_101") || !strings.Contains(hint, "may have been applied") {
+					t.Errorf("%v, %d: hint %q does not say it may have been applied", args, c.status, hint)
+				}
+				continue
+			}
 			if hint == "" || hint != api.HintFor(err) {
 				t.Errorf("%v, %d: hint %q, want the class's %q", args, c.status, hint, api.HintFor(err))
 			}
@@ -142,11 +150,69 @@ func TestAdCampaignHintsAreScopedToTheAnswer(t *testing.T) {
 		if _, _, err := executeCommand(append(args, "--json")...); err == nil || !strings.Contains(hintFor(err), "p202 ad-c") {
 			t.Errorf("%v, 404: err %v, hint %q", args, err, hintFor(err))
 		}
+		if args[1] == "pause" {
+			status = http.StatusConflict
+			body = `{"error":true,"status":409,"message":"Could not activate cmpn_101: OpenAI answered 400: campaign is archived.","details":{"upstream":"openai_ads","reason":"refused"}}`
+			_, _, err := executeCommand(append(args, "--json")...)
+			if err == nil || !strings.Contains(hintFor(err), "OpenAI refused it") || !strings.Contains(hintFor(err), "same answer") || strings.Contains(hintFor(err), "Fix the field") {
+				t.Errorf("%v, OpenAI's refusal: err %v, hint %q", args, err, hintFor(err))
+			}
+		}
 		status = http.StatusUnprocessableEntity
 		body = `{"error":true,"status":422,"message":"OpenAI refused the stored key","field_errors":{"api_key":"OpenAI refused the stored key"}}`
 		_, _, err := executeCommand(append(args, "--json")...)
 		if err == nil || exitCodeForError(err) != ExitValidation || !strings.Contains(hintFor(err), "p202 ad-connection update 3 --api-key-file") {
 			t.Errorf("%v, refused key: err %v, exit %d, hint %q", args, err, exitCodeForError(err), hintFor(err))
 		}
+	}
+}
+
+// The ad-campaign tools take OpenAI's own ids where the commands do: a
+// parent to narrow a list by (cmpn_, adgrp_), the object to change (ad_ too),
+// and the next page's cursor; Prosper202's numeric ids are refused.
+func TestMCPAdCampaignToolsTakeChatGptAdsIds(t *testing.T) {
+	tools, err := buildMCPDeferredTools(rootCmd, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]mcpTool{}
+	for _, tool := range tools {
+		byName[tool.Name] = tool
+	}
+	list := byName["ad_campaign_list"].InputSchema
+	for _, prop := range []string{"campaign_id", "ad_group_id"} {
+		if list.Properties[prop].Pattern != adObjectIDPattern.String() {
+			t.Errorf("ad_campaign_list %s pattern %q, want %q", prop, list.Properties[prop].Pattern, adObjectIDPattern.String())
+		}
+	}
+	if _, ok := list.Properties["after"]; !ok {
+		t.Errorf("ad_campaign_list takes no after, so it cannot page: %v", list.Properties)
+	}
+	if byName["ad_campaign_pause"].InputSchema.Properties["id"].Pattern != adObjectIDPattern.String() {
+		t.Errorf("ad_campaign_pause id pattern %q", byName["ad_campaign_pause"].InputSchema.Properties["id"].Pattern)
+	}
+
+	calls, _ := adCampaignServer(t)
+	for _, input := range []string{
+		`{"connection_id":"1","level":"ad-groups","campaign_id":"cmpn_101"}`,
+		`{"connection_id":"1","level":"ads","ad_group_id":"adgrp_201","after":"ad_301"}`,
+	} {
+		if _, stderr, err := mcpExecute(t, "mcp", "call", "ad_campaign_list", "--input", input); err != nil {
+			t.Errorf("%s: %v %s", input, err, stderr)
+		}
+	}
+	if _, _, err := mcpExecute(t, "mcp", "call", "ad_campaign_pause", "--input", `{"connection_id":"1","id":"ad_301","level":"ads","dry_run":true}`); err != nil {
+		t.Errorf("pause ad_301: %v", err)
+	}
+	want := []string{
+		"GET /api/v3/ad-connections/1/ad-groups?campaign_id=cmpn_101",
+		"GET /api/v3/ad-connections/1/ads?ad_group_id=adgrp_201&after=ad_301",
+		"POST /api/v3/ad-connections/1/ads/ad_301/pause?dry_run=1",
+	}
+	if strings.Join(*calls, "|") != strings.Join(want, "|") {
+		t.Errorf("requests %v, want %v", *calls, want)
+	}
+	if _, _, err := mcpExecute(t, "mcp", "call", "ad_campaign_list", "--input", `{"connection_id":"1","level":"ad-groups","campaign_id":"101"}`); err == nil {
+		t.Errorf("a numeric campaign_id was taken")
 	}
 }

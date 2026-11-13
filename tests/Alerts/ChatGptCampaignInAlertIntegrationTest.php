@@ -85,7 +85,8 @@ final class ChatGptCampaignInAlertIntegrationTest extends TestCase
 
         self::assertCount(1, $alerts);
         self::assertStringContainsString('Its clicks come from ChatGPT Ads campaigns cmpn_101, cmpn_102: pause them at Setup › Destinations › ChatGPT Ads, or run p202 ad-campaign pause 3 cmpn_101.', $alerts[0]->message);
-        self::assertSame(['chatgpt_connection_id' => 3, 'chatgpt_campaign_ids' => 'cmpn_101,cmpn_102'], array_intersect_key($alerts[0]->facts, array_flip(['chatgpt_connection_id', 'chatgpt_campaign_ids'])));
+        self::assertSame(['chatgpt_campaigns' => '3:cmpn_101,3:cmpn_102', 'chatgpt_campaign_ids' => 'cmpn_101,cmpn_102'], array_intersect_key($alerts[0]->facts, array_flip(['chatgpt_campaigns', 'chatgpt_campaign_ids'])));
+        self::assertArrayNotHasKey('chatgpt_connection_id', $alerts[0]->facts, 'no one connection stands for every campaign');
 
         self::$db->query('TRUNCATE TABLE 202_ad_connections');
         $plain = (new SpendWithoutConversionsDetector())->detect($this->conn, $activity, new AlertSettings(dailyCostCap: '100.00'));
@@ -115,5 +116,26 @@ final class ChatGptCampaignInAlertIntegrationTest extends TestCase
 
         self::$db->query("UPDATE 202_alert_log SET actions = 'not json' WHERE user_id = 1");
         self::assertSame([], $store->recent(1, self::NOW - 60, 10)[0]['actions'], 'unreadable actions: the alert is still shown, without buttons');
+    }
+
+    /** Two connections feeding one Prosper202 campaign: each campaign's pause goes through the connection that reaches it. */
+    public function testEachCampaignKeepsTheConnectionThatReachesIt(): void
+    {
+        self::fixture("INSERT INTO 202_ppc_networks (ppc_network_id, user_id, ppc_network_name, ppc_network_time) VALUES (8, 1, 'ChatGPT Ads EU', 1)");
+        self::fixture("INSERT INTO 202_ppc_accounts (ppc_account_id, user_id, ppc_network_id, ppc_account_name, ppc_account_time) VALUES (53, 1, 8, 'EU', 1)");
+        self::fixture("INSERT INTO 202_ppc_network_variables (ppc_variable_id, ppc_network_id, name, parameter, placeholder) VALUES (64, 8, 'Campaign ID', 'campaign_id', '{campaign_id}')");
+        self::fixture("INSERT INTO 202_ad_connections (connection_id, user_id, platform, ppc_account_id, account_ref, name, currency, timezone, credentials, setup, status, created_at, updated_at)
+            VALUES (5, 1, 'openai_ads', 53, 'adacct_456', 'Northwind EU', 'EUR', 'Europe/Berlin', '', '{}', 'connected', 1, 1)");
+        $this->click(9010, 1, 30, 53, ['cmpn_eu1' => 64]);
+        $activity = new AccountActivity(1, self::NOW, 'UTC', self::NOW - 3600, 'USD', [
+            30 => new CampaignActivity(30, 'Spring sale', clicksToday: 4, costToday: 150.0),
+        ]);
+        $alert = (new SpendWithoutConversionsDetector())->detect($this->conn, $activity, new AlertSettings(dailyCostCap: '100.00'))[0];
+
+        self::assertSame([
+            ['action' => 'chatgpt_pause', 'connection_id' => 3, 'campaign_id' => 'cmpn_101'],
+            ['action' => 'chatgpt_pause', 'connection_id' => 3, 'campaign_id' => 'cmpn_102'],
+            ['action' => 'chatgpt_pause', 'connection_id' => 5, 'campaign_id' => 'cmpn_eu1'],
+        ], MysqlAlertStore::actionsOf($alert));
     }
 }

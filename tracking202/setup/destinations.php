@@ -136,12 +136,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($done === null) {
                     $errors['destination'] = 'That connection is not one of yours, or was deleted.';
                 } else {
-                    $_SESSION['p202_ad_campaign_done'] = [
-                        'ad_campaign_pause' => $objectId . ' is paused at OpenAI.',
-                        'ad_campaign_activate' => $objectId . ' is active at OpenAI.',
-                        'ad_campaign_template' => $objectId . '\'s tracking template is now the Get Links one.',
-                        'ad_campaign_events' => ($done['unchanged'] ?? false) === true ? $objectId . ' already counts every event setting setup made; nothing was changed.' : $objectId . ' now counts the event settings setup made, besides its own.',
-                    ][$action];
+                    // Said from what OpenAI shows now (the write's answer or a read of it), never from what was asked.
+                    $record = (array) $done['record'];
+                    $unchanged = ($done['unchanged'] ?? false) === true;
+                    $_SESSION['p202_ad_campaign_done'] = match ($action) {
+                        'ad_campaign_pause', 'ad_campaign_activate' => $objectId . ($unchanged ? ' was already ' : ' is now ') . (string) ($record['status'] ?? '') . ' at OpenAI'
+                            . ($unchanged ? '; nothing was sent.' : ' (it was ' . (string) ($done['previous']['status'] ?? '') . ').'),
+                        'ad_campaign_template' => $unchanged ? $objectId . ' already has the Get Links tracking template; nothing was sent.'
+                            : $objectId . '\'s tracking template at OpenAI is now ' . (string) ($record['query_string_template'] ?? '') . ' (it was '
+                            . (string) ($done['previous']['query_string_template'] ?? 'not set') . ').',
+                        default => $unchanged ? $objectId . ' already counts every event setting setup made; nothing was changed.' : $objectId . ' now counts the event settings setup made, besides its own.',
+                    };
                     header('location: ' . $self . '?ad_campaigns=' . $connectionId . '#ad-campaigns');
                     die();
                 }
@@ -513,7 +518,7 @@ if ($adCampaignsConnection !== null) {
         [$pausePreview, $pausePreviewError] = $live(static fn (): ?array => $service->setStatus($userId, $adCampaignsId, 'campaigns', $previewCampaign, 'pause', true));
     }
     echo p202_ad_campaigns_pause_preview($adCampaignsId, $pausePreview, $pausePreviewError, $self, (string) ($_SESSION['token'] ?? ''));
-    echo p202_ad_campaigns_view($adCampaignsConnection, $campaignPage['data'] ?? null, $campaignError, $spend, $spendError, $detail, $detailError, $self, (string) ($_SESSION['token'] ?? ''));
+    echo p202_ad_campaigns_view($adCampaignsConnection, $campaignPage['data'] ?? null, $campaignError, $spend, $spendError, $detail, $detailError, $self, (string) ($_SESSION['token'] ?? ''), ($campaignPage['has_more'] ?? false) === true);
     echo p202_setup_script_tag($base);
     template_bottom();
 

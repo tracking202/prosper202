@@ -5557,6 +5557,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "409":
+          description: OpenAI refused the request itself (its reason in the message; details.reason refused); sending it again unchanged gets the same answer
         "429":
           $ref: "#/components/responses/UpstreamRateLimited"
         "502":
@@ -5591,6 +5593,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "409":
+          description: OpenAI refused the request itself (its reason in the message; details.reason refused); sending it again unchanged gets the same answer
         "429":
           $ref: "#/components/responses/UpstreamRateLimited"
         "502":
@@ -5636,6 +5640,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "409":
+          description: OpenAI refused the request itself (its reason in the message; details.reason refused); sending it again unchanged gets the same answer
         "429":
           $ref: "#/components/responses/UpstreamRateLimited"
         "502":
@@ -5745,6 +5751,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "409":
+          description: OpenAI refused the request itself (its reason in the message; details.reason refused); sending it again unchanged gets the same answer
         "429":
           $ref: "#/components/responses/UpstreamRateLimited"
         "502":
@@ -5779,6 +5787,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "409":
+          description: OpenAI refused the request itself (its reason in the message; details.reason refused); sending it again unchanged gets the same answer
         "429":
           $ref: "#/components/responses/UpstreamRateLimited"
         "502":
@@ -5824,6 +5834,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "409":
+          description: OpenAI refused the request itself (its reason in the message; details.reason refused); sending it again unchanged gets the same answer
         "429":
           $ref: "#/components/responses/UpstreamRateLimited"
         "502":
@@ -5933,6 +5945,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "409":
+          description: OpenAI refused the request itself (its reason in the message; details.reason refused); sending it again unchanged gets the same answer
         "429":
           $ref: "#/components/responses/UpstreamRateLimited"
         "502":
@@ -5967,6 +5981,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "409":
+          description: OpenAI refused the request itself (its reason in the message; details.reason refused); sending it again unchanged gets the same answer
         "429":
           $ref: "#/components/responses/UpstreamRateLimited"
         "502":
@@ -6012,6 +6028,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "409":
+          description: OpenAI refused the request itself (its reason in the message; details.reason refused); sending it again unchanged gets the same answer
         "429":
           $ref: "#/components/responses/UpstreamRateLimited"
         "502":
@@ -6061,6 +6079,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "409":
+          description: OpenAI refused the request itself (its reason in the message; details.reason refused); sending it again unchanged gets the same answer
         "429":
           $ref: "#/components/responses/UpstreamRateLimited"
         "502":
@@ -14408,7 +14428,10 @@ components:
         The ad platform answered something its API does not document (an ad
         account without an id, currency or time zone, or a refusal of the
         account read that is not about the key). `details.reason` is
-        `unreadable_answer`. Nothing was stored.
+        `unreadable_answer`. Nothing was stored. On a ChatGPT Ads campaign
+        write, `details.reason` `unconfirmed` is a write whose answer, and
+        a read of the object after it, do not show it done: it may have been
+        applied, so read the object before sending it again.
       content:
         application/json:
           schema:

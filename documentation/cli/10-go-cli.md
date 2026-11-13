@@ -629,8 +629,9 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   `ad_campaign_pause`, `ad_campaign_activate` and `ad_campaign_spend` (its
   campaigns live at OpenAI; pause and activate change them at once, so call
   them with `dry_run: true` first; with `--staged` they propose). The
-  destination and ad connection tools are local only; the four campaign
-  tools are offered by the hosted server too. `p202 mcp tools --deferred`
+  destination tools and `ad_connection_check` are local only; the four
+  campaign tools and `ad_connection_list` are offered by the hosted server
+  too. `p202 mcp tools --deferred`
   answers `tools`, `hosted_excludes` (the local-only ones),
   `staged_excludes` (the ones `--staged` does not offer), `hosted_omits`
   (arguments the hosted server leaves out) and `words` (the words each tool

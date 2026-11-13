@@ -375,6 +375,11 @@ func TestMCPDeferredListingOffersNoLocalToolToAHostedRun(t *testing.T) {
 	if hosted == 0 || len(tools) != hosted {
 		t.Errorf("a hosted run lists %d tools, want the %d that are not NotHosted", len(tools), hosted)
 	}
+	// The owner's decision (2026-11-12): a hosted assistant finds the connection the campaign tools need; the
+	// check, which records OpenAI's answer on the connection, stays local.
+	if !offered["ad_connection_list"] || offered["ad_connection_check"] || !offered["ad_campaign_list"] {
+		t.Errorf("a hosted run offers %v", offered)
+	}
 }
 
 // mcpAnswerKeyRef is a key a tool's Note names in its answer: a dotted path

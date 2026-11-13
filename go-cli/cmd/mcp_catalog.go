@@ -95,8 +95,12 @@ var (
 // a request path (report_breakeven's into campaigns/<id>), so a model can
 // send nothing else there. none is a read's filter only: a write stores the
 // id, and the API refuses none there.
-func mcpIDFlagPattern(property string, kind mcpKind) (*regexp.Regexp, string) {
-	if (property == "ppc_network_id" || property == "publisher_id") && kind == mcpRead {
+func mcpIDFlagPattern(property string, s mcpToolSpec) (*regexp.Regexp, string) {
+	// `p202 ad-campaign` names objects by OpenAI's own ids (cmpn_101, adgrp_201), never Prosper202's numbers.
+	if len(s.Command) > 0 && s.Command[0] == "ad-campaign" {
+		return adObjectIDPattern, "a ChatGPT Ads id such as cmpn_101"
+	}
+	if (property == "ppc_network_id" || property == "publisher_id") && s.Kind == mcpRead {
 		return mcpNumericOrNone, "a numeric id, or none"
 	}
 	return mcpNumericID, "a numeric id"
@@ -124,7 +128,8 @@ func adObjectArg() mcpArg {
 }
 
 // adWriteNote: the change is made at OpenAI at once.
-const adWriteNote = "Changes it at OpenAI: call it with dry_run true first, and show the user."
+const adWriteNote = "Changes it at OpenAI at once: preview with dry_run true and show the user first. " +
+	"A proposal-only connection cannot preview; its call is proposed for the user to apply."
 
 func changeArg() mcpArg {
 	return mcpArg{Name: "change_id", Description: "Change id (chg_..., from change_list).", Required: true, Pattern: mcpChangeID, Form: "a change id such as chg_1a2b3c"}
@@ -583,7 +588,7 @@ func (s mcpToolSpec) params(c *cobra.Command) ([]mcpParam, map[string]*pflag.Fla
 		flags[prop] = f
 		p := mcpParam{property: prop, flag: f.Name, kind: kind, required: required[f.Name], schema: schema}
 		if kind == "string" && strings.HasSuffix(prop, "_id") {
-			p.pattern, p.form = mcpIDFlagPattern(prop, s.Kind)
+			p.pattern, p.form = mcpIDFlagPattern(prop, s)
 		}
 		params = append(params, p)
 	})

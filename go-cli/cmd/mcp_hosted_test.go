@@ -93,7 +93,6 @@ func apiArea(path string) string {
 // mcpLocalOnlyByDecision: NotHosted tools whose areas a hosted key reaches,
 // kept local by a decision rather than by the areas, with why.
 var mcpLocalOnlyByDecision = map[string]string{
-	"ad_connection_list":  "marked local only by the ad connections change (1.9.80); hosting it is that owner's call",
 	"ad_connection_check": "writes the connection's status from a call to OpenAI and cannot be proposed; local only (1.9.80)",
 }
 

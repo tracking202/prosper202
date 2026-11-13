@@ -34,6 +34,18 @@ func adCampaignFailure(err error, connectionID, notFound string) error {
 		statusHint{http.StatusUnprocessableEntity, "api_key", replace})
 }
 
+// adCampaignWriteFailure is adCampaignFailure for a write, which may have
+// landed when the answer was lost (503) or did not show it (502): read the
+// object before sending it again. OpenAI refusing it (409) is its decision,
+// which sending it again does not change.
+func adCampaignWriteFailure(err error, connectionID, objectID string) error {
+	get := "`p202 ad-campaign get " + connectionID + " " + objectID + "` shows what stands at OpenAI now"
+	return withStatusHint(adCampaignFailure(err, connectionID, adCampaignListHint),
+		statusHint{http.StatusServiceUnavailable, "", "It may have been applied: " + get + "; send it again only if it was not."},
+		statusHint{http.StatusBadGateway, "", "Not confirmed, and it may have been applied: " + get + " before sending it again."},
+		statusHint{http.StatusConflict, "", "OpenAI refused it; " + get + ". Sending it again unchanged gets the same answer."})
+}
+
 var adCampaignCmd = &cobra.Command{
 	Use:   "ad-campaign",
 	Short: "ChatGPT Ads campaigns, ad groups and ads: list with status and serving issues, pause, activate, set the tracking template, spend",
@@ -76,7 +88,8 @@ func adCampaignWrite(cmd *cobra.Command, name, path string, body map[string]inte
 	}
 	data, err := c.PostUpdate(path, params, body)
 	if err != nil {
-		return adCampaignFailure(err, strings.SplitN(strings.TrimPrefix(path, "ad-connections/"), "/", 2)[0], adCampaignListHint)
+		parts := strings.Split(path, "/")
+		return adCampaignWriteFailure(err, parts[1], parts[3])
 	}
 	render(data)
 	return nil

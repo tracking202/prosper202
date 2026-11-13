@@ -97,7 +97,8 @@ final class SpendWithoutConversionsDetector implements AlertDetector
                 $first['campaign_id']
             ),
             [
-                'chatgpt_connection_id' => $first['connection_id'],
+                // Each campaign with the connection that reaches it: two connections can share a Prosper202 campaign.
+                'chatgpt_campaigns' => implode(',', array_map(static fn (array $f): string => $f['connection_id'] . ':' . $f['campaign_id'], $found)),
                 'chatgpt_campaign_ids' => implode(',', array_column($found, 'campaign_id')),
             ],
         ];

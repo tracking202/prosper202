@@ -24,7 +24,15 @@ use Prosper202\AdPlatforms\AdPlatformUnavailable;
  * OpenAI not reached, its rate limit and an answer that is not what its API
  * documents throw AdPlatformUnavailable: nothing the caller sent is wrong. A
  * refused key is an AdConnectionInputException naming api_key; an object the
- * ad account does not have, one naming id with $platform NOT_FOUND.
+ * ad account does not have, one naming id with $platform NOT_FOUND; OpenAI
+ * refusing the request itself (a 400 or 409), $platform REFUSED.
+ *
+ * A write is done only when OpenAI's answer, or a read of the object after
+ * it, shows the change on the object asked for. A write whose answer could be
+ * a landed write (no answer, a 5xx, a 2xx that does not show the change) is
+ * never answered as failed-try-again: the object is read back, and when that
+ * does not settle it the answer is UNCONFIRMED, saying it may have been
+ * applied (CLAUDE.md #13).
  *
  * Not here (spec 7 G): creating campaigns, ads or creatives, budgets and
  * bids, audiences, feeds, bulk jobs.
@@ -106,14 +114,32 @@ final class OpenAiAdsCampaigns
         }
         $objectId = self::objectId($objectId, 'id');
         $to = $action === 'pause' ? 'paused' : 'active';
-        if ($dryRun) {
-            $current = self::shape($level, $this->read($key, $level, $objectId));
-
-            return self::preview($action, $level, $current, ['status' => ['from' => $current['status'], 'to' => $to]]);
+        // Read first: the preview, what was there before, and what cannot be changed.
+        $current = self::shape($level, $this->read($key, $level, $objectId));
+        if ($current['status'] === 'archived') {
+            throw new AdConnectionInputException('id', $objectId . ' is archived at OpenAI: an archived object is neither paused nor activated, and nothing was sent.');
         }
-        $done = $this->called($this->api->post($key, self::path($level) . '/' . $objectId . '/' . $action, []), $action . ' ' . $objectId);
+        $ended = $level === 'campaigns' && is_int($current['end_time'] ?? null) && $current['end_time'] <= time();
+        if ($action === 'activate' && $ended) {
+            throw new AdConnectionInputException('id', $objectId . '\'s end time has passed at OpenAI, so it would not serve: change its schedule in ChatGPT Ads Manager first. Nothing was sent.');
+        }
+        $change = ['status' => ['from' => $current['status'], 'to' => $to]];
+        if ($dryRun) {
+            return self::preview($action, $level, $current, $change) + ($current['status'] === $to ? ['unchanged' => true] : []);
+        }
+        if ($current['status'] === $to) {
+            return ['dry_run' => false, 'unchanged' => true, 'action' => $action, 'level' => $level, 'record' => $current, 'previous' => ['status' => $current['status']]];
+        }
+        $done = $this->written(
+            $this->api->post($key, self::path($level) . '/' . $objectId . '/' . $action, []),
+            $key,
+            $level,
+            $objectId,
+            $action . ' ' . $objectId,
+            static fn (array $record): bool => $record['status'] === $to
+        );
 
-        return ['action' => $action, 'level' => $level, 'record' => self::shape($level, $done)];
+        return ['action' => $action, 'level' => $level, 'record' => $done, 'previous' => ['status' => $current['status']]];
     }
 
     /**
@@ -130,17 +156,25 @@ final class OpenAiAdsCampaigns
             return null;
         }
         $objectId = self::objectId($objectId, 'id');
+        $current = self::shape($level, $this->read($key, $level, $objectId));
+        $previous = ['query_string_template' => $current['query_string_template']];
         if ($dryRun) {
-            $current = self::shape($level, $this->read($key, $level, $objectId));
-
-            return self::preview('set-template', $level, $current, ['query_string_template' => ['from' => $current['query_string_template'], 'to' => $template]]);
+            return self::preview('set-template', $level, $current, ['query_string_template' => ['from' => $current['query_string_template'], 'to' => $template]])
+                + ['previous' => $previous] + ($current['query_string_template'] === $template ? ['unchanged' => true] : []);
         }
-        $done = $this->called(
+        if ($current['query_string_template'] === $template) {
+            return ['dry_run' => false, 'unchanged' => true, 'action' => 'set-template', 'level' => $level, 'record' => $current, 'previous' => $previous];
+        }
+        $done = $this->written(
             $this->api->post($key, self::path($level) . '/' . $objectId, ['landing_page_configuration' => ['query_string_template' => $template]]),
-            'set the tracking template of ' . $objectId
+            $key,
+            $level,
+            $objectId,
+            'set the tracking template of ' . $objectId,
+            static fn (array $record): bool => $record['query_string_template'] === $template
         );
 
-        return ['action' => 'set-template', 'level' => $level, 'record' => self::shape($level, $done)];
+        return ['action' => 'set-template', 'level' => $level, 'record' => $done, 'previous' => $previous];
     }
 
     /**
@@ -173,18 +207,41 @@ final class OpenAiAdsCampaigns
         }
         $current = self::shape('campaigns', $this->read($key, 'campaigns', $campaignId));
         $had = $current['conversion_event_setting_ids'];
+        // OpenAI replaces the list: only a list it answered means what the campaign has. A missing or unreadable
+        // one is not "none", or the write would remove the campaign's own (CLAUDE.md #4).
+        if (!is_array($had)) {
+            throw new AdPlatformUnavailable(AdPlatformUnavailable::UNREADABLE, 'OpenAI\'s answer for ' . $campaignId . ' has no readable list of its conversion event settings, so they cannot be added to: nothing was sent.');
+        }
         $merged = array_values(array_unique([...$had, ...$ids]));
         $change = ['conversion_event_setting_ids' => ['from' => $had, 'to' => $merged]];
         if ($dryRun || $merged === $had) {
             return array_replace(self::preview('attach-event-settings', 'campaigns', $current, $change), $dryRun ? [] : ['dry_run' => false, 'unchanged' => true]);
         }
-        $done = $this->called($this->api->post($key, 'campaigns/' . $campaignId, ['conversion_event_setting_ids' => $merged]), 'attach event settings to ' . $campaignId);
+        $sorted = $merged;
+        sort($sorted);
+        $done = $this->written(
+            $this->api->post($key, 'campaigns/' . $campaignId, ['conversion_event_setting_ids' => $merged]),
+            $key,
+            'campaigns',
+            $campaignId,
+            'attach event settings to ' . $campaignId,
+            static function (array $record) use ($sorted): bool {
+                $now = $record['conversion_event_setting_ids'];
+                if (!is_array($now)) {
+                    return false;
+                }
+                sort($now);
 
-        return ['action' => 'attach-event-settings', 'level' => 'campaigns', 'record' => self::shape('campaigns', $done)];
+                return $now === $sorted;
+            }
+        );
+
+        return ['action' => 'attach-event-settings', 'level' => 'campaigns', 'record' => $done, 'previous' => ['conversion_event_setting_ids' => $had]];
     }
 
     /**
-     * Spend, impressions and clicks by campaign over whole days in the ad account's own time zone ($since to $until,
+     * Spend (major units of the ad account's currency, as OpenAI's Reporting reference says of spend, CPC and CPM;
+     * budgets, unlike it, are micros), impressions and clicks by campaign over whole days in the ad account's own time zone ($since to $until,
      * both included; yesterday when both are null), as OpenAI reports them now. Null when the account has no such
      * connection.
      *
@@ -208,6 +265,7 @@ final class OpenAiAdsCampaigns
         $range = json_encode(['type' => 'date_range', 'since' => $since, 'until' => $until], JSON_THROW_ON_ERROR);
         $campaigns = [];
         $after = null;
+        $cursors = [];
         for ($page = 0; $page < self::SPEND_MAX_PAGES; $page++) {
             $answer = $this->called($this->api->get($key, 'ad_account/insights', [
                 'time_granularity' => 'none',
@@ -221,22 +279,18 @@ final class OpenAiAdsCampaigns
                 throw new AdPlatformUnavailable(AdPlatformUnavailable::UNREADABLE, 'OpenAI\'s spend answer has no list of campaigns.');
             }
             foreach ($rows as $row) {
-                if (!is_array($row) || !is_string($row['campaign_id'] ?? null)) {
-                    continue;
-                }
-                $campaigns[] = [
-                    'campaign_id' => $row['campaign_id'],
-                    'name' => is_string($row['campaign_name'] ?? null) ? $row['campaign_name'] : '',
-                    'impressions' => is_int($row['impressions'] ?? null) ? $row['impressions'] : 0,
-                    'clicks' => is_int($row['clicks'] ?? null) ? $row['clicks'] : 0,
-                    'spend' => is_int($row['spend'] ?? null) || is_float($row['spend'] ?? null) ? $row['spend'] : 0,
-                ];
+                $campaigns[] = self::spendRow($row, $campaigns);
             }
-            $last = $answer['last_id'] ?? null;
-            if (($answer['has_more'] ?? false) !== true || !is_string($last) || $last === '' || $last === $after) {
+            if (($answer['has_more'] ?? false) !== true) {
                 $after = null;
                 break;
             }
+            // A next page needs a cursor that moves on: one seen before would read a page twice and count it twice.
+            $last = $answer['last_id'] ?? null;
+            if (!is_string($last) || $last === '' || isset($cursors[$last])) {
+                throw new AdPlatformUnavailable(AdPlatformUnavailable::UNREADABLE, 'OpenAI\'s spend answer says more follow but gives no new cursor, so the rest cannot be read without counting a page twice.');
+            }
+            $cursors[$last] = true;
             $after = $last;
         }
         if ($after !== null) {
@@ -256,7 +310,7 @@ final class OpenAiAdsCampaigns
                 'spend' => round((float) array_sum(array_column($campaigns, 'spend')), 6),
             ],
             'campaigns' => $campaigns,
-            'note' => 'As OpenAI reports it now: spend settles later than clicks, so the last days can still change.',
+            'note' => 'As OpenAI reports it now, in the ad account\'s currency: spend settles later than clicks, so the last days can still change.',
         ];
     }
 
@@ -357,7 +411,8 @@ final class OpenAiAdsCampaigns
                 'bidding_type' => $string('bidding_type'),
                 'start_time' => is_int($row['start_time'] ?? null) ? $row['start_time'] : null,
                 'end_time' => is_int($row['end_time'] ?? null) ? $row['end_time'] : null,
-                'conversion_event_setting_ids' => array_values(array_filter((array) ($row['conversion_event_setting_ids'] ?? []), 'is_string')),
+                // null when OpenAI's answer has no list of ids: not the same as none (attachEventSettings).
+                'conversion_event_setting_ids' => self::idList($row['conversion_event_setting_ids'] ?? null),
             ];
         }
         if ($level === 'ads') {
@@ -417,10 +472,98 @@ final class OpenAiAdsCampaigns
         [$field, $why] = match ($answer->kind) {
             AdvertiserAnswer::KEY_REFUSED => ['api_key', ' OpenAI refused the stored Advertiser API key: replace it with p202 ad-connection update --api-key-file.'],
             AdvertiserAnswer::NOT_FOUND => ['id', ' This ad account has no such object; list them first.'],
+            AdvertiserAnswer::REFUSED => ['connection', ' That is OpenAI refusing it, not a field to change here: sending it again unchanged will not change the answer.'],
             default => ['connection', ''],
         };
 
         throw new AdConnectionInputException($field, $said . $why, $answer->kind);
+    }
+
+    /** @return list<string>|null */
+    private static function idList(mixed $ids): ?array
+    {
+        if (!is_array($ids) || !array_is_list($ids)) {
+            return null;
+        }
+        foreach ($ids as $id) {
+            if (!is_string($id)) {
+                return null;
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * One campaign's row of a spend answer, read strictly: a missing campaign id or a figure that is not a number
+     * (null is OpenAI's "no figure", not zero) refuses the answer rather than counting it as 0 (CLAUDE.md #4).
+     *
+     * @param list<array<string, mixed>> $read the rows read before it
+     * @return array{campaign_id: string, name: string, impressions: int, clicks: int, spend: int|float}
+     */
+    private static function spendRow(mixed $row, array $read): array
+    {
+        $id = is_array($row) ? ($row['campaign_id'] ?? null) : null;
+        if (!is_string($id) || $id === '') {
+            throw new AdPlatformUnavailable(AdPlatformUnavailable::UNREADABLE, 'OpenAI\'s spend answer has a row that names no campaign.');
+        }
+        if (in_array($id, array_column($read, 'campaign_id'), true)) {
+            throw new AdPlatformUnavailable(AdPlatformUnavailable::UNREADABLE, 'OpenAI\'s spend answer names campaign ' . $id . ' twice.');
+        }
+        foreach (['impressions', 'clicks', 'spend'] as $field) {
+            $value = $row[$field] ?? null;
+            if (!is_int($value) && !($field === 'spend' && is_float($value))) {
+                throw new AdPlatformUnavailable(AdPlatformUnavailable::UNREADABLE, 'OpenAI\'s spend answer gives campaign ' . $id . '\'s ' . $field . ' as ' . get_debug_type($value) . ', not a number, so the total cannot be told.');
+            }
+        }
+
+        return [
+            'campaign_id' => $id,
+            'name' => is_string($row['campaign_name'] ?? null) ? $row['campaign_name'] : '',
+            'impressions' => $row['impressions'],
+            'clicks' => $row['clicks'],
+            'spend' => $row['spend'],
+        ];
+    }
+
+    /**
+     * What a write did: the object as OpenAI shows it once $applied says the change is on it. An answer that could
+     * be a landed write (no answer, a 5xx, a 2xx that does not show the change) is never answered "try again": the
+     * object is read back, and when that does not show the change the write is UNCONFIRMED (CLAUDE.md #13).
+     *
+     * @param callable(array<string, mixed>): bool $applied
+     * @return array<string, mixed>
+     */
+    private function written(AdvertiserAnswer $answer, #[\SensitiveParameter] string $key, string $level, string $objectId, string $what, callable $applied): array
+    {
+        $check = 'Read it (p202 ad-campaign get, or the campaigns page) before sending it again.';
+        if ($answer->isOk()) {
+            $record = self::shape($level, $answer->json);
+            if ($record['id'] === $objectId && $applied($record)) {
+                return $record;
+            }
+        } elseif ($answer->kind !== AdvertiserAnswer::UNAVAILABLE || str_starts_with((string) $answer->error, 'not sent')) {
+            // Refused, not found, the key, the rate limit, or never sent: nothing was applied.
+            $this->called($answer, $what);
+        } elseif ($answer->status < 200 || $answer->status >= 300) {
+            throw new AdPlatformUnavailable(AdPlatformUnavailable::UNREACHABLE, 'Could not ' . $what . ': ' . $answer->error . '. It may have been applied all the same. ' . $check);
+        }
+        try {
+            $now = self::shape($level, $this->read($key, $level, $objectId));
+        } catch (AdPlatformUnavailable | AdConnectionInputException $e) {
+            throw new AdPlatformUnavailable(AdPlatformUnavailable::UNCONFIRMED, 'OpenAI took the request to ' . $what . ', but its answer does not show the change, and reading '
+                . $objectId . ' back failed (' . $e->getMessage() . '): it may have been applied. ' . $check);
+        }
+        if ($now['id'] === $objectId && $applied($now)) {
+            return $now;
+        }
+
+        throw new AdPlatformUnavailable(
+            AdPlatformUnavailable::UNCONFIRMED,
+            'OpenAI answered the request to ' . $what . ', but ' . $objectId . ' does not show it at OpenAI now (status '
+                . ($now['status'] ?? 'unknown') . ', tracking template ' . ($now['query_string_template'] ?? 'not set') . '): it is not done. ' . $check,
+            ['record' => $now]
+        );
     }
 
     private static function cursor(string $after): string

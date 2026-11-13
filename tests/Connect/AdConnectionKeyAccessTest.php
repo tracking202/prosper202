@@ -11,7 +11,7 @@ use Api\V3\Support\AiConnect;
 use Tests\TestCase;
 
 /**
- * An AI connection's key reaches ChatGPT Ads connections (reads, a check)
+ * An AI connection's key reaches ChatGPT Ads connections (reads; a check with write)
  * and their campaigns (pause, activate, template, event settings), never
  * the connection's key: connecting, replacing or deleting it, and setup need
  * full access or global write.

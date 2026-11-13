@@ -282,15 +282,15 @@ final class MysqlAlertStore
      */
     public static function actionsOf(Alert $alert): array
     {
-        $connection = $alert->facts['chatgpt_connection_id'] ?? null;
-        $campaigns = $alert->facts['chatgpt_campaign_ids'] ?? null;
-        if (!is_int($connection) || !is_string($campaigns) || $campaigns === '') {
+        // "connection:campaign" pairs: neither part can hold ':' or ',' (digits; an OpenAI id), so a pair reads one way.
+        $pairs = $alert->facts['chatgpt_campaigns'] ?? null;
+        if (!is_string($pairs) || $pairs === '') {
             return [];
         }
         $actions = [];
-        foreach (explode(',', $campaigns) as $campaign) {
-            if (preg_match('/\A[a-z]+_[A-Za-z0-9-]{1,64}\z/D', $campaign) === 1) {
-                $actions[] = ['action' => 'chatgpt_pause', 'connection_id' => $connection, 'campaign_id' => $campaign];
+        foreach (explode(',', $pairs) as $pair) {
+            if (preg_match('/\A([1-9][0-9]{0,9}):([a-z]+_[A-Za-z0-9-]{1,64})\z/D', $pair, $m) === 1) {
+                $actions[] = ['action' => 'chatgpt_pause', 'connection_id' => (int) $m[1], 'campaign_id' => $m[2]];
             }
         }
 

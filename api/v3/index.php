@@ -872,8 +872,9 @@ try {
         // ── Ad connections: ad platform accounts reached through their API ─
         // Setup's, like the destinations they set up. Not stageable: a body
         // carries a key, and a check or setup is a call to the platform.
-        // Reading them, and a check (a read of the ad account), need only the
-        // area's scope, which an AI connection's key can hold. What handles
+        // Reading them needs the area's read scope and a check (it records
+        // OpenAI's answer on the connection) its write scope, both of which an
+        // AI connection's key can hold. What handles
         // the key itself -- connecting, replacing it, deleting the
         // connection, and setup, which makes resources with it -- needs a
         // key with full access or global write (AdConnectionKeyAccess): an
@@ -1910,12 +1911,6 @@ try {
             // override, as /apps/verify is.
             $scopeAction = 'read';
         }
-        if ($method === 'POST' && preg_match('#^/ad-connections/[^/]+/check$#', $path) === 1) {
-            // A check reads the ad account from OpenAI again and keeps what
-            // it said (name, currency, zone, status): no setup changes, so a
-            // key that may read connections may ask, as Check my page.
-            $scopeAction = 'read';
-        }
         if ($method === 'POST' && preg_match('#^/staged-changes/[^/]+/discard$#', $path) === 1) {
             // Gated on the change's own area, like apply below. Demanding
             // `staged-changes:stage` here locked the documented granular
@@ -1982,6 +1977,23 @@ try {
                     // that cannot name its target is rejected up front.
                     $stagePreview = null;
                 }
+            }
+        }
+        if ($method === 'POST' && preg_match('#^/ad-connections/([1-9][0-9]{0,9})/(campaigns|ad-groups|ads)/([^/]+)/(pause|activate|template|event-settings)$#', $path, $m) === 1) {
+            // A ChatGPT Ads proposal carries what the person approving it needs: the object as OpenAI has it now
+            // and what would change, read as the dry run reads it. The preview is a read of the area; without
+            // it, or when OpenAI cannot be asked, the proposal is recorded without one.
+            try {
+                $auth->requireScope('ad-connections:read');
+                $campaigns = new \Api\V3\Controllers\AdCampaignsController($db, $userId);
+                $previewed = match ($m[4]) {
+                    'pause', 'activate' => $campaigns->setStatus((int) $m[1], $m[2], $m[3], $m[4], $payload, true),
+                    'template' => $campaigns->setTemplate((int) $m[1], $m[2], $m[3], $payload, true),
+                    default => $campaigns->attachEventSettings((int) $m[1], $m[3], $payload, true),
+                };
+                $stagePreview = $previewed['data'] ?? null;
+            } catch (AuthException | \Api\V3\Exception\UpstreamUnavailableException | \Api\V3\Exception\TooManyRequestsException) {
+                $stagePreview = null;
             }
         }
         $response = ['_status' => 202] + $stagedChanges()->stage($method, $path, $payload, $stagePreview);

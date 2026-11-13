@@ -15,8 +15,9 @@ use Prosper202\AdPlatforms\OpenAiAds\TrackingTemplate;
  * @param list<array<string, mixed>>|null $campaigns null when they could not be read ($error says why)
  * @param array<string, mixed>|null $spend OpenAiAdsCampaigns::spend(), null when not read
  * @param array{campaign: string, groups: list<array{group: array<string, mixed>, ads: list<array<string, mixed>>}>}|null $detail
+ * @param bool $more OpenAI has more campaigns than $campaigns holds
  */
-function p202_ad_campaigns_view(array $connection, ?array $campaigns, ?string $error, ?array $spend, ?string $spendError, ?array $detail, ?string $detailError, string $self, string $token): string
+function p202_ad_campaigns_view(array $connection, ?array $campaigns, ?string $error, ?array $spend, ?string $spendError, ?array $detail, ?string $detailError, string $self, string $token, bool $more = false): string
 {
     $e = 'p202_setup_e';
     $id = (int) $connection['connection_id'];
@@ -39,10 +40,16 @@ function p202_ad_campaigns_view(array $connection, ?array $campaigns, ?string $e
     };
     $statusActions = static function (string $level, array $row) use ($form): string {
         $object = (string) $row['id'];
+        $status = (string) ($row['status'] ?? '');
+        if ($status === 'active') {
+            return $form('ad_campaign_pause', $level, $object, 'pause', 'Pause ' . $object . ' at OpenAI? It stops serving at once.');
+        }
+        // Only a paused object is offered activate: an archived one cannot be, an ended campaign would not serve.
+        if ($status !== 'paused' || (is_int($row['end_time'] ?? null) && $row['end_time'] <= time())) {
+            return '';
+        }
 
-        return ($row['status'] ?? '') === 'active'
-            ? $form('ad_campaign_pause', $level, $object, 'pause', 'Pause ' . $object . ' at OpenAI? It stops serving at once.')
-            : $form('ad_campaign_activate', $level, $object, 'activate', 'Activate ' . $object . ' at OpenAI? It can start spending at once.');
+        return $form('ad_campaign_activate', $level, $object, 'activate', 'Activate ' . $object . ' at OpenAI? It can start spending at once.');
     };
     $out = '<section class="p202-panel" id="ad-campaigns"><div class="p202-panel__head">'
         . '<h2 class="p202-panel__title">ChatGPT Ads campaigns · ' . $e($account['name'] ?? '') . '</h2>'
@@ -72,18 +79,21 @@ function p202_ad_campaigns_view(array $connection, ?array $campaigns, ?string $e
                 . '<td class="num">' . $e($money($c['budget']['daily_spend_limit_micros'] ?? null)) . '</td>'
                 . '<td class="num">' . $e(isset($spentBy[$cid]) ? $currency . ' ' . number_format((float) $spentBy[$cid]['spend'], 2) : '—') . '</td>'
                 . '<td>' . $e($template === null ? 'not set' : ($template === $default ? 'the Get Links one' : 'its own')) . '</td>'
-                . '<td>' . count($c['conversion_event_setting_ids']) . '</td>'
+                . '<td>' . (is_array($c['conversion_event_setting_ids']) ? count($c['conversion_event_setting_ids']) : 'not read') . '</td>'
                 . '<td class="text-nowrap">' . $statusActions('campaigns', $c)
-                . ($template === $default ? '' : ' ' . $form('ad_campaign_template', 'campaigns', $cid, 'push template', 'Change ' . $cid . '\'s tracking template to the Get Links one? OpenAI appends it to every ad\'s URL.'))
+                . ($template === $default ? '' : ' ' . $form('ad_campaign_template', 'campaigns', $cid, 'push template', 'Change ' . $cid . '\'s tracking template to the Get Links one? '
+                    . ($template === null ? 'It has none now.' : 'It replaces ' . $template . '.') . ' OpenAI appends it to every ad\'s URL.'))
                 . ' ' . $form('ad_campaign_events', 'campaigns', $cid, 'attach event settings') . '</td></tr>';
         }
         $out .= '</tbody></table></div>'
+            . ($more ? p202_flash('info', 'These are the first ' . count($campaigns) . ' campaigns; OpenAI has more. p202 ad-campaign list ' . $id . ' --after <the last id> reads the rest.') : '')
             . '<div class="form-text">The Get Links template is <code>' . $e($default) . '</code>; for a tracker on a landing page, Get Links adds its t202id. Event settings attached are the ones setup made, added to the campaign\'s own. The same from a script: <code>p202 ad-campaign</code>.</div>';
     }
     if ($detailError !== null) {
         $out .= p202_flash('bad', 'Its ad groups and ads were not read: ' . $detailError);
     } elseif ($detail !== null) {
-        $out .= '<h3 class="p202-panel__title mt-4">' . $e($detail['campaign']) . ': ad groups and ads</h3>';
+        $out .= '<h3 class="p202-panel__title mt-4">' . $e($detail['campaign']) . ': ad groups and ads</h3>'
+            . '<div class="form-text">At most the first 20 ad groups and 50 ads of each are shown; p202 ad-campaign list --level ad-groups or ads reads them all.</div>';
         if ($detail['groups'] === []) {
             $out .= '<div class="form-text">This campaign has no ad groups.</div>';
         }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\AdPlatforms;
 
 use Api\V3\Controllers\AdCampaignsController;
+use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\TooManyRequestsException;
 use Api\V3\Exception\UpstreamUnavailableException;
 use Api\V3\Exception\ValidationException;
@@ -12,6 +13,7 @@ use Api\V3\HttpException;
 use PHPUnit\Framework\TestCase;
 use Prosper202\AdPlatforms\AdConnectionInputException;
 use Prosper202\AdPlatforms\AdConnectionStore;
+use Prosper202\AdPlatforms\AdPlatformUnavailable;
 use Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi;
 use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsCampaigns;
 use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsConnections;
@@ -41,8 +43,10 @@ final class AdCampaignsIntegrationTest extends TestCase
 
     /** @var list<array{method: string, url: string, route: string, body: mixed}> */
     private array $requests = [];
-    /** @var array<string, array<string, mixed>> answers by "METHOD path" */
+    /** @var array<string, array<string, mixed>|callable(): array<string, mixed>> answers by "METHOD path", before the model */
     private array $routes = [];
+    /** @var array<string, mixed> cmpn_101 as the stand-in holds it: a write changes it, a read answers it */
+    private array $campaign = [];
 
     protected function setUp(): void
     {
@@ -51,13 +55,11 @@ final class AdCampaignsIntegrationTest extends TestCase
         self::fixture('DELETE FROM 202_users_pref WHERE user_id IN (1, 2)');
         self::fixture("INSERT INTO 202_users_pref SET user_id=1, user_account_currency='USD'");
         $this->requests = [];
-        $campaign = self::answer('campaign.json');
+        $this->campaign = (array) json_decode(self::answer('campaign.json'), true);
+        $this->campaign['end_time'] = null;
         $this->routes = [
             'GET ad_account' => ['body' => self::answer('ad_account.json')],
             'GET campaigns' => ['body' => self::answer('campaigns_list.json')],
-            'GET campaigns/cmpn_101' => ['body' => $campaign],
-            'POST campaigns/cmpn_101/pause' => ['body' => str_replace('"status": "active"', '"status": "paused"', $campaign)],
-            'POST campaigns/cmpn_101' => ['body' => $campaign],
             'GET ads/ad_301' => ['body' => self::answer('ad.json')],
             'GET ad_account/insights' => ['body' => self::answer('insights_campaigns.json')],
         ];
@@ -76,12 +78,33 @@ final class AdCampaignsIntegrationTest extends TestCase
             $method = isset($options[CURLOPT_POSTFIELDS]) && !($options[CURLOPT_HTTPGET] ?? false) ? 'POST' : 'GET';
             $route = $method . ' ' . ltrim((string) parse_url(substr($url, strlen(AdvertiserApi::BASE) - 1), PHP_URL_PATH), '/');
             $this->requests[] = ['method' => $method, 'url' => $url, 'route' => $route, 'body' => $method === 'POST' ? json_decode((string) $options[CURLOPT_POSTFIELDS], true) : null];
-            $answer = $this->routes[$route] ?? ['status' => 404, 'body' => '{"error":{"message":"Not found"}}'];
+            $answer = $this->routes[$route] ?? $this->model($route, $this->requests[array_key_last($this->requests)]['body']);
+            if (is_callable($answer)) {
+                $answer = $answer();
+            }
 
             return $answer + ['status' => 200, 'error' => null, 'primary_ip' => '203.0.113.20', 'location' => null, 'body' => '{}'];
         };
 
         return new AdvertiserApi(new WebhookSender($guard, $transport));
+    }
+
+    /**
+     * cmpn_101 as OpenAI keeps it: pause and activate set its status, an update takes the fields sent.
+     *
+     * @return array<string, mixed>
+     */
+    private function model(string $route, mixed $body): array
+    {
+        if ($route === 'POST campaigns/cmpn_101/pause' || $route === 'POST campaigns/cmpn_101/activate') {
+            $this->campaign['status'] = str_ends_with($route, 'pause') ? 'paused' : 'active';
+        } elseif ($route === 'POST campaigns/cmpn_101' && is_array($body)) {
+            $this->campaign = array_replace($this->campaign, $body);
+        } elseif ($route !== 'GET campaigns/cmpn_101') {
+            return ['status' => 404, 'body' => '{"error":{"message":"Not found"}}'];
+        }
+
+        return ['body' => (string) json_encode($this->campaign)];
     }
 
     private function campaigns(): OpenAiAdsCampaigns
@@ -184,7 +207,7 @@ final class AdCampaignsIntegrationTest extends TestCase
         }
         (new AdConnectionStore(new Connection(self::$db)))->mergeSetup(1, $id, ['event_settings' => ['lead_created' => ['id' => 'ces_300', 'name' => 'Leads', 'how' => 'created']]], 2);
         $this->campaigns()->attachEventSettings(1, $id, 'cmpn_101', [], false);
-        self::assertSame(['conversion_event_setting_ids' => ['ces_100', 'ces_300']], $this->writes()[1]['body'], 'the ones setup made');
+        self::assertSame(['conversion_event_setting_ids' => ['ces_100', 'ces_200', 'ces_300']], $this->writes()[1]['body'], 'the ones setup made, besides what it has');
     }
 
     public function testIdsThatAreNotOpenAisNeverReachARequestPath(): void
@@ -215,7 +238,7 @@ final class AdCampaignsIntegrationTest extends TestCase
             'pause preview' => fn () => $controller->setStatus($id, 'campaigns', 'cmpn_101', 'pause', [], true),
             'events' => fn () => $controller->attachEventSettings($id, 'cmpn_101', ['event_setting_ids' => ['ces_200']], false),
         ];
-        foreach ([[404, 404, null], [401, 422, null], [429, 429, 60], [503, 503, 60], [500, 503, 60]] as [$openai, $want, $retry]) {
+        foreach ([[404, 404, null], [401, 422, null], [400, 409, null], [409, 409, null], [429, 429, 60], [503, 503, 60], [500, 503, 60]] as [$openai, $want, $retry]) {
             $this->routes['GET campaigns/cmpn_101'] = ['status' => $openai, 'body' => '{"error":{"message":"said ' . self::KEY . '"}}'];
             foreach ($calls as $what => $call) {
                 try {
@@ -226,6 +249,11 @@ final class AdCampaignsIntegrationTest extends TestCase
                     self::assertStringNotContainsString(self::KEY, $e->getMessage());
                     $after = $e instanceof TooManyRequestsException || $e instanceof UpstreamUnavailableException ? $e->retryAfter : null;
                     self::assertSame($retry, $after, $what . ' after OpenAI\'s ' . $openai . ': Retry-After');
+                    if ($want === 409) {
+                        self::assertInstanceOf(ConflictException::class, $e);
+                        self::assertSame(['upstream' => 'openai_ads', 'reason' => 'refused'], $e->getDetails(), $what);
+                        self::assertStringContainsString('sending it again unchanged will not change the answer', $e->getMessage(), $what);
+                    }
                     if ($want === 422) {
                         self::assertInstanceOf(ValidationException::class, $e);
                         self::assertSame(['api_key'], array_keys($e->getFieldErrors()), $what);
@@ -252,6 +280,190 @@ final class AdCampaignsIntegrationTest extends TestCase
                 self::assertSame([502, null], [$e->getHttpStatus(), $e->retryAfter], $route);
             }
         }
+    }
+
+    /** A write is done only when OpenAI shows it: an answer that does not show it is checked by reading the object. */
+    public function testAWriteIsDoneOnlyWhenOpenAiShowsItDone(): void
+    {
+        $id = $this->connect();
+        $cases = [
+            'an empty record' => '{}',
+            'a record of another object' => '{"id":"cmpn_999","status":"paused"}',
+            'the status it had' => '{"id":"cmpn_101","status":"active"}',
+        ];
+        foreach ($cases as $what => $body) {
+            $this->campaign['status'] = 'active';
+            // OpenAI answers that, and the campaign is still active when read back: not done.
+            $this->routes['POST campaigns/cmpn_101/pause'] = ['body' => $body];
+            try {
+                $this->campaigns()->setStatus(1, $id, 'campaigns', 'cmpn_101', 'pause', false);
+                self::fail($what . ' was answered as a pause');
+            } catch (AdPlatformUnavailable $e) {
+                self::assertSame(AdPlatformUnavailable::UNCONFIRMED, $e->reason, $what);
+                self::assertStringContainsString('cmpn_101 does not show it at OpenAI now (status active', $e->getMessage(), $what);
+                self::assertSame('active', $e->context['record']['status'] ?? null, $what);
+            }
+        }
+        // The same answer, with the campaign paused when read back: the read decides, and it is done.
+        $this->routes['POST campaigns/cmpn_101/pause'] = function (): array {
+            $this->campaign['status'] = 'paused';
+
+            return ['body' => '{}'];
+        };
+        $this->campaign['status'] = 'active';
+        $done = $this->campaigns()->setStatus(1, $id, 'campaigns', 'cmpn_101', 'pause', false);
+        self::assertSame(['paused', 'active'], [$done['record']['status'], $done['previous']['status']]);
+
+        // A template push answered without the template is not done either.
+        $this->routes['POST campaigns/cmpn_101'] = ['body' => '{"id":"cmpn_101"}'];
+        try {
+            $this->campaigns()->setTemplate(1, $id, 'campaigns', 'cmpn_101', 'a={ad_id}', false);
+            self::fail('a template push OpenAI did not show was answered as done');
+        } catch (AdPlatformUnavailable $e) {
+            self::assertSame(AdPlatformUnavailable::UNCONFIRMED, $e->reason);
+        }
+    }
+
+    /**
+     * A write whose answer could be a landed write is never answered "try again": a 2xx OpenAI's JSON is not is read
+     * back; when the read fails too it is UNCONFIRMED and says it may have been applied (CLAUDE.md #13).
+     */
+    public function testAnUnreadableAnswerToAWriteIsReadBackNotRetried(): void
+    {
+        $id = $this->connect();
+        $this->routes['POST campaigns/cmpn_101/pause'] = function (): array {
+            $this->campaign['status'] = 'paused';
+
+            return ['body' => 'ok'];
+        };
+        try {
+            self::assertSame('paused', $this->campaigns()->setStatus(1, $id, 'campaigns', 'cmpn_101', 'pause', false)['record']['status'], 'read back: done');
+        } catch (AdPlatformUnavailable $e) {
+            self::fail('a pause that landed, its answer not JSON, was answered ' . $e->reason . ' instead of read back');
+        }
+
+        $this->campaign['status'] = 'active';
+        $reads = 0;
+        $this->routes['GET campaigns/cmpn_101'] = function () use (&$reads): array {
+            // The read before the write answers; the read after it does not.
+            return ++$reads === 1 ? ['body' => (string) json_encode($this->campaign)] : ['status' => 503, 'body' => '{"error":{"message":"overloaded"}}'];
+        };
+        try {
+            $this->campaigns()->setStatus(1, $id, 'campaigns', 'cmpn_101', 'pause', false);
+            self::fail('an unconfirmed pause was answered');
+        } catch (AdPlatformUnavailable $e) {
+            self::assertSame(AdPlatformUnavailable::UNCONFIRMED, $e->reason, 'not "unreachable": never a 503 to retry');
+            self::assertStringContainsString('it may have been applied', $e->getMessage());
+            self::assertStringContainsString('before sending it again', $e->getMessage());
+        }
+
+        // No answer at all (OpenAI's 500) is a 503, and says the write may have been applied.
+        unset($this->routes['GET campaigns/cmpn_101']);
+        $this->campaign['status'] = 'active';
+        $this->routes['POST campaigns/cmpn_101/pause'] = ['status' => 500, 'body' => '{"error":{"message":"internal"}}'];
+        try {
+            $this->campaigns()->setStatus(1, $id, 'campaigns', 'cmpn_101', 'pause', false);
+            self::fail('a pause OpenAI failed was answered');
+        } catch (AdPlatformUnavailable $e) {
+            self::assertSame(AdPlatformUnavailable::UNREACHABLE, $e->reason);
+            self::assertStringContainsString('It may have been applied all the same', $e->getMessage());
+        }
+    }
+
+    /** An archived object is not paused or activated, an ended campaign not activated, and one already there is left. */
+    public function testAStatusChangeAsksWhatTheObjectIsFirst(): void
+    {
+        $id = $this->connect();
+        $this->campaign['status'] = 'paused';
+        $same = $this->campaigns()->setStatus(1, $id, 'campaigns', 'cmpn_101', 'pause', false);
+        self::assertSame([true, 'paused'], [$same['unchanged'], $same['record']['status']]);
+        self::assertSame([], $this->writes(), 'already paused: nothing sent');
+
+        $this->campaign['end_time'] = time() - 60;
+        foreach (['archived' => ['archived', 'pause'], 'ended' => ['paused', 'activate']] as $what => [$status, $action]) {
+            $this->campaign['status'] = $status;
+            try {
+                $this->campaigns()->setStatus(1, $id, 'campaigns', 'cmpn_101', $action, false);
+                self::fail($what . ': ' . $action . ' was sent');
+            } catch (AdConnectionInputException $e) {
+                self::assertSame('id', $e->field, $what);
+            }
+        }
+        self::assertSame([], $this->writes(), 'nothing sent');
+    }
+
+    /** A template push answers the template it replaced, in the preview and after. */
+    public function testATemplatePushSaysWhatItReplaced(): void
+    {
+        $id = $this->connect();
+        $preview = $this->campaigns()->setTemplate(1, $id, 'campaigns', 'cmpn_101', 'a={ad_id}', true);
+        self::assertSame('utm_source=openai&utm_campaign={campaign_id}', $preview['previous']['query_string_template']);
+        $done = $this->campaigns()->setTemplate(1, $id, 'campaigns', 'cmpn_101', 'a={ad_id}', false);
+        self::assertSame(['a={ad_id}', 'utm_source=openai&utm_campaign={campaign_id}'], [$done['record']['query_string_template'], $done['previous']['query_string_template']]);
+    }
+
+    /** OpenAI replaces the list: one it did not answer is not "none", or the write would remove the campaign's own. */
+    public function testEventSettingsAreNeverWrittenOverAListThatWasNotRead(): void
+    {
+        $id = $this->connect();
+        foreach (['missing' => null, 'null' => 'null', 'not a list' => '"ces_100"'] as $what => $value) {
+            unset($this->campaign['conversion_event_setting_ids']);
+            if ($value !== null) {
+                $this->campaign['conversion_event_setting_ids'] = json_decode($value);
+            }
+            try {
+                $this->campaigns()->attachEventSettings(1, $id, 'cmpn_101', ['ces_9'], false);
+                self::fail($what . ': the list was written over');
+            } catch (AdPlatformUnavailable $e) {
+                self::assertSame(AdPlatformUnavailable::UNREADABLE, $e->reason, $what);
+            }
+        }
+        self::assertSame([], $this->writes(), 'nothing sent');
+
+        $this->campaign['conversion_event_setting_ids'] = [];
+        $this->campaigns()->attachEventSettings(1, $id, 'cmpn_101', ['ces_9'], false);
+        self::assertSame([['conversion_event_setting_ids' => ['ces_9']]], array_column($this->writes(), 'body'), 'an answered [] is none');
+    }
+
+    /** A spend figure that is not a number, a row naming no campaign, or a cursor that does not move on is refused. */
+    public function testSpendIsNeverCountedFromWhatCannotBeRead(): void
+    {
+        $id = $this->connect();
+        $row = ['campaign_id' => 'cmpn_101', 'campaign_name' => 'Spring launch', 'impressions' => 1200, 'clicks' => 36, 'spend' => 18.42];
+        $page = static fn (array $rows, bool $more = false, string $last = 'y'): array => ['body' => (string) json_encode(['object' => 'list', 'data' => $rows, 'last_id' => $last, 'has_more' => $more])];
+        $bad = [
+            'spend as text' => [$page([['spend' => '18.42'] + $row])],
+            'spend null' => [$page([['spend' => null] + $row])],
+            'impressions as text' => [$page([['impressions' => '1200'] + $row])],
+            'no campaign_id' => [$page([array_diff_key($row, ['campaign_id' => 1])])],
+            'one campaign twice' => [$page([$row, $row])],
+            'a cursor that repeats' => 'repeat',
+            'more without a cursor' => [$page([$row], true, '')],
+        ];
+        foreach ($bad as $what => $pages) {
+            $n = 0;
+            $this->routes['GET ad_account/insights'] = function () use (&$pages, &$n, $page, $row): array {
+                if ($pages === 'repeat') {
+                    // A new campaign on every page, and the same cursor every time.
+                    return $page([['campaign_id' => 'cmpn_r' . ++$n] + $row], true, 'p1');
+                }
+
+                return count($pages) > 1 ? array_shift($pages) : $pages[0];
+            };
+            try {
+                $this->campaigns()->spend(1, $id, null, null, 1777172400);
+                self::fail($what . ' was counted');
+            } catch (\RuntimeException $e) {
+                self::assertInstanceOf(AdPlatformUnavailable::class, $e, $what . ': ' . $e->getMessage());
+                self::assertSame(AdPlatformUnavailable::UNREADABLE, $e->reason, $what);
+            }
+        }
+        $pages = [$page([$row], true, 'p1'), $page([['campaign_id' => 'cmpn_102', 'spend' => 3] + $row], false, 'p2')];
+        $this->routes['GET ad_account/insights'] = function () use (&$pages): array {
+            return array_shift($pages);
+        };
+        $spend = $this->campaigns()->spend(1, $id, null, null, 1777172400);
+        self::assertSame(21.42, $spend['total']['spend'], 'two pages, each counted once; spend in major units');
     }
 
     public function testSpendIsYesterdayInTheAccountsZoneByCampaign(): void

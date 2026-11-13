@@ -75,7 +75,8 @@ var mcpDeferredToolSpecs = []mcpToolSpec{
 		Omit:  []string{"real"},
 		Words: []string{"test destination", "test fire", "validate destination", "destinations"}},
 	// ChatGPT Ads connections (Setup › Destinations › ChatGPT Ads): an ad account reached with its Advertiser API key.
-	{Name: "ad_connection_list", Command: []string{"ad-connection", "list"}, Title: "ChatGPT Ads connections", Kind: mcpRead, NotHosted: true,
+	// Hosted too (the owner, 2026-11-12): the campaign tools need its connection_id. It never shows a key.
+	{Name: "ad_connection_list", Command: []string{"ad-connection", "list"}, Title: "ChatGPT Ads connections", Kind: mcpRead,
 		Note:  "Each ad account's id, name, currency, time zone, status and what setup made.",
 		Words: []string{"chatgpt ads connection", "openai ads account", "advertiser api key", "chatgpt ads"}},
 	{Name: "ad_connection_check", Command: []string{"ad-connection", "check"}, Title: "Check a ChatGPT Ads connection", Kind: mcpUpdate, NotHosted: true, NotStaged: true, OpenWorld: true, Refreshes: true,
@@ -84,7 +85,7 @@ var mcpDeferredToolSpecs = []mcpToolSpec{
 		Words: []string{"is my chatgpt ads key working", "check chatgpt ads connection", "chatgpt ads"}},
 	// ChatGPT Ads campaigns, live at OpenAI through an ad connection.
 	{Name: "ad_campaign_list", Command: []string{"ad-campaign", "list"}, Title: "ChatGPT Ads campaigns", Kind: mcpRead, OpenWorld: true,
-		Args: []mcpArg{idArg("connection_id", "Ad connection id (from ad_connection_list).", true)}, Omit: []string{"after"},
+		Args:  []mcpArg{idArg("connection_id", "Ad connection id (from ad_connection_list).", true)},
 		Note:  "Status, budget, serving issues and tracking template; level ad-groups or ads for the rest.",
 		Words: []string{"chatgpt ads campaigns", "openai ads campaign status", "why is my chatgpt ad not serving", "chatgpt ads"}},
 	{Name: "ad_campaign_pause", Command: []string{"ad-campaign", "pause"}, Title: "Pause a ChatGPT Ads campaign", Kind: mcpUpdate, OpenWorld: true,

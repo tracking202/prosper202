@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\UpstreamUnavailableException;
 use Api\V3\Exception\ValidationException;
@@ -26,7 +27,8 @@ use Prosper202\Database\Connection;
  * An object the ad account does not have is a 404; OpenAI not reached, its
  * rate limit and an answer that cannot be used are the ad connections'
  * upstream failures (503 or 429 with Retry-After, 502), never a 422; a
- * refused key is a 422 naming api_key.
+ * write OpenAI's answer does not show done is a 502 `unconfirmed`; OpenAI
+ * refusing the request itself is a 409; a refused key is a 422 naming api_key.
  */
 final class AdCampaignsController
 {
@@ -137,9 +139,12 @@ final class AdCampaignsController
         } catch (AdPlatformUnavailable $e) {
             throw UpstreamUnavailableException::forAdPlatform($e, OpenAiAdsConnections::PLATFORM);
         } catch (AdConnectionInputException $e) {
-            throw $e->platform === AdvertiserAnswer::NOT_FOUND
-                ? new NotFoundException($e->getMessage(), $e)
-                : new ValidationException($e->getMessage(), [$e->field => $e->getMessage()], $e);
+            throw match ($e->platform) {
+                AdvertiserAnswer::NOT_FOUND => new NotFoundException($e->getMessage(), $e),
+                // OpenAI's own refusal of the request (a 400 or 409): its decision, not a field of this request.
+                AdvertiserAnswer::REFUSED => new ConflictException($e->getMessage(), ['upstream' => OpenAiAdsConnections::PLATFORM, 'reason' => 'refused'], $e),
+                default => new ValidationException($e->getMessage(), [$e->field => $e->getMessage()], $e),
+            };
         }
     }
 

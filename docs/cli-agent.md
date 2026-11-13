@@ -1033,10 +1033,12 @@ p202 ad-campaign spend <conn> [--since YYYY-MM-DD --until YYYY-MM-DD]   # by cam
 
 Every write changes the campaign at OpenAI at once: run it with `--dry-run` first, which answers `change` (from, to)
 and sends nothing. With `--staged` a write is proposed for a person to apply. `attach-events` reads, merges and writes the campaign's list (OpenAI
-replaces it whole); `unchanged: true` means nothing was sent. A 404 is an id this ad account does not have; a 422
-naming `api_key` a key OpenAI refused (`ad-connection update --api-key-file`); OpenAI not reached is a
-503 and its rate limit a 429 (exit 4 or 7: wait `retry_after_seconds` and run it again; nothing was changed),
-and a 502 an answer that cannot be used. Spend is as OpenAI reports it now:
+replaces it whole); `unchanged: true` means nothing was sent, `previous` what a write replaced. A 404 is an id
+this ad account does not have; a 422 naming `api_key` a key OpenAI refused (`ad-connection update --api-key-file`),
+naming `id` an archived object (or activating an ended campaign); a 409 OpenAI refusing it (do not send it again
+unchanged); a 429 its rate limit (exit 7: wait `retry_after_seconds`, nothing was changed). A 503 (no answer) or a
+502 with `details.reason` `unconfirmed` on a write may have been applied: run `p202 ad-campaign get` before sending
+it again. Spend is in major units of the ad account's currency; an answer it cannot read is a 502, never a 0. Spend is as OpenAI reports it now:
 the last days can still change.
 
 ### Reports
@@ -1501,9 +1503,11 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
   (`notifications/tools/list_changed`) and answers each one's name, what it
   does and its input schema. A deferred tool called by name before that is
   loaded and run. Today they are `destination_list`, `destination_deliveries`
-  and `destination_test` (Setup › Destinations); `--read-only` and `--staged`
-  leave out `destination_test`. They are local only: the hosted server below
-  refuses them.
+  and `destination_test` (Setup › Destinations), `ad_connection_list` and
+  `ad_connection_check`, and `ad_campaign_list`, `ad_campaign_pause`,
+  `ad_campaign_activate` and `ad_campaign_spend`; `--read-only` and `--staged`
+  leave out `destination_test` and `ad_connection_check`. The destination
+  tools and the check are local only: the hosted server below refuses them.
 - `p202 mcp tools` prints the tool list as JSON (`--deferred`: the tools
   `get_more_tools` loads); `p202 mcp call <tool> --input '<json>'` runs one
   tool as the app would, deferred ones included, with the server's
