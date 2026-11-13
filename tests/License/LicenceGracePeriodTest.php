@@ -437,13 +437,12 @@ final class LicenceGracePeriodTest extends TestCase
     }
 
     /**
-     * The web sign-in keeps taking such an answer (unchanged), but records
-     * nothing from it: it shares the record the CLI gate reads, and a yes
-     * there would admit the CLI.
+     * The web sign-in records only a confirmed answer: it shares the record
+     * the CLI gate reads.
      *
      * @dataProvider unconfirmedValidAnswers
      */
-    public function testTheSignInTakesAnUnconfirmedValidAnswerButRecordsNothing(string $body): void
+    public function testTheSignInRecordsOnlyAConfirmedAnswer(string $body): void
     {
         $GLOBALS['db'] = $this->recordingDb($queries);
         $_SESSION['user_id'] = 3;

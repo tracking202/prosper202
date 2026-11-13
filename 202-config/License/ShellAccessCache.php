@@ -244,9 +244,8 @@ class ShellAccessCache
     /**
      * The answer as the licence service confirmed it, or null when it did
      * not: a refusal, or a valid key that came with a boolean 'paid' (free
-     * or paid). "Key valid" without a boolean 'paid' does not say the key is
-     * known (an older service, an edge fallback, or one that answers keys it
-     * has not checked), so it is no answer: never admitted, never recorded,
+     * or paid). An answer that does not say whether the key is paid is no
+     * answer: never admitted, never recorded,
      * and the grace period reads the last confirmed answer instead. Every
      * recorder (recordLicence()) and the CLI and AI-connect gate ask this.
      *
