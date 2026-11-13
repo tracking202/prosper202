@@ -52,6 +52,52 @@ final class Ga4Destination implements DestinationType
         return self::HOST;
     }
 
+    public function backfillDays(): int
+    {
+        return intdiv(self::MAX_AGE_SECONDS, 86400);
+    }
+
+    public function takesConsent(): bool
+    {
+        return true;
+    }
+
+    public function configured(array $settings): bool
+    {
+        return true;
+    }
+
+    public function hashEmail(?string $email): ?string
+    {
+        return PiiHash::email($email);
+    }
+
+    public function hashPhone(?string $phone): ?string
+    {
+        return PiiHash::phone($phone);
+    }
+
+    public function formSettings(array $post, array $settings): array
+    {
+        foreach (['measurement_id', 'event_name', 'client_id_source', 'user_id_source'] as $key) {
+            $settings[$key] = DestinationForm::text($post, $key);
+        }
+        $settings['params'] = [];
+        foreach (DestinationForm::pairs($post, 'param_name', 'param_field', 'settings.params', 'An event parameter needs a name.') as [$name, $field]) {
+            if (isset($settings['params'][$name])) {
+                throw new DestinationInputException('settings.params', 'Parameter "' . $name . '" is listed twice; keep one.');
+            }
+            $settings['params'][$name] = $field;
+        }
+
+        return $settings;
+    }
+
+    public function label(array $settings): string
+    {
+        return 'GA4 ' . (is_string($settings['measurement_id'] ?? null) ? $settings['measurement_id'] : '');
+    }
+
     public function validate(array $settings, ?array $credentials): array
     {
         $id = strtoupper(trim(self::text($settings, 'measurement_id', '', 'settings.')));

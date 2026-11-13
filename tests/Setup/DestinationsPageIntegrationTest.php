@@ -275,6 +275,51 @@ final class DestinationsPageIntegrationTest extends TestCase
         self::assertArrayNotHasKey('campaign_conversion_actions', self::store()->get(self::USER, $this->ads)['settings'], 'a cleared action removes the campaign\'s row');
     }
 
+    public function testAChatGptAdsDestinationIsAddedListedAndEditedOnThePage(): void
+    {
+        $key = 'oai-capi-Key_0123456789abcdef';
+        self::q('DELETE FROM 202_ppc_accounts WHERE ppc_account_id IN (990091, 990092)');
+        self::q("SET SESSION sql_mode=''");
+        self::q('INSERT INTO 202_ppc_accounts SET ppc_account_id = 990091, user_id = ' . self::USER . ", ppc_network_id = 0, ppc_account_name = 'ChatGPT', ppc_account_deleted = 0");
+        self::q('INSERT INTO 202_ppc_accounts SET ppc_account_id = 990092, user_id = ' . self::OTHER . ", ppc_network_id = 0, ppc_account_name = 'Theirs', ppc_account_deleted = 0");
+        self::q(self::$strict);
+        try {
+            $html = self::page();
+            self::assertStringContainsString('Add ChatGPT Ads', $html);
+            self::assertStringContainsString('<option value="990091">ChatGPT</option>', $html, 'the account\'s own traffic sources are offered');
+            self::assertStringNotContainsString('Theirs', $html);
+
+            $add = ['action' => 'create_openai_ads', 'oai_name' => 'ChatGPT Ads', 'oai_pixel_id' => 'px_4821', 'oai_conversions_api_key' => $key,
+                'oai_event_type' => 'order_created', 'oai_custom_event_name' => '', 'oai_scope' => 'oppref', 'oai_ppc_account_id' => ''];
+            self::page([], ['oai_ppc_account_id' => '990092', 'oai_scope' => 'source'] + $add);
+            self::assertSame(2, count(self::store()->list(self::USER)), 'another account\'s traffic source is refused, nothing made');
+
+            self::page([], $add);
+            $made = array_values(array_filter(self::store()->list(self::USER), static fn (array $d): bool => $d['type'] === 'openai_ads'));
+            self::assertCount(1, $made);
+            $id = (int) $made[0]['destination_id'];
+            self::assertSame(['pixel_id' => 'px_4821', 'event_type' => 'order_created', 'scope' => 'oppref', 'event_types' => [], 'campaign_ids' => [], 'send_user_data' => false, 'consent' => []], $made[0]['settings']);
+            self::assertSame($key, self::store()->forSending(self::USER, $id)['credentials']['conversions_api_key']);
+
+            $html = self::page();
+            self::assertStringContainsString('ChatGPT Ads pixel px_4821', $html, 'the list names its pixel');
+            $form = self::editForm($html, $id);
+            self::assertStringNotContainsString($key, $html, 'the key is never shown');
+            self::assertStringNotContainsString('name="ad_user_data"', $form, 'no consent fields for a platform that takes none');
+
+            self::page([], [
+                'action' => 'update', 'destination_id' => (string) $id, 'name' => 'ChatGPT Ads', 'pixel_id' => 'px_4821', 'conversions_api_key' => '',
+                'event_type' => 'trial_started', 'custom_event_name' => '', 'scope' => 'source', 'ppc_account_id' => '990091',
+                'et_campaign' => [(string) self::CAMPAIGN, ''], 'et_type' => ['lead_created', ''], 'all_campaigns' => '1', 'send_user_data' => '1',
+            ]);
+            $saved = self::store()->get(self::USER, $id)['settings'];
+            self::assertSame(['trial_started', 'source', 990091, [self::CAMPAIGN => 'lead_created'], true], [$saved['event_type'], $saved['scope'], $saved['ppc_account_id'], $saved['event_types'], $saved['send_user_data']]);
+            self::assertSame($key, self::store()->forSending(self::USER, $id)['credentials']['conversions_api_key'], 'a blank key keeps the stored one');
+        } finally {
+            self::q('DELETE FROM 202_ppc_accounts WHERE ppc_account_id IN (990091, 990092)');
+        }
+    }
+
     public function testFailuresAreCountedWithTheirReasonsAndSentAgain(): void
     {
         $failed = $this->delivery($this->ga4, 'failed', 'HTTP 400: the API secret is not valid', 501);

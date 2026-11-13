@@ -322,7 +322,7 @@ final class DestinationQueue
         if ($destination === null) {
             return null;
         }
-        $most = self::backfillDays((string) $destination['type']);
+        $most = $this->store->type((string) $destination['type'])->backfillDays();
         if ($days < 1 || $days > $most) {
             throw new DestinationInputException('days', 'days must be 1 to ' . $most . ' for this destination: its platform takes nothing older.');
         }
@@ -354,12 +354,6 @@ final class DestinationQueue
         }
 
         return ['queued' => $queued, 'more' => true];
-    }
-
-    /** How far back a type's platform takes a conversion, in days. */
-    public static function backfillDays(string $type): int
-    {
-        return $type === Ga4Destination::TYPE ? intdiv(Ga4Destination::MAX_AGE_SECONDS, 86400) : intdiv(GoogleAdsDestination::CLICK_MAX_AGE, 86400);
     }
 
     /**
@@ -491,6 +485,9 @@ final class DestinationQueue
             if ($setting !== 'disabled') {
                 return ['withheld', new SendResult(false, false, null, 'withheld: your privacy setting holds back visitors who may be in Europe, and this click\'s address is not placed outside it')];
             }
+            if (!$destination['adapter']->takesConsent()) {
+                return ['withheld', new SendResult(false, false, null, 'withheld: the visitor may be in the EEA or UK, and this destination\'s platform takes no consent signal to state theirs with')];
+            }
             if (!self::consentGranted($destination['settings'])) {
                 return ['withheld', new SendResult(false, false, null, 'withheld: the visitor may be in the EEA or UK, and this destination does not state consent granted (ad_user_data and ad_personalization)')];
             }
@@ -511,8 +508,9 @@ final class DestinationQueue
         $visit = $this->conn->prepareWrite('SELECT c.click_time FROM ' . FirstVisit::of('?') . ' AS c WHERE c.user_id = ?');
         $this->conn->bind($visit, 'ii', [$clickId, $userId]);
         $clickTime = $this->conn->fetchOne($visit)['click_time'] ?? null;
-        [$customerId, $emails, $phones] = $this->customer($destination['settings'], (int) ($conv['customer_id'] ?? 0), $userId);
-        $eventId = DestinationEventId::of($this->conn, $userId, $clickId, $convId, isset($conv['transaction_id']) ? (string) $conv['transaction_id'] : null);
+        [$customerId, $emails, $phones] = $this->customer($destination['adapter'], $destination['settings'], (int) ($conv['customer_id'] ?? 0), $userId);
+        $ownTransactionId = isset($conv['transaction_id']) ? (string) $conv['transaction_id'] : null;
+        $eventId = DestinationEventId::of($this->conn, $userId, $clickId, $convId, $ownTransactionId);
         $facts = new ConversionFacts(
             $convId,
             $clickId,
@@ -531,7 +529,9 @@ final class DestinationQueue
                 ? self::visitorAddress($ip) : null,
             // Not stored for a click yet: nothing is guessed in its place.
             null,
-            self::pageUrl($conv['landing_url'] ?? null) ?? self::pageUrl($conv['outbound_url'] ?? null)
+            self::pageUrl($conv['landing_url'] ?? null) ?? self::pageUrl($conv['outbound_url'] ?? null),
+            $click['ppc_account_id'],
+            $eventId !== DestinationEventId::from($ownTransactionId, $convId)
         );
         $result = $destination['adapter']->send($destination['settings'], $destination['credentials'], $facts, false, $now);
 
@@ -550,7 +550,7 @@ final class DestinationQueue
      * @param array<string, mixed> $settings
      * @return array{0: int|null, 1: list<string>, 2: list<string>}
      */
-    private function customer(array $settings, int $customerId, int $userId): array
+    private function customer(DestinationType $adapter, array $settings, int $customerId, int $userId): array
     {
         if ($customerId <= 0) {
             return [null, [], []];
@@ -565,8 +565,9 @@ final class DestinationQueue
         if (!self::sendsUserData($settings)) {
             return [null, [], []];
         }
-        $email = PiiHash::email($row['email'] ?? null);
-        $phone = PiiHash::phone($row['phone'] ?? null);
+        // Each platform's own normalisation (CLAUDE.md #30).
+        $email = $adapter->hashEmail($row['email'] ?? null);
+        $phone = $adapter->hashPhone($row['phone'] ?? null);
 
         return [$customerId, $email === null ? [] : [$email], $phone === null ? [] : [$phone]];
     }

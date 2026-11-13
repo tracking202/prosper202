@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 use Prosper202\Destinations\DestinationForm;
 use Prosper202\Destinations\DestinationQueue;
+use Prosper202\Destinations\DestinationStore;
 use Prosper202\Destinations\Ga4Destination;
 use Prosper202\Destinations\GoogleAdsDestination;
+use Prosper202\Destinations\OpenAiAdsDestination;
 
 /**
  * Setup › Destinations' per-destination panels: what its conversions came to,
@@ -44,11 +46,51 @@ function p202_destination_privacy_link(string $base): string
         . ' (the stricter of your setting and the install owner\'s applies)';
 }
 
+/** What ChatGPT Ads' `scope` setting sends, in words. */
+function p202_destination_openai_scope(string $scope): string
+{
+    return [
+        'oppref' => 'conversions from ChatGPT ad clicks',
+        'source' => 'every conversion of one traffic source',
+        'all' => 'every conversion',
+    ][$scope] ?? $scope;
+}
+
+/** What the privacy setting does to a destination that takes no consent signal (ChatGPT Ads). */
+function p202_destination_openai_privacy_sentence(string $setting): string
+{
+    return $setting === 'all'
+        ? 'Your privacy setting (' . p202_destination_privacy_name($setting) . ') holds back every visitor, so nothing is sent.'
+        : 'A visitor who may be in the EEA or UK is never sent: OpenAI takes no consent signal to state theirs with.';
+}
+
+/**
+ * The account's traffic source accounts, id to "network › account", for
+ * ChatGPT Ads' scope source.
+ *
+ * @return array<int, string>
+ */
+function p202_destination_traffic_sources(\Prosper202\Database\Connection $conn, int $userId): array
+{
+    $stmt = $conn->prepareRead('SELECT a.ppc_account_id, a.ppc_account_name, n.ppc_network_name FROM 202_ppc_accounts AS a
+        LEFT JOIN 202_ppc_networks AS n ON n.ppc_network_id = a.ppc_network_id AND n.user_id = a.user_id
+        WHERE a.user_id = ? AND a.ppc_account_deleted = 0 ORDER BY n.ppc_network_name, a.ppc_account_name LIMIT 1000');
+    $conn->bind($stmt, 'i', [$userId]);
+    $out = [];
+    foreach ($conn->fetchAll($stmt) as $row) {
+        $out[(int) $row['ppc_account_id']] = trim((string) ($row['ppc_network_name'] ?? '') . ' › ' . (string) $row['ppc_account_name'], ' ›');
+    }
+
+    return $out;
+}
+
 /** The note under a destination whose sends the privacy setting holds back; '' when it holds none it would otherwise send. */
-function p202_destination_privacy_note(string $setting, array $settings, string $base): string
+function p202_destination_privacy_note(string $setting, array $settings, string $base, bool $takesConsent = true): string
 {
     if ($setting === 'all') {
         $text = 'Nothing is sent: your privacy setting (' . p202_destination_privacy_name($setting) . ') holds back every visitor.';
+    } elseif (!$takesConsent) {
+        $text = 'Visitors who may be in the EEA or UK are withheld: this platform takes no consent signal to state theirs with.';
     } elseif ($setting !== 'disabled' && p202_destination_consent_granted($settings)) {
         $text = 'Both consent signals are Granted, but visitors who may be in the EEA or UK are still withheld: your privacy setting ('
             . p202_destination_privacy_name($setting) . ') holds them back. They are sent only with the setting Disabled.';
@@ -125,7 +167,7 @@ function p202_destination_health(array $d, array $health, string $self, string $
             <label class="form-text mt-0" for="backfill<?php echo $id; ?>">Send earlier conversions, from the last</label>
             <select class="form-select form-select-sm w-auto" id="backfill<?php echo $id; ?>" name="days">
                 <?php foreach ([1, 3, 7, 30, 90] as $days) {
-                    if ($days <= DestinationQueue::backfillDays((string) $d['type'])) {
+                    if ($days <= (DestinationStore::builtInTypes()[(string) $d['type']] ?? null)?->backfillDays() ?? 0) {
                         echo '<option value="' . $days . '">' . $days . ($days === 1 ? ' day' : ' days') . '</option>';
                     }
                 } ?>
@@ -144,10 +186,11 @@ function p202_destination_health(array $d, array $health, string $self, string $
  * @param array<string, mixed>|null $posted the refused edit of this destination, to show again
  * @param array<string, mixed> $errors its errors
  */
-function p202_destination_edit(array $d, array $campaigns, ?array $posted, array $errors, string $self, string $token, string $privacy, string $base): string
+function p202_destination_edit(array $d, array $campaigns, ?array $posted, array $errors, string $self, string $token, string $privacy, string $base, array $trafficSources = []): string
 {
     $id = (int) $d['destination_id'];
     $isAds = $d['type'] === GoogleAdsDestination::TYPE;
+    $isOai = $d['type'] === OpenAiAdsDestination::TYPE;
     $settings = (array) $d['settings'];
     $consent = (array) ($settings['consent'] ?? []);
     $text = static fn (string $key, string $stored): string => p202_setup_e($posted === null ? $stored : (is_string($posted[$key] ?? null) ? $posted[$key] : ''));
@@ -161,10 +204,11 @@ function p202_destination_edit(array $d, array $campaigns, ?array $posted, array
     foreach ($selectedCampaigns as $one) {
         $offered[(int) $one] ??= 'Campaign ' . $one . ' (deleted)';
     }
-    if ($isAds) {
+    if ($isAds || $isOai) {
+        [$mapKey, $firstName, $secondName] = $isAds ? ['campaign_conversion_actions', 'cca_campaign', 'cca_action'] : ['event_types', 'et_campaign', 'et_type'];
         $rows = $posted === null
-            ? array_map(static fn ($campaign, $action): array => [(string) $campaign, (string) $action], array_keys((array) ($settings['campaign_conversion_actions'] ?? [])), array_values((array) ($settings['campaign_conversion_actions'] ?? [])))
-            : array_map(null, array_map('strval', array_filter((array) ($posted['cca_campaign'] ?? []), 'is_string')), array_map('strval', array_filter((array) ($posted['cca_action'] ?? []), 'is_string')));
+            ? array_map(static fn ($campaign, $action): array => [(string) $campaign, (string) $action], array_keys((array) ($settings[$mapKey] ?? [])), array_values((array) ($settings[$mapKey] ?? [])))
+            : array_map(null, array_map('strval', array_filter((array) ($posted[$firstName] ?? []), 'is_string')), array_map('strval', array_filter((array) ($posted[$secondName] ?? []), 'is_string')));
     } else {
         $rows = $posted === null
             ? array_map(static fn ($name, $field): array => [(string) $name, (string) $field], array_keys((array) ($settings['params'] ?? [])), array_values((array) ($settings['params'] ?? [])))
@@ -182,7 +226,9 @@ function p202_destination_edit(array $d, array $campaigns, ?array $posted, array
     };
     $shown = ['name', 'settings.measurement_id', 'settings.event_name', 'settings.client_id_source', 'settings.user_id_source', 'settings.params', 'credentials.api_secret',
         'settings.customer_id', 'settings.login_customer_id', 'settings.conversion_action', 'settings.campaign_conversion_actions', 'credentials.developer_token',
-        'credentials.oauth_client_id', 'credentials.oauth_client_secret', 'settings.campaign_ids', 'settings.consent.ad_user_data', 'settings.consent.ad_personalization'];
+        'credentials.oauth_client_id', 'credentials.oauth_client_secret', 'settings.campaign_ids', 'settings.consent.ad_user_data', 'settings.consent.ad_personalization',
+        'settings.pixel_id', 'settings.event_type', 'settings.custom_event_name', 'settings.event_types', 'settings.scope', 'settings.ppc_account_id', 'credentials.conversions_api_key'];
+    $oaiTypes = array_keys(OpenAiAdsDestination::EVENT_TYPES);
     $keep = 'Leave blank to keep the stored one.';
     ob_start(); ?>
     <details class="p202-disclosure mb-3" id="edit<?php echo $id; ?>"<?php echo $posted !== null ? ' open' : ''; ?>>
@@ -193,7 +239,38 @@ function p202_destination_edit(array $d, array $campaigns, ?array $posted, array
                 <input type="hidden" name="action" value="update"><input type="hidden" name="destination_id" value="<?php echo $id; ?>">
                 <?php echo p202_setup_error_flashes($errors, $shown); ?>
                 <?php echo $field('name', 'name', 'Name', $text('name', (string) $d['name'])); ?>
-                <?php if ($isAds) {
+                <?php if ($isOai) {
+                    echo $field('pixel_id', 'settings.pixel_id', 'Pixel ID', $text('pixel_id', $stored('pixel_id')), 'Ads Manager › Conversions › your web pixel.');
+                    echo $field('conversions_api_key', 'credentials.conversions_api_key', 'Conversions API key', '', $keep . ' Stored encrypted, never shown.', 'password'); ?>
+                <div class="row g-3 mb-3">
+                    <div class="col-12 col-sm-6">
+                        <label class="form-label" for="e<?php echo $id; ?>_event_type">Event type</label>
+                        <select class="form-select<?php echo p202_setup_invalid($errors, 'settings.event_type'); ?>" id="e<?php echo $id; ?>_event_type" name="event_type">
+                            <?php echo p202_setup_options(array_combine($oaiTypes, $oaiTypes), $choice('event_type', $stored('event_type') ?: 'order_created')); ?>
+                        </select>
+                        <?php echo p202_setup_feedback($errors, 'settings.event_type'); ?>
+                    </div>
+                    <div class="col-12 col-sm-6">
+                        <label class="form-label" for="e<?php echo $id; ?>_scope">Which conversions</label>
+                        <select class="form-select<?php echo p202_setup_invalid($errors, 'settings.scope'); ?>" id="e<?php echo $id; ?>_scope" name="scope">
+                            <?php echo p202_setup_options(array_combine(OpenAiAdsDestination::SCOPES, array_map('p202_destination_openai_scope', OpenAiAdsDestination::SCOPES)), $choice('scope', $stored('scope') ?: 'oppref')); ?>
+                        </select>
+                        <?php echo p202_setup_feedback($errors, 'settings.scope'); ?>
+                    </div>
+                </div>
+                <?php echo $field('custom_event_name', 'settings.custom_event_name', 'Custom event name', $text('custom_event_name', $stored('custom_event_name')), 'Only with the event type custom.'); ?>
+                <div class="mb-3">
+                    <label class="form-label" for="e<?php echo $id; ?>_ppc_account_id">Traffic source account</label>
+                    <?php $sources = $trafficSources;
+                    if ($stored('ppc_account_id') !== '') {
+                        $sources[(int) $stored('ppc_account_id')] ??= 'Account ' . $stored('ppc_account_id') . ' (deleted)';
+                    } ?>
+                    <select class="form-select<?php echo p202_setup_invalid($errors, 'settings.ppc_account_id'); ?>" id="e<?php echo $id; ?>_ppc_account_id" name="ppc_account_id">
+                        <?php echo p202_setup_options($sources, $choice('ppc_account_id', $stored('ppc_account_id')), 'Only with one traffic source…'); ?>
+                    </select>
+                    <?php echo p202_setup_feedback($errors, 'settings.ppc_account_id'); ?>
+                </div>
+                <?php } elseif ($isAds) {
                     echo $field('customer_id', 'settings.customer_id', 'Customer ID', $text('customer_id', $stored('customer_id')), 'The Google Ads account the conversions go to.', 'text', '123-456-7890');
                     echo $field('login_customer_id', 'settings.login_customer_id', 'Manager account ID (optional)', $text('login_customer_id', $stored('login_customer_id')), 'Only when your access to that account is through a manager account.');
                     echo $field('conversion_action', 'settings.conversion_action', 'Conversion action ID', $text('conversion_action', $stored('conversion_action')), 'Goals › Conversions › your action: the number after ctId= in its address.');
@@ -202,7 +279,7 @@ function p202_destination_edit(array $d, array $campaigns, ?array $posted, array
                     echo $field('api_secret', 'credentials.api_secret', 'API secret', '', $keep . ' Stored encrypted, never shown.', 'password');
                     echo $field('event_name', 'settings.event_name', 'Event name', $text('event_name', $stored('event_name')));
                 } ?>
-                <?php if (!$isAds) { ?>
+                <?php if (!$isAds && !$isOai) { ?>
                 <div class="row g-3 mb-3">
                     <div class="col-12 col-sm-6">
                         <label class="form-label" for="e<?php echo $id; ?>_client_id_source">GA client id</label>
@@ -221,20 +298,28 @@ function p202_destination_edit(array $d, array $campaigns, ?array $posted, array
                 </div>
                 <?php } ?>
                 <div class="mb-3">
-                    <span class="form-label d-block"><?php echo $isAds ? 'Conversion action per campaign' : 'Event parameters'; ?></span>
+                    <span class="form-label d-block"><?php echo $isAds ? 'Conversion action per campaign' : ($isOai ? 'Event type per campaign' : 'Event parameters'); ?></span>
                     <?php foreach ($rows as $n => [$first, $second]) { ?>
                     <div class="row g-2 mb-2">
-                        <?php if ($isAds) {
+                        <?php if ($isAds || $isOai) {
                             $rowCampaigns = $campaigns;
                             if ($first !== '') {
                                 $rowCampaigns[(int) $first] ??= 'Campaign ' . $first . ' (deleted)';
                             } ?>
                         <div class="col-7">
-                            <select class="form-select" name="cca_campaign[]" aria-label="Campaign <?php echo $n + 1; ?>">
+                            <select class="form-select" name="<?php echo $isOai ? 'et_campaign[]' : 'cca_campaign[]'; ?>" aria-label="Campaign <?php echo $n + 1; ?>">
                                 <?php echo p202_setup_options($rowCampaigns, $first, 'Campaign…'); ?>
                             </select>
                         </div>
+                        <?php if ($isOai) { ?>
+                        <div class="col-5">
+                            <select class="form-select" name="et_type[]" aria-label="Event type <?php echo $n + 1; ?>">
+                                <?php echo p202_setup_options(array_combine(array_diff($oaiTypes, ['custom']), array_diff($oaiTypes, ['custom'])), $second, 'Not set'); ?>
+                            </select>
+                        </div>
+                        <?php } else { ?>
                         <div class="col-5"><input type="text" class="form-control" name="cca_action[]" value="<?php echo p202_setup_e($second); ?>" placeholder="Conversion action ID" aria-label="Conversion action <?php echo $n + 1; ?>"></div>
+                        <?php } ?>
                         <?php } else { ?>
                         <div class="col-6"><input type="text" class="form-control" name="param_name[]" value="<?php echo p202_setup_e($first); ?>" placeholder="Parameter name" aria-label="Parameter name <?php echo $n + 1; ?>"></div>
                         <div class="col-6">
@@ -245,10 +330,12 @@ function p202_destination_edit(array $d, array $campaigns, ?array $posted, array
                         <?php } ?>
                     </div>
                     <?php } ?>
-                    <?php echo p202_setup_feedback($errors, $isAds ? 'settings.campaign_conversion_actions' : 'settings.params'); ?>
-                    <div class="form-text"><?php echo $isAds
+                    <?php echo p202_setup_feedback($errors, $isAds ? 'settings.campaign_conversion_actions' : ($isOai ? 'settings.event_types' : 'settings.params')); ?>
+                    <div class="form-text"><?php echo $isOai
+                        ? 'A campaign listed here is sent as its own event type; every other campaign uses the type above. Set a row to Not set to remove it. Save to get more rows.'
+                        : ($isAds
                         ? 'A campaign listed here uploads to its own action; every other campaign uses the action above. Clear a row\'s action to remove it. Save to get more rows.'
-                        : 'Each parameter is sent with the click field you pick (value, currency and transaction_id are always sent). Set a row to Not sent to remove it. Save to get more rows.'; ?></div>
+                        : 'Each parameter is sent with the click field you pick (value, currency and transaction_id are always sent). Set a row to Not sent to remove it. Save to get more rows.'); ?></div>
                 </div>
                 <div class="mb-3">
                     <span class="form-label d-block">Campaigns</span>
@@ -266,8 +353,9 @@ function p202_destination_edit(array $d, array $campaigns, ?array $posted, array
                 </div>
                 <div class="form-check mb-3">
                     <input class="form-check-input" type="checkbox" id="e<?php echo $id; ?>_send_user_data" name="send_user_data" value="1"<?php echo $checked($posted === null ? !empty($settings['send_user_data']) : ($posted['send_user_data'] ?? '') === '1'); ?>>
-                    <label class="form-check-label" for="e<?php echo $id; ?>_send_user_data">Send hashed email and phone</label>
+                    <label class="form-check-label" for="e<?php echo $id; ?>_send_user_data">Send hashed email and phone<?php echo $isOai ? ', and the visitor\'s IP address' : ''; ?></label>
                 </div>
+                <?php if (!$isOai) { ?>
                 <div class="row g-3 mb-2">
                     <?php foreach (['ad_user_data' => 'Ad User Data', 'ad_personalization' => 'Ad Personalization'] as $key => $label) { ?>
                     <div class="col-12 col-sm-6">
@@ -279,7 +367,8 @@ function p202_destination_edit(array $d, array $campaigns, ?array $posted, array
                     </div>
                     <?php } ?>
                 </div>
-                <div class="form-text mb-3"><?php echo p202_setup_e($privacy); ?> Change it in <?php echo p202_destination_privacy_link($base); ?>.</div>
+                <?php } ?>
+                <div class="form-text mb-3"><?php echo p202_setup_e($isOai ? p202_destination_openai_privacy_sentence('') : $privacy); ?> Change it in <?php echo p202_destination_privacy_link($base); ?>.</div>
                 <?php if ($isAds) {
                     echo $field('developer_token', 'credentials.developer_token', 'Developer token', '', $keep, 'password');
                     echo $field('oauth_client_id', 'credentials.oauth_client_id', 'OAuth client ID', '', $keep . ' A different client needs Connect Google Ads again.');

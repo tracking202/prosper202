@@ -23,6 +23,8 @@ final class ConversionFacts
      * @param string|null $userAgent the visitor's user agent; no click stores one yet, so null
      * @param string|null $pageUrl the click's landing page, else the tracking link it came through: scheme, host, port
      *        and path only (no query, fragment, user:password@ or ;path parameters), at most 2048 characters
+     * @param int $ppcAccountId the click's traffic source account, 0 when none of the account's
+     * @param bool $restates the conversion replaced one and is sent under that one's event id
      */
     public function __construct(
         public readonly ?int $convId,
@@ -41,6 +43,8 @@ final class ConversionFacts
         public readonly ?string $ipAddress = null,
         public readonly ?string $userAgent = null,
         public readonly ?string $pageUrl = null,
+        public readonly int $ppcAccountId = 0,
+        public readonly bool $restates = false,
     ) {
     }
 
