@@ -15,11 +15,13 @@ require_once __DIR__ . '/_includes/setup_ui.php';
 require_once __DIR__ . '/_includes/google_ads_picker.php';
 require_once __DIR__ . '/_includes/destination_panels.php';
 require_once __DIR__ . '/_includes/ad_connection_panel.php';
+require_once __DIR__ . '/_includes/ad_campaigns_panel.php';
 
 use Prosper202\AdPlatforms\AdConnectionInputException;
 use Prosper202\AdPlatforms\AdConnectionStore;
 use Prosper202\AdPlatforms\AdPlatformUnavailable;
 use Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi;
+use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsCampaigns;
 use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsConnections;
 use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsTestEvent;
 use Prosper202\Destinations\DestinationForm;
@@ -47,6 +49,7 @@ $conn = new \Prosper202\Database\Connection($db);
 $store = new DestinationStore($conn);
 $adStore = new AdConnectionStore($conn);
 $advertiserApi = static fn (): AdvertiserApi => AdvertiserApi::fromEnvironment(\Api\V3\Support\ServerStateStore::forInstall($db));
+$adCampaigns = static fn (): OpenAiAdsCampaigns => new OpenAiAdsCampaigns($adStore, $advertiserApi());
 $adConnections = static fn (): OpenAiAdsConnections => new OpenAiAdsConnections($adStore, $advertiserApi(), $store, \Prosper202\Database\InstallId::of($db));
 $base = get_absolute_url();
 $self = $base . 'tracking202/setup/destinations.php';
@@ -118,6 +121,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } else {
                     $_SESSION['p202_ad_setup'] = ['id' => $connectionId, 'steps' => array_map(static fn (array $step): array => array_intersect_key($step, array_flip(['step', 'outcome', 'detail'])), $ran['steps'])];
                     header('location: ' . $self . '?done=ad_setup#ac' . $connectionId);
+                    die();
+                }
+            } elseif (in_array($action, ['ad_campaign_pause', 'ad_campaign_activate', 'ad_campaign_template', 'ad_campaign_events'], true)) {
+                $level = is_string($_POST['level'] ?? null) ? $_POST['level'] : '';
+                $objectId = is_string($_POST['object_id'] ?? null) ? $_POST['object_id'] : '';
+                OpenAiAdsCampaigns::path($level);
+                $done = match ($action) {
+                    'ad_campaign_pause' => $adCampaigns()->setStatus($userId, $connectionId, $level, $objectId, 'pause', false),
+                    'ad_campaign_activate' => $adCampaigns()->setStatus($userId, $connectionId, $level, $objectId, 'activate', false),
+                    'ad_campaign_template' => $adCampaigns()->setTemplate($userId, $connectionId, $level, $objectId, null, false),
+                    default => $adCampaigns()->attachEventSettings($userId, $connectionId, $objectId, [], false),
+                };
+                if ($done === null) {
+                    $errors['destination'] = 'That connection is not one of yours, or was deleted.';
+                } else {
+                    // Said from what OpenAI shows now (the write's answer or a read of it), never from what was asked.
+                    $record = (array) $done['record'];
+                    $unchanged = ($done['unchanged'] ?? false) === true;
+                    $_SESSION['p202_ad_campaign_done'] = match ($action) {
+                        'ad_campaign_pause', 'ad_campaign_activate' => $objectId . ($unchanged ? ' was already ' : ' is now ') . (string) ($record['status'] ?? '') . ' at OpenAI'
+                            . ($unchanged ? '; nothing was sent.' : ' (it was ' . (string) ($done['previous']['status'] ?? '') . ').'),
+                        'ad_campaign_template' => $unchanged ? $objectId . ' already has the Get Links tracking template; nothing was sent.'
+                            : $objectId . '\'s tracking template at OpenAI is now ' . (string) ($record['query_string_template'] ?? '') . ' (it was '
+                            . (string) ($done['previous']['query_string_template'] ?? 'not set') . ').',
+                        default => $unchanged ? $objectId . ' already counts every event setting setup made; nothing was changed.' : $objectId . ' now counts the event settings setup made, besides its own.',
+                    };
+                    header('location: ' . $self . '?ad_campaigns=' . $connectionId . '#ad-campaigns');
                     die();
                 }
             } elseif ($action === 'ad_delete') {
@@ -445,6 +475,55 @@ if ($queuedNotice !== null && ($_GET['done'] ?? '') === 'queued') {
         . (($queuedNotice['more'] ?? false) === true ? ' More remain: press the button again for the next ' . number_format(DestinationQueue::RESEND_BATCH) . '.' : ''));
 }
 echo p202_setup_error_flashes($editedId !== null || $adRefused !== null ? [] : $errors, $formFields);
+$adCampaignsId = \Prosper202\Http\PostedId::read($_GET['ad_campaigns'] ?? null);
+$adCampaignsConnection = $adCampaignsId === null ? null : $adStore->get($userId, $adCampaignsId);
+if ($adCampaignsId !== null && $adCampaignsConnection === null) {
+    echo p202_flash('bad', 'That ChatGPT Ads connection is not one of yours, or was deleted.');
+}
+if ($adCampaignsConnection !== null) {
+    if (isset($_SESSION['p202_ad_campaign_done']) && is_string($_SESSION['p202_ad_campaign_done'])) {
+        echo p202_flash('ok', $_SESSION['p202_ad_campaign_done']);
+        unset($_SESSION['p202_ad_campaign_done']);
+    }
+    // Live reads of OpenAI; a refusal or an outage is shown as such, never as an empty account.
+    $live = static function (callable $read): array {
+        try {
+            return [$read(), null];
+        } catch (AdConnectionInputException | AdPlatformUnavailable $e) {
+            return [null, $e->getMessage()];
+        }
+    };
+    $service = $adCampaigns();
+    [$campaignPage, $campaignError] = $live(static fn (): ?array => $service->list($userId, $adCampaignsId, 'campaigns', null, OpenAiAdsCampaigns::MAX_PAGE_LIMIT, null));
+    [$spend, $spendError] = $live(static fn (): ?array => $service->spend($userId, $adCampaignsId, null, null, time()));
+    $detail = null;
+    $detailError = null;
+    $detailCampaign = is_string($_GET['campaign'] ?? null) ? $_GET['campaign'] : null;
+    if ($detailCampaign !== null) {
+        [$detail, $detailError] = $live(static function () use ($service, $userId, $adCampaignsId, $detailCampaign): array {
+            $groups = [];
+            foreach ($service->list($userId, $adCampaignsId, 'ad-groups', $detailCampaign, 20, null)['data'] ?? [] as $group) {
+                $ads = $service->list($userId, $adCampaignsId, 'ads', (string) $group['id'], 50, null)['data'] ?? [];
+                $groups[] = ['group' => $group, 'ads' => $ads];
+            }
+
+            return ['campaign' => $detailCampaign, 'groups' => $groups];
+        });
+    }
+    // A pause offered by a money-loss alert: previewed first (read from OpenAI, nothing changed), then confirmed.
+    $pausePreview = null;
+    $pausePreviewError = null;
+    $previewCampaign = is_string($_GET['preview_pause'] ?? null) ? $_GET['preview_pause'] : null;
+    if ($previewCampaign !== null) {
+        [$pausePreview, $pausePreviewError] = $live(static fn (): ?array => $service->setStatus($userId, $adCampaignsId, 'campaigns', $previewCampaign, 'pause', true));
+    }
+    echo p202_ad_campaigns_pause_preview($adCampaignsId, $pausePreview, $pausePreviewError, $self, (string) ($_SESSION['token'] ?? ''));
+    echo p202_ad_campaigns_view($adCampaignsConnection, $campaignPage['data'] ?? null, $campaignError, $spend, $spendError, $detail, $detailError, $self, (string) ($_SESSION['token'] ?? ''), ($campaignPage['has_more'] ?? false) === true);
+    echo p202_setup_script_tag($base);
+    template_bottom();
+
+    return;
+}
 if ($logDestination !== null) {
     echo p202_destination_log($logDestination, $queue->log($userId, $logId, $logStatus, 50, ($logPage - 1) * 50), $logStatus, $logPage, 50, $self, $base, (string) ($_SESSION['token'] ?? ''), $when);
     echo p202_setup_script_tag($base);

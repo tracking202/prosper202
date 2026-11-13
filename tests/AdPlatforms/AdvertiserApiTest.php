@@ -166,4 +166,10 @@ final class AdvertiserApiTest extends TestCase
         self::assertSame('GET /conversions/event_settings', AdvertiserApi::endpoint('GET', 'conversions/event_settings'));
         self::assertSame('GET /ad_account', AdvertiserApi::endpoint('GET', 'ad_account'));
     }
+
+    public function testAListParameterIsSentAsOpenAiReadsIt(): void
+    {
+        self::assertSame('include[]=serving_issues&limit=5&fields[]=campaign.id&fields[]=campaign.spend&name=a%20b%26c',
+            AdvertiserApi::query(['include' => ['serving_issues'], 'limit' => 5, 'fields' => ['campaign.id', 'campaign.spend'], 'name' => 'a b&c']));
+    }
 }

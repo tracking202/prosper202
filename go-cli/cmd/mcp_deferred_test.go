@@ -8,6 +8,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"regexp"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -86,9 +87,9 @@ func TestMCPDeferredToolsStayInBudget(t *testing.T) {
 	}
 }
 
-// Each deferred tool is registered once, is local only (the hosted relay
-// lists the always-loaded catalogue and loads its own), and says what task
-// it is for.
+// Each deferred tool is registered once and says what task it is for. One
+// the hosted relay may load is held to the AI key's areas by
+// TestHostedMCPToolsStayInsideTheAIKeyAreas.
 func TestMCPDeferredToolsAreRegisteredOnce(t *testing.T) {
 	seen := map[string]bool{mcpGetMoreTools: true}
 	for _, s := range mcpAllToolSpecs() {
@@ -98,9 +99,6 @@ func TestMCPDeferredToolsAreRegisteredOnce(t *testing.T) {
 		seen[s.Name] = true
 	}
 	for _, s := range mcpDeferredToolSpecs {
-		if !s.NotHosted {
-			t.Errorf("%s is deferred and not NotHosted: the hosted relay cannot load it", s.Name)
-		}
 		if len(s.Words) == 0 {
 			t.Errorf("%s has no Words for get_more_tools to find it by", s.Name)
 		}
@@ -278,6 +276,112 @@ func TestMCPGetMoreToolsLoadsDeferredToolsOverStdio(t *testing.T) {
 	}
 }
 
+// `p202 mcp tools --deferred` is what the hosted relay builds its own
+// get_more_tools from: every deferred tool, hosted_excludes and
+// staged_excludes naming exactly the NotHosted and NotStaged ones,
+// hosted_omits each tool's HostedOmit as arguments, and words
+// carrying each tool's Words, so the relay matches a task by the words this
+// server does.
+func TestMCPDeferredListingCarriesWhatTheRelayMatches(t *testing.T) {
+	listed, err := mcpDeferredListing(rootCmd, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(listed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Tools          []struct{ Name string } `json:"tools"`
+		HostedExcludes []string                `json:"hosted_excludes"`
+		StagedExcludes []string                `json:"staged_excludes"`
+		HostedOmits    map[string][]string     `json:"hosted_omits"`
+		Words          map[string][]string     `json:"words"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Tools) != len(mcpDeferredToolSpecs) {
+		t.Fatalf("listed %d tools of %d specs", len(got.Tools), len(mcpDeferredToolSpecs))
+	}
+	excluded, notStaged := map[string]bool{}, map[string]bool{}
+	for _, name := range got.HostedExcludes {
+		excluded[name] = true
+	}
+	for _, name := range got.StagedExcludes {
+		notStaged[name] = true
+	}
+	for _, s := range mcpDeferredToolSpecs {
+		if excluded[s.Name] != s.NotHosted {
+			t.Errorf("%s: in hosted_excludes %v, NotHosted %v", s.Name, excluded[s.Name], s.NotHosted)
+		}
+		if notStaged[s.Name] != s.NotStaged {
+			t.Errorf("%s: in staged_excludes %v, NotStaged %v", s.Name, notStaged[s.Name], s.NotStaged)
+		}
+		want := []string{}
+		for _, f := range s.HostedOmit {
+			want = append(want, strings.ReplaceAll(f, "-", "_"))
+		}
+		if strings.Join(got.HostedOmits[s.Name], "|") != strings.Join(want, "|") {
+			t.Errorf("%s: hosted_omits %q, want %q", s.Name, got.HostedOmits[s.Name], want)
+		}
+		if strings.Join(got.Words[s.Name], "|") != strings.Join(s.Words, "|") || len(s.Words) == 0 {
+			t.Errorf("%s: words %q, want its Words %q", s.Name, got.Words[s.Name], s.Words)
+		}
+	}
+	if len(got.Words) != len(mcpDeferredToolSpecs) {
+		t.Errorf("words names %d tools, want %d", len(got.Words), len(mcpDeferredToolSpecs))
+	}
+	// The relay's fixture is regenerated from this output: its top-level keys are the contract.
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(body, &keys); err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for k := range keys {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	if got := strings.Join(names, ","); got != "hosted_excludes,hosted_omits,schema,staged_excludes,tools,words" {
+		t.Errorf("--deferred's top-level keys are %s", got)
+	}
+}
+
+// A hosted run lists only the deferred tools the relay may load: a NotHosted
+// one is named in hosted_excludes and is not among the tools.
+func TestMCPDeferredListingOffersNoLocalToolToAHostedRun(t *testing.T) {
+	withHostedRun(t, true)
+	listed, err := mcpDeferredListing(rootCmd, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools, ok := listed["tools"].([]mcpTool)
+	if !ok {
+		t.Fatalf("tools is %T", listed["tools"])
+	}
+	offered := map[string]bool{}
+	for _, tool := range tools {
+		offered[tool.Name] = true
+	}
+	hosted := 0
+	for _, s := range mcpDeferredToolSpecs {
+		if offered[s.Name] == s.NotHosted {
+			t.Errorf("%s: offered %v to a hosted run, NotHosted %v", s.Name, offered[s.Name], s.NotHosted)
+		}
+		if !s.NotHosted {
+			hosted++
+		}
+	}
+	if hosted == 0 || len(tools) != hosted {
+		t.Errorf("a hosted run lists %d tools, want the %d that are not NotHosted", len(tools), hosted)
+	}
+	// The owner's decision (2026-11-12): a hosted assistant finds the connection the campaign tools need; the
+	// check, which records OpenAI's answer on the connection, stays local.
+	if !offered["ad_connection_list"] || offered["ad_connection_check"] || !offered["ad_campaign_list"] {
+		t.Errorf("a hosted run offers %v", offered)
+	}
+}
+
 // mcpAnswerKeyRef is a key a tool's Note names in its answer: a dotted path
 // (pagination.total) or a key with its value (truncated: true).
 var mcpAnswerKeyRef = regexp.MustCompile(`\b([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)\b|\b([a-z][a-z0-9_]*): (?:true|false)\b`)
@@ -287,6 +391,7 @@ var mcpAnswerKeyRef = regexp.MustCompile(`\b([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*
 var mcpDeferredAnswerSources = map[string]string{
 	"destination":   "DestinationsController.php",
 	"ad-connection": "AdConnectionsController.php",
+	"ad-campaign":   "AdCampaignsController.php",
 }
 
 // A deferred tool's Note names only keys its answer carries: the answer is
@@ -345,13 +450,15 @@ func TestMCPToolsListsTheDeferredOnes(t *testing.T) {
 		mcpToolsDeferred, mcpReadOnly = false, false
 		return out
 	}
-	if got := strings.Join(names("mcp", "tools", "--deferred"), ","); got != "destination_list,destination_deliveries,destination_test,ad_connection_list,ad_connection_check" {
+	if got := strings.Join(names("mcp", "tools", "--deferred"), ","); got != "destination_list,destination_deliveries,destination_test,ad_connection_list,ad_connection_check,"+
+		"ad_campaign_list,ad_campaign_pause,ad_campaign_activate,ad_campaign_spend" {
 		t.Errorf("--deferred lists %s", got)
 	}
-	if got := strings.Join(names("mcp", "tools", "--deferred", "--read-only"), ","); got != "destination_list,destination_deliveries,ad_connection_list" {
+	if got := strings.Join(names("mcp", "tools", "--deferred", "--read-only"), ","); got != "destination_list,destination_deliveries,ad_connection_list,ad_campaign_list,ad_campaign_spend" {
 		t.Errorf("--deferred --read-only lists %s", got)
 	}
-	if got := strings.Join(names("--staged", "mcp", "tools", "--deferred"), ","); got != "destination_list,destination_deliveries,ad_connection_list" {
+	if got := strings.Join(names("--staged", "mcp", "tools", "--deferred"), ","); got != "destination_list,destination_deliveries,ad_connection_list,"+
+		"ad_campaign_list,ad_campaign_pause,ad_campaign_activate,ad_campaign_spend" {
 		t.Errorf("--staged --deferred lists %s", got)
 	}
 	for _, name := range names("mcp", "tools") {
@@ -368,8 +475,9 @@ func TestMCPDeferredToolsSayWhenTheyReachOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tool := range tools {
-		// The test fire and the connection check make the install call OpenAI.
-		if want := tool.Name == "destination_test" || tool.Name == "ad_connection_check"; tool.Annotations.OpenWorldHint != want {
+		// The test fire, the connection check and every campaign tool make the install call OpenAI.
+		want := tool.Name == "destination_test" || tool.Name == "ad_connection_check" || strings.HasPrefix(tool.Name, "ad_campaign_")
+		if tool.Annotations.OpenWorldHint != want {
 			t.Errorf("%s openWorldHint %v, want %v", tool.Name, tool.Annotations.OpenWorldHint, want)
 		}
 	}
@@ -387,8 +495,9 @@ func TestMCPDeferredToolsDoNothingAPersonWasNotAsked(t *testing.T) {
 	seen := map[string]bool{}
 	for _, tool := range tools {
 		seen[tool.Name] = true
-		if tool.Annotations.DestructiveHint {
-			t.Errorf("%s is annotated destructive", tool.Name)
+		// A pause or an activate changes what OpenAI serves at once: a client should ask first.
+		if want := tool.Name == "ad_campaign_pause" || tool.Name == "ad_campaign_activate"; tool.Annotations.DestructiveHint != want {
+			t.Errorf("%s destructiveHint %v, want %v", tool.Name, tool.Annotations.DestructiveHint, want)
 		}
 		if tool.Name == "ad_connection_check" && tool.Annotations.ReadOnlyHint {
 			t.Errorf("%s writes the check: it is not read-only", tool.Name)

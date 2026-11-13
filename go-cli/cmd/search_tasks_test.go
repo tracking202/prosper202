@@ -233,6 +233,7 @@ func TestSearchFindsSpyByWhatPeopleCallIt(t *testing.T) {
 // other task's command comes first. mobile-apps-ui-001 came first again when
 // the click filter's commands joined the index.
 var searchKnownMisses = map[string]string{
+	"chatgpt-ads-001-connect-the-ad-account-and-set-it-up":                  "connect an account and set it up: two tasks; ad-connection setup first, ad-connection create second",
 	"admin-005-a-paykickstart-key-is-stored-never-repeated":                 "save a key and give the URL to paste: two tasks; system integrations first, user prefs update second",
 	"admin-006-a-jvzoo-affiliate-gets-the-affiliate-url":                    "save a key and give the URL to paste: two tasks; system integrations first, user prefs update second",
 	"admin-007-a-shopify-webhook-secret-is-stored-never-repeated":           "save a secret and give the URL to paste: two tasks; system integrations first, user prefs update second",

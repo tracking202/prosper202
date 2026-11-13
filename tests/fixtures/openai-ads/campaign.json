@@ -1,0 +1,16 @@
+{
+  "id": "cmpn_101",
+  "created_at": 1735689600,
+  "updated_at": 1735862400,
+  "name": "Spring launch",
+  "description": "Promote the new productivity bundle.",
+  "status": "active",
+  "product_feed_id": null,
+  "start_time": 1735689600,
+  "end_time": 1738368000,
+  "budget": {"daily_spend_limit_micros": 25000000},
+  "bidding_type": "impressions",
+  "conversion_event_setting_ids": ["ces_100"],
+  "landing_page_configuration": {"query_string_template": "utm_source=openai&utm_campaign={campaign_id}"},
+  "serving_issues": [{"code": "campaign_budget_exhausted"}]
+}

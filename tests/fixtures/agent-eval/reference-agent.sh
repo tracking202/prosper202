@@ -103,6 +103,34 @@ case "$ask" in
         p202 destination update "$id" --scope all --json >/dev/null
         printf 'Destination %s (EVAL ChatGPT Ads) now sends every conversion (scope all), so OpenAI can match people who saw an ad without clicking it. Each conversion still goes once: OpenAI keeps the first event it gets.\n' "$id"
         ;;
+    # ChatGPT Ads through its Advertiser API (chatgpt-ads.json): connect with
+    # the key from its file, then setup; pause, push the template and read
+    # spend through the connection, by the campaign's name.
+    *"Connect my ChatGPT Ads account"*)
+        out=$(p202 ad-connection create --api-key-file /tmp/p202-eval-ads-key.txt --json)
+        id=$(printf '%s' "$out" | jq -r '.data.connection_id')
+        steps=$(p202 ad-connection setup "$id" --json | jq -r '[.data.steps[] | "\(.step): \(.outcome)"] | join(", ")')
+        printf 'Connected %s (%s, %s). Setup: %s. The key is stored encrypted and never shown.\n' \
+            "$(printf '%s' "$out" | jq -r '.data.account.name')" "$(printf '%s' "$out" | jq -r '.data.account.id')" \
+            "$(printf '%s' "$out" | jq -r '.data.account.currency')" "$steps"
+        ;;
+    *"Spring sale is losing money"*)
+        id=$(p202 ad-connection list --json | jq -r '.data[0].connection_id')
+        cmpn=$(p202 ad-campaign list "$id" --json | jq -r '[.data[] | select(.name=="Spring sale")][0].id')
+        p202 ad-campaign pause "$id" "$cmpn" --dry-run --json >/dev/null
+        p202 ad-campaign pause "$id" "$cmpn" --json >/dev/null
+        printf 'Paused Spring sale (%s) in ChatGPT Ads; `p202 ad-campaign activate %s %s` turns it back on.\n' "$cmpn" "$id" "$cmpn"
+        ;;
+    *"tracking template on my ChatGPT Ads campaign"*)
+        id=$(p202 ad-connection list --json | jq -r '.data[0].connection_id')
+        cmpn=$(p202 ad-campaign list "$id" --json | jq -r '[.data[] | select(.name=="Trial sign-ups")][0].id')
+        template=$(p202 ad-campaign set-template "$id" "$cmpn" --json | jq -r '.data.record.query_string_template')
+        printf 'Trial sign-ups (%s) now appends %s to its ads'"'"' URLs.\n' "$cmpn" "$template"
+        ;;
+    *"ChatGPT Ads cost me yesterday"*)
+        id=$(p202 ad-connection list --json | jq -r '.data[0].connection_id')
+        p202 ad-campaign spend "$id" --json | jq -r '.data | "Yesterday (\(.since), \(.timezone)) ChatGPT Ads cost \(.currency) \(.total.spend): " + ([.campaigns[] | "\(.name) \(.spend)"] | join(", ")) + "."'
+        ;;
     # Text ads (setup-text-ads.json): an ad is a campaign's or an advanced
     # landing page's, and a tracker carries the one its link shows.
     *"EVAL Spring Ad"*)

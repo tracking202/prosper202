@@ -55,12 +55,10 @@ var mcpToolsCmd = &cobra.Command{
 		}
 		var listed interface{} = cat
 		if mcpToolsDeferred {
-			// The tools get_more_tools loads on request, in the catalogue's tool shape.
-			deferred, err := buildMCPDeferredTools(rootCmd, mcpReadOnly, api.StagedMode())
+			listed, err = mcpDeferredListing(rootCmd, mcpReadOnly, api.StagedMode())
 			if err != nil {
 				return err
 			}
-			listed = map[string]interface{}{"schema": mcpCatalogSchema, "tools": deferred}
 		}
 		var buf bytes.Buffer
 		enc := json.NewEncoder(&buf)

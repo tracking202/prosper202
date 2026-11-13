@@ -1,0 +1,4 @@
+{"object": "list", "data": [
+  {"id": "start=1777075200:end=1777161600:entity_id=cmpn_101", "start_time": 1777075200, "end_time": 1777161600, "readable_time": "2026-04-25", "campaign_id": "cmpn_101", "campaign_name": "Spring launch", "impressions": 1200, "clicks": 36, "spend": 18.42},
+  {"id": "start=1777075200:end=1777161600:entity_id=cmpn_102", "start_time": 1777075200, "end_time": 1777161600, "readable_time": "2026-04-25", "campaign_id": "cmpn_102", "campaign_name": "Trial sign-ups", "impressions": 980, "clicks": 29, "spend": 14.86}
+], "count": 2, "first_id": "x", "last_id": "y", "has_more": false}
