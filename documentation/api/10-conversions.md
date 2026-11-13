@@ -21,7 +21,7 @@ List, inspect, manually create, and delete conversions.
 | `DELETE` | `/conversions/{id}` | Delete a conversion |
 | `GET` | `/conversions/postback-code` | The conversion pixels and postback URLs Setup › Postback / Pixel shows ([Setup API](27-setup.md)) |
 | `GET` | `/conversions/postback-auth` | The mode, the postback token those URLs carry, the signing secret, and how to sign ([Setup API](27-setup.md#postback-authentication)) |
-| `PUT` | `/conversions/postback-auth` | Choose what postbacks and pixels must carry: `off`, `token` (token or signature) or `signed` (signatures only; pixels refused) |
+| `PUT` | `/conversions/postback-auth` | Choose what postbacks and pixels must carry: `off`, `token` (token or signature) or `signed` (signatures only; unsigned pixels refused) |
 | `POST` | `/conversions/postback-auth/rotate` | Replace the token or the signing secret, the old one working for a grace period |
 
 Each conversion is answered with `currency`, the currency its

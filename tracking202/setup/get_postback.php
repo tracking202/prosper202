@@ -76,7 +76,7 @@ template_top('Pixel And Postback URLs');
 <p class="p202-decided mb-3"><i class="bi bi-shield-lock"></i> <?php echo match ($postbackAuth->mode) {
 	\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::TOKEN => 'Your account accepts only postbacks and pixels that carry its token (<code>p202_token</code>), as these URLs do, or a signature.',
 	\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::OFF => 'Your account also accepts postbacks and pixels without a token. These URLs carry it; once your networks use them, require it.',
-	\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::SIGNED => '<strong>Your account accepts only signed postbacks</strong>, so these URLs are refused as they are: the token alone is not enough, and the pixels below cannot sign, so every pixel is refused. Sign each postback with your signing secret, or accept the token again.',
+	\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::SIGNED => '<strong>Your account accepts only signed postbacks</strong>, so these URLs are refused as they are: the token alone is not enough, and the pixels below cannot sign, so they are refused. Sign each postback with your signing secret, or accept the token again.',
 }; ?>
 	<a href="<?php echo p202_setup_e($base . '202-account/api-integrations.php#postback-auth'); ?>">Postback authentication settings</a></p>
 <?php } ?>

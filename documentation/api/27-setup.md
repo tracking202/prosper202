@@ -251,9 +251,9 @@ before.
 
 ## Postback authentication
 
-Click ids count up. Without authentication, anyone who can guess one can send
-`gpb.php?subid=<id>` and record a sale, or `&status=reversed` and take one
-back. So each account has two credentials:
+Once your account requires it (its mode, below), authentication refuses
+postbacks and pixels that carry neither your account's token nor a valid
+signature. Each account has two credentials:
 
 - a **postback token**, 32 hex characters, which every pixel and postback URL
   Setup hands out carries as `p202_token`;
@@ -285,11 +285,9 @@ database's deployment secrets). The token is shown on Setup › Postback /
 Pixel; both are shown on Account › API Integrations › Postback
 authentication. The token is a URL parameter, so it lands in the logs of
 whoever relays the request; rotate it if it leaks. **A pixel runs in the
-visitor's browser, so its token can be read on the advertiser's page.** That
-still stops anyone forging conversions blind by counting click ids, which is
-the attack it is for; it does not stop someone who has seen the page. A
-sender that can sign should sign, and `signed` mode keeps a token read off a
-page from opening anything.
+visitor's browser, so anyone who sees a page with your pixel can read its
+token.** For senders that can sign, `signed` mode is the stronger choice: it
+accepts only signed requests.
 
 | Method | Path | Body | Permission and key scope |
 | ------ | ---- | ---- | ---------- |
@@ -312,8 +310,8 @@ If a stored token or secret cannot be read (the key that encrypts them was
 lost from the database, or a value was altered), a postback that presents it
 is answered `500`, never let through, while one that presents nothing is
 still decided by the mode, and `off` accepts both. Opening Account › API
-Integrations, Setup › Postback / Pixel, any of the three routes above, or a
-rotation replaces it with a new one, and the answer says so (`recovered`):
+Integrations, Setup › Postback / Pixel, `GET` or `PUT`
+`/conversions/postback-auth`, or a rotation replaces it with a new one, and the answer says so (`recovered`):
 the old ones stopped working, so copy your URLs again.
 
 A rotation makes a new token or signing secret; the old one keeps working

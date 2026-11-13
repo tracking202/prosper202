@@ -78,9 +78,9 @@ final class PostbackAuthController
         $mode = is_string($payload['mode'] ?? null) ? PostbackAuthMode::tryFrom($payload['mode']) : null;
         if ($mode === null) {
             throw new ValidationException('mode is required', [
-                'mode' => 'One of off (postbacks and pixels may come without credentials; a wrong one is still refused),'
+                'mode' => 'One of off (every postback and pixel is accepted, with or without credentials),'
                     . ' token (they must carry the token or a signature) or signed (only a signature: the token alone is'
-                    . ' refused, and so is every pixel, which cannot sign).',
+                    . ' refused, and so is a pixel that is not signed, as a browser cannot sign).',
             ]);
         }
         $now ??= time();

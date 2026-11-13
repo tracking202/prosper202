@@ -32,15 +32,15 @@ var postbackCredentials = []string{"token", "signing_secret"}
 var conversionPostbackAuthCmd = &cobra.Command{
 	Use:   "postback-auth",
 	Short: "Postback authentication: the token your postbacks and pixels carry, the signing secret, and what is required",
-	Long: "Click ids count up, so a bare postback lets anyone who guesses one record or reverse a\n" +
-		"conversion. Your postbacks and pixels (`p202 conversion postback-url`, `p202 conversion pixel`)\n" +
+	Long: "Once required, authentication refuses postbacks and pixels that carry neither your\n" +
+		"account's token nor a valid signature. Your postbacks and pixels (`p202 conversion postback-url`, `p202 conversion pixel`)\n" +
 		"carry your account's token as p202_token. A sender that can compute an HMAC signs instead,\n" +
 		"with p202_ts and p202_sig keyed with the signing secret, which no URL carries. The mode says\n" +
 		"what gpb.php, pb.php, upx.php, px.php and gpx.php require: off (nothing; accounts from before\n" +
 		"1.9.80 start here), token (the token or a signature; new accounts) or signed (a signature only:\n" +
-		"the token alone is refused, and so is every pixel, which cannot sign). Under token and\n" +
-		"signed a wrong token or signature is refused; off accepts any. A pixel's token can be read on the advertiser's page: it\n" +
-		"stops guessing, not someone who saw the page.",
+		"the token alone is refused, and so is a pixel that is not signed). Under token and\n" +
+		"signed a wrong token or signature is refused; off accepts any. Anyone who sees a page\n" +
+		"with your pixel can read its token, so for senders that can sign, signed is the stronger choice.",
 }
 
 var conversionPostbackAuthGetCmd = &cobra.Command{
@@ -98,7 +98,7 @@ var conversionPostbackAuthSetCmd = &cobra.Command{
 		"nor a signature: give your networks the postbacks from `p202 conversion postback-url` first,\n" +
 		"and check `p202 conversion postback-auth readiness` for senders that still send none.\n" +
 		"--mode signed accepts only a signature keyed with the signing secret: the token alone is\n" +
-		"refused, and every pixel too, since a browser cannot sign. --mode off accepts every request,\n" +
+		"refused, and so is a pixel a browser loads, since it cannot sign. --mode off accepts every request,\n" +
 		"a stale or wrong token included. Needs a role with access_to_api_integrations.",
 	Example: "  p202 conversion postback-auth set --mode token\n" +
 		"  p202 conversion postback-auth set --mode signed",

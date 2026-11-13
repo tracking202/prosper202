@@ -7,11 +7,12 @@ namespace Prosper202\Conversion\PostbackAuth;
 /**
  * What an account's postbacks and pixels must present (PostbackAuthGate):
  *
- * - OFF: nothing; a token or signature that is present is still checked.
+ * - OFF: nothing, and nothing presented is checked: every request for the
+ *   account is accepted.
  * - TOKEN: the token (p202_token) or a signature.
  * - SIGNED: a signature (p202_ts + p202_sig, keyed with the signing
- *   secret). The token alone is refused, and so is every pixel, which a
- *   browser fetches and cannot sign.
+ *   secret). The token alone is refused, and so is a pixel request that is
+ *   not signed, as a browser cannot sign.
  */
 enum PostbackAuthMode: string
 {
