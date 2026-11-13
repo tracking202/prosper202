@@ -449,9 +449,9 @@ final class DestinationQueue
         // The primary, not a replica: a row a lagging replica lacks is not a deleted one.
         // 202_clicks_advance and 202_clicks_site are one row per click, written by its latest visit.
         $stmt = $this->conn->prepareWrite('SELECT cl.click_id, cl.campaign_id, cl.conv_time, cl.click_payout, cl.transaction_id, cl.deleted, cl.superseded_by, cl.customer_id, cl.match_method, cl.currency, '
-            . ConsentWithheld::requestRefusedSql('cl') . ' AS refused_request, '
-            . ConsentWithheld::replacedRefusedSql('cl') . ' AS refused_replaced, '
-            . ConsentWithheld::visitRefusedSql('cl') . ' AS refused_visit, '
+            . ConsentWithheld::requestRefusedSql() . ' AS refused_request, '
+            . ConsentWithheld::replacedRefusedSql() . ' AS refused_replaced, '
+            . ConsentWithheld::visitRefusedSql() . ' AS refused_visit, '
             . IpAddressSql::address('ip', 'ip6') . ' AS ip_address, landing.site_url_address AS landing_url, outbound.site_url_address AS outbound_url,
                    ac.aff_campaign_id AS campaign_found, ac.identity_signals
             FROM 202_conversion_logs cl LEFT JOIN 202_clicks_advance ca ON ca.click_id = cl.click_id LEFT JOIN 202_ips ip ON ip.ip_id = ca.ip_id'

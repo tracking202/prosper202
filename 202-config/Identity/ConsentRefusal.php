@@ -76,7 +76,10 @@ final class ConsentRefusal
      */
     public static function standsAtSql(string $click, string $visitTime): string
     {
-        return 'EXISTS (SELECT 1 FROM `' . self::TABLE . "` AS cr WHERE cr.click_id = $click"
+        // The table by its name, so the account-scope scan reads it
+        // (AccountScopedJoinTest): it has no user_id, a row is keyed by the
+        // account's own click, and the caller names that click.
+        return "EXISTS (SELECT 1 FROM 202_click_consent_refusals AS cr WHERE cr.click_id = $click"
             . " AND cr.refused_at >= $visitTime)";
     }
 

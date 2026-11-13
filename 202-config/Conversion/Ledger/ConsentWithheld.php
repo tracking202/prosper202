@@ -46,10 +46,10 @@ final class ConsentWithheld
     }
 
     /**
-     * The SQL that is 1 when the visitor of conversion $c (an alias of
-     * 202_conversion_logs) refused consent, else 0: the rule every reader
-     * that hands a conversion to an ad platform applies
-     * (DestinationQueue::deliver(), OfflineExport::query()). Any of:
+     * The SQL that is 1 when the visitor of the conversion read as `cl` (an
+     * alias of 202_conversion_logs the caller gives it) refused consent, else
+     * 0: the rule every reader that hands a conversion to an ad platform
+     * applies (DestinationQueue::deliver(), OfflineExport::query()). Any of:
      * - its own request refused (consent_withheld; a NULL reads as 1, #25);
      * - it replaced a refused conversion and goes by that one's event id
      *   (DestinationEventId::of()): a sale refused once is not sent later
@@ -58,35 +58,36 @@ final class ConsentWithheld
      *   click's lock when it was recorded), or of a later visit, refused
      *   (ConsentRefusal). A later visit that consents, with no refusal at or
      *   after it, credits its own conversions.
+     * The alias is written out, not passed in, so the account-scope scan
+     * reads each tie (AccountScopedJoinTest).
      */
-    public static function refusedSql(string $c): string
+    public static function refusedSql(): string
     {
-        return '(' . self::requestRefusedSql($c) . ' OR ' . self::replacedRefusedSql($c)
-            . ' OR ' . self::visitRefusedSql($c) . ')';
+        return '(' . self::requestRefusedSql() . ' OR ' . self::replacedRefusedSql()
+            . ' OR ' . self::visitRefusedSql() . ')';
     }
 
     /** The first of refusedSql()'s three, alone. */
-    public static function requestRefusedSql(string $c): string
+    public static function requestRefusedSql(): string
     {
-        return "COALESCE($c.consent_withheld, 1) <> 0";
+        return 'COALESCE(cl.consent_withheld, 1) <> 0';
     }
 
     /** The second of refusedSql()'s three, alone: the account's own rows of the click (#27). */
-    public static function replacedRefusedSql(string $c): string
+    public static function replacedRefusedSql(): string
     {
         // By the superseded_by key, named: a click can hold any number of rows,
         // and a table just filled has statistics that send the planner to the
         // click's or the account's key instead, a scan for every row read.
-        return "EXISTS (SELECT 1 FROM 202_conversion_logs AS rr FORCE INDEX (superseded_by)"
-            . " WHERE rr.superseded_by = $c.conv_id"
-            . " AND rr.click_id = $c.click_id AND rr.user_id = $c.user_id"
+        return 'EXISTS (SELECT 1 FROM 202_conversion_logs AS rr FORCE INDEX (superseded_by)'
+            . ' WHERE rr.superseded_by = cl.conv_id AND rr.click_id = cl.click_id AND rr.user_id = cl.user_id'
             . " AND rr.superseded_reason IN ('replace', 'batch') AND COALESCE(rr.consent_withheld, 1) <> 0)";
     }
 
     /** The third of refusedSql()'s three, alone. */
-    public static function visitRefusedSql(string $c): string
+    public static function visitRefusedSql(): string
     {
-        return ConsentRefusal::standsAtSql("$c.click_id", "COALESCE($c.click_time, 0)");
+        return ConsentRefusal::standsAtSql('cl.click_id', 'COALESCE(cl.click_time, 0)');
     }
 
     /**

@@ -151,20 +151,6 @@ final class AccountScopedJoinTest extends TestCase
      * @var array<string, array<string, string>>
      */
     private const HARMLESS = [
-        '202-config/Conversion/Ledger/ConsentWithheld.php' => [
-            'no user_id tie | 202_conversion_logs | rr.superseded_by = {$c}.conv_id AND rr.click_id = {$c}.click_id'
-                . ' AND rr.user_id = {$c}.user_id AND rr.superseded_reason IN ( \'replace\' , \'batch\' )'
-                . ' AND COALESCE ( rr.consent_withheld , 1 ) <> 0' =>
-                'replacedRefusedSql(): tied, `rr.user_id = row.user_id` with the row\'s alias interpolated, which'
-                . ' the scan cannot read as the row; it reads only whether a row this conversion replaced refused',
-        ],
-        '202-config/Identity/ConsentRefusal.php' => [
-            'subquery table built at runtime | {self::TABLE} | SELECT 1 FROM {{self::TABLE}} AS cr WHERE cr.click_id'
-                . ' = {$click} AND cr' =>
-                'standsAtSql(): self::TABLE is 202_click_consent_refusals, which has no user_id: a row is keyed by'
-                . ' the click id alone, written only for the account\'s own click, and read for the click of the'
-                . ' conversion being read; it answers only whether that click\'s visitor refused',
-        ],
         '202-config/Click/AdClickIdIndex.php' => [
             'no user_id tie | 202_clicks | v.click_id = x.click_id AND v.click_time >= ?' =>
                 'clicksWith(): asks only whether the click an index row names was visited in the window, before'

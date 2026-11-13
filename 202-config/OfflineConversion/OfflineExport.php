@@ -212,7 +212,7 @@ final class OfflineExport
         $oldest = $options->now - self::CLICK_MAX_AGE;
         $sql = 'SELECT cl.conv_id, cl.click_time, cl.conv_time, cl.match_method, cl.currency, '
             . CountedAmount::sqlOrNull('cl') . ' AS counted_amount,' . $ids
-            . ' ' . ConsentWithheld::refusedSql('cl') . ' AS refused,'
+            . ' ' . ConsentWithheld::refusedSql() . ' AS refused,'
             . ' COALESCE(cn.conversion_name, dn.conversion_name) AS conversion_name,'
             . " CASE WHEN cl.match_method IN ($named) AND cl.click_time BETWEEN ? AND ?"
             . ' THEN EXISTS (SELECT 1 FROM 202_clicks AS oc WHERE oc.click_id = cl.click_id AND oc.user_id = cl.user_id'
