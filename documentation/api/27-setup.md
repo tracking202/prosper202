@@ -310,8 +310,8 @@ If a stored token or secret cannot be read (the key that encrypts them was
 lost from the database, or a value was altered), a postback that presents it
 is answered `500`, never let through, while one that presents nothing is
 still decided by the mode, and `off` accepts both. Opening Account › API
-Integrations, Setup › Postback / Pixel, any of the three routes above, or a
-rotation replaces it with a new one, and the answer says so (`recovered`):
+Integrations, Setup › Postback / Pixel, `GET` or `PUT`
+`/conversions/postback-auth`, or a rotation replaces it with a new one, and the answer says so (`recovered`):
 the old ones stopped working, so copy your URLs again.
 
 A rotation makes a new token or signing secret; the old one keeps working

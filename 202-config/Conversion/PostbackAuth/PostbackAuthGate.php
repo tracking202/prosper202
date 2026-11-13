@@ -21,7 +21,8 @@ use Prosper202\Database\Connection;
  *   against the URL token, a signature against the signing secret.
  * - Mode token: the token or a signature is needed.
  * - Mode signed: a signature is needed; the token alone is refused. A pixel
- *   is fetched by a browser and cannot sign, so every pixel is refused.
+ *   is fetched by a browser and cannot sign, so a pixel request is refused
+ *   unless it is signed.
  * - A row that cannot be read throws: the caller answers 500, never a pass.
  *   Only what the request presents is opened: a request presenting nothing
  *   is decided by the mode alone.
