@@ -684,7 +684,7 @@ sign in and approve the connection on your own install (Prosper202 1.9.78 or
 later, on https), choosing read only, propose changes, or read and change. The
 connection is an API key labelled `AI: <app> via mcp.tracking202.com` in
 My Account › Personal Settings › API keys; remove it there to disconnect. Your install approves it with
-an active free ClickServer licence (your my.tracking202.com key, confirmed by Tracking202; no paid subscription), as the CLI needs; the hosted connector itself needs no paid subscription from the connector's next release. The key keeps the access it was approved with: when a later version lets a connection do
+an active free ClickServer licence (your my.tracking202.com key, confirmed by Tracking202; no paid subscription), as the CLI needs; the hosted connector needs the same active free licence, and no paid subscription. The key keeps the access it was approved with: when a later version lets a connection do
 more (a new write tool), a call that needs it is refused (exit 2) with a hint to connect the app again
 and choose the access the install names, which approves a new key that has it. One call there reads at most 1 MB of the install's answers, so its list
 tools take no `all`: page with `limit` and `offset`. It also decodes at most

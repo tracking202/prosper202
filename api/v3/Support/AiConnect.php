@@ -483,8 +483,8 @@ final class AiConnect
 
         // An install with no key was refused above. A key that cannot be read
         // is the install's own error, which cliAccess() lets through; the
-        // answer then carries no hash, which the hosted MCP server takes
-        // from the connector's next release.
+        // answer then carries no hash, and the hosted MCP server refuses the
+        // connection naming the key setting to check.
         $licenceKey = CapabilitiesController::licenceKeyFor($db, $userId);
 
         $label = self::label((string) $grant['client_name']);

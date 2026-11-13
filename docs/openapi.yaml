@@ -9785,9 +9785,9 @@ paths:
                           approving user's, else the install owner's), trimmed and
                           lowercased first. Left out when the install could not read
                           its key (the install's own error, which the gate lets through).
-                          The install sends it whenever it can read its key; from the
-                          connector's next release the hosted MCP server takes an answer
-                          without it. The key itself is never sent.
+                          The install sends it whenever it can read its key; the hosted
+                          MCP server refuses an answer without it and names the key
+                          setting to check. The key itself is never sent.
         '400':
           description: >-
             invalid_request (a missing or malformed field) or invalid_grant

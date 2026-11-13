@@ -546,7 +546,7 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
 
 Claude Desktop and Cursor take the same command in their MCP settings.
 
-**Hosted AI apps** (claude.ai and others) add `https://mcp.tracking202.com/mcp` as a connector, then sign in and approve the connection on your own install (1.9.78 or later, served over HTTPS), choosing read only, propose changes, or read and change. The connection is an API key under My Account › Personal Settings › API keys; remove it there to disconnect. From 1.9.80 your install approves the connection with an active free ClickServer licence (your my.tracking202.com key, confirmed by Tracking202; no paid subscription), as `p202` and `p202 mcp` need; the hosted connector itself needs no paid subscription from the connector's next release.
+**Hosted AI apps** (claude.ai and others) add `https://mcp.tracking202.com/mcp` as a connector, then sign in and approve the connection on your own install (1.9.78 or later, served over HTTPS), choosing read only, propose changes, or read and change. The connection is an API key under My Account › Personal Settings › API keys; remove it there to disconnect. From 1.9.80 your install approves the connection with an active free ClickServer licence (your my.tracking202.com key, confirmed by Tracking202; no paid subscription), as `p202` and `p202 mcp` need; the hosted connector needs the same active free licence, and no paid subscription.
 
 Overview: [Prosper202 for AI assistants](https://prosper.tracking202.com/ai/); command reference: [p202 mcp](https://prosper.tracking202.com/documentation/cli/mcp); tools, limits and what the hosted connector records: [MCP Server](documentation/cli/10-go-cli.md#mcp-server-ai-assistants).
 
