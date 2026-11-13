@@ -30,7 +30,7 @@ namespace Prosper202\Attribution;
  *
  * @phpstan-type Posted array{
  *     refused: string|null, retryable: bool, strayed: string|null, pinned: string, status: int,
- *     error: string|null, location: string|null, body: string
+ *     error: string|null, location: string|null, body: string, retry_after: string|null
  * }
  */
 final class WebhookSender
@@ -49,11 +49,11 @@ final class WebhookSender
 
     private ?WebhookGuard $guard;
     private bool $ownTransport;
-    /** @var callable(array<int, mixed>): array{status: int, error: string|null, primary_ip: string|null, location: string|null, body: string} */
+    /** @var callable(array<int, mixed>): array{status: int, error: string|null, primary_ip: string|null, location: string|null, body: string, retry_after?: string|null} */
     private $transport;
 
     /**
-     * @param (callable(array<int, mixed>): array{status: int, error: string|null, primary_ip: string|null, location: string|null, body: string})|null $transport
+     * @param (callable(array<int, mixed>): array{status: int, error: string|null, primary_ip: string|null, location: string|null, body: string, retry_after?: string|null})|null $transport
      */
     public function __construct(?WebhookGuard $guard = null, ?callable $transport = null)
     {
@@ -182,7 +182,7 @@ final class WebhookSender
     {
         $none = [
             'refused' => null, 'retryable' => false, 'strayed' => null, 'pinned' => '', 'status' => 0,
-            'error' => null, 'location' => null, 'body' => '',
+            'error' => null, 'location' => null, 'body' => '', 'retry_after' => null,
         ];
         if ($body !== null && strlen($body) > self::MAX_BODY_BYTES) {
             return ['refused' => 'the body is ' . strlen($body) . ' bytes, more than the ' . self::MAX_BODY_BYTES
@@ -219,6 +219,7 @@ final class WebhookSender
             'error' => $answer['error'],
             'location' => $answer['location'],
             'body' => $answer['body'],
+            'retry_after' => $answer['retry_after'] ?? null,
         ];
     }
 
@@ -264,10 +265,10 @@ final class WebhookSender
     /**
      * The real transfer. Reads at most $maxBytes of the answer, keeps its
      * first $keepBytes, and keeps the Location header of a redirect for the
-     * message.
+     * message and the Retry-After header as sent.
      *
      * @param array<int, mixed> $options
-     * @return array{status: int, error: string|null, primary_ip: string|null, location: string|null, body: string}
+     * @return array{status: int, error: string|null, primary_ip: string|null, location: string|null, body: string, retry_after?: string|null}
      */
     public static function curlTransport(
         array $options,
@@ -281,6 +282,7 @@ final class WebhookSender
         $body = '';
         $read = 0;
         $location = null;
+        $retryAfter = null;
         $options[CURLOPT_RETURNTRANSFER] = false;
         $options[CURLOPT_WRITEFUNCTION] = static function ($handle, string $chunk) use (&$body, &$read, $maxBytes, $keepBytes): int {
             $read += strlen($chunk);
@@ -293,9 +295,11 @@ final class WebhookSender
 
             return strlen($chunk);
         };
-        $options[CURLOPT_HEADERFUNCTION] = static function ($handle, string $line) use (&$location): int {
+        $options[CURLOPT_HEADERFUNCTION] = static function ($handle, string $line) use (&$location, &$retryAfter): int {
             if (stripos($line, 'location:') === 0) {
                 $location = trim(substr($line, 9));
+            } elseif (stripos($line, 'retry-after:') === 0) {
+                $retryAfter = mb_substr(trim(substr($line, 12)), 0, 100);
             }
 
             return strlen($line);
@@ -320,6 +324,7 @@ final class WebhookSender
             'primary_ip' => is_string($primary) && $primary !== '' ? $primary : null,
             'location' => $location,
             'body' => $body,
+            'retry_after' => $retryAfter,
         ];
     }
 

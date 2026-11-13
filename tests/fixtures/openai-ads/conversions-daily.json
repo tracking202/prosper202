@@ -1,0 +1,30 @@
+{
+  "object": "list",
+  "account_currency": "USD",
+  "data": [
+    {
+      "entity_id": "ad_501",
+      "date": "@D0@",
+      "conversions": 3,
+      "click_through_conversions": 2,
+      "view_through_conversions": 1,
+      "order_created_attributed_sales": "129.50",
+      "order_created_attributed_sales_currency": "USD"
+    },
+    {
+      "entity_id": "ad_502",
+      "date": "@D0@",
+      "conversions": 0,
+      "click_through_conversions": 0,
+      "view_through_conversions": 0,
+      "order_created_attributed_sales": null,
+      "order_created_attributed_sales_currency": "USD"
+    },
+    {
+      "entity_id": "ad_501",
+      "date": "not a day",
+      "conversions": 1
+    }
+  ],
+  "count": 3
+}

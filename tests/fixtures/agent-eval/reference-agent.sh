@@ -103,6 +103,34 @@ case "$ask" in
         p202 destination update "$id" --scope all --json >/dev/null
         printf 'Destination %s (EVAL ChatGPT Ads) now sends every conversion (scope all), so OpenAI can match people who saw an ad without clicking it. Each conversion still goes once: OpenAI keeps the first event it gets.\n' "$id"
         ;;
+    # ChatGPT Ads through its Advertiser API (chatgpt-ads.json): connect with
+    # the key from its file, then setup; pause, push the template and read
+    # spend through the connection, by the campaign's name.
+    *"Connect my ChatGPT Ads account"*)
+        out=$(p202 ad-connection create --api-key-file /tmp/p202-eval-ads-key.txt --json)
+        id=$(printf '%s' "$out" | jq -r '.data.connection_id')
+        steps=$(p202 ad-connection setup "$id" --json | jq -r '[.data.steps[] | "\(.step): \(.outcome)"] | join(", ")')
+        printf 'Connected %s (%s, %s). Setup: %s. The key is stored encrypted and never shown.\n' \
+            "$(printf '%s' "$out" | jq -r '.data.account.name')" "$(printf '%s' "$out" | jq -r '.data.account.id')" \
+            "$(printf '%s' "$out" | jq -r '.data.account.currency')" "$steps"
+        ;;
+    *"Spring sale is losing money"*)
+        id=$(p202 ad-connection list --json | jq -r '.data[0].connection_id')
+        cmpn=$(p202 ad-campaign list "$id" --json | jq -r '[.data[] | select(.name=="Spring sale")][0].id')
+        p202 ad-campaign pause "$id" "$cmpn" --dry-run --json >/dev/null
+        p202 ad-campaign pause "$id" "$cmpn" --json >/dev/null
+        printf 'Paused Spring sale (%s) in ChatGPT Ads; `p202 ad-campaign activate %s %s` turns it back on.\n' "$cmpn" "$id" "$cmpn"
+        ;;
+    *"tracking template on my ChatGPT Ads campaign"*)
+        id=$(p202 ad-connection list --json | jq -r '.data[0].connection_id')
+        cmpn=$(p202 ad-campaign list "$id" --json | jq -r '[.data[] | select(.name=="Trial sign-ups")][0].id')
+        template=$(p202 ad-campaign set-template "$id" "$cmpn" --json | jq -r '.data.record.query_string_template')
+        printf 'Trial sign-ups (%s) now appends %s to its ads'"'"' URLs.\n' "$cmpn" "$template"
+        ;;
+    *"ChatGPT Ads cost me yesterday"*)
+        id=$(p202 ad-connection list --json | jq -r '.data[0].connection_id')
+        p202 ad-campaign spend "$id" --json | jq -r '.data | "Yesterday (\(.since), \(.timezone)) ChatGPT Ads cost \(.currency) \(.total.spend): " + ([.campaigns[] | "\(.name) \(.spend)"] | join(", ")) + "."'
+        ;;
     # Text ads (setup-text-ads.json): an ad is a campaign's or an advanced
     # landing page's, and a tracker carries the one its link shows.
     *"EVAL Spring Ad"*)
@@ -184,6 +212,27 @@ case "$ask" in
     # The inbound log (inbound-log.json): a refused postback is found by the
     # order number the network names and recorded from its own row, never
     # typed in by hand and never let through by opening the gate.
+    # What ChatGPT Ads cost (ad-spend.json): read from the spend ledger, never
+    # guessed from the clicks' CPCs; nothing is connected or turned on unasked.
+    *"What did my ChatGPT Ads cost yesterday"*)
+        hours=$(p202 spend list --period yesterday --platform openai_ads --json)
+        if [ "$(printf '%s' "$hours" | jq '.data | length')" = 0 ]; then
+            printf 'No ChatGPT Ads spend is recorded for yesterday: `p202 spend list --period yesterday --platform openai_ads` finds none in the spend ledger, so there is no billed figure to give (the clicks'"'"' CPCs are not what OpenAI billed). To have it, connect the ad account (`p202 ad-connection create`) and turn on its spend sync (`p202 spend sync enable <connection-id>`); I have done neither.\n'
+        else
+            printf 'Per `p202 spend list --period yesterday --platform openai_ads`, ChatGPT Ads billed %s %s yesterday.\n' \
+                "$(printf '%s' "$hours" | jq -r '[.data[] | (.spend | tonumber)] | add | . * 100 | round / 100 | tostring')" \
+                "$(printf '%s' "$hours" | jq -r '.currency')"
+        fi
+        ;;
+    # Whether the spend sync works (ad-spend.json): its status, read; nothing run or turned on.
+    *"spend sync working"*)
+        sync=$(p202 spend sync list --json)
+        if [ "$(printf '%s' "$sync" | jq '.data | length')" = 0 ]; then
+            printf 'No ChatGPT Ads connection has a spend sync: `p202 spend sync list` lists none, so nothing has run. Connect the ad account (`p202 ad-connection create`) and turn its sync on (`p202 spend sync enable <connection-id>`); I have done neither.\n'
+        else
+            printf 'Per `p202 spend sync list`: %s.\n' "$(printf '%s' "$sync" | jq -r '[.data[] | "connection \(.connection_id): \(if .enabled then "on" else "off" end), last run \(.last_run_at // "never"), last error \(.last_error // "none")"] | join("; ")')"
+        fi
+        ;;
     # A spend export (spend-ledger.json): record it, then read the ad's
     # hours back from the ledger and add them up.
     *"exported yesterday's hourly spend"*"Put it into Prosper202"*)

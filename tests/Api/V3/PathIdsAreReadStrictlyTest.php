@@ -34,6 +34,7 @@ final class PathIdsAreReadStrictlyTest extends TestCase
         ['#^/ltv/subscriptions/\{ref\}/events$#', 'ref', "the caller's own external subscription id"],
         ['#^/apps/\{id\}/installs/\{uuid\}$#', 'uuid', "an Android install's uuid"],
         ['#^/users/\{id\}/api-keys/\{keyId\}$#', 'keyId', 'an API key is a string'],
+        ['#^/ad-connections/\{id\}/(campaigns|ad-groups|ads)/\{objectId\}(/|$)#', 'objectId', "an ad platform's own id (cmpn_…), checked by OpenAiAdsCampaigns::objectId() before it reaches a request"],
     ];
 
     /**

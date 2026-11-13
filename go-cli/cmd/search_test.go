@@ -366,3 +366,26 @@ func TestSearchFoldsInflectionsTheIndexKnows(t *testing.T) {
 		t.Errorf("imported conversions import: terms %v, unknown %v", a.Terms, a.UnknownTerms)
 	}
 }
+
+// A query that is a page, with or without its section, or a phrase, word for
+// word, names that task; a query with a word more or less does not.
+func TestSearchNamesAGroupOnlyWordForWord(t *testing.T) {
+	d := &rankDoc{groups: []searchGroup{{tokens: []string{"landing", "page"}, section: []string{"setup"}}, {tokens: []string{"lp", "code"}}}}
+	set := func(w ...string) map[string]bool {
+		m := map[string]bool{}
+		for _, x := range w {
+			m[x] = true
+		}
+		return m
+	}
+	for _, q := range [][]string{{"landing", "page"}, {"setup", "landing", "page"}, {"lp", "code"}} {
+		if !namesAGroupExactly(d, set(q...)) {
+			t.Errorf("%v names a group", q)
+		}
+	}
+	for _, q := range [][]string{{"landing"}, {"setup", "landing", "page", "code"}, {"setup", "lp", "code"}} {
+		if namesAGroupExactly(d, set(q...)) {
+			t.Errorf("%v names no group word for word", q)
+		}
+	}
+}

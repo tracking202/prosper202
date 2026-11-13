@@ -39,6 +39,17 @@ campaign whose cost today reaches the cap with no conversion today is alerted,
 at most once a day. Any conversion recorded today counts, an upload included.
 "Today" is your account's day in its time zone, and cost
 is every click's, filtered clicks included, since each was paid for.
+When today's clicks came from ChatGPT Ads (the `campaign_id` the ChatGPT Ads
+tracking template puts on each click, on a traffic source account linked to
+an [ad connection](../api/28-ad-connections.md)), the alert names those
+ChatGPT Ads campaigns and says where to pause them: Setup › Destinations ›
+ChatGPT Ads › campaigns, or `p202 ad-campaign pause`. The webhook payload
+carries them as `chatgpt_campaigns` (`connection:campaign` pairs, such as
+`3:cmpn_101,5:cmpn_eu1`: each campaign with the ad connection that reaches
+it) and `chatgpt_campaign_ids`, and the
+alert on Home has a **Pause … in ChatGPT Ads** button for each: it shows the
+campaign's status at OpenAI and what pausing changes, and pauses only when
+you confirm.
 
 **Postback refusals jumped.** This alert watches the [inbound
 log](../api/00-api-integrations.md) (Setup › Inbound Log): every postback and

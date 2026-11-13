@@ -210,6 +210,8 @@ final class UserDeletionPurgeTest extends TestCase
         '202_dni_networks' => 'account setup, kept with the soft-deleted user',
         '202_clicks' => 'the traffic record: clicks are kept',
         '202_spend_ledger' => 'the traffic record: what the ad platforms billed for the kept clicks',
+        '202_ad_platform_conversions' => 'the traffic record: the conversions an ad platform reported for the kept clicks\' ads',
+        '202_ad_spend_sync' => 'account setup: whether a kept ad connection\'s spend is pulled, and its last run',
         '202_clicks_advance' => 'the traffic record: clicks are kept',
         '202_clicks_counter' => 'the traffic record: clicks are kept',
         '202_clicks_record' => 'the traffic record: clicks are kept',

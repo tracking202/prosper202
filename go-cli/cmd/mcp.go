@@ -27,7 +27,7 @@ var mcpToolRun bool
 
 var mcpCmd = &cobra.Command{
 	Use:   "mcp",
-	Short: "Serve Prosper202 to AI assistants over MCP (stdio), for Claude Desktop, Claude Code, Cursor and others",
+	Short: "Serve Prosper202 to AI apps over MCP (stdio): Claude Desktop, Claude Code, Cursor, others",
 	Long: "Runs an MCP (Model Context Protocol) server on stdin/stdout. An AI app starts it\n" +
 		"and calls its tools, each of which runs one p202 command against your install with\n" +
 		"the profile that is active when the server starts (or --profile).\n\n" +
@@ -46,7 +46,7 @@ var mcpCmd = &cobra.Command{
 
 var mcpToolsCmd = &cobra.Command{
 	Use:   "tools",
-	Short: "List the MCP tools as JSON (names, input schemas, read/write hints)",
+	Short: "The MCP tools as JSON (names, input schemas, read/write hints)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cat, err := buildMCPCatalog(rootCmd, mcpReadOnly, api.StagedMode())
@@ -55,12 +55,10 @@ var mcpToolsCmd = &cobra.Command{
 		}
 		var listed interface{} = cat
 		if mcpToolsDeferred {
-			// The tools get_more_tools loads on request, in the catalogue's tool shape.
-			deferred, err := buildMCPDeferredTools(rootCmd, mcpReadOnly, api.StagedMode())
+			listed, err = mcpDeferredListing(rootCmd, mcpReadOnly, api.StagedMode())
 			if err != nil {
 				return err
 			}
-			listed = map[string]interface{}{"schema": mcpCatalogSchema, "tools": deferred}
 		}
 		var buf bytes.Buffer
 		enc := json.NewEncoder(&buf)

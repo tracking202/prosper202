@@ -41,6 +41,7 @@ function p202_ad_connections_panel(array $connections, array $ppcAccounts, ?arra
                 . p202_setup_token_field($token) . '<input type="hidden" name="action" value="' . $act . '"><input type="hidden" name="connection_id" value="' . $id . '">'
                 . '<button type="submit" class="p202-list__action' . ($act === 'ad_delete' ? ' p202-list__action--danger' : '') . '">' . $label . '</button></form>';
         }
+        $out .= '<a class="p202-list__action" href="' . $e($self . '?ad_campaigns=' . $id . '#ad-campaigns') . '">campaigns</a>';
         $out .= '</span><span class="p202-list__meta">' . $e(($account['currency'] ?? '') . ' · ' . ($account['timezone'] ?? ''))
             . ($c['ppc_account_id'] !== null ? ' · traffic source account ' . $e($ppcAccounts[(int) $c['ppc_account_id']] ?? '#' . (int) $c['ppc_account_id']) : '')
             . ' · pixel ' . $e($pixel !== null ? (string) ($pixel['pixel_id'] ?? '') : 'not set up')

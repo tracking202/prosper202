@@ -100,7 +100,7 @@ func adConnectionPpcAccount(cmd *cobra.Command, body map[string]interface{}) err
 
 var adConnectionListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List ad connections (keys are never shown, only whether they are stored)",
+	Short: "List ad connections (keys never shown)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
@@ -118,7 +118,7 @@ var adConnectionListCmd = &cobra.Command{
 
 var adConnectionGetCmd = &cobra.Command{
 	Use:   "get <id>",
-	Short: "Show one ad connection: its account, status and what setup made",
+	Short: "One ad connection: account, status, what setup made",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := adConnectionArg(args[0]); err != nil {
@@ -139,7 +139,7 @@ var adConnectionGetCmd = &cobra.Command{
 
 var adConnectionCreateCmd = &cobra.Command{
 	Use:   "create --api-key-file <file>",
-	Short: "Connect a ChatGPT Ads account with its Advertiser API key (checked with OpenAI first)",
+	Short: "Connect a ChatGPT Ads account by its Advertiser API key",
 	Long: "Reads the Advertiser API key from --api-key-file (- reads piped stdin) and checks it with OpenAI: a key\n" +
 		"OpenAI refuses, or one that could not be checked, is not stored. Then run `p202 ad-connection setup <id>`.",
 	Args: cobra.NoArgs,
@@ -173,7 +173,7 @@ var adConnectionCreateCmd = &cobra.Command{
 
 var adConnectionUpdateCmd = &cobra.Command{
 	Use:   "update <id>",
-	Short: "Replace an ad connection's Advertiser API key, or link it to a traffic source account",
+	Short: "Replace an ad connection's API key, or link it to a traffic source account",
 	Long: "  p202 ad-connection update 1 --api-key-file new-key.txt   (must reach the same ad account)\n" +
 		"  p202 ad-connection update 1 --ppc-account-id 4\n" +
 		"  p202 ad-connection update 1 --no-ppc-account",
@@ -213,7 +213,7 @@ var adConnectionUpdateCmd = &cobra.Command{
 
 var adConnectionDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
-	Short: "Delete an ad connection (its keys are erased here; nothing is removed at OpenAI)",
+	Short: "Delete an ad connection (nothing changes at OpenAI)",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		for _, a := range args {
@@ -230,7 +230,7 @@ var adConnectionDeleteCmd = &cobra.Command{
 
 var adConnectionCheckCmd = &cobra.Command{
 	Use:   "check <id>",
-	Short: "Read the ad account from OpenAI again: name, currency, time zone, and whether the key still works",
+	Short: "Re-read the ad account from OpenAI, and whether the key works",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := adConnectionArg(args[0]); err != nil {
@@ -251,7 +251,7 @@ var adConnectionCheckCmd = &cobra.Command{
 
 var adConnectionSetupCmd = &cobra.Command{
 	Use:   "setup <id>",
-	Short: "Find or make the pixel, a Conversions API key, the destination and event settings (each step shown)",
+	Short: "Find or make the pixel, Conversions API key, destination and event settings",
 	Long: "Runs the steps pixel, conversions_key, destination and event_settings, and prints what each did. A step\n" +
 		"that ran before is kept, so it can be run again. Skip one with --skip. When OpenAI has pixel or key\n" +
 		"creation switched off for the account, the step says so: give them from Ads Manager.\n\n" +
