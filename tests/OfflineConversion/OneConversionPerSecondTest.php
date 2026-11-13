@@ -44,6 +44,7 @@ final class OneConversionPerSecondTest extends TestCase
             'msclkid' => self::CLICK,
             'conversion_name' => 'Sale',
             'owned' => 1,
+            'refused' => 0,
         ];
     }
 

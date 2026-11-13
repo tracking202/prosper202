@@ -63,6 +63,7 @@ final class MoneyLossAlertsUpgradeIntegrationTest extends TestCase
         self::q('DROP TABLE 202_alert_log');
         // As 1.9.79 left it: neither of the keys nor the columns the 1.9.80 step adds.
         self::q('ALTER TABLE 202_conversion_logs DROP INDEX user_conv_time, DROP INDEX user_currency_click_time,'
+            . ' DROP INDEX superseded_by,'
             . ' DROP COLUMN currency, DROP COLUMN stated_amount, DROP COLUMN stated_currency, DROP COLUMN currency_basis,'
             . ' DROP COLUMN consent_withheld');
         self::q('DELETE FROM 202_conversion_logs WHERE user_id = 7899');
