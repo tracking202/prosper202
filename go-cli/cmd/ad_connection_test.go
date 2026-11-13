@@ -140,7 +140,7 @@ func TestDestinationTestRealAsksForTheReadBack(t *testing.T) {
 	if _, _, err := executeCommand("destination", "test", "3", "--json"); err != nil {
 		t.Fatalf("test: %v", err)
 	}
-	if !reflect.DeepEqual(bodies, []map[string]interface{}{{"real": true}, {}}) {
+	if !reflect.DeepEqual(bodies, []map[string]interface{}{{"real": true, "confirm_counted": true}, {}}) {
 		t.Errorf("bodies = %v", bodies)
 	}
 	if !strings.Contains(out, `"arrived": true`) {
@@ -213,5 +213,76 @@ func TestAdConnectionHintsAreForRefusedInputOnly(t *testing.T) {
 				t.Errorf("%s, %s: hint = %q, want the network hint", name, c.what, hint)
 			}
 		}
+	}
+}
+
+// OpenAI not reached or limiting requests is the server's failure to ask, not
+// a word about the key: the class's retry hint, never where the key is.
+func TestAdConnectionOpenAiOutageIsNotABadKey(t *testing.T) {
+	var status int
+	var body string
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		if status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable {
+			w.Header().Set("Retry-After", "60")
+		}
+		w.WriteHeader(status)
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	keyFile := filepath.Join(tmp, "key.txt")
+	if err := os.WriteFile(keyFile, []byte(adConnectionTestKey+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	upstream := func(code int, reason string) string {
+		return `{"error":true,"status":` + strconv.Itoa(code) + `,"message":"OpenAI could not be reached, so the key was not checked and nothing was saved",` +
+			`"retry_after_seconds":60,"details":{"upstream":"openai_ads","reason":"` + reason + `"}}`
+	}
+	commands := map[string][]string{
+		"create": {"ad-connection", "create", "--api-key-file", keyFile},
+		"update": {"ad-connection", "update", "3", "--api-key-file", keyFile},
+		"check":  {"ad-connection", "check", "3"},
+		"setup":  {"ad-connection", "setup", "3"},
+	}
+	for name, args := range commands {
+		for _, c := range []struct {
+			what   string
+			status int
+			body   string
+			exit   int
+			retry  string
+		}{
+			{"an outage", http.StatusServiceUnavailable, upstream(503, "unreachable"), ExitServer, "Wait a minute and run the same command again"},
+			{"an unusable answer", http.StatusBadGateway, upstream(502, "unreadable_answer"), ExitServer, "Wait a minute and run the same command again"},
+			{"its rate limit", http.StatusTooManyRequests, upstream(429, "rate_limited"), ExitRateLimited, ""},
+		} {
+			status, body = c.status, c.body
+			_, _, err := executeCommand(append(args, "--json")...)
+			if err == nil {
+				t.Fatalf("%s, %s: no error", name, c.what)
+			}
+			if got := exitCodeForError(err); got != c.exit {
+				t.Errorf("%s, %s: exit %d, want %d (%v)", name, c.what, got, c.exit, err)
+			}
+			hint := hintFor(err)
+			if strings.Contains(hint, advertiserKeyWhere) || strings.Contains(hint, adConnectionListHint) {
+				t.Errorf("%s, %s: a command's own hint on an outage: %q", name, c.what, hint)
+			}
+			if hint == "" || hint != api.HintFor(err) {
+				t.Errorf("%s, %s: hint = %q, want the class's", name, c.what, hint)
+			}
+			if c.retry != "" && !strings.Contains(hint, c.retry) {
+				t.Errorf("%s, %s: hint = %q, want %q", name, c.what, hint, c.retry)
+			}
+		}
+	}
+	// A key OpenAI refuses is still the caller's to fix.
+	status = http.StatusUnprocessableEntity
+	body = `{"error":true,"status":422,"message":"OpenAI refused that key","field_errors":{"api_key":"OpenAI refused that key"}}`
+	_, _, err := executeCommand("ad-connection", "create", "--api-key-file", keyFile, "--json")
+	if err == nil || exitCodeForError(err) != ExitValidation || !strings.Contains(hintFor(err), advertiserKeyWhere) {
+		t.Errorf("a refused key: err %v, exit %d, hint %q", err, exitCodeForError(err), hintFor(err))
 	}
 }

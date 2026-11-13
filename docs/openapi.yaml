@@ -5219,9 +5219,11 @@ paths:
       summary: Connect an ad account with its Advertiser API key
       description: |
         The key is checked first with OpenAI's `GET /ad_account`, which fills
-        the account's id, name, currency and time zone; a key OpenAI refuses,
-        or one that could not be checked, is answered 422 and nothing is
-        stored. The key is stored encrypted and never served. One connection
+        the account's id, name, currency and time zone; a key OpenAI refuses
+        is answered 422 and nothing is stored. When OpenAI could not be asked
+        nothing is stored either and the answer is 503 (not reached), 429
+        (its rate limit) or 502 (an answer that cannot be used), never a 422:
+        the key was not judged. The key is stored encrypted and never served. One connection
         per ad account; at most 10 per account. A currency other than the
         account's is allowed and said in `currency_matches_account`.
       operationId: createAdConnection
@@ -5250,6 +5252,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/UpstreamRateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}:
     parameters:
@@ -5305,6 +5313,12 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/UpstreamRateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
     delete:
       tags: [Ad Connections]
       summary: Delete an ad connection
@@ -5329,8 +5343,10 @@ paths:
       summary: Read the ad account again
       description: |
         Refreshes name, currency and time zone. A refused key sets `status`
-        `key_refused`; a request that got no answer leaves `status` as it was
-        and says why in `last_error`. Not previewable: `dry_run` is answered 422.
+        `key_refused` and is a 200: the check was made. A check OpenAI did not
+        answer is a 503 (429 for its rate limit, 502 for an answer that cannot
+        be used) with the connection in `details.connection`: `status` is left
+        as it was, and `last_error` and `checked_at` record the try. Not previewable: `dry_run` is answered 422.
       operationId: checkAdConnection
       responses:
         "200":
@@ -5348,6 +5364,12 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/UpstreamRateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/setup:
     parameters:
@@ -5368,7 +5390,12 @@ paths:
         Where OpenAI answers 404 to pixel or key creation (the feature is off
         for the account) the step is `needs_input`: give `pixel_id` with
         `source_id`, or `conversions_api_key`, from Ads Manager. Creates carry
-        an Idempotency-Key. Not previewable: `dry_run` is answered 422.
+        an Idempotency-Key. A run in which OpenAI was not reached (or was
+        limiting requests) and no step is `created`, `found`, `given` or
+        `kept` set nothing up and is a 503 (429 when every such failure was
+        the rate limit), with the steps in `details.steps`; a run in which
+        any step did or kept something is a 200 with each step's outcome.
+        Not previewable: `dry_run` is answered 422.
       operationId: setupAdConnection
       requestBody:
         content:
@@ -5416,6 +5443,12 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/UpstreamRateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   # ─── Destinations ────────────────────────────────────────────────────
 
@@ -5584,8 +5617,10 @@ paths:
         are read through the connection, and `arrived` says whether it is
         among them as a server event (`server_to_server`). The answer is
         `sent`, `arrived`, `event_type`, `pixel_id`, `connection_id`,
-        `status_code` and `message`. Without a connection it is a 422 naming
-        `real`. Not logged as a delivery.
+        `status_code` and `message`. Because the event is counted, `real`
+        is refused (422 naming `confirm_counted`) unless
+        `"confirm_counted": true` is sent with it. Without a connection it
+        is a 422 naming `real`. Not logged as a delivery.
       operationId: testDestination
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer}}
@@ -5596,6 +5631,7 @@ paths:
               type: object
               properties:
                 real: {type: boolean, description: ChatGPT Ads with a connection - send a real event and read it back}
+                confirm_counted: {type: boolean, description: Required true with real - the event is saved and counted as a conversion}
       responses:
         "200":
           description: The platform's verdict
@@ -13670,6 +13706,47 @@ components:
           schema:
             $ref: "#/components/schemas/ValidationError"
 
+    UpstreamUnavailable:
+      description: >-
+        The ad platform (OpenAI) could not be reached: no answer, or a 5xx of
+        its own. Nothing the request sent is wrong and the key was not judged;
+        the same request can succeed later. `details.upstream` names the
+        platform and `details.reason` is `unreachable`. A check's answer
+        carries the connection as it stands in `details.connection`; a
+        setup's carries `details.connection` and `details.steps`.
+      headers:
+        Retry-After:
+          description: Seconds to wait before asking again
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UpstreamFailure"
+    UpstreamRateLimited:
+      description: >-
+        The ad platform's rate limit (OpenAI answered 429, or this install is
+        holding to OpenAI's per-minute limits). Nothing the request sent is
+        wrong. `details.reason` is `rate_limited`; the rest is as for 503.
+      headers:
+        Retry-After:
+          description: Seconds to wait before asking again
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UpstreamFailure"
+    UpstreamUnreadable:
+      description: >-
+        The ad platform answered something its API does not document (an ad
+        account without an id, currency or time zone, or a refusal of the
+        account read that is not about the key). `details.reason` is
+        `unreadable_answer`. Nothing was stored.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UpstreamFailure"
     AppRateLimited:
       description: Per-source rate limit exceeded; retry after the indicated seconds
       headers:
@@ -13690,6 +13767,23 @@ components:
   # ─── Schemas ─────────────────────────────────────────────────────────
 
   schemas:
+    UpstreamFailure:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            retry_after_seconds: {type: integer, description: Present on 429 and 503}
+            details:
+              type: object
+              properties:
+                upstream: {type: string, enum: [openai_ads]}
+                reason: {type: string, enum: [unreachable, rate_limited, unreadable_answer]}
+                connection:
+                  $ref: "#/components/schemas/AdConnection"
+                steps:
+                  type: array
+                  items: {type: object}
+
     # ── Bulk upsert ────────────────────────────────────────────────────
 
     BulkUpsertResult:

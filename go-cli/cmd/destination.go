@@ -756,6 +756,8 @@ var destinationTestCmd = &cobra.Command{
 		body := map[string]interface{}{}
 		if real, _ := cmd.Flags().GetBool("real"); real {
 			body["real"] = true
+			// The flag is the operator's word that a counted event is meant; the API refuses real without it.
+			body["confirm_counted"] = true
 		}
 		data, err := c.Post("destinations/"+args[0]+"/test", body)
 		if err != nil {
@@ -932,7 +934,7 @@ func init() {
 	destinationResendCmd.Flags().Int("delivery-id", 0, "The one delivery to send again (from `destination deliveries`)")
 	destinationResendCmd.Flags().String("status", "", "Send every delivery of this status again, one of {values}")
 	enumFlag(destinationResendCmd, "status", destinationResendStatuses)
-	destinationTestCmd.Flags().Bool("real", false, "ChatGPT Ads with an ad connection: send a real event (saved, counted) and read it back from OpenAI")
+	destinationTestCmd.Flags().Bool("real", false, "ChatGPT Ads with an ad connection: send a real event, which OpenAI saves and counts as a conversion, and read it back")
 	destinationBackfillCmd.Flags().Int("days", 0, "How many days back (1-3 for GA4, 1-7 for ChatGPT Ads, 1-90 for Google Ads)")
 	destinationCmd.AddCommand(destinationListCmd, destinationGetCmd, destinationCreateCmd, destinationUpdateCmd,
 		destinationDeleteCmd, destinationTestCmd, destinationDeliveriesCmd, destinationConnectCmd,

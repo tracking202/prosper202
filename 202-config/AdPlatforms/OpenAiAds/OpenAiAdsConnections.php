@@ -6,6 +6,7 @@ namespace Prosper202\AdPlatforms\OpenAiAds;
 
 use Prosper202\AdPlatforms\AdConnectionInputException;
 use Prosper202\AdPlatforms\AdConnectionStore;
+use Prosper202\AdPlatforms\AdPlatformUnavailable;
 use Prosper202\Destinations\DestinationInputException;
 use Prosper202\Destinations\DestinationStore;
 
@@ -44,7 +45,12 @@ final class OpenAiAdsConnections
     public const PIXEL_NAME = 'Prosper202';
     public const KEY_NAME = 'Prosper202 server events';
     private const MAX_PAGES = 10;
+    /** A step with one of these outcomes did something, or kept what an earlier run did. */
+    private const DONE_OUTCOMES = ['created', 'found', 'given', 'kept'];
     private const NOT_ENABLED = 'OpenAI answered 404 Not found: %s is not switched on for this ad account. Ask your OpenAI partner representative to enable it, or %s';
+
+    /** @var list<string> the kinds of the answers a setup run did not get from OpenAI (an outage, its limit) */
+    private array $unreached = [];
 
     public function __construct(
         private readonly AdConnectionStore $store,
@@ -59,6 +65,8 @@ final class OpenAiAdsConnections
      * could not be asked about.
      *
      * @return array<string, mixed> the connection as AdConnectionStore::get() shapes it
+     * @throws AdConnectionInputException for a key OpenAI refuses
+     * @throws AdPlatformUnavailable when OpenAI could not be asked: that says nothing about the key
      */
     public function connect(int $userId, #[\SensitiveParameter] string $key, ?int $ppcAccountId, int $now): array
     {
@@ -72,10 +80,12 @@ final class OpenAiAdsConnections
     }
 
     /**
-     * Read the account again: name, currency and time zone are refreshed; a refused key marks the connection, and a
-     * failed request leaves its status as it was and says why. Null when the account has no such connection.
+     * Read the account again: name, currency and time zone are refreshed; a refused key marks the connection. Null
+     * when the account has no such connection.
      *
      * @return array<string, mixed>|null
+     * @throws AdPlatformUnavailable when OpenAI could not be asked: the check is recorded (last_error, checked_at),
+     *         the status stays as it was, and the connection is in the exception's context
      */
     public function check(int $userId, int $connectionId, int $now): ?array
     {
@@ -85,16 +95,22 @@ final class OpenAiAdsConnections
         }
         $key = $connection['credentials']['advertiser_api_key'] ?? '';
         $answer = $this->api->get($key, 'ad_account');
-        if (!$answer->isOk()) {
+        $account = $answer->isOk() ? self::accountOf($answer) : null;
+        if ($answer->kind === AdvertiserAnswer::KEY_REFUSED) {
             // Only a refusal says the key is bad; an outage says nothing about it (CLAUDE.md #11).
-            $status = $answer->kind === AdvertiserAnswer::KEY_REFUSED ? AdConnectionStore::STATUS_KEY_REFUSED : null;
-            $this->store->recordCheck($userId, $connectionId, null, $status ?? $this->statusOf($userId, $connectionId), (string) $answer->error, $now);
+            $refused = AdConnectionStore::STATUS_KEY_REFUSED;
+            $this->store->recordCheck($userId, $connectionId, null, $refused, (string) $answer->error, $now);
+        } elseif (!is_array($account)) {
+            // The check is recorded with the status left as it was, and the caller is told it was not made.
+            $why = $account ?? (string) $answer->error;
+            $status = $this->statusOf($userId, $connectionId);
+            $this->store->recordCheck($userId, $connectionId, null, $status, $why, $now);
 
-            return $this->store->get($userId, $connectionId);
-        }
-        $account = self::accountOf($answer);
-        if (is_string($account)) {
-            $this->store->recordCheck($userId, $connectionId, null, $this->statusOf($userId, $connectionId), $account, $now);
+            throw new AdPlatformUnavailable(
+                self::reasonOf($answer),
+                self::notAsked($answer, 'the check was not made and the connection is as it was') . ': ' . $why,
+                ['connection' => $this->store->get($userId, $connectionId)]
+            );
         } elseif ($account['ref'] !== $connection['account_ref']) {
             $this->store->recordCheck($userId, $connectionId, null, AdConnectionStore::STATUS_KEY_REFUSED, 'The stored key now reaches ad account ' . $account['ref'] . ', not ' . $connection['account_ref'] . '; replace it with this account\'s key.', $now);
         } else {
@@ -147,6 +163,7 @@ final class OpenAiAdsConnections
         }
         $key = $connection['credentials']['advertiser_api_key'] ?? '';
         $steps = [];
+        $this->unreached = [];
         $skip = static fn (string $step): bool => in_array($step, $options['skip'], true);
 
         $reread = fn (): array => $this->store->forCalling($userId, $connectionId) ?? throw new \RuntimeException('ad connection ' . $connectionId . ' was deleted during its setup');
@@ -162,7 +179,53 @@ final class OpenAiAdsConnections
 
         $steps[] = $skip('event_settings') ? self::step('event_settings', 'skipped', 'Skipped: no event settings were made.') : $this->eventSettingsStep($userId, $connection, $key, $setup, $pixel, $options, $now);
 
-        return ['connection' => $this->store->get($userId, $connectionId) ?? throw new \RuntimeException('ad connection ' . $connectionId . ' was deleted during its setup'), 'steps' => $steps];
+        $gone = 'ad connection ' . $connectionId . ' was deleted during its setup';
+        $stands = $this->store->get($userId, $connectionId) ?? throw new \RuntimeException($gone);
+        $ran = ['connection' => $stands, 'steps' => $steps];
+        // A run in which OpenAI was not reached and no step made, found, took or kept anything did not set
+        // anything up: that is a failure of the run, not an answer with four failed steps in it.
+        $did = array_intersect(array_column($steps, 'outcome'), self::DONE_OUTCOMES) !== [];
+        if (!$did && $this->unreached !== []) {
+            $limited = array_unique($this->unreached) === [AdvertiserAnswer::RATE_LIMITED];
+
+            throw new AdPlatformUnavailable(
+                $limited ? AdPlatformUnavailable::RATE_LIMITED : AdPlatformUnavailable::UNREACHABLE,
+                ($limited ? 'OpenAI is limiting requests' : 'OpenAI could not be reached')
+                    . ', so setup made nothing. Try again in a minute: what a step makes is made once.',
+                $ran
+            );
+        }
+
+        return $ran;
+    }
+
+    /** What a setup run asked of OpenAI: an answer it did not get (an outage, the limit) is counted for the run. */
+    private function heard(AdvertiserAnswer $answer): AdvertiserAnswer
+    {
+        if ($answer->kind === AdvertiserAnswer::UNAVAILABLE || $answer->kind === AdvertiserAnswer::RATE_LIMITED) {
+            $this->unreached[] = $answer->kind;
+        }
+
+        return $answer;
+    }
+
+    private static function reasonOf(AdvertiserAnswer $answer): string
+    {
+        return match ($answer->kind) {
+            AdvertiserAnswer::RATE_LIMITED => AdPlatformUnavailable::RATE_LIMITED,
+            AdvertiserAnswer::UNAVAILABLE => AdPlatformUnavailable::UNREACHABLE,
+            default => AdPlatformUnavailable::UNREADABLE,
+        };
+    }
+
+    /** The opening of the sentence for an answer that was not got or cannot be used; $so says what follows from it. */
+    private static function notAsked(AdvertiserAnswer $answer, string $so): string
+    {
+        return match (self::reasonOf($answer)) {
+            AdPlatformUnavailable::RATE_LIMITED => 'OpenAI is limiting requests, so ' . $so,
+            AdPlatformUnavailable::UNREACHABLE => 'OpenAI could not be reached, so ' . $so,
+            default => 'OpenAI\'s answer about the ad account cannot be used, so ' . $so,
+        };
     }
 
     /**
@@ -217,7 +280,9 @@ final class OpenAiAdsConnections
 
             return self::step('pixel', 'found', 'Using the account\'s web pixel ' . $pixel['name'] . ' (' . $pixel['pixel_id'] . ').', ['pixel' => $pixel]);
         }
-        $created = $this->api->post($key, 'conversions/pixels', ['name' => self::PIXEL_NAME, 'client_type' => 'web'], $this->idempotencyKey($connection, 'pixel'));
+        $pixelBody = ['name' => self::PIXEL_NAME, 'client_type' => 'web'];
+        $once = $this->idempotencyKey($connection, 'pixel');
+        $created = $this->heard($this->api->post($key, 'conversions/pixels', $pixelBody, $once));
         if ($created->kind === AdvertiserAnswer::NOT_FOUND) {
             return self::step('pixel', 'needs_input', sprintf(self::NOT_ENABLED, 'pixel creation', 'create the pixel in Ads Manager and give its pixel id and source id (clidsrc_…) here.'));
         }
@@ -247,7 +312,8 @@ final class OpenAiAdsConnections
         if (($connection['credentials']['conversions_api_key'] ?? '') !== '') {
             return self::step('conversions_key', 'kept', 'Using the Conversions API key made before.');
         }
-        $created = $this->api->post($key, 'conversions/api_keys', ['name' => self::KEY_NAME], $this->idempotencyKey($connection, 'conversions_key'));
+        $once = $this->idempotencyKey($connection, 'conversions_key');
+        $created = $this->heard($this->api->post($key, 'conversions/api_keys', ['name' => self::KEY_NAME], $once));
         if ($created->kind === AdvertiserAnswer::NOT_FOUND) {
             return self::step('conversions_key', 'needs_input', sprintf(self::NOT_ENABLED, 'Conversions API key creation', 'make a Conversions API key in Ads Manager and give it here.'));
         }
@@ -403,12 +469,12 @@ final class OpenAiAdsConnections
                 $said[] = $type . ': found ' . $found[$type]['id'];
                 continue;
             }
-            $created = $this->api->post($key, 'conversions/event_settings', [
+            $created = $this->heard($this->api->post($key, 'conversions/event_settings', [
                 'name' => 'Prosper202 ' . str_replace('_', ' ', $type),
                 'event_type' => $type,
                 'attribution_window_days' => self::ATTRIBUTION_WINDOW_DAYS,
                 'source_ids' => [$sourceId],
-            ], $this->idempotencyKey($connection, 'event_setting|' . $sourceId . '|' . $type));
+            ], $this->idempotencyKey($connection, 'event_setting|' . $sourceId . '|' . $type)));
             $id = $created->json['id'] ?? null;
             if (!$created->isOk() || !is_string($id) || $id === '') {
                 $failed = true;
@@ -458,7 +524,8 @@ final class OpenAiAdsConnections
         $rows = [];
         $after = null;
         for ($page = 0; $page < self::MAX_PAGES; $page++) {
-            $answer = $this->api->get($key, $path, ['limit' => 500] + ($after === null ? [] : ['after' => $after]));
+            $query = ['limit' => 500] + ($after === null ? [] : ['after' => $after]);
+            $answer = $this->heard($this->api->get($key, $path, $query));
             if ($answer->kind === AdvertiserAnswer::NOT_FOUND) {
                 return null;
             }
@@ -485,7 +552,9 @@ final class OpenAiAdsConnections
     }
 
     /**
-     * The account the key reaches, or why it could not be read.
+     * The account the key reaches, or the sentence for a key OpenAI refused.
+     *
+     * @throws AdPlatformUnavailable when OpenAI was not reached or its answer cannot be used
      *
      * @return array{ref: string, name: string, currency: string, timezone: string}|string
      */
@@ -495,11 +564,15 @@ final class OpenAiAdsConnections
         if ($answer->kind === AdvertiserAnswer::KEY_REFUSED) {
             return 'OpenAI refused that key (' . $answer->error . '). Use an Advertiser API key from Ads Manager › Settings for the ad account you mean.';
         }
-        if (!$answer->isOk()) {
-            return 'The key could not be checked, so nothing was saved: ' . $answer->error;
+        $account = $answer->isOk() ? self::accountOf($answer) : (string) $answer->error;
+        if (is_string($account)) {
+            // Not a word about the key: it was not judged (CLAUDE.md #11).
+            $said = self::notAsked($answer, 'the key was not checked and nothing was saved') . ': ' . $account;
+
+            throw new AdPlatformUnavailable(self::reasonOf($answer), $said);
         }
 
-        return self::accountOf($answer);
+        return $account;
     }
 
     /** @return array{ref: string, name: string, currency: string, timezone: string}|string */

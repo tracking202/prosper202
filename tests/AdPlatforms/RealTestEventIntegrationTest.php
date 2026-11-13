@@ -138,6 +138,41 @@ final class RealTestEventIntegrationTest extends TestCase
         $this->testEvent()->send(1, $destination, time());
     }
 
+    /** Over the API a real, counted event is sent only when the request says it knows it is counted. */
+    public function testOverTheApiARealEventNeedsItsConfirmation(): void
+    {
+        $destination = $this->setUpConnection();
+        $controller = new \Api\V3\Controllers\DestinationsController(self::$db, 1);
+        $requests = function (): int {
+            $context = stream_context_create(['ssl' => ['cafile' => self::$tls . '/cert.pem', 'verify_peer' => true]]);
+            $read = (string) file_get_contents(self::$origin . '/control/requests', false, $context);
+            $seen = json_decode($read, true, 512, JSON_THROW_ON_ERROR);
+
+            return count($seen['requests']);
+        };
+        $before = $requests();
+        $refusals = [
+            'real alone' => [['real' => true], 'confirm_counted'],
+            'real with a false confirmation' => [['real' => true, 'confirm_counted' => false], 'confirm_counted'],
+            'a confirmation without real' => [['confirm_counted' => true], 'confirm_counted'],
+        ];
+        foreach ($refusals as $what => [$body, $field]) {
+            try {
+                $controller->test($destination, $body);
+                self::fail($what . ' was sent');
+            } catch (\Api\V3\Exception\ValidationException $e) {
+                self::assertArrayHasKey($field, $e->getFieldErrors(), $what);
+                if ($what === 'real alone') {
+                    self::assertStringContainsString('counted as a conversion', $e->getFieldErrors()[$field]);
+                }
+            }
+        }
+        self::assertSame($before, $requests(), 'nothing was asked of OpenAI for a refused test');
+
+        $answer = $controller->test($destination, ['real' => true, 'confirm_counted' => true])['data'];
+        self::assertSame([true, true], [$answer['sent'], $answer['arrived']], $answer['message']);
+    }
+
     public function testAnotherAccountsDestinationIsNone(): void
     {
         $destination = $this->setUpConnection();

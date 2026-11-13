@@ -145,9 +145,10 @@ function p202_ad_connection_refusal(?array $mine): string
         if ($text === '' || ($field === 'api_key' && $mine['action'] === 'ad_replace_key')) {
             continue;
         }
-        $what = P202_AD_CONNECTION_REFUSALS[$mine['action']] ?? 'That was not done';
+        // OpenAI not reached is a whole sentence of its own, and not about what was sent.
+        $what = $field === 'openai' ? '' : (P202_AD_CONNECTION_REFUSALS[$mine['action']] ?? 'That was not done') . ': ';
         $where = $field === 'api_key' ? ' On this page: Replace key, below.' : '';
-        $out .= p202_flash('bad', $what . ': ' . $text . $where);
+        $out .= p202_flash('bad', $what . $text . $where);
     }
 
     return $out;

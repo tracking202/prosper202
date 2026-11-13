@@ -537,6 +537,42 @@ final class DestinationsPageIntegrationTest extends TestCase
         self::assertStringContainsString('Setup did not run: source_id goes with pixel_id', $block);
     }
 
+    /** OpenAI not reached is said under the connection as that, never as a bad key and never as a failed page. */
+    public function testOpenAiNotReachedIsSaidAsThatUnderTheConnection(): void
+    {
+        $id = $this->connected();
+        $sql = 'SELECT status, credentials FROM 202_ad_connections WHERE user_id = ' . self::USER
+            . ' ORDER BY connection_id';
+        $row = static fn (): array => (array) self::$db->query($sql)->fetch_all(MYSQLI_ASSOC);
+        $before = $row();
+        putenv(AdvertiserApi::ENV_ENDPOINT . '=https://127.0.0.1:1');
+        try {
+            $posts = [
+                'check' => ['action' => 'ad_check', 'connection_id' => (string) $id],
+                'setup' => ['action' => 'ad_setup', 'connection_id' => (string) $id, 'steps' => ['pixel']],
+                'replace key' => self::replaceKeyPost($id),
+            ];
+            foreach ($posts as $what => $post) {
+                $html = self::page([], $post);
+                $block = self::connectionBlock($html, $id);
+                self::assertStringContainsString('OpenAI could not be reached, so ', $block, $what);
+                self::assertStringContainsString('Try again in a minute', $block, $what);
+                self::assertStringNotContainsString('refused that key', $html, $what);
+                self::assertStringNotContainsString('That could not be done', $html, $what . ': not a failed page');
+                self::assertStringNotContainsString('did not pass: OpenAI', $block, $what . ': its own sentence');
+            }
+            self::assertSame($before, $row(), 'the status and the stored key are as they were');
+
+            $html = self::page([], ['action' => 'ad_connect', 'api_key' => self::AD_KEY]);
+            $said = 'OpenAI could not be reached, so the key was not checked and nothing was saved';
+            self::assertStringContainsString($said, $html);
+            self::assertStringNotContainsString('needs attention', $html, 'not a field to mend');
+            self::assertSame($before, $row(), 'nothing more stored');
+        } finally {
+            $this->openAi();
+        }
+    }
+
     public function testFailuresAreCountedWithTheirReasonsAndSentAgain(): void
     {
         $failed = $this->delivery($this->ga4, 'failed', 'HTTP 400: the API secret is not valid', 501);

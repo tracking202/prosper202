@@ -383,7 +383,9 @@ event with `validate_only`, which OpenAI checks and does not save. With a
 ChatGPT Ads connection to the pixel's ad account, *send a real test event*
 (or `p202 destination test <id> --real`) sends one real event instead, which
 OpenAI saves and counts as a conversion of the pixel, then reads the
-account's recent events and says whether it arrived from this server. After a
+account's recent events and says whether it arrived from this server. Over the
+API that is `{"real": true, "confirm_counted": true}`: `real` alone is refused,
+because the event is counted. After a
 test, confirm the first real conversions in Ads Manager › Conversions.
 
 ## CLI

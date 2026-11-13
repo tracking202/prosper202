@@ -44,7 +44,7 @@ var mcpDeferredToolSpecs = []mcpToolSpec{
 		Words: []string{"test destination", "test fire", "validate destination", "destinations"}},
 	// ChatGPT Ads connections (Setup › Destinations › ChatGPT Ads): an ad account reached with its Advertiser API key.
 	{Name: "ad_connection_list", Command: []string{"ad-connection", "list"}, Title: "ChatGPT Ads connections", Kind: mcpRead, NotHosted: true,
-		Note:  "Each ad account's id, name, currency, time zone, status and what setup made; keys are never shown.",
+		Note:  "Each ad account's id, name, currency, time zone, status and what setup made.",
 		Words: []string{"chatgpt ads connection", "openai ads account", "advertiser api key", "chatgpt ads"}},
 	{Name: "ad_connection_check", Command: []string{"ad-connection", "check"}, Title: "Check a ChatGPT Ads connection", Kind: mcpUpdate, NotHosted: true, NotStaged: true, OpenWorld: true, Refreshes: true,
 		Args:  []mcpArg{idArg("id", "Ad connection id (from ad_connection_list).", true)},

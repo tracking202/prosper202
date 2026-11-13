@@ -4,9 +4,14 @@ declare(strict_types=1);
 
 namespace Tests\AdPlatforms;
 
+use Api\V3\Controllers\AdConnectionsController;
+use Api\V3\Exception\TooManyRequestsException;
+use Api\V3\Exception\UpstreamUnavailableException;
+use Api\V3\Exception\ValidationException;
 use PHPUnit\Framework\TestCase;
 use Prosper202\AdPlatforms\AdConnectionInputException;
 use Prosper202\AdPlatforms\AdConnectionStore;
+use Prosper202\AdPlatforms\AdPlatformUnavailable;
 use Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi;
 use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsConnections;
 use Prosper202\Attribution\WebhookGuard;
@@ -168,8 +173,10 @@ final class AdConnectionsIntegrationTest extends TestCase
         try {
             $this->connections()->connect(1, self::KEY, null, 1);
             self::fail('an unchecked key was stored');
-        } catch (AdConnectionInputException $e) {
-            self::assertStringContainsString('could not be checked, so nothing was saved', $e->getMessage());
+        } catch (AdPlatformUnavailable $e) {
+            self::assertSame(AdPlatformUnavailable::UNREACHABLE, $e->reason, 'an outage is not a word about the key');
+            $said = 'OpenAI could not be reached, so the key was not checked and nothing was saved';
+            self::assertStringContainsString($said, $e->getMessage());
         }
         self::assertSame([], $this->store()->list(1));
     }
@@ -500,7 +507,14 @@ final class AdConnectionsIntegrationTest extends TestCase
     {
         $id = $this->connect();
         $this->routes['GET ad_account'] = [['status' => 503, 'body' => '{"error":{"message":"Service unavailable"}}']];
-        $out = $this->connections()->check(1, $id, 5);
+        try {
+            $this->connections()->check(1, $id, 5);
+            self::fail('a check OpenAI did not answer was answered as made');
+        } catch (AdPlatformUnavailable $e) {
+            self::assertSame(AdPlatformUnavailable::UNREACHABLE, $e->reason);
+            self::assertEquals($this->store()->get(1, $id), $e->context['connection'], 'the connection as it stands');
+        }
+        $out = $this->store()->get(1, $id);
         self::assertSame(['connected', 5], [$out['status'], $out['checked_at']], 'an outage says nothing of the key');
         self::assertStringContainsString('OpenAI answered 503', (string) $out['last_error']);
 
@@ -511,6 +525,176 @@ final class AdConnectionsIntegrationTest extends TestCase
         $back = $this->connections()->check(1, $id, 7);
         self::assertSame(['connected', null, 'Northwind Outfitters EU'], [$back['status'], $back['last_error'], $back['account']['name']]);
         self::assertNull($this->connections()->check(2, $id, 8), 'not another account\'s');
+    }
+
+    private function controller(int $user = 1): AdConnectionsController
+    {
+        return new AdConnectionsController(self::$db, $user, $this->api());
+    }
+
+    /**
+     * What a controller call threw, as the dispatcher answers it: [status, the exception]. 200 with the answer
+     * when it threw nothing.
+     *
+     * @return array{0: int, 1: mixed}
+     */
+    private static function answered(callable $call): array
+    {
+        try {
+            return [200, $call()];
+        } catch (ValidationException $e) {
+            return [422, $e];
+        } catch (TooManyRequestsException | UpstreamUnavailableException $e) {
+            return [$e->getHttpStatus(), $e];
+        }
+    }
+
+    /** OpenAI's answers to GET /ad_account that say nothing about the key, with the status each is answered by. */
+    private const NOT_ASKED = [
+        'a 5xx' => [['status' => 503, 'body' => '{"error":{"message":"Service unavailable"}}'], 503, 'unreachable'],
+        'no answer' => [['status' => 0, 'error' => 'Connection timed out', 'body' => ''], 503, 'unreachable'],
+        'its rate limit' => [['status' => 429, 'body' => '{"error":{"message":"Too many"}}'], 429, 'rate_limited'],
+        'an account without an id' => [['body' => '{"name":"Northwind Outfitters"}'], 502, 'unreadable_answer'],
+    ];
+
+    /** An outage, a rate limit or an unusable answer while connecting is never a 422 about the key. */
+    public function testConnectingWhileOpenAiCannotBeAskedIsNotABadKeyAndStoresNothing(): void
+    {
+        $body = ['api_key' => self::KEY];
+        foreach (self::NOT_ASKED as $what => [$answer, $status, $reason]) {
+            $this->routes['GET ad_account'] = [$answer];
+            [$got, $e] = self::answered(fn (): array => $this->controller()->create($body));
+            self::assertSame($status, $got, $what);
+            $details = $e instanceof TooManyRequestsException ? $e->getDetails()['details'] : $e->getDetails();
+            self::assertSame(['upstream' => 'openai_ads', 'reason' => $reason], $details, $what);
+            self::assertSame($status === 502 ? null : 60, $e->retryAfter, $what . ': when to ask again');
+            self::assertStringNotContainsString('refused that key', $e->getMessage(), $what);
+            self::assertStringNotContainsString(self::KEY, $e->getMessage(), $what);
+            self::assertSame([], $this->store()->list(1), $what . ': nothing stored');
+        }
+        $this->routes['GET ad_account'] = [['status' => 401, 'body' => '{"error":{"message":"Invalid API key"}}']];
+        [$got, $e] = self::answered(fn (): array => $this->controller()->create($body));
+        self::assertSame(422, $got, 'a key OpenAI refuses is still the caller\'s to fix');
+        self::assertStringContainsString('OpenAI refused that key', $e->getFieldErrors()['api_key']);
+        self::assertSame([], $this->store()->list(1));
+    }
+
+    public function testReplacingAKeyWhileOpenAiCannotBeAskedIsNotABadKeyAndKeepsTheStoredOne(): void
+    {
+        $id = $this->connect();
+        $sql = "SELECT credentials FROM 202_ad_connections WHERE connection_id = $id";
+        $sealed = fn (): string => (string) self::$db->query($sql)->fetch_row()[0];
+        $before = $sealed();
+        $body = ['api_key' => 'sk-ads-live-a-newer-key-02'];
+        foreach (self::NOT_ASKED as $what => [$answer, $status, $reason]) {
+            $this->routes['GET ad_account'] = [$answer];
+            [$got, $e] = self::answered(fn (): array => $this->controller()->update($id, $body));
+            self::assertSame($status, $got, $what);
+            $details = $e instanceof TooManyRequestsException ? $e->getDetails()['details'] : $e->getDetails();
+            self::assertSame($reason, $details['reason'], $what);
+            self::assertSame($before, $sealed(), $what . ': the stored key is as it was');
+        }
+        $this->routes['GET ad_account'] = [['status' => 403, 'body' => '{}']];
+        [$got, $e] = self::answered(fn (): array => $this->controller()->update($id, $body));
+        self::assertSame(422, $got);
+        self::assertArrayHasKey('api_key', $e->getFieldErrors());
+        self::assertSame($before, $sealed());
+        self::assertSame(self::KEY, $this->store()->forCalling(1, $id)['credentials']['advertiser_api_key']);
+    }
+
+    /** A check OpenAI did not answer is a failure that carries the connection; one it refused was made. */
+    public function testACheckOpenAiDidNotAnswerIsAFailureThatLeavesTheStatus(): void
+    {
+        $id = $this->connect();
+        foreach (self::NOT_ASKED as $what => [$answer, $status, $reason]) {
+            $this->routes['GET ad_account'] = [$answer];
+            [$got, $e] = self::answered(fn (): array => $this->controller()->check($id));
+            self::assertSame($status, $got, $what);
+            $details = $e instanceof TooManyRequestsException ? $e->getDetails()['details'] : $e->getDetails();
+            self::assertSame($reason, $details['reason'], $what);
+            self::assertSame('connected', $details['connection']['status'], $what . ': the status is as it was');
+            self::assertNotSame('', (string) $details['connection']['last_error'], $what . ': the try is recorded');
+            self::assertEquals($this->store()->get(1, $id), $details['connection'], $what);
+        }
+        $this->routes['GET ad_account'] = [['status' => 401, 'body' => '{}']];
+        [$got, $answer] = self::answered(fn (): array => $this->controller()->check($id));
+        self::assertSame([200, 'key_refused'], [$got, $answer['data']['status']], 'a refusal is the check\'s answer');
+    }
+
+    /** A setup that reached nothing at OpenAI is a failure; one in which a step did or kept something is not. */
+    public function testASetupThatReachedNothingIsAFailureAndOneThatDidSomethingIsAnAnswer(): void
+    {
+        $id = $this->connect();
+        $routes = $this->routes;
+        $down = [['status' => 503, 'body' => '']];
+        $limited = [['status' => 429, 'body' => '']];
+        foreach ([503 => $down, 429 => $limited] as $status => $answer) {
+            $this->routes = array_fill_keys(array_keys($routes), $answer);
+            [$got, $e] = self::answered(fn (): array => $this->controller()->setup($id, []));
+            self::assertSame($status, $got);
+            $details = $e instanceof TooManyRequestsException ? $e->getDetails()['details'] : $e->getDetails();
+            self::assertSame($status === 429 ? 'rate_limited' : 'unreachable', $details['reason']);
+            $outcomes = array_column($details['steps'], 'outcome', 'step');
+            $want = ['pixel' => 'failed', 'conversions_key' => 'failed', 'destination' => 'needs_input'];
+            self::assertSame($want + ['event_settings' => 'needs_input'], $outcomes);
+            self::assertSame([], (array) $details['connection']['setup'], 'nothing was set up');
+            self::assertSame(0, self::destinationsOf(1));
+        }
+
+        // The pixel is made and the key is not: an answer, with each step's outcome.
+        $this->routes = ['POST conversions/api_keys' => $down, 'GET conversions/event_settings' => $down] + $routes;
+        [$got, $answer] = self::answered(fn (): array => $this->controller()->setup($id, []));
+        self::assertSame(200, $got);
+        $outcomes = array_column($answer['data']['steps'], 'outcome', 'step');
+        self::assertSame(['created', 'failed'], [$outcomes['pixel'], $outcomes['conversions_key']]);
+
+        // Everything is down again, and the pixel made before is kept: still an answer.
+        $this->routes = array_fill_keys(array_keys($routes), $down);
+        [$got, $answer] = self::answered(fn (): array => $this->controller()->setup($id, []));
+        self::assertSame(200, $got, 'a kept step is something the run stands on');
+        self::assertSame('kept', array_column($answer['data']['steps'], 'outcome', 'step')['pixel']);
+
+        // Input that needs no call and no outage: needs_input alone is an answer, not an outage.
+        $this->routes = $routes;
+        $second = (int) $this->controller(2)->create(['api_key' => self::KEY])['data']['connection_id'];
+        $off = [['status' => 404, 'body' => '{"error":{"message":"Not found"}}']];
+        $this->routes = array_fill_keys(array_keys($routes), $off);
+        [$got] = self::answered(fn (): array => $this->controller(2)->setup($second, []));
+        self::assertSame(200, $got);
+    }
+
+    /**
+     * A credential key that is there and is not a key: every way in says what mends it (the one row removed),
+     * and doing that works.
+     */
+    public function testAMalformedCredentialKeyIsAnsweredWithWhatMendsIt(): void
+    {
+        $id = $this->connect();
+        $secret = AdConnectionStore::SECRET_NAME;
+        self::$db->query("UPDATE 202_deployment_secrets SET secret_value = 'not-a-key' WHERE secret_name = '$secret'");
+        self::assertSame(1, self::$db->affected_rows);
+        $mend = "DELETE FROM 202_deployment_secrets WHERE secret_name = '$secret'";
+        $calls = [
+            'replace key' => fn (): array => $this->controller()->update($id, ['api_key' => self::KEY]),
+            'check' => fn (): array => $this->controller()->check($id),
+            'setup' => fn (): array => $this->controller()->setup($id, []),
+            'connect another account' => fn (): array => $this->controller(2)->create(['api_key' => self::KEY]),
+        ];
+        foreach ($calls as $what => $call) {
+            [$got, $e] = self::answered($call);
+            self::assertSame(422, $got, $what);
+            self::assertStringContainsString($mend, $e->getFieldErrors()['api_key'], $what);
+            self::assertStringNotContainsString('connect again', $e->getMessage(), $what);
+            self::assertStringNotContainsString('(p202 ad-connection update', $e->getMessage(), $what . ': no detour');
+        }
+        $status = $this->controller()->get($id)['data']['status'];
+        self::assertSame('credentials_unreadable', $status, 'and reads still answer');
+        self::assertSame([], $this->store()->list(2), 'nothing stored for the other account');
+
+        self::$db->query($mend);
+        [$got, $answer] = self::answered($calls['replace key']);
+        self::assertSame([200, 'connected'], [$got, $answer['data']['status']], 'the instruction works');
+        self::assertSame(self::KEY, $this->store()->forCalling(1, $id)['credentials']['advertiser_api_key']);
     }
 
     public function testAReplacedKeyMustReachTheSameAdAccount(): void

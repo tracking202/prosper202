@@ -21,6 +21,7 @@ use Api\V3\RequestContext;
 use Api\V3\Router;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\TooManyRequestsException;
+use Api\V3\Exception\UpstreamUnavailableException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\PathId;
@@ -2010,6 +2011,14 @@ try {
 } catch (TooManyRequestsException $e) {
     header('Retry-After: ' . $e->retryAfter);
     Bootstrap::errorResponse($e->getMessage(), 429, ['retry_after_seconds' => $e->retryAfter] + $e->getDetails());
+} catch (UpstreamUnavailableException $e) {
+    // Another service's failure, in its own words: nothing here is broken, so the upgrade is not named for it.
+    $extra = ['details' => $e->getDetails()];
+    if ($e->retryAfter !== null) {
+        header('Retry-After: ' . $e->retryAfter);
+        $extra = ['retry_after_seconds' => $e->retryAfter] + $extra;
+    }
+    Bootstrap::errorResponse($e->getMessage(), $e->getHttpStatus(), $extra);
 } catch (HttpException $e) {
     $code = $e->getHttpStatus();
     $message = $e->getMessage();

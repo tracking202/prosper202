@@ -116,10 +116,21 @@ final class DestinationsController
      */
     public function test(int $id, array $payload = []): array
     {
-        PayloadKeys::refuseUnknown($payload, ['real'], 'a test');
+        PayloadKeys::refuseUnknown($payload, ['real', 'confirm_counted'], 'a test');
         $real = $payload['real'] ?? false;
         if (!is_bool($real)) {
             throw new ValidationException('Validation failed', ['real' => 'true sends a real ChatGPT Ads event and reads it back; leave it out for a check that saves nothing.']);
+        }
+        // A real event is saved and counted by OpenAI: it is sent only when the request says it knows that.
+        if ($real && ($payload['confirm_counted'] ?? null) !== true) {
+            $counted = 'A real test event is saved by OpenAI and counted as a conversion of the pixel.'
+                . ' Send "confirm_counted": true with "real": true to send it, or leave real out for a check'
+                . ' that saves nothing.';
+            throw new ValidationException('Validation failed', ['confirm_counted' => $counted]);
+        }
+        if (!$real && array_key_exists('confirm_counted', $payload)) {
+            $alone = 'Goes with "real": true; leave both out for a check that saves nothing.';
+            throw new ValidationException('Validation failed', ['confirm_counted' => $alone]);
         }
         if ($real) {
             try {

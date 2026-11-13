@@ -37,15 +37,46 @@ POST /api/v3/ad-connections
 ```
 
 The key is checked with OpenAI's `GET /ad_account` first. A key OpenAI
-refuses (401, 403), or one that could not be checked (no answer, 5xx), is
-answered `422` naming `api_key`, and nothing is stored. One connection per
-ad account. `currency_matches_account` is false when the ad account bills in
+refuses (401, 403) is answered `422` naming `api_key`, and nothing is stored.
+One connection per ad account. `currency_matches_account` is false when the ad account bills in
 another currency than this account's: conversions are sent as they are,
 and spend is not converted.
 
 `status` is `connected`, `key_refused` (the last check was refused: replace
 the key) or `credentials_unreadable`. A check that got no answer keeps the
-status and says why in `last_error`.
+status and says why in `last_error` (see below for its HTTP answer).
+
+The keys are sealed with one credential key per install, the row of
+`202_deployment_secrets` whose `secret_name` is `ad_connection_credential`.
+When that row is there and is not 64 lower-case hex characters, nothing can
+be sealed or opened: connecting, replacing a key, a check and a setup answer
+`422` naming `api_key` with the mend, which is for someone with database
+access to delete that one row and then replace each connection's Advertiser
+API key (a new credential key is made with the first one).
+
+## When OpenAI cannot be asked
+
+An outage or a rate limit at OpenAI says nothing about the key, so it is
+never a `422`. Connecting, replacing a key (`PATCH` with `api_key`), a check
+and a setup answer:
+
+| Status | When | Body |
+|--------|------|------|
+| `503` with `Retry-After` | No answer from OpenAI, or a 5xx of its own | `details.reason` `unreachable` |
+| `429` with `Retry-After` | OpenAI answered 429, or this install is holding to OpenAI's per-minute limits | `details.reason` `rate_limited` |
+| `502` | OpenAI answered something its API does not document (an ad account with no id, currency or time zone) | `details.reason` `unreadable_answer` |
+
+`details.upstream` is `openai_ads`. Nothing is stored by a connect or a key
+replacement that ends this way. A **check** still records the try
+(`last_error`, `checked_at`) and leaves `status` as it was; the connection is
+in `details.connection`. A check OpenAI *refuses* was made, and is a `200`
+with `status` `key_refused`. A **setup** is one of these only when OpenAI was
+not reached (or was limiting) and no step came out `created`, `found`, `given`
+or `kept`: the run set nothing up, and its steps are in `details.steps`
+(`429` when every such failure was the rate limit, else `503`). A run in which
+any step did or kept something is a `200` with each step's outcome, failed
+ones included. `p202 ad-connection` exits 4 (server) or 7 (rate limited) for
+these, with a hint to wait and run the command again.
 
 ## Setup
 

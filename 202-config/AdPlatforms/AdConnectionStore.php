@@ -22,6 +22,12 @@ use Prosper202\Security\SealedSecret;
 final class AdConnectionStore
 {
     public const SECRET_NAME = 'ad_connection_credential';
+    /** What an operator does about a credential key that is there and is not a key; it then is minted anew. */
+    private const MALFORMED_KEY = 'The ad connections\' credential key (the row of 202_deployment_secrets whose secret_name'
+        . ' is ' . self::SECRET_NAME . ') is not 64 lower-case hex characters, so no key can be sealed or opened and'
+        . ' no Advertiser API key will mend it. Someone with database access deletes that one row (DELETE FROM'
+        . ' 202_deployment_secrets WHERE secret_name = \'' . self::SECRET_NAME . '\'); then replace each'
+        . ' connection\'s Advertiser API key, which makes a new credential key';
     public const MAX_PER_ACCOUNT = 10;
     public const STATUS_CONNECTED = 'connected';
     public const STATUS_KEY_REFUSED = 'key_refused';
@@ -262,7 +268,10 @@ final class AdConnectionStore
         try {
             $this->key(false);
         } catch (AdConnectionKeyMissing $e) {
-            throw new AdConnectionInputException('api_key', $e->getMessage() . '; replace the Advertiser API key (p202 ad-connection update --api-key-file).');
+            // A malformed key's sentence says what mends it; replacing the Advertiser API key would not.
+            $mend = $e->malformed ? '' : '; replace the Advertiser API key (p202 ad-connection update --api-key-file).';
+
+            throw new AdConnectionInputException('api_key', $e->getMessage() . $mend);
         }
         try {
             return $this->opened($row);
@@ -435,7 +444,14 @@ final class AdConnectionStore
     /** @param array<string, string> $credentials */
     private function writeCredentials(int $userId, int $connectionId, #[\SensitiveParameter] array $credentials): void
     {
-        $sealed = $credentials === [] ? '' : SealedSecret::seal(self::json($credentials), $this->key(true), self::AAD . $connectionId . '|' . $userId, 'Encrypting the connection\'s credentials failed');
+        try {
+            $key = $this->key(true);
+        } catch (AdConnectionKeyMissing $e) {
+            // Minting never writes over a row that is there: only its removal lets a key be sealed again.
+            throw $e->malformed ? new AdConnectionInputException('api_key', $e->getMessage()) : $e;
+        }
+        $aad = self::AAD . $connectionId . '|' . $userId;
+        $sealed = $credentials === [] ? '' : SealedSecret::seal(self::json($credentials), $key, $aad, 'Encrypting the connection\'s credentials failed');
         $update = $this->conn->prepareWrite('UPDATE `' . TableRegistry::AD_CONNECTIONS . '` SET credentials = ? WHERE connection_id = ? AND user_id = ? AND deleted_at IS NULL');
         $this->conn->bind($update, 'sii', [$sealed, $connectionId, $userId]);
         $this->conn->execute($update);
@@ -511,10 +527,10 @@ final class AdConnectionStore
         try {
             $key = SealedSecret::readKey($this->conn, self::SECRET_NAME);
         } catch (MalformedSecretKey) {
-            $key = null;
+            throw new AdConnectionKeyMissing(self::MALFORMED_KEY, true);
         }
         if ($key === null) {
-            throw new AdConnectionKeyMissing('The ad connections\' credential key is missing from 202_deployment_secrets or is not 64 lower-case hex characters; connect again');
+            throw new AdConnectionKeyMissing('The ad connections\' credential key is missing from 202_deployment_secrets; connect again');
         }
 
         // Only a plain read is kept: a key minted in a transaction may be rolled back with it (CLAUDE.md #11).

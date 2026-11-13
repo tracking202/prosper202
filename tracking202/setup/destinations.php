@@ -18,6 +18,7 @@ require_once __DIR__ . '/_includes/ad_connection_panel.php';
 
 use Prosper202\AdPlatforms\AdConnectionInputException;
 use Prosper202\AdPlatforms\AdConnectionStore;
+use Prosper202\AdPlatforms\AdPlatformUnavailable;
 use Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi;
 use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsConnections;
 use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsTestEvent;
@@ -277,6 +278,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         } catch (DestinationInputException | AdConnectionInputException $e) {
             $errors[$e->field] = $e->getMessage();
+        } catch (AdPlatformUnavailable $e) {
+            // OpenAI was not reached, or is limiting requests: its own sentence, which is not about the key.
+            $errors['openai'] = $e->getMessage();
         } catch (\Throwable $e) {
             error_log(p202UncaughtLogLine('Setup › Destinations: ' . $action . ' failed', $e));
             $errors['action'] = 'That could not be done. Try again; if it keeps failing, the server\'s error log says why.';
