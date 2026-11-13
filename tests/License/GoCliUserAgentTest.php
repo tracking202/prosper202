@@ -8,7 +8,7 @@ use Api\V3\Controllers\CapabilitiesController;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The Pro gate applies to the Go CLI only; the legacy PHP CLI is exempt.
+ * The free-licence gate applies to the Go CLI only; the legacy PHP CLI is exempt.
  */
 final class GoCliUserAgentTest extends TestCase
 {

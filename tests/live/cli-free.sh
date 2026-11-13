@@ -103,11 +103,13 @@ use_key() { # use_key <suffix>: a fresh key with that suffix becomes the install
 expect_served() { # $1 = case name
     if [ "$STATUS" = 200 ]; then ok "$1: 200"; else ko "$1: expected 200" "got $STATUS: $BODY"; fi
 }
+# "Pro" as a word: a substring test also matches "Prosper202", which every message names.
+PRO_WORD='(^|[^[:alnum:]])Pro([^[:alnum:]]|$)'
 expect_refused() { # $1 = case name, $2 = words the message must hold
     local category message
     category=$(printf '%s' "$BODY" | jget category)
     message=$(printf '%s' "$BODY" | jget message)
-    if [ "$STATUS" = 402 ] && [ "$category" = licence ] && [[ "$message" == *"$2"* ]] && [[ "$message" != *Pro* ]]; then
+    if [ "$STATUS" = 402 ] && [ "$category" = licence ] && [[ "$message" == *"$2"* ]] && ! [[ "$message" =~ $PRO_WORD ]]; then
         ok "$1: 402, category licence, \"$2\""
     else
         ko "$1: expected 402 + category licence + \"$2\" (and no \"Pro\")" "got $STATUS: $BODY"

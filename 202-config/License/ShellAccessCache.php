@@ -23,8 +23,8 @@ class ShellAccessCache
 
     /**
      * How long a refusal is believed. Shorter than an allow: a customer who
-     * starts the trial after a "not paid" is served within this, not after
-     * TTL_SECONDS, and nothing else invalidates the entry when they pay.
+     * gets or reactivates the free licence after a refusal is served within
+     * this, not after TTL_SECONDS, and nothing else invalidates the entry.
      */
     public const int DENIAL_TTL_SECONDS = 300;
 

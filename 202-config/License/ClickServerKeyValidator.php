@@ -43,8 +43,9 @@ class ClickServerKeyValidator
     /**
      * Full licence answer for a key.
      *
-     * 'paid' is true when the key's account has an active Prosper202
-     * ClickServer subscription (trials count). It is null when the answer
+     * 'paid' is true when the key's account has an active paid Prosper202
+     * ClickServer subscription; the CLI and AI-connect gate decides on
+     * 'valid' alone and does not read it. It is null when the answer
      * carried no 'paid' field (older backend, or the edge fallback that
      * answers while the backend is unreachable); callers must treat null as
      * "unknown", not as "not paid".

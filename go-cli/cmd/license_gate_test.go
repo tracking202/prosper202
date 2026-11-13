@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -14,32 +15,49 @@ import (
 // The install answers 402 to p202-cli when its ClickServer key is not an
 // active free licence; the CLI must say what a free licence needs, not blame
 // the API key (the CLI's REST key is fine).
-func TestCliExplainsProLicenceRefusal(t *testing.T) {
+func TestCliExplainsTheFreeLicenceRefusal(t *testing.T) {
 	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.Header.Get("User-Agent"), "p202-cli/") {
 			t.Errorf("request without the p202-cli User-Agent the install gates on: %q", r.Header.Get("User-Agent"))
 		}
 		w.WriteHeader(402)
-		w.Write([]byte(`{"error":true,"status":402,"category":"licence","message":"The Prosper202 CLI requires a Prosper202 ClickServer Pro licence. Start a Pro trial or subscription at https://my.tracking202.com/api/customers/subscriptions/support"}`))
+		w.Write([]byte(`{"error":true,"status":402,"category":"licence","message":"The Prosper202 CLI is free, but it needs an active free ClickServer licence on this install, and Tracking202 did not accept the install's ClickServer API key as one."}`))
 	}))
 	defer srv.Close()
 	tmp := t.TempDir()
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 	_, _, err := executeCommand("user", "list")
-	if err == nil || !strings.Contains(err.Error(), "Pro licence") {
-		t.Fatalf("want the Pro licence refusal, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "active free ClickServer licence") {
+		t.Fatalf("want the free licence refusal, got %v", err)
 	}
 	if h := hintFor(err); !strings.Contains(h, "active free ClickServer licence") || !strings.Contains(h, "https://my.tracking202.com/api/customers/subscriptions/support") || strings.Contains(h, "Verify your API key") {
 		t.Errorf("hint %q should say what a free licence needs, not blame the key", h)
 	}
 	// A stable contract for agents: its own category and exit code, not
-	// "validation"/1 (bad input) and not "auth"/2 (bad key).
+	// "validation"/1 (bad input) and not "auth"/2 (bad key). The number is
+	// documented, so it is pinned as a literal.
 	if got := api.ErrorCategory(err); got != "licence" {
 		t.Errorf("category = %q, want licence", got)
 	}
-	if got := exitCodeForError(err); got != ExitLicence {
-		t.Errorf("exit code = %d, want %d (ExitLicence)", got, ExitLicence)
+	if got := exitCodeForError(err); got != 6 {
+		t.Errorf("exit code = %d, want 6", got)
+	}
+}
+
+// No licence hint offers a Pro plan or trial: from 1.9.80 the CLI is free.
+// "Pro" is matched as a word, since "Prosper202" contains it.
+func TestLicenceHintsNeverOfferPro(t *testing.T) {
+	proWord := regexp.MustCompile(`\bPro\b|\btrial\b`)
+	for _, message := range []string{"The Prosper202 CLI is free, but it needs an active free ClickServer licence.", "The licence could not be checked."} {
+		err := &api.APIError{Status: 402, Category: "licence", Message: message}
+		h := api.HintFor(err)
+		if h == "" {
+			t.Fatalf("no hint for a licence refusal %q", message)
+		}
+		if proWord.MatchString(h) {
+			t.Errorf("hint for %q offers Pro or a trial: %q", message, h)
+		}
 	}
 }
 
