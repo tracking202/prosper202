@@ -27,6 +27,13 @@ import (
 //     fields, so `report groups` outranked the command named breakdown -- and
 //     BM25F does not; it ranks long, noisy asks better.
 //
+// A query that is a page or phrase word for word (a page with or without
+// its section) puts that task's command first, ahead of fusion: "Setup
+// Landing Pages" was decided by 0.0325 to 0.0323 on corpus word counts, so
+// indexing an unrelated sixth task flipped it. Measured on the agent-eval
+// asks (TestSearchFindsTheEvalAsksCommand) and the 39 UI pages: no change
+// to either, since no ask is a page name word for word.
+//
 // Reciprocal rank fusion (1/(60+rank), summed) of their top tens. On 30
 // phrasings written and sealed (their hash recorded) before either ranker
 // existed, the fusion put the right command first for 16 and in the top five
@@ -118,6 +125,9 @@ const (
 type searchGroup struct {
 	run    string
 	tokens []string
+	// section is a page's UI section ("Setup" of "Setup › Landing Pages"),
+	// which a query may name with the page.
+	section []string
 }
 
 type flagValue struct{ flag, value string }
@@ -283,7 +293,11 @@ func taskFieldsOf(d *rankDoc, tasks []taskInfo, withSections bool) {
 			}
 			toks := meaningfulTokens(label)
 			d.add(sfPage, toks, fixedLabel(fmt.Sprintf("UI page %q", p), true))
-			grps = append(grps, searchGroup{run: t.Run, tokens: toks})
+			grp := searchGroup{run: t.Run, tokens: toks}
+			if withSections && section != "" {
+				grp.section = meaningfulTokens(section)
+			}
+			grps = append(grps, grp)
 			if withSections && section != "" {
 				d.add(sfSection, meaningfulTokens(section), fixedLabel(fmt.Sprintf("UI section %q", section), true))
 			}
@@ -952,7 +966,20 @@ func fuseRankings(summed, bm25f []rankedCommand, terms []string) []fusedCommand 
 		}
 		return f.bm25fRank
 	}
+	// A query that is a page or phrase, word for word, is that task's: its
+	// command goes first. Fusion alone left it to the corpus's word counts,
+	// so "Setup Landing Pages" put `landing-page code` (0.0325) over the
+	// page's own `landing-page list` (0.0323) once a sixth unrelated task
+	// was indexed, and the next task could flip any other page.
+	termSet := map[string]bool{}
+	for _, t := range terms {
+		termSet[t] = true
+	}
+	exact := func(f fusedCommand) bool { return namesAGroupExactly(f.doc, termSet) }
 	sort.SliceStable(out, func(i, j int) bool {
+		if ei, ej := exact(out[i]), exact(out[j]); ei != ej {
+			return ei
+		}
 		if out[i].fused != out[j].fused {
 			return out[i].fused > out[j].fused
 		}
@@ -1023,4 +1050,34 @@ func matchedReasons(c *rankCorpus, d *rankDoc, terms []string) []string {
 		}
 	}
 	return out
+}
+
+// namesAGroupExactly is whether the query's words are, as a set, exactly one
+// of the document's pages or phrases (a page with or without its UI
+// section): the query names that task, nothing more and nothing less.
+func namesAGroupExactly(d *rankDoc, terms map[string]bool) bool {
+	if d == nil {
+		return false
+	}
+	same := func(words []string) bool {
+		set := map[string]bool{}
+		for _, w := range words {
+			set[w] = true
+		}
+		if len(set) != len(terms) {
+			return false
+		}
+		for w := range set {
+			if !terms[w] {
+				return false
+			}
+		}
+		return true
+	}
+	for _, g := range d.groups {
+		if same(g.tokens) || (len(g.section) > 0 && same(append(append([]string{}, g.tokens...), g.section...))) {
+			return true
+		}
+	}
+	return false
 }

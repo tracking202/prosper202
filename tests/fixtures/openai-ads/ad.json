@@ -1,0 +1,12 @@
+{
+  "id": "ad_301",
+  "name": "Bundle ad",
+  "created_at": 1735689600,
+  "updated_at": 1735862400,
+  "creative": {},
+  "status": "active",
+  "review_status": "rejected",
+  "review": {"status": "rejected", "reason": "landing_page_unavailable"},
+  "landing_page_configuration": null,
+  "serving_issues": [{"code": "review_not_approved"}]
+}

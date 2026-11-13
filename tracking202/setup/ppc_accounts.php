@@ -521,6 +521,7 @@ if ($delete_success == true) {
 }
 
 require_once __DIR__ . '/_includes/setup_ui.php';
+require_once __DIR__ . '/_includes/spend_sync_card.php';
 
 $base = get_absolute_url();
 $self = $base . 'tracking202/setup/ppc_accounts.php';
@@ -643,6 +644,16 @@ if (isset($_GET['chatgpt_added']) || isset($_GET['chatgpt_adopted']) || isset($_
 			. ' do not share ChatGPT Ads spend: ' . implode(', ', $unmarked) . '. If one of them is where your'
 			. ' ChatGPT ads send clicks, mark it: edit it and open Advanced.');
 	}
+}
+$spendSyncSaid = [
+	'on' => ['ok', 'ChatGPT Ads spend is pulled every hour from now on; the first run reads the last 30 days.'],
+	'off' => ['ok', 'ChatGPT Ads spend is no longer pulled. What is already in the spend ledger stays.'],
+	'missing' => ['error', 'That ChatGPT Ads connection is not this account\'s, or was removed.'],
+	'invalid' => ['error', 'The spend sync form was not read; reload the page and try again.'],
+	'token' => ['error', 'Invalid or expired form token. Please reload the page and try again.'],
+][(string) ($_GET['spend_sync'] ?? '')] ?? null;
+if ($spendSyncSaid !== null) {
+	echo p202_flash($spendSyncSaid[0], $spendSyncSaid[1]);
 }
 if ($error) {
 	echo p202_setup_error_flashes($error, ['ppc_network_name', 'ppc_network_id', 'ppc_account_name', 'ppc_network_chatgpt']);
@@ -857,6 +868,8 @@ if ($error) {
 		</div>
 	</div>
 </div>
+
+<?php echo p202_spend_sync_card($db, (int) $_SESSION['user_id'], $base, $token); ?>
 
 <?php echo p202_setup_script_tag($base); ?>
 <?php template_bottom(); ?>

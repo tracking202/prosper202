@@ -693,10 +693,20 @@ try {
         // Update section as POST /clicks/cpc does; `?dry_run=1` previews.
         // Reading it shows money and clicks, masked as the reports' are.
         $spendFigures = \Api\V3\Support\CampaignFigures::SPEND;
+        $platformConversionFigures = \Api\V3\Support\CampaignFigures::PLATFORM_CONVERSIONS;
         $router->group('/spend-ledger', function (Router $r) use ($crud, $payload, $queryParams) {
             $r->post('', fn() => $crud(\Api\V3\Controllers\SpendLedgerController::class)->write($payload, writeDryRunRequested($queryParams)));
         }, [$updateSection]);
         $router->get('/spend-ledger', fn() => $campaignFigures($crud(\Api\V3\Controllers\SpendLedgerController::class)->read($queryParams), $spendFigures));
+        $router->get('/spend-ledger/conversions', fn() => $campaignFigures($crud(\Api\V3\Controllers\PlatformConversionsController::class)->list($queryParams), $platformConversionFigures));
+        // Each ChatGPT Ads connection's hourly spend pull (off until turned
+        // on): Setup's, like the connections themselves.
+        $router->group('/spend-ledger/sync', function (Router $r) use ($crud, $payload) {
+            $cls = \Api\V3\Controllers\SpendSyncController::class;
+            $r->get('',                    fn() => $crud($cls)->list());
+            $r->put('/{id}',               fn($ctx) => $crud($cls)->update(PathId::of($ctx), $payload));
+            $r->post('/{id}/run',          fn($ctx) => $crud($cls)->run(PathId::of($ctx), $payload));
+        }, [$setupSection]);
         $router->group('/conversions', function (Router $r) use ($crud, $payload, $queryParams, $auth, $db) {
             $cls = \Api\V3\Controllers\UpdateController::class;
             $r->post('/subids',        fn() => $crud($cls)->markSubids($payload, writeDryRunRequested($queryParams)));
@@ -870,15 +880,52 @@ try {
         // ── Ad connections: ad platform accounts reached through their API ─
         // Setup's, like the destinations they set up. Not stageable: a body
         // carries a key, and a check or setup is a call to the platform.
-        $router->group('/ad-connections', function (Router $r) use ($crud, $payload) {
+        // Reading them needs the area's read scope and a check (it records
+        // OpenAI's answer on the connection) its write scope, both of which an
+        // AI connection's key can hold. What handles
+        // the key itself -- connecting, replacing it, deleting the
+        // connection, and setup, which makes resources with it -- needs a
+        // key with full access or global write (AdConnectionKeyAccess): an
+        // area scope, all an AI connection's key ever has, is not enough.
+        $router->group('/ad-connections', function (Router $r) use ($crud) {
             $cls = \Api\V3\Controllers\AdConnectionsController::class;
             $r->get('', fn() => $crud($cls)->list());
             $r->get('/{id}', fn($ctx) => $crud($cls)->get(PathId::of($ctx)));
+            $r->post('/{id}/check', fn($ctx) => $crud($cls)->check(PathId::of($ctx)));
+        }, [$setupSection]);
+        $router->group('/ad-connections', function (Router $r) use ($crud, $payload) {
+            $cls = \Api\V3\Controllers\AdConnectionsController::class;
             $r->post('', fn() => ['_status' => 201] + $crud($cls)->create($payload));
             $r->patch('/{id}', fn($ctx) => $crud($cls)->update(PathId::of($ctx), $payload));
             $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->delete(PathId::of($ctx))));
-            $r->post('/{id}/check', fn($ctx) => $crud($cls)->check(PathId::of($ctx)));
             $r->post('/{id}/setup', fn($ctx) => $crud($cls)->setup(PathId::of($ctx), $payload));
+        }, [$setupSection, static function () use ($auth): void {
+            \Api\V3\Support\AdConnectionKeyAccess::require($auth);
+        }]);
+
+        // A ChatGPT Ads connection's campaigns, ad groups and ads, read from
+        // and changed at OpenAI (AdCampaignsController). {objectId} is
+        // OpenAI's own id, checked against its shape before it goes into a
+        // request path. Every write previews with ?dry_run=1.
+        $router->group('/ad-connections', function (Router $r) use ($crud, $payload, $queryParams) {
+            $cls = \Api\V3\Controllers\AdCampaignsController::class;
+            $r->get('/{id}/spend', fn($ctx) => $crud($cls)->spend(PathId::of($ctx), $queryParams));
+            $r->get('/{id}/campaigns', fn($ctx) => $crud($cls)->list(PathId::of($ctx), 'campaigns', $queryParams));
+            $r->get('/{id}/ad-groups', fn($ctx) => $crud($cls)->list(PathId::of($ctx), 'ad-groups', $queryParams));
+            $r->get('/{id}/ads', fn($ctx) => $crud($cls)->list(PathId::of($ctx), 'ads', $queryParams));
+            $r->get('/{id}/campaigns/{objectId}', fn($ctx) => $crud($cls)->get(PathId::of($ctx), 'campaigns', (string) $ctx['objectId']));
+            $r->get('/{id}/ad-groups/{objectId}', fn($ctx) => $crud($cls)->get(PathId::of($ctx), 'ad-groups', (string) $ctx['objectId']));
+            $r->get('/{id}/ads/{objectId}', fn($ctx) => $crud($cls)->get(PathId::of($ctx), 'ads', (string) $ctx['objectId']));
+            $r->post('/{id}/campaigns/{objectId}/pause', fn($ctx) => $crud($cls)->setStatus(PathId::of($ctx), 'campaigns', (string) $ctx['objectId'], 'pause', $payload, writeDryRunRequested($queryParams)));
+            $r->post('/{id}/campaigns/{objectId}/activate', fn($ctx) => $crud($cls)->setStatus(PathId::of($ctx), 'campaigns', (string) $ctx['objectId'], 'activate', $payload, writeDryRunRequested($queryParams)));
+            $r->post('/{id}/ad-groups/{objectId}/pause', fn($ctx) => $crud($cls)->setStatus(PathId::of($ctx), 'ad-groups', (string) $ctx['objectId'], 'pause', $payload, writeDryRunRequested($queryParams)));
+            $r->post('/{id}/ad-groups/{objectId}/activate', fn($ctx) => $crud($cls)->setStatus(PathId::of($ctx), 'ad-groups', (string) $ctx['objectId'], 'activate', $payload, writeDryRunRequested($queryParams)));
+            $r->post('/{id}/ads/{objectId}/pause', fn($ctx) => $crud($cls)->setStatus(PathId::of($ctx), 'ads', (string) $ctx['objectId'], 'pause', $payload, writeDryRunRequested($queryParams)));
+            $r->post('/{id}/ads/{objectId}/activate', fn($ctx) => $crud($cls)->setStatus(PathId::of($ctx), 'ads', (string) $ctx['objectId'], 'activate', $payload, writeDryRunRequested($queryParams)));
+            $r->post('/{id}/campaigns/{objectId}/template', fn($ctx) => $crud($cls)->setTemplate(PathId::of($ctx), 'campaigns', (string) $ctx['objectId'], $payload, writeDryRunRequested($queryParams)));
+            $r->post('/{id}/ad-groups/{objectId}/template', fn($ctx) => $crud($cls)->setTemplate(PathId::of($ctx), 'ad-groups', (string) $ctx['objectId'], $payload, writeDryRunRequested($queryParams)));
+            $r->post('/{id}/ads/{objectId}/template', fn($ctx) => $crud($cls)->setTemplate(PathId::of($ctx), 'ads', (string) $ctx['objectId'], $payload, writeDryRunRequested($queryParams)));
+            $r->post('/{id}/campaigns/{objectId}/event-settings', fn($ctx) => $crud($cls)->attachEventSettings(PathId::of($ctx), (string) $ctx['objectId'], $payload, writeDryRunRequested($queryParams)));
         }, [$setupSection]);
 
         // ── API capabilities ────────────────────────────────────────────
@@ -1491,14 +1538,14 @@ try {
                 'conversions'   => '/conversions',
                 'update'        => '/clicks/cpc, /conversions/{subids|subids/delete|subids/reset|uploads}',
                 'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart|groups}',
-                'spend_ledger'  => '/spend-ledger',
+                'spend_ledger'  => '/spend-ledger[/conversions|/sync[/{id}[/run]]]',
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}[/{id}][/deliveries]',
                 'rotators'      => '/rotators[/{id}/rules|/{id}/stats]',
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
                 'apps'          => '/apps/{id|skan-encodings|postbacks|report|notifications|verify|schema|installs}[/installs|/install-token|/store-link|/integrity|/integrity-credential]',
                 'goals'         => '/goals/{id|validate|evaluate}',
                 'destinations'  => '/destinations[/{id}][/test|/deliveries[/resend]|/backfill|/oauth/start|/google-ads/accounts|/google-ads/conversion-actions|/google-ads/pick]',
-                'ad_connections' => '/ad-connections[/{id}][/check|/setup]',
+                'ad_connections' => '/ad-connections[/{id}][/check|/setup|/spend|/campaigns|/ad-groups|/ads[/{id}[/pause|/activate|/template|/event-settings]]]',
                 'events'        => '/events',
                 'users'         => '/users',
                 'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations|integrations/record-held|traffic-source-owners|traffic-source-owners/repair|traffic-source-owners/split}',
@@ -1638,6 +1685,18 @@ try {
     });
     $writePreviewRouter->post('/system/retention/delete-before', $writePreview);
     $writePreviewRouter->put('/rotators/{id}/rules', $writePreview);
+    $writePreviewRouter->group('/ad-connections/{id}', function (Router $r) use ($writePreview) {
+        $r->post('/campaigns/{objectId}/pause', $writePreview);
+        $r->post('/campaigns/{objectId}/activate', $writePreview);
+        $r->post('/campaigns/{objectId}/template', $writePreview);
+        $r->post('/ad-groups/{objectId}/pause', $writePreview);
+        $r->post('/ad-groups/{objectId}/activate', $writePreview);
+        $r->post('/ad-groups/{objectId}/template', $writePreview);
+        $r->post('/ads/{objectId}/pause', $writePreview);
+        $r->post('/ads/{objectId}/activate', $writePreview);
+        $r->post('/ads/{objectId}/template', $writePreview);
+        $r->post('/campaigns/{objectId}/event-settings', $writePreview);
+    });
     // ── Staged writes ───────────────────────────────────────────────
     // `?staged=1` on an operator-surface write records it as a proposal
     // (server-issued change id) instead of executing it; a person applies
@@ -1712,6 +1771,21 @@ try {
     // An event is a write like a conversion: stageable, and applied through
     // the real route (received at apply time).
     $stageableRouter->post('/events', $stageable);
+    // The ChatGPT Ads campaign writes: a proposal is applied through the
+    // same route, so a propose-only key (an AI connection's) proposes a
+    // pause and a person applies it, as every other hosted write.
+    $stageableRouter->group('/ad-connections/{id}', function (Router $r) use ($stageable) {
+        $r->post('/campaigns/{objectId}/pause', $stageable);
+        $r->post('/campaigns/{objectId}/activate', $stageable);
+        $r->post('/campaigns/{objectId}/template', $stageable);
+        $r->post('/ad-groups/{objectId}/pause', $stageable);
+        $r->post('/ad-groups/{objectId}/activate', $stageable);
+        $r->post('/ad-groups/{objectId}/template', $stageable);
+        $r->post('/ads/{objectId}/pause', $stageable);
+        $r->post('/ads/{objectId}/activate', $stageable);
+        $r->post('/ads/{objectId}/template', $stageable);
+        $r->post('/campaigns/{objectId}/event-settings', $stageable);
+    });
     $stageableRouter->group('/users', function (Router $r) use ($stageable) {
         $r->post('', $stageable);
         $r->put('/{id}', $stageable);
@@ -1911,6 +1985,23 @@ try {
                     // that cannot name its target is rejected up front.
                     $stagePreview = null;
                 }
+            }
+        }
+        if ($method === 'POST' && preg_match('#^/ad-connections/([1-9][0-9]{0,9})/(campaigns|ad-groups|ads)/([^/]+)/(pause|activate|template|event-settings)$#', $path, $m) === 1) {
+            // A ChatGPT Ads proposal carries what the person approving it needs: the object as OpenAI has it now
+            // and what would change, read as the dry run reads it. The preview is a read of the area; without
+            // it, or when OpenAI cannot be asked, the proposal is recorded without one.
+            try {
+                $auth->requireScope('ad-connections:read');
+                $campaigns = new \Api\V3\Controllers\AdCampaignsController($db, $userId);
+                $previewed = match ($m[4]) {
+                    'pause', 'activate' => $campaigns->setStatus((int) $m[1], $m[2], $m[3], $m[4], $payload, true),
+                    'template' => $campaigns->setTemplate((int) $m[1], $m[2], $m[3], $payload, true),
+                    default => $campaigns->attachEventSettings((int) $m[1], $m[3], $payload, true),
+                };
+                $stagePreview = $previewed['data'] ?? null;
+            } catch (AuthException | \Api\V3\Exception\UpstreamUnavailableException | \Api\V3\Exception\TooManyRequestsException) {
+                $stagePreview = null;
             }
         }
         $response = ['_status' => 202] + $stagedChanges()->stage($method, $path, $payload, $stagePreview);

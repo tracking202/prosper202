@@ -1,0 +1,4 @@
+{"object": "list", "data": [
+  {"id": "cmpn_101", "created_at": 1735689600, "updated_at": 1735862400, "name": "Spring launch", "description": null, "status": "active", "product_feed_id": null, "start_time": null, "end_time": null, "budget": {"daily_spend_limit_micros": 25000000}, "bidding_type": "impressions", "serving_issues": []},
+  {"id": "cmpn_102", "created_at": 1735689600, "updated_at": 1735862400, "name": "Trial sign-ups", "description": null, "status": "paused", "product_feed_id": null, "start_time": null, "end_time": null, "budget": {}, "bidding_type": "conversions", "serving_issues": [{"code": "campaign_not_active"}]}
+], "first_id": "cmpn_101", "last_id": "cmpn_102", "has_more": true}

@@ -76,6 +76,11 @@ final class SpendRow
         $campaign = self::text($row, 'campaign_ref', self::REF_WIDTH, $prefix, $errors);
         $adGroup = self::text($row, 'ad_group_ref', self::REF_WIDTH, $prefix, $errors);
         $ad = self::text($row, 'ad_ref', self::REF_WIDTH, $prefix, $errors);
+        if (preg_match('/[^\x20-\x7E]/', $ad) === 1) {
+            // Clicks are tied to an ad by LedgerCost::tieKey(), exact for ASCII only (CLAUDE.md #17).
+            $errors[$prefix . 'ad_ref'] = 'must be ASCII, as ad platforms\' ad ids are (OpenAI\'s ad_501); clicks could not be matched to another id exactly';
+            $ad = '';
+        }
         $hour = self::count($row, 'hour_start', $prefix, $errors);
         if ($hour !== null && $hour % 3600 !== 0) {
             $errors[$prefix . 'hour_start'] = 'must be the unix second an hour starts at, in UTC (a multiple of 3600); ' . $hour . ' is not';

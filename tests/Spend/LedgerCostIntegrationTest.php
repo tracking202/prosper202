@@ -427,6 +427,12 @@ final class LedgerCostIntegrationTest extends TestCase
         $named = LedgerCost::sets(new Connection(self::$db), self::USER, null, 0, 0, ['ad_A'], 'openai_ads');
         self::assertNotContains($network, array_column($named, 'network_id'));
         self::assertContains($network, array_column(LedgerCost::sets(new Connection(self::$db), self::USER, null, 0, 0, ['ad_A'], 'other_ads'), 'network_id'));
+        // A click id the collation folds onto the ad only past ASCII is not the ad (CLAUDE.md #17).
+        self::q("INSERT INTO 202_custom_variables SET custom_variable_id = 630109, ppc_variable_id = $network, variable = 'ad_é7'");
+        self::q("INSERT INTO 202_variable_sets2 SET variable_set_id = 630109, variables = '630109'");
+        foreach (['openai_ads', 'other_ads'] as $platform) {
+            self::assertSame([], LedgerCost::sets(new Connection(self::$db), self::USER, null, 0, 0, ['ad_e7'], $platform), $platform);
+        }
 
         // A ChatGPT Ads source set up by hand: no source of the account is marked, so the ad id alone
         // matches, the newsletter clicks included (3.00 over four clicks), and the note says nothing of it.

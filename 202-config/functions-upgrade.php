@@ -5526,6 +5526,10 @@ class UPGRADE
                 // the source Setup › Traffic Sources' "Add ChatGPT Ads" makes
                 // (Prosper202\Setup\ChatGptAdsSource), '' on every other.
                 \Prosper202\Database\Tables\CampaignTables::ppcNetworks(),
+                // Each ad connection's spend sync: on or off, and its last run.
+                \Prosper202\Database\Tables\MiscTables::adSpendSync(),
+                // The conversions an ad platform reports per ad per day.
+                \Prosper202\Database\Tables\MiscTables::adPlatformConversions(),
             ], [], [], true) && $before_ok;
             if ($step_ok) {
                 _upgrade_seed_bot202_facebook_pixel_lookups();

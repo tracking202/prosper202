@@ -45,6 +45,8 @@ final class MiscTables
             self::charts(),
             // Spend ledger
             self::spendLedger(),
+            self::adSpendSync(),
+            self::adPlatformConversions(),
             // Export tables
             self::exportAdgroups(),
             self::exportCampaigns(),
@@ -344,6 +346,81 @@ final class MiscTables
                 PRIMARY KEY (`user_id`,`platform`,`account_ref`,`ad_ref`,`hour_start`),
                 KEY `user_hour` (`user_id`,`hour_start`),
                 KEY `user_ad_hour` (`user_id`,`ad_ref`,`hour_start`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * Each ad connection's spend sync (Prosper202\Spend\OpenAi\SpendSync),
+     * from 1.9.80 on: whether the operator turned it on (no row is off), when
+     * the first 30-day backfill finished (null: not yet), the last run and
+     * whether it was complete (last_complete), its
+     * failure (last_error) and notes (last_note), rows still left out of the
+     * ledger (left_out, kept until those hours are read cleanly) and the
+     * hours they were in (left_out_hours, hour starts, comma-separated, each
+     * read again until it reads cleanly), the first hour the forward read has
+     * not reached (pending_from) and the hour it has reached, kept once it
+     * reaches now so a run after a pause reads the gap (read_to), the first hour whose conversions are still
+     * to read (conversions_from), and how long a rate-limited platform or a
+     * refused key is left alone (rate_limited and key_refusals count each
+     * kind's back-offs in a row).
+     */
+    public static function adSpendSync(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::AD_SPEND_SYNC,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::AD_SPEND_SYNC . "` (
+                `connection_id` int(10) unsigned NOT NULL,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `enabled` tinyint(1) NOT NULL DEFAULT '0',
+                `backfilled_at` int(10) unsigned DEFAULT NULL,
+                `last_run_at` int(10) unsigned DEFAULT NULL,
+                `last_success_at` int(10) unsigned DEFAULT NULL,
+                `last_complete` tinyint(1) NOT NULL DEFAULT '0',
+                `last_rows` int(10) unsigned NOT NULL DEFAULT '0',
+                `last_error` text DEFAULT NULL,
+                `last_note` text DEFAULT NULL,
+                `left_out` text DEFAULT NULL,
+                `left_out_hours` text DEFAULT NULL,
+                `pending_from` int(10) unsigned DEFAULT NULL,
+                `read_to` int(10) unsigned DEFAULT NULL,
+                `conversions_from` int(10) unsigned DEFAULT NULL,
+                `rate_limited` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `key_refusals` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `retry_after` int(10) unsigned NOT NULL DEFAULT '0',
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`connection_id`),
+                KEY `user_id` (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The conversions an ad platform reports per ad per day, beside
+     * Prosper202's own for reconciliation (Prosper202\Spend\OpenAi\SpendSync),
+     * from 1.9.80 on. `day` is a date in the ad account's zone (`timezone`),
+     * as the platform reports it; a re-pull replaces the day's row. sales is
+     * null when the platform could not value it.
+     */
+    public static function adPlatformConversions(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::AD_PLATFORM_CONVERSIONS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::AD_PLATFORM_CONVERSIONS . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `platform` varchar(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `account_ref` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+                `ad_ref` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+                `day` date NOT NULL,
+                `timezone` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `conversions` int(10) unsigned NOT NULL,
+                `click_through` int(10) unsigned DEFAULT NULL,
+                `view_through` int(10) unsigned DEFAULT NULL,
+                `sales` decimal(16,6) DEFAULT NULL,
+                `sales_currency` char(3) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`user_id`,`platform`,`account_ref`,`ad_ref`,`day`),
+                KEY `user_day` (`user_id`,`day`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

@@ -24,12 +24,16 @@ final class AdvertiserAnswer
     /** Any other 4xx: OpenAI refused the request itself. */
     public const REFUSED = 'refused';
 
-    /** @param array<string, mixed> $json */
+    /**
+     * @param array<string, mixed> $json
+     * @param int|null $retryAfter seconds OpenAI's Retry-After asked to wait, null when it named none
+     */
     private function __construct(
         public readonly string $kind,
         public readonly int $status,
         public readonly array $json,
         public readonly ?string $error,
+        public readonly ?int $retryAfter = null,
     ) {
     }
 
@@ -39,9 +43,9 @@ final class AdvertiserAnswer
         return new self(self::OK, $status, $json, null);
     }
 
-    public static function failed(string $kind, int $status, string $error): self
+    public static function failed(string $kind, int $status, string $error, ?int $retryAfter = null): self
     {
-        return new self($kind, $status, [], $error);
+        return new self($kind, $status, [], $error, $retryAfter);
     }
 
     public function isOk(): bool

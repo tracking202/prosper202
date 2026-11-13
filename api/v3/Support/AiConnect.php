@@ -41,10 +41,13 @@ final class AiConnect
      */
     public const READ_AREAS = [
         'reports', 'attribution', 'campaigns', 'trackers', 'landing-pages', 'ppc-networks', 'ppc-accounts',
-        'aff-networks', 'text-ads', 'rotators', 'clicks', 'conversions', 'staged-changes',
+        'aff-networks', 'text-ads', 'rotators', 'clicks', 'conversions', 'staged-changes', 'ad-connections',
     ];
     public const WRITE_AREAS = [
         'campaigns', 'trackers', 'landing-pages', 'ppc-networks', 'ppc-accounts', 'aff-networks', 'text-ads', 'rotators',
+        // ChatGPT Ads campaigns: pause, activate, template, event settings. The connection's key is never
+        // reachable with an area scope (AdConnectionKeyAccess).
+        'ad-connections',
     ];
 
     /**

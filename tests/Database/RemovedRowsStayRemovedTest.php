@@ -71,6 +71,10 @@ final class RemovedRowsStayRemovedTest extends TestCase
      * @var array<string, array<string, string>>
      */
     private const ALLOWED = [
+        '202-config/AdPlatforms/OpenAiAds/ChatGptCampaignsOfCampaign.php' => [
+            'read | 202_ppc_network_variables' => 'a money-loss alert names the ChatGPT Ads campaign today\'s clicks'
+                . ' recorded: a campaign_id variable removed since is still what those clicks carried',
+        ],
         '202-config/class-dataengine.php' => [
             'read | 202_ppc_network_variables' => 'the Custom Variables report names the variable each recorded value'
                 . ' belongs to: a removed variable\'s values are still its clicks\', so its name is read and shown'

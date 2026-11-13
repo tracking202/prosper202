@@ -1,0 +1,70 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Prosper202\Spend\OpenAi;
+
+use Prosper202\AdPlatforms\AdConnectionStore;
+
+/**
+ * The spend sync's connections read from the ad connections
+ * (Prosper202\AdPlatforms\AdConnectionStore): the account's live
+ * `openai_ads` connections, the key opened only to run one.
+ */
+final class AdConnectionSpendConnections implements SpendConnections
+{
+    public function __construct(private readonly AdConnectionStore $store)
+    {
+    }
+
+    public function find(int $userId, int $connectionId): ?SpendConnection
+    {
+        $shown = $this->store->get($userId, $connectionId);
+        if ($shown === null || ($shown['platform'] ?? null) !== SpendSync::PLATFORM) {
+            return null;
+        }
+        $calling = $this->store->forCalling($userId, $connectionId);
+        if ($calling === null) {
+            return null;
+        }
+        $key = $calling['credentials']['advertiser_api_key'] ?? '';
+        if ($key === '') {
+            throw new \RuntimeException('the connection holds no Advertiser API key');
+        }
+
+        return new SpendConnection(
+            $connectionId,
+            $userId,
+            $calling['account_ref'],
+            (string) ($shown['account']['currency'] ?? ''),
+            $key,
+            \Prosper202\Report\AccountZone::normalize((string) ($shown['account']['timezone'] ?? ''))
+        );
+    }
+
+    public function keyRefused(int $userId, int $connectionId, string $why, int $now): void
+    {
+        // As OpenAiAdsConnections::check() records a refused key.
+        $this->store->recordCheck($userId, $connectionId, null, AdConnectionStore::STATUS_KEY_REFUSED, $why, $now);
+    }
+
+    public function keyAccepted(int $userId, int $connectionId, int $now): void
+    {
+        // Only a key_refused mark is the run's to undo: another status (an unreadable key) is not about this key.
+        if (($this->store->get($userId, $connectionId)['status'] ?? null) === AdConnectionStore::STATUS_KEY_REFUSED) {
+            $this->store->recordCheck($userId, $connectionId, null, AdConnectionStore::STATUS_CONNECTED, null, $now);
+        }
+    }
+
+    public function ofAccount(int $userId): array
+    {
+        $out = [];
+        foreach ($this->store->list($userId) as $connection) {
+            if (($connection['platform'] ?? null) === SpendSync::PLATFORM) {
+                $out[(int) $connection['connection_id']] = (string) ($connection['account']['id'] ?? '');
+            }
+        }
+
+        return $out;
+    }
+}

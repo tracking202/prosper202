@@ -1,0 +1,134 @@
+{
+  "cases": [
+    {
+      "id": "chatgpt-ads-001-connect-the-ad-account-and-set-it-up",
+      "priority": "high",
+      "state": "seeded fixture; the OpenAI stand-in reset, no ad connection, the Advertiser API key in /tmp/p202-eval-ads-key.txt",
+      "setup": [
+        "curl -sf --cacert \"$P202_OPENAI_ADS_CA_FILE\" -X POST \"$P202_OPENAI_ADS_ENDPOINT/control/reset\" >/dev/null",
+        "for id in $(p202 ad-connection list --json | jq -r '.data[].connection_id'); do p202 ad-connection delete \"$id\" --force --json >/dev/null; done; printf %s 'sk-ads-eval-key-0001' > /tmp/p202-eval-ads-key.txt; true"
+      ],
+      "ask": "Connect my ChatGPT Ads account. The Advertiser API key is in /tmp/p202-eval-ads-key.txt. Then set up its pixel, a Conversions API key and the event settings.",
+      "expected": {
+        "runs_one_of": [
+          "ad-connection create"
+        ],
+        "never_runs": [
+          "ad-connection delete"
+        ],
+        "checks": [
+          {
+            "run": "p202 ad-connection list --json | jq -r '[.data[] | \"account=\\(.account.id) name=\\(.account.name) status=\\(.status) ads_key=\\(.credentials_set.advertiser_api_key) capi_key=\\(.credentials_set.conversions_api_key) pixel=\\(.setup.pixel.pixel_id != null) events=\\(.setup.event_settings | length)\"] | join(\";\")'",
+            "includes": [
+              "account=adacct_123 name=Northwind Outfitters status=connected ads_key=true capi_key=true pixel=true events=1"
+            ]
+          },
+          {
+            "run": "p202 ad-connection list --json",
+            "omits": [
+              "sk-ads-eval-key"
+            ]
+          }
+        ],
+        "reply_includes": [
+          "Northwind Outfitters"
+        ]
+      }
+    },
+    {
+      "id": "chatgpt-ads-002-pause-the-campaign-losing-money",
+      "priority": "high",
+      "state": "seeded fixture; one ad connection to the stand-in's account, whose Spring sale (cmpn_101) is active",
+      "setup": [
+        "curl -sf --cacert \"$P202_OPENAI_ADS_CA_FILE\" -X POST \"$P202_OPENAI_ADS_ENDPOINT/control/reset\" >/dev/null",
+        "for id in $(p202 ad-connection list --json | jq -r '.data[].connection_id'); do p202 ad-connection delete \"$id\" --force --json >/dev/null; done; printf %s 'sk-ads-eval-key-0001' > /tmp/p202-eval-ads-key.txt; p202 ad-connection create --api-key-file /tmp/p202-eval-ads-key.txt --json >/dev/null"
+      ],
+      "ask": "My ChatGPT Ads campaign Spring sale is losing money. Pause it.",
+      "expected": {
+        "runs_one_of": [
+          "ad-campaign pause"
+        ],
+        "never_runs": [
+          "ad-connection delete",
+          "ad-campaign activate"
+        ],
+        "checks": [
+          {
+            "run": "p202 ad-campaign get $(p202 ad-connection list --json | jq -r '.data[0].connection_id') cmpn_101 --json | jq -r '\"status=\\(.data.status)\"'",
+            "includes": [
+              "status=paused"
+            ]
+          },
+          {
+            "run": "p202 ad-campaign get $(p202 ad-connection list --json | jq -r '.data[0].connection_id') cmpn_102 --json | jq -r '\"status=\\(.data.status)\"'",
+            "includes": [
+              "status=paused"
+            ]
+          }
+        ],
+        "reply_includes": [
+          "cmpn_101"
+        ]
+      }
+    },
+    {
+      "id": "chatgpt-ads-003-push-the-tracking-template",
+      "priority": "medium",
+      "state": "seeded fixture; one ad connection; the stand-in's Trial sign-ups (cmpn_102) has no tracking template",
+      "setup": [
+        "curl -sf --cacert \"$P202_OPENAI_ADS_CA_FILE\" -X POST \"$P202_OPENAI_ADS_ENDPOINT/control/reset\" >/dev/null",
+        "for id in $(p202 ad-connection list --json | jq -r '.data[].connection_id'); do p202 ad-connection delete \"$id\" --force --json >/dev/null; done; printf %s 'sk-ads-eval-key-0001' > /tmp/p202-eval-ads-key.txt; p202 ad-connection create --api-key-file /tmp/p202-eval-ads-key.txt --json >/dev/null"
+      ],
+      "ask": "Put the Get Links tracking template on my ChatGPT Ads campaign Trial sign-ups.",
+      "expected": {
+        "runs_one_of": [
+          "ad-campaign set-template"
+        ],
+        "never_runs": [
+          "ad-campaign pause",
+          "ad-campaign activate"
+        ],
+        "checks": [
+          {
+            "run": "p202 ad-campaign get $(p202 ad-connection list --json | jq -r '.data[0].connection_id') cmpn_102 --json | jq -r '.data.query_string_template'",
+            "includes": [
+              "oppref={oppref}",
+              "campaign_id={campaign_id}"
+            ]
+          },
+          {
+            "run": "p202 ad-campaign get $(p202 ad-connection list --json | jq -r '.data[0].connection_id') cmpn_101 --json | jq -r '\"template=\\(.data.query_string_template)\"'",
+            "includes": [
+              "template=null"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "chatgpt-ads-004-yesterdays-spend",
+      "priority": "medium",
+      "state": "seeded fixture; one ad connection; the stand-in reports Spring sale USD 18.42 and Trial sign-ups USD 14.86",
+      "setup": [
+        "curl -sf --cacert \"$P202_OPENAI_ADS_CA_FILE\" -X POST \"$P202_OPENAI_ADS_ENDPOINT/control/reset\" >/dev/null",
+        "for id in $(p202 ad-connection list --json | jq -r '.data[].connection_id'); do p202 ad-connection delete \"$id\" --force --json >/dev/null; done; printf %s 'sk-ads-eval-key-0001' > /tmp/p202-eval-ads-key.txt; p202 ad-connection create --api-key-file /tmp/p202-eval-ads-key.txt --json >/dev/null"
+      ],
+      "ask": "What did ChatGPT Ads cost me yesterday, by campaign?",
+      "expected": {
+        "runs_one_of": [
+          "ad-campaign spend"
+        ],
+        "never_runs": [
+          "ad-campaign pause",
+          "ad-campaign activate",
+          "ad-campaign set-template"
+        ],
+        "reply_includes": [
+          "33.28",
+          "18.42",
+          "14.86"
+        ]
+      }
+    }
+  ]
+}
