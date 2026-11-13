@@ -15,6 +15,7 @@ use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\Ledger\SupersededReason;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
+use Prosper202\Identity\ConsentRefusal;
 use Prosper202\Notifications\NotificationOutbox;
 use Prosper202\Notifications\OutcomeNotificationSink;
 use Throwable;
@@ -1350,8 +1351,10 @@ final class GoalEngine
         if ($subject->clickId !== null) {
             // Written in place of a retired row for the same goal and event (a
             // re-evaluation, a replay), it credits the visit that row did, not
-            // the click's latest now: what a later visit did is not this sale's
-            // (Ledger\ConsentWithheld::refusedSql() reads the credited visit).
+            // the click's latest now: what a later visit did is not this sale's.
+            // Reporting reads it (the row's click_time: an offline file's click
+            // time, the click-age checks); consent does not, a refusal holds
+            // for every visit of the click (ConsentRefusal).
             $credited = $decided !== null && $decided['conversion_id'] !== null
                 ? $this->creditedVisit($userId, (int) $decided['conversion_id'])
                 : null;
@@ -2135,6 +2138,22 @@ final class GoalEngine
                 );
             }
         }
+        if ($event->consentWithheld) {
+            $this->refuseSubjectsClick($subject, $event->occurredAt);
+        }
+    }
+
+    /**
+     * A goal event whose own request refused refuses the click its subject is
+     * credited to (ConsentRefusal), so no conversion of that click is sent,
+     * whichever goal or request it came from. current() locked that click; an
+     * install credited to no click has none to refuse.
+     */
+    private function refuseSubjectsClick(GoalSubject $subject, int $at): void
+    {
+        if ($subject->clickId !== null) {
+            ConsentRefusal::record($this->conn, $subject->clickId, $at);
+        }
     }
 
     /** The visit ledger row $convId of the account credits (its click_time). */
@@ -2156,13 +2175,14 @@ final class GoalEngine
 
     /**
      * A stored event reported again by a request that refused consent: the
-     * event and every ledger row its outcomes wrote are refused from now on
-     * (Ledger\ConsentWithheld), in the ingest's transaction; nothing sets
-     * either back. A delivery already sent stays sent. Before the 1.9.80
+     * event, every ledger row its outcomes wrote and the subject's click are
+     * refused from now on (Ledger\ConsentWithheld, ConsentRefusal), in the
+     * ingest's transaction; nothing sets them back. A delivery already sent stays sent. Before the 1.9.80
      * upgrade adds the columns there is no destination to keep them from.
      */
     private function tightenStoredEvent(int $userId, GoalSubject $subject, string $eventId): void
     {
+        $this->refuseSubjectsClick($subject, $this->now());
         if (ConsentWithheld::goalEventsColumnPresent($this->conn)) {
             $stmt = $this->conn->prepareWrite('UPDATE 202_goal_events SET consent_withheld = 1'
                 . ' WHERE subject_type = ? AND subject_id = ? AND event_id = ? AND user_id = ?'

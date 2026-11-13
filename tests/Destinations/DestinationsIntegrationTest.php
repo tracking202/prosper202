@@ -33,6 +33,8 @@ final class DestinationsIntegrationTest extends TestCase
     }
 
     private const SECRET = 'Sx9-secretAPIvalue';
+    /** The reason a delivery of a refused click gives. */
+    private const BY_CLICK = DestinationQueue::REFUSED . ' on its click, by a visit or another of its conversions';
 
     /** @var list<array<string, mixed>> decoded bodies the transport was handed */
     private array $bodies = [];
@@ -527,10 +529,12 @@ final class DestinationsIntegrationTest extends TestCase
         self::assertNotNull($page('c3')->attach($conn, 1, 122, self::CLICK_TIME + 100));
         self::assertSame(1, $marked(122, self::CLICK_TIME + 100));
         // 123's refusing re-click is stamped before the visit it follows (a web server's clock): the refusal
-        // covers the latest visit recorded, which a late request of that visit then marks.
+        // holds for the click whatever its time, and keeps that time for the record; a late request of the
+        // latest visit then marks it.
         $reClick(123, [], self::CLICK_TIME + 100);
         $reClick(123, ['p202_consent' => '0'], self::CLICK_TIME + 50);
-        self::assertSame([[(string) (self::CLICK_TIME + 100)]], $refusals(123), 'it covers every visit so far');
+        $what = 'stored with the refusing request\'s time';
+        self::assertSame([[(string) (self::CLICK_TIME + 50)]], $refusals(123), $what);
         self::assertNotNull($page('c4')->attach($conn, 1, 123, self::CLICK_TIME + 100));
         self::assertSame(1, $marked(123, self::CLICK_TIME + 100));
         self::assertSame([], $refusals(100), 'a click that never withheld consent stores no refusal');
@@ -645,7 +649,7 @@ final class DestinationsIntegrationTest extends TestCase
         self::assertNull($by[112]->ipAddress, 'another account\'s latest visit is no visit of it, whatever its mark');
         $refusedClick = array_column($why, 'last_error', 'click_id')[120];
         $what = 'a later visit of a refused click that consents is withheld all the same';
-        self::assertSame(DestinationQueue::REFUSED . ' on a visit of the click', $refusedClick, $what);
+        self::assertSame(self::BY_CLICK, $refusedClick, $what);
         $what = 'the positive control: another click of the same visitor (its cookie) that did not refuse is sent';
         self::assertSame('198.51.100.7', $by[111]->ipAddress, $what);
         self::assertNull($by[105]->ipAddress, 'nor one whose campaign has identity capture off');
@@ -682,14 +686,16 @@ final class DestinationsIntegrationTest extends TestCase
      * pixel with p202_consent=0, after a click that consented) is sent to no
      * destination: its delivery is withheld and says the visitor refused, a
      * send again checks again, and the install still records it. The
-     * refusal is the conversion's, so a later visit that consents, before
-     * the send or after, changes neither conversion. A repeat of the same
-     * conversion that refuses tightens it; nothing loosens it.
+     * refusal refuses its click too (202_click_consent_refusals), so no other
+     * conversion of that click is sent: not one recorded before it and not
+     * yet sent, not one a later consenting visit credits, not a later one
+     * whose request names no p202_consent. A repeat of the same conversion
+     * that refuses tightens it; nothing loosens it.
      */
     public function testAConversionWhoseOwnRequestRefusedConsentIsSentToNoDestination(): void
     {
         foreach (['202_clicks_visitor', '202_identity_observations', '202_click_consent_refusals'] as $t) {
-            self::fixture("DELETE FROM $t WHERE click_id BETWEEN 140 AND 149");
+            self::fixture("DELETE FROM $t WHERE click_id BETWEEN 140 AND 149 OR click_id = 190");
         }
         self::fixture("INSERT INTO 202_ips SET ip_id=5, ip_address='198.51.100.7'");
         self::fixture("INSERT INTO 202_customers SET customer_id=9, user_id=1, primary_ref='crm-9',
@@ -697,7 +703,7 @@ final class DestinationsIntegrationTest extends TestCase
             first_seen_time=1, last_activity_time=1, created_at=1, updated_at=1");
         $conn = new Connection(self::$db);
         $cookie = ['p202vid' => str_repeat('c9', 16)];
-        foreach ([140, 141, 142, 143, 144, 145] as $click) {
+        foreach ([140, 141, 142, 143, 144, 145, 190] as $click) {
             self::fixture("INSERT INTO 202_clicks_advance SET click_id=$click, ip_id=5");
             $this->click($click);
             // The click's own request consented.
@@ -731,9 +737,13 @@ final class DestinationsIntegrationTest extends TestCase
             [$stored($refused), $stored($given), $stored($absent)],
             'the refusal is on the row, with it'
         );
+        $refusedClicks = static fn (): array => array_map('intval', array_column(self::$db->query(
+            'SELECT click_id FROM 202_click_consent_refusals'
+                . ' WHERE click_id BETWEEN 140 AND 149 OR click_id = 190 ORDER BY click_id'
+        )->fetch_all(MYSQLI_NUM), 0));
+        self::assertSame([140], $refusedClicks(), 'the refusing conversion refused its click; the others did not');
         // 143's conversion refuses, and before it is sent the visitor clicks again, consenting. The refusal
-        // was the conversion's request's, not the click's (none is stored for 143), so the later visit's
-        // conversion is sent; the first keeps its refusal.
+        // refused the click, so the later visit's conversion is withheld too.
         $early = $record(143, 'ORD-W4', ['consent_withheld' => true]);
         self::fixture('INSERT INTO 202_clicks SET click_id=143, user_id=1, aff_campaign_id=30, ppc_account_id=70,'
             . ' click_payout=2.5, click_cpc=0, click_lead=0, click_time=' . (self::CLICK_TIME + 100));
@@ -749,9 +759,18 @@ final class DestinationsIntegrationTest extends TestCase
         $record(145, 'ORD-D2');
         $flags = [$stored($tightened), $stored($kept)];
         self::assertSame(['1', '1'], $flags, 'a refusing repeat tightens; nothing loosens');
+        // 190: a consenting sale still pending, then another sale whose request refuses, then a later one
+        // that names no p202_consent. The refusal holds the whole click back, the pending one included.
+        $before = $record(190, 'ORD-C1');
+        $byRequest = $record(190, 'ORD-C2', ['consent_withheld' => true]);
+        $after = $record(190, 'ORD-C3');
+        $flags = [$stored($before), $stored($byRequest), $stored($after)];
+        self::assertSame(['0', '1', '0'], $flags, 'only C2 refused on its own request');
+        $what = 'a refusing request, or a refusing repeat, refuses its click';
+        self::assertSame([140, 143, 144, 145, 190], $refusedClicks(), $what);
 
         $run = $queue()->sendDue(10, 5, time() + 1);
-        self::assertSame(['sent' => 3, 'withheld' => 4], ['sent' => $run['sent'], 'withheld' => $run['withheld']]);
+        self::assertSame(['sent' => 2, 'withheld' => 8], ['sent' => $run['sent'], 'withheld' => $run['withheld']]);
         $by = [];
         foreach ($facts as $f) {
             $by[$f->convId] = $f;
@@ -759,7 +778,6 @@ final class DestinationsIntegrationTest extends TestCase
         $consented = [
             $given => 'a conversion that consented',
             $absent => 'one that named no p202_consent',
-            $later => 'a later visit\'s conversion',
         ];
         foreach ($consented as $convId => $what) {
             self::assertSame('198.51.100.7', $by[$convId]->ipAddress, "the positive control: $what sends the address");
@@ -773,6 +791,7 @@ final class DestinationsIntegrationTest extends TestCase
             $early => 'one sent after a later visit consented',
             $tightened => 'one a refusing repeat tightened',
             $kept => 'one a consenting repeat did not loosen',
+            $byRequest => 'C2, whose request refused',
         ];
         $status = static fn (int $convId): array => self::$db->query(
             "SELECT status, last_error FROM 202_destination_deliveries WHERE destination_id=$on AND conv_id=$convId"
@@ -786,14 +805,29 @@ final class DestinationsIntegrationTest extends TestCase
                 "$what says the visitor refused"
             );
         }
+        $byClick = [
+            $later => 'a later visit\'s conversion of a click a conversion refused',
+            $before => 'C1, recorded before C2 refused and not yet sent',
+            $after => 'C3, a later sale naming no p202_consent',
+        ];
+        foreach ($byClick as $convId => $what) {
+            self::assertArrayNotHasKey($convId, $by, "$what sends nothing");
+            self::assertSame('withheld', $status($convId)['status'], "$what is withheld");
+            self::assertSame(
+                self::BY_CLICK,
+                $status($convId)['last_error'],
+                "$what says why"
+            );
+        }
         // Sent again, each is checked again and stays withheld.
-        self::assertSame(4, $queue()->resend(1, $on, null, 'withheld', time() + 2)['queued']);
+        self::assertSame(8, $queue()->resend(1, $on, null, 'withheld', time() + 2)['queued']);
         $again = $queue()->sendDue(10, 5, time() + 3);
-        self::assertSame(['sent' => 0, 'withheld' => 4], ['sent' => $again['sent'], 'withheld' => $again['withheld']]);
-        self::assertCount(3, $facts, 'nothing more was sent');
-        $counted = (int) self::$db->query('SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id BETWEEN 140 AND 145'
+        self::assertSame(['sent' => 0, 'withheld' => 8], ['sent' => $again['sent'], 'withheld' => $again['withheld']]);
+        self::assertCount(2, $facts, 'nothing more was sent');
+        $counted = (int) self::$db->query('SELECT COUNT(*) FROM 202_conversion_logs'
+            . ' WHERE (click_id BETWEEN 140 AND 145 OR click_id = 190)'
             . ' AND deleted = 0')->fetch_row()[0];
-        self::assertSame(7, $counted, 'the install records every conversion, the refused ones too');
+        self::assertSame(10, $counted, 'the install records every conversion, the refused ones too');
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('consent_withheld must be true or false');
@@ -873,12 +907,12 @@ final class DestinationsIntegrationTest extends TestCase
         )->fetch_row()[0];
         $what = 'a refused visit\'s conversion is not sent after a later visit consents';
         self::assertNotContains($refusedVisit, $sent, $what);
-        self::assertSame(DestinationQueue::REFUSED . ' on a visit of the click', $why($refusedVisit));
+        self::assertSame(self::BY_CLICK, $why($refusedVisit));
         self::assertNotContains($consentedVisit, $sent, 'a conversion is not sent once a later visit has refused');
-        self::assertSame(DestinationQueue::REFUSED . ' on a visit of the click', $why($consentedVisit));
+        self::assertSame(self::BY_CLICK, $why($consentedVisit));
         $what = 'a later visit of a refused click that consents is not sent';
         self::assertNotContains($laterVisit, $sent, $what);
-        self::assertSame(DestinationQueue::REFUSED . ' on a visit of the click', $why($laterVisit), $what);
+        self::assertSame(self::BY_CLICK, $why($laterVisit), $what);
         $what = 'the positive control: a new click that does not refuse is sent';
         self::assertContains($newClick, $sent, $what);
         self::assertContains($captureOff, $sent, 'a campaign with capture off is no refusal');
@@ -927,7 +961,10 @@ final class DestinationsIntegrationTest extends TestCase
      * its outcomes write carries it, first or again: a subject's first
      * event, a later one, a replay (an event older than the last), a replay
      * that renumbers events of one second, and a re-evaluation under a new
-     * goal version. None of those rows is sent; the consenting ones are.
+     * goal version. None of those rows is sent, and the refusing request
+     * refuses its click: a consenting event's row on that click, before the
+     * refusal or after it, is not sent either. A click no request of which
+     * refused is.
      */
     public function testAGoalReachedByARefusingRequestIsSentToNoDestinationHoweverItIsWrittenAgain(): void
     {
@@ -967,6 +1004,8 @@ final class DestinationsIntegrationTest extends TestCase
         // so the second sorts first and the refusing one is renumbered and written again.
         $ingest(152, 'buy', ['event_id' => 'b-refusing', 'p202_consent' => '0'], $now);
         $ingest(152, 'buy', ['event_id' => 'a-consenting'], $now);
+        // A later sale on 152 whose request names no p202_consent.
+        $ingest(152, 'buy', ['event_id' => 'c-later'], $now + 40);
         // A new version of Purchase, applied: 147's and 148's rows are retired and written again.
         $definition = \Prosper202\Goals\GoalDefinition::parse($goal('Purchase', 'purchase', 11));
         $this->goals->addVersion(1, $purchase, $definition, 2);
@@ -992,7 +1031,12 @@ final class DestinationsIntegrationTest extends TestCase
         ksort($byName);
         self::assertSame(['purchase' => '1', 'signup' => '0', 'trial' => '1'], $byName, 'a later event and a replay');
         $what = 'a renumbering replay keeps each event\'s own';
-        self::assertSame(['a-consenting' => '0', 'b-refusing' => '1'], $live(152), $what);
+        self::assertSame(['a-consenting' => '0', 'b-refusing' => '1', 'c-later' => '0'], $live(152), $what);
+        $refusedClicks = array_map('intval', array_column(self::$db->query('SELECT click_id'
+            . ' FROM 202_click_consent_refusals WHERE click_id IN (147, 148, 149, 152) ORDER BY click_id')
+            ->fetch_all(MYSQLI_NUM), 0));
+        $what = 'a refusing event refuses its click; 148 consented throughout';
+        self::assertSame([147, 149, 152], $refusedClicks, $what);
 
         $queue = new DestinationQueue($conn, $store, static fn (string $ip): bool => false);
         $queue->sendDue(30, 5, time() + 1);
@@ -1002,28 +1046,31 @@ final class DestinationsIntegrationTest extends TestCase
                 . ' AND superseded_by IS NULL'
                 . ' AND consent_withheld = 1'
         )->fetch_all(MYSQLI_NUM), 0));
-        $consentingRows = array_map('intval', array_column(self::$db->query(
-            'SELECT conv_id FROM 202_conversion_logs WHERE click_id IN (147, 148, 149, 152) AND deleted = 0'
+        $unrefusedClickRows = array_map('intval', array_column(self::$db->query(
+            'SELECT conv_id FROM 202_conversion_logs WHERE click_id = 148 AND deleted = 0'
                 . ' AND superseded_by IS NULL'
-                . ' AND consent_withheld = 0'
         )->fetch_all(MYSQLI_NUM), 0));
         self::assertCount(4, $refusedRows, 'one live row per refused event');
         self::assertSame([], array_values(array_intersect($refusedRows, $sent)), 'no refused row is sent');
         sort($sent);
-        sort($consentingRows);
-        self::assertSame($consentingRows, $sent, 'every consenting one is');
+        sort($unrefusedClickRows);
+        self::assertNotSame([], $unrefusedClickRows);
+        self::assertSame($unrefusedClickRows, $sent, 'only the rows of the click that never refused are sent:'
+            . ' not 149\'s consenting signup before the refusal, nor 152\'s consenting sales before and after it');
     }
 
     /**
      * A goal event reported again (the same event id, a reloaded pixel or a
      * retried postback) by a request that refuses tightens the stored event
-     * and the conversion its outcome wrote; a repeat that consents loosens
-     * nothing.
+     * and the conversion its outcome wrote, and refuses its click, so a
+     * later event of that click is not sent either; a repeat that consents
+     * loosens nothing. An event that refuses and reaches no goal refuses its
+     * click too.
      */
     public function testARepeatedGoalEventThatRefusesTightens(): void
     {
         $conn = new Connection(self::$db);
-        foreach ([160, 161] as $click) {
+        foreach ([160, 161, 191] as $click) {
             $this->click($click);
         }
         $facts = [];
@@ -1060,16 +1107,44 @@ final class DestinationsIntegrationTest extends TestCase
         $ingest(161, 'e-2', ['p202_consent' => '0']);
         $ingest(161, 'e-2', []);
         self::assertSame(['1', '1'], $flags(161), 'refused first, it stays refused');
+        // After the refusing repeat, a later event on 160 that reaches another goal, naming no p202_consent;
+        // and on 191 an event that refuses and reaches no goal, then one that does.
+        $this->campaignGoal(30, ['name' => 'Upsell', 'trigger' => ['event' => 'upsell'],
+            'value' => ['type' => 'fixed', 'amount' => 2]]);
+        $event = static fn (int $click, string $name, string $id, array $get) => $engine->ingest(
+            1,
+            $engine->clickSubject(1, $click),
+            [\Prosper202\Goals\WebEvents::fromQuery(
+                ['event' => $name, 'event_id' => $id] + $get,
+                '',
+                self::CLICK_TIME + 600,
+                true
+            )],
+            MatchMethod::CLICK_ID
+        );
+        $event(160, 'upsell', 'e-3', []);
+        $event(191, 'browse', 'e-4', ['p202_consent' => '0']);
+        self::assertSame('0', (string) self::$db->query('SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id = 191')
+            ->fetch_row()[0], 'the refusing event reached no goal');
+        $event(191, 'upsell', 'e-5', []);
+        $later = array_map('intval', array_column(self::$db->query('SELECT conv_id FROM 202_conversion_logs'
+            . " WHERE click_id IN (160, 191) AND event_name = 'upsell' AND deleted = 0 AND consent_withheld = 0")
+            ->fetch_all(MYSQLI_NUM), 0));
+        self::assertCount(2, $later, 'two later consenting conversions, one per click');
+        $refusedClicks = array_map('intval', array_column(self::$db->query('SELECT click_id'
+            . ' FROM 202_click_consent_refusals WHERE click_id IN (160, 161, 191) ORDER BY click_id')
+            ->fetch_all(MYSQLI_NUM), 0));
+        self::assertSame([160, 161, 191], $refusedClicks, 'each refusing request refused its click');
 
         (new DestinationQueue($conn, $store, static fn (string $ip): bool => false))->sendDue(30, 5, time() + 1);
-        self::assertSame([], $facts, 'none of them is sent');
+        self::assertSame([], $facts, 'none of them is sent, the later consenting ones of a refused click included');
     }
 
     /**
      * A goal conversion written again (a re-evaluation) credits the visit the
-     * row it replaces credited, not the click's latest: a sale made on a
-     * visit that refused is not sent because a later visit consented before
-     * the re-evaluation.
+     * row it replaces credited, not the click's latest, which reports and an
+     * offline file read as its click time; and it is not sent, since a visit
+     * of its click refused (a later consenting visit gives nothing back).
      */
     public function testAGoalRowWrittenAgainCreditsTheVisitTheFirstDid(): void
     {

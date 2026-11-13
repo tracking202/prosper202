@@ -22,6 +22,7 @@ use Prosper202\Database\Connection;
 use Prosper202\DataEngine\ClickRollupSql;
 use Prosper202\Ltv\MysqlCustomerRepository;
 use Prosper202\Destinations\DestinationQueue;
+use Prosper202\Identity\ConsentRefusal;
 use Prosper202\Notifications\NotificationOutbox;
 use RuntimeException;
 use Throwable;
@@ -387,6 +388,12 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // moved the click since the endpoint resolved its SubID.
         if (isset($data['expected_campaign_id']) && (int) $data['expected_campaign_id'] !== $clickCampaignId) {
             throw new PurLinkCampaignChanged('The click no longer belongs to the PurLink campaign');
+        }
+        // A conversion whose own request refused refuses its click, under the
+        // click's lock and in this transaction, a repeat of one included: no
+        // conversion credited to the click is sent from then on (ConsentRefusal).
+        if ($consentWithheld) {
+            ConsentRefusal::record($this->conn, $clickId, $convTime);
         }
         $terms = $ledger->campaignTerms($clickCampaignId, $userId);
         // The currency the row's amount is in is stamped on it (RowCurrency);

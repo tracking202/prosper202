@@ -283,10 +283,11 @@ final class ClickTables
     }
 
     /**
-     * The clicks a request withheld consent for, and the visit it held
-     * from (Prosper202\Identity\ConsentRefusal): one row per such click,
-     * from 1.9.80 on, written with the visit that withheld and deleted with
-     * the click (ClickRetention). click_id is 202_clicks.click_id's type.
+     * The clicks a request withheld consent for, a visit of the click or a
+     * conversion's own request (Prosper202\Identity\ConsentRefusal): one
+     * row per such click, from 1.9.80 on, written with the request that
+     * withheld and deleted with the click (ClickRetention); refused_at is
+     * for the record, no reader decides by it. click_id is 202_clicks.click_id's type.
      */
     public static function clickConsentRefusals(): SchemaDefinition
     {

@@ -12,7 +12,8 @@ use Prosper202\Identity\ConsentRefusal;
  * RequestSignals::consentGiven() alone): 202_conversion_logs.consent_withheld
  * is 1 on its row, written by the row's INSERT, so the row and the refusal
  * commit together or not at all. A later request of the same conversion
- * (a duplicate) that refuses sets it to 1; nothing sets it back to 0. No
+ * (a duplicate) that refuses sets it to 1; nothing sets it back to 0. Either
+ * refuses the conversion's click too (ConsentRefusal). No
  * destination is sent such a conversion (DestinationQueue::deliver()); the
  * install's own reports count it. A goal event keeps its request's refusal
  * in 202_goal_events.consent_withheld, which every ledger row its outcomes
@@ -54,9 +55,10 @@ final class ConsentWithheld
      * - it replaced a refused conversion and goes by that one's event id
      *   (DestinationEventId::of()): a sale refused once is not sent later
      *   under the name it was refused under;
-     * - any request of its click refused (ConsentRefusal), on the visit it
-     *   credits or on any other: a later visit that consents does not give
-     *   the click back. Only another click starts fresh.
+     * - any request of its click refused (ConsentRefusal): a visit, the one
+     *   it credits or any other, or the request of any conversion or goal
+     *   event of the click: a later visit or conversion that consents does
+     *   not give the click back. Only another click starts fresh.
      * The alias is written out, not passed in, so the account-scope scan
      * reads each tie (AccountScopedJoinTest).
      */

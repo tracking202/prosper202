@@ -144,7 +144,7 @@ final class ClickIdentity
         }
         if ($this->refused) {
             self::onALockErrorAgain(
-                static fn () => ConsentRefusal::recordForStoredClick($conn, $clickId, $visitTime)
+                static fn () => ConsentRefusal::record($conn, $clickId, $visitTime)
             );
         }
         self::onALockErrorAgain(static fn () => IdentityGraph::withdrawBrowserSignals($conn, $clickId));

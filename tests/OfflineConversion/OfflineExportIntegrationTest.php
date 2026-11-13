@@ -218,7 +218,7 @@ final class OfflineExportIntegrationTest extends TestCase
     public function testAVisitorWhoRefusedConsentIsInNoFile(): void
     {
         $msclkid = static fn (int $n): string => str_pad(dechex($n), 32, '0', STR_PAD_LEFT);
-        foreach ([600, 601, 602, 604] as $click) {
+        foreach ([600, 601, 602, 604, 605] as $click) {
             $this->click($click, 8, ['gclid' => 'EAIaIQ_' . $click, 'msclkid' => $msclkid($click)]);
         }
         $this->click(603, 7, ['gclid' => 'EAIaIQ_603', 'msclkid' => $msclkid(603)]);
@@ -246,8 +246,17 @@ final class OfflineExportIntegrationTest extends TestCase
             'consent_withheld' => true]);
         $replacing = $this->record(603, MatchMethod::CLICK_ID, ['payout' => '10', 'transaction_id' => 'C-603b',
             'conv_time' => $at + 1]);
+        // 605: a consenting sale, then one whose own request refuses, then a later one naming no
+        // p202_consent. The refusing request refuses the click: none of the three is in a file.
+        $byClick = [];
+        foreach (['C-605a' => [], 'C-605b' => ['consent_withheld' => true], 'C-605c' => []] as $tx => $more) {
+            $byClick[] = $this->record(605, MatchMethod::CLICK_ID, ['payout' => '10', 'transaction_id' => $tx,
+                'conv_time' => $at + count($byClick)] + $more);
+        }
+        $stored = self::$db->query('SELECT COUNT(*) FROM 202_click_consent_refusals WHERE click_id = 605')->fetch_row();
+        self::assertSame(['1'], $stored, 'the refusing request refused its click');
         // Each click by its ids: a line names its gclid, or its msclkid in a Microsoft file.
-        $refused = [600 => $request, 601 => $visit, 603 => $replacing, 604 => $laterVisit];
+        $refused = [600 => $request, 601 => $visit, 603 => $replacing, 604 => $laterVisit, 605 => $byClick[0]];
         $named = static fn (string $text, int $click): bool
             => str_contains($text, 'EAIaIQ_' . $click) || str_contains(strtolower($text), $msclkid($click));
 
@@ -257,7 +266,8 @@ final class OfflineExportIntegrationTest extends TestCase
             foreach ($refused as $click => $convId) {
                 self::assertFalse($named($text, $click), "$what: conversion $convId is not in the file");
             }
-            self::assertSame(4, $summary->leftOut['refused_consent'], "$what: each is counted as refused");
+            $refusedCount = $summary->leftOut['refused_consent'];
+            self::assertSame(7, $refusedCount, "$what: each is counted as refused, 605's three too");
             $counted = $summary->rows + array_sum($summary->leftOut);
             self::assertSame($summary->conversions, $counted, "$what: the counts add up");
         };

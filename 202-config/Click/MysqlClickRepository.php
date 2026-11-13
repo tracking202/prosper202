@@ -178,7 +178,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             // One the visitor refused holds for the click, whatever a later
             // request or visit of it carries (ConsentRefusal).
             if ($click->identity?->refused === true) {
-                ConsentRefusal::recordForStoredClick($this->conn, $click->clickId, $click->clickTime);
+                ConsentRefusal::record($this->conn, $click->clickId, $click->clickTime);
             }
             // The redirector records no text ad: the click's is kept unless
             // the re-click brings one. The keyword is the click's.
