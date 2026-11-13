@@ -35,22 +35,29 @@ func newShellCapableServer(t *testing.T) *httptest.Server {
 	}))
 }
 
-// newShellDeniedServer creates a mock server where shell capability is not enabled.
+// newShellDeniedServer creates a mock server whose capabilities say shell and
+// cli false. It still serves health: the shell does not refuse on those flags
+// itself; the install's own 402 on each command does that.
 func newShellDeniedServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/versions":
 			_, _ = w.Write([]byte(`{"data":{"preferred":"v3"}}`))
 		case r.URL.Path == "/api/v3/capabilities":
-			_, _ = w.Write([]byte(`{"data":{}}`))
+			_, _ = w.Write([]byte(`{"data":{"shell":false,"cli":false}}`))
+		case r.URL.Path == "/api/v3/system/health":
+			_, _ = w.Write([]byte(`{"data":{"status":"ok","version":"4.0"}}`))
 		default:
 			w.WriteHeader(404)
 		}
 	}))
+	return srv
 }
 
-func TestShellDeniedWithoutCapability(t *testing.T) {
+// The shell does not refuse on capabilities that say shell or cli false; the
+// commands it runs meet the install's licence gate like any other.
+func TestShellRunsWhateverTheCapabilitiesSay(t *testing.T) {
 	srv := newShellDeniedServer(t)
 	defer srv.Close()
 
@@ -58,12 +65,12 @@ func TestShellDeniedWithoutCapability(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key-12345678")
 
-	_, _, err := executeCommand("shell", "-c", "health")
-	if err == nil {
-		t.Fatal("expected error when shell capability is not enabled")
+	stdout, _, err := executeCommand("shell", "-c", "system health")
+	if err != nil {
+		t.Fatalf("the shell refused: %v", err)
 	}
-	if !strings.Contains(err.Error(), "shell access is not enabled") {
-		t.Errorf("unexpected error: %v", err)
+	if !strings.Contains(stdout, "ok") {
+		t.Errorf("expected health output, got: %s", stdout)
 	}
 }
 
@@ -210,30 +217,6 @@ func TestShellPreventsRecursion(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cannot run shell from within shell") && !strings.Contains(err.Error(), "one or more commands failed") {
 		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestShellCapabilityFetchErrorSurfaced(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/versions":
-			_, _ = w.Write([]byte(`{"data":{"preferred":"v3"}}`))
-		default:
-			w.WriteHeader(500)
-		}
-	}))
-	defer srv.Close()
-
-	tmp := t.TempDir()
-	setTestHome(t, tmp)
-	writeTestConfig(t, tmp, srv.URL, "test-key-12345678")
-
-	_, _, err := executeCommand("shell", "-c", "health")
-	if err == nil {
-		t.Fatal("expected error when capabilities endpoint fails")
-	}
-	if !strings.Contains(err.Error(), "could not verify shell access") {
-		t.Errorf("expected fetch failure to be surfaced, got: %v", err)
 	}
 }
 
@@ -390,27 +373,42 @@ func TestShellAssignmentFailureStopsBatch(t *testing.T) {
 	}
 }
 
-func TestShellUseReverifiesShellAccess(t *testing.T) {
-	licensed := newShellCapableServer(t)
-	defer licensed.Close()
-	unlicensed := newShellDeniedServer(t)
-	defer unlicensed.Close()
+// Switching to a profile on an install whose capabilities say shell false
+// works; its commands meet that install's licence gate.
+func TestShellUseSwitchesToAnyConfiguredProfile(t *testing.T) {
+	first := newShellCapableServer(t)
+	defer first.Close()
+	second := newShellDeniedServer(t)
+	defer second.Close()
 
 	tmp := t.TempDir()
 	setTestHome(t, tmp)
 	writeTestConfigWithProfiles(t, tmp, "default", map[string]map[string]interface{}{
-		"default":    {"url": licensed.URL, "api_key": "test-key-12345678"},
-		"unlicensed": {"url": unlicensed.URL, "api_key": "other-key-12345678"},
+		"default": {"url": first.URL, "api_key": "test-key-12345678"},
+		"other":   {"url": second.URL, "api_key": "other-key-12345678"},
 	})
 
-	// Switching to a profile whose key lacks shell access must fail and the
-	// session must stay on the licensed profile.
-	stdout, stderr, err := executeCommand("shell", "--stop-on-error", "-c", "use unlicensed; system health")
-	if err == nil {
-		t.Fatalf("expected use of unlicensed profile to fail, stdout: %s stderr: %s", stdout, stderr)
+	stdout, stderr, err := executeCommand("shell", "--stop-on-error", "-c", "use other; system health")
+	if err != nil {
+		t.Fatalf("use of a configured profile failed: %v (stdout: %s stderr: %s)", err, stdout, stderr)
 	}
-	if !strings.Contains(err.Error(), "stopped on error") {
-		t.Errorf("unexpected error: %v", err)
+	if !strings.Contains(stdout, "ok") {
+		t.Errorf("expected health output from the other profile, got: %s", stdout)
+	}
+}
+
+// Switching to a profile that does not exist still fails.
+func TestShellUseRefusesAnUnknownProfile(t *testing.T) {
+	srv := newShellCapableServer(t)
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key-12345678")
+
+	_, _, err := executeCommand("shell", "--stop-on-error", "-c", "use nosuch; system health")
+	if err == nil || !strings.Contains(err.Error(), "stopped on error") {
+		t.Errorf("expected use of an unknown profile to stop the batch, got: %v", err)
 	}
 }
 

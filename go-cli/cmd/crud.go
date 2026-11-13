@@ -212,7 +212,7 @@ func renderDeletePreviews(c *api.Client, endpoint string, ids []string) error {
 		if err != nil {
 			if refused := licenceRefusal(err); refused != nil {
 				// Every remaining id would meet the same 402: stop, and report
-				// it as the licence refusal (exit 6, the trial hint).
+				// it as the licence refusal (exit 6, the licence hint).
 				return fmt.Errorf("previewing the delete of %s/%s (%d of %d previewed before it; the rest not attempted): %w",
 					endpoint, id, len(previews), len(ids), refused)
 			}
@@ -416,7 +416,7 @@ func runBulkOrSingleDelete(cmd *cobra.Command, args []string, spec deleteSpec) e
 			if err := c.Delete(spec.endpoint + "/" + id); err != nil {
 				if refused := licenceRefusal(err); refused != nil {
 					// Every remaining id would meet the same 402: stop, and
-					// report it as the licence refusal (exit 6, the trial hint).
+					// report it as the licence refusal (exit 6, the licence hint).
 					return fmt.Errorf("deleting %s %s%s (%d of %d deleted before it; the rest not attempted): %w",
 						spec.noun, id, spec.context, deleted, len(ids), refused)
 				}
@@ -1794,7 +1794,7 @@ func init() {
 				}
 				if refused != nil && failed == 0 {
 					// Every remaining tracker would meet the same 402: report
-					// it as the licence refusal (exit 6, the trial hint), with
+					// it as the licence refusal (exit 6, the licence hint), with
 					// nothing on stdout, as the bulk deletes do.
 					return fmt.Errorf("fetching tracker URLs (%d of %d fetched before it; the rest not attempted): %w",
 						fetched, len(trackers), refused)

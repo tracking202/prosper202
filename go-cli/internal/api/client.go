@@ -278,7 +278,9 @@ func HintFor(err error) string {
 			// The install could not reach the licence service, and no recent answer covers it.
 			return "The install could not reach Tracking202 to check its licence. Make sure the server running Prosper202 can reach my.tracking202.com over HTTPS, then run the command again; for help, contact support@tracking202.com or the support chat."
 		case apiErr.Status == 402 && apiErr.Category == "licence":
-			return "This install's ClickServer API key has no active Prosper202 ClickServer Pro subscription. Start a Pro trial or subscription at https://my.tracking202.com/api/customers/subscriptions/support, then run the command again (the install re-checks a refusal within five minutes)."
+			// From 1.9.80 the CLI is free and needs only a valid key; older
+			// installs refused on a paid subscription, so upgrading helps too.
+			return "The CLI is free, but it needs an active free ClickServer licence on the install: Tracking202 did not accept the install's ClickServer API key. No paid subscription is needed. For accounts made since October 2026 the free licence stays active with a CPM* newsletter subscription (subscribe with your my.tracking202.com account's email address); an install with no key enters one on its api-key-required.php page. Then run the command again (the install checks a refusal again within five minutes). An install older than Prosper202 1.9.80 also asks for a paid subscription: upgrade it."
 		case apiErr.Status == 402:
 			// categoryForHTTPStatus files it under server (exit 4); it needs
 			// that category's next step, not silence.
@@ -948,7 +950,7 @@ func categoryForHTTPStatus(status int) string {
 		// limit's window has passed (RetryAfter).
 		return "rate_limited"
 	case status == http.StatusPaymentRequired:
-		// The install refuses p202-cli without a Pro licence with a 402 whose
+		// The install refuses p202-cli without an active licence with a 402 whose
 		// envelope carries category "licence" (parseAPIError reads it); a bare
 		// 402 is something in front of the install, retried like a 5xx.
 		return "server"

@@ -671,7 +671,7 @@ func isClickNotFound(err error) bool {
 }
 
 // abortsImport reports errors that every later request would repeat (a refused key, no connection,
-// an install that refuses the CLI without a Pro licence, a rate limit until its window passes).
+// an install that refuses the CLI without an active licence, a rate limit until its window passes).
 func abortsImport(err error) bool {
 	cat := api.ErrorCategory(err)
 	return cat == "auth" || cat == "network" || cat == "licence" || cat == "rate_limited"

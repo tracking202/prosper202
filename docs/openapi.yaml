@@ -8783,8 +8783,10 @@ paths:
         the approval page sent it, and the verifier whose S256 challenge went
         with the person (RFC 7636). A code works once and for five minutes.
         The licence is decided first, as the install's CLI licence gate decides
-        it; the answer is then a new API key of the user who approved, with the
-        access they chose. The key's scope holds it to the areas the MCP
+        it: connecting is free but needs an active free ClickServer licence (a
+        key Tracking202 accepts as valid; no paid subscription). The answer is
+        then a new API key of the user who approved, with the access they
+        chose. The key's scope holds it to the areas the MCP
         server's tools use (never users, system or sync). `?dry_run` and
         `?staged` are refused.
       operationId: connectToken
@@ -8838,20 +8840,16 @@ paths:
                         type: boolean
                         description: >-
                           Always true: an approval the install's licence gate refuses
-                          answers 402 and no key is made. The gate lets an approval
-                          through when the licence service cannot answer, as it does for
-                          the CLI, so the MCP server checks licence_key_sha256 itself
+                          answers 402 and no key is made
                       licence_key_sha256:
                         type: string
                         description: >-
-                          SHA-256 (hex) of the ClickServer API key whose licence decides
-                          for this user (theirs, else the install owner's), trimmed and
-                          lowercased first, as the licence service compares keys. The MCP
-                          server checks it with the licence service; the key itself is
-                          never sent. It is the hash the install reports, so the check
-                          shows that the install presented the hash of a paid licence key,
-                          not that the key is this install's own; obtaining another
-                          account's hash requires that account's key.
+                          SHA-256 (hex) of the install's ClickServer API key (the
+                          approving user's, else the install owner's), trimmed and
+                          lowercased first. Left out when the install could not read
+                          its key (the install's own error, which the gate lets through).
+                          The hosted MCP server takes it when sent and no longer requires
+                          it; the key itself is never sent.
         '400':
           description: >-
             invalid_request (a missing or malformed field) or invalid_grant
@@ -8860,13 +8858,15 @@ paths:
         '402':
           description: >-
             licence: the approving user's ClickServer API key (or the install
-            owner's) has no Pro licence; no key was made
+            owner's) is not an active free ClickServer licence, the install
+            has none, or Tracking202 could not be reached and no valid answer
+            in the last 30 days covers it; no key was made
         '422':
           description: An unknown field, or ?dry_run or ?staged
         '500':
           description: >-
-            The key or the licence key could not be read or written; nothing
-            was connected, and the approval is spent
+            The key could not be written; nothing was connected, and the
+            approval is spent
 
   /connect/revoke:
     post:

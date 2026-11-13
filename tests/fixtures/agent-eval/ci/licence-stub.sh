@@ -10,8 +10,8 @@
 # verification stays fully on and no product code knows about the stub.
 # The licence check answers "Key valid" + paid:true for a non-empty key and
 # 404 "Key not found" for an empty one; a key ending in one of the suffixes
-# in Stub.ANSWERS (and -outage, -redirect...) gets that answer instead, for
-# tests/live/cli-licence-gate.sh. Every other path answers 200 {}.
+# in Stub.ANSWERS (and -outage, -redirect...) gets that answer instead;
+# tests/live/cli-free.sh uses -unpaid, -invalid, -refused and -outage. Every other path answers 200 {}.
 #
 #   licence-stub.sh start <dir>   start it, and prove PHP's curl verifies it
 #   licence-stub.sh stop <dir>    stop it, and list the requests it answered
@@ -70,8 +70,8 @@ class Stub(http.server.BaseHTTPRequestHandler):
     # Every answer the real service gives, plus three it never does,
     # chosen by the key's suffix; "-redirect", "-redirect-away" and
     # "-redirect-loop" (in do_POST) exercise the validator's own
-    # redirect handling. tests/live/cli-licence-gate.sh sets the
-    # install's key to each; keep the two lists in step.
+    # redirect handling. tests/live/cli-free.sh sets the install's key
+    # to -unpaid, -invalid, -refused and -outage keys.
     ANSWERS = {
         "-unpaid":   (200, {"code": 200, "msg": "Key valid", "paid": False}),
         "-no-paid":  (200, {"code": 200, "msg": "Key valid"}),

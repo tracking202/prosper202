@@ -212,16 +212,14 @@ jobs:
           go-cli/p202 config set-key "$P202_EVAL_API_KEY"
           go-cli/p202 config test --json
 
-      - name: Prove the Go CLI licence gate end to end
-        # tests/live/cli-licence-gate.sh sets the install's ClickServer key to
-        # values the stub above answers differently (paid, unpaid, no such
-        # key, a refused key, an outage, a gateway's own 404, a 'paid' that is
-        # not a boolean) and drives api/v3 with the Go CLI's User-Agent, the
-        # PHP CLI's and curl's, then the built CLI itself: 402 + category
-        # licence + exit 6 only for the Go CLI and only on the service's own
-        # "not paid"; allowed on every answer that is not the service's.
-        # Restores the key and drops the cache entries it wrote. Before the
-        # seed, so the fixture is read by evals exactly as seeded.
+      - name: Prove the Go CLI's free-licence gate end to end
+        # tests/live/cli-free.sh sets the install's ClickServer key to values
+        # the stub above answers differently (valid but unpaid, no such key,
+        # no CPM* newsletter, an outage with and without a valid answer in the
+        # grace period) and drives api/v3 with the Go CLI's User-Agent and the
+        # built CLI: served on a valid key, paid or not, and within the grace
+        # period; 402 + category licence otherwise. Restores the key. Before
+        # the seed, so the fixture is read by evals exactly as seeded.
         env:
           P202_BASE: http://127.0.0.1:8000
           P202_API_KEY: ${{ env.P202_EVAL_API_KEY }}
@@ -233,7 +231,7 @@ jobs:
           P202_DB_ALLOW_DESTRUCTIVE: yes-i-mean-it
           P202_BIN: go-cli/p202
           P202_LICENCE_STUB: '1'
-        run: bash tests/live/cli-licence-gate.sh
+        run: bash tests/live/cli-free.sh
 
       - name: Seed the eval fixture
         run: P202_BIN=go-cli/p202 tests/fixtures/agent-eval/seed.sh

@@ -186,7 +186,7 @@ func execFailure(results map[string]execResult) error {
 		}
 	}
 	if failed > 0 && refused == failed {
-		return licenceRefusalError(fmt.Sprintf("%d of %d selected profiles failed, each refused the CLI: its install's ClickServer API key needs an active Prosper202 ClickServer Pro licence", failed, len(results)))
+		return licenceRefusalError(fmt.Sprintf("%d of %d selected profiles failed, each refused the CLI: its install's ClickServer API key needs to be an active free ClickServer licence", failed, len(results)))
 	}
 	if failed > 0 && limited == failed {
 		// Rate limits keep their exit code across the boundary too; running

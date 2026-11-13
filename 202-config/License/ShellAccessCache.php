@@ -5,9 +5,10 @@ declare(strict_types=1);
 namespace Prosper202\License;
 
 /**
- * File-backed cache of CLI shell license checks, shared by web auth (which
- * warms and invalidates entries as it validates keys) and the v3 capabilities
- * endpoint (which reads and refreshes them).
+ * File-backed cache of ClickServer key checks ("is this key an active
+ * licence"), shared by web auth (which warms and invalidates entries as it
+ * validates keys) and the v3 API's Go CLI gate and AI connection
+ * (CapabilitiesController::cliAccess, which read and refresh them).
  *
  * Entries live in a private 0700 directory under the system temp dir. The
  * directory and every entry must be owned by the current process user and
@@ -33,7 +34,12 @@ class ShellAccessCache
      */
     public const int GRACE_SECONDS = 30 * 86400;
 
-    /** The questions a LicenceAnswerStore records an answer to. */
+    /**
+     * The questions a LicenceAnswerStore records an answer to. Only
+     * QUESTION_VALID is asked; QUESTION_PAID is the column the Go CLI's
+     * paid-licence gate used before 1.9.80, kept so the record's shape is
+     * unchanged and a future paid tier can use it.
+     */
     public const string QUESTION_VALID = 'valid';
     public const string QUESTION_PAID = 'paid';
 
@@ -113,8 +119,7 @@ class ShellAccessCache
 
     /**
      * Whether $key is licensed while ClickServer gives no answer: the durable
-     * record's last answer to this cache's question (a valid key here, a paid
-     * licence in CliAccessCache) was a yes, given at most GRACE_SECONDS ago.
+     * record's last answer to this cache's question (a valid key) was a yes, given at most GRACE_SECONDS ago.
      * With nothing recorded for the key yet (an install upgraded from before
      * the record), or a record that cannot be read (its table not made yet),
      * this cache's own last answer within the same window decides instead.
@@ -168,9 +173,10 @@ class ShellAccessCache
     }
 
     /**
-     * Record a whole licence answer from ClickServerKeyValidator: the key's
-     * validity here, its paid licence in CliAccessCache when the answer says.
-     * No answer (null) records nothing. Every path that confirms a key calls
+     * Record a licence answer from ClickServerKeyValidator: the key's
+     * validity. Its 'paid' part is not recorded: nothing in Prosper202 is
+     * gated on it (the Go CLI and AI assistants need a valid key, not a paid
+     * one, since 1.9.80). No answer (null) records nothing. Every path that confirms a key calls
      * this or recordAnswer() (KeyEntryRecordsTheAnswerTest).
      *
      * @param array{valid: bool, paid: ?bool}|null $licence
@@ -181,9 +187,6 @@ class ShellAccessCache
             return;
         }
         ShellAccessCache::recordAnswer($answers, $key, $licence['valid']);
-        if ($licence['paid'] !== null) {
-            CliAccessCache::recordAnswer($answers, $key, $licence['paid']);
-        }
     }
 
     /**

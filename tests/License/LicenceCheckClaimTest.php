@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Tests\License;
 
 use Api\V3\Controllers\CapabilitiesController;
-use Prosper202\License\CliAccessCache;
 use Prosper202\License\LicenceAnswerStore;
 use Prosper202\License\ShellAccessCache;
 use Tests\TestCase;
@@ -14,7 +13,8 @@ use Tests\TestCase;
  * A request that finds another one checking the same key waits for that
  * verdict rather than reading "unknown": on a cold cache, a burst of
  * /capabilities calls read shell: false for a licensed user, and wrote a
- * hold-off marker after the claimant's answer had landed.
+ * hold-off marker after the claimant's answer had landed. The verdict is the
+ * Go CLI gate's: an active free ClickServer licence (a valid key).
  */
 final class LicenceCheckClaimTest extends TestCase
 {
@@ -32,7 +32,6 @@ final class LicenceCheckClaimTest extends TestCase
     protected function tearDown(): void
     {
         ShellAccessCache::invalidate($this->key);
-        CliAccessCache::invalidate($this->key);
         parent::tearDown();
     }
 
@@ -56,7 +55,7 @@ final class LicenceCheckClaimTest extends TestCase
 
     private function shellAccess(CapabilitiesController $controller): bool
     {
-        return (new \ReflectionMethod(CapabilitiesController::class, 'shellAccess'))->invoke($controller);
+        return $controller->cliAccess();
     }
 
     public function testTheClaimantsVerdictIsWaitedFor(): void
@@ -68,7 +67,6 @@ final class LicenceCheckClaimTest extends TestCase
             'require ' . var_export($root . '/vendor/autoload.php', true) . ';'
             . ' usleep(300000);'
             . ' \Prosper202\License\ShellAccessCache::write(' . var_export($this->key, true) . ', true);'
-            . ' \Prosper202\License\CliAccessCache::write(' . var_export($this->key, true) . ', true);'
             . ' \Prosper202\License\ShellAccessCache::endCheck(' . var_export($this->key, true) . ');',
         ], [], $pipes);
         self::assertIsResource($child);
@@ -85,7 +83,7 @@ final class LicenceCheckClaimTest extends TestCase
     {
         $root = dirname(__DIR__, 2);
         $child = proc_open([PHP_BINARY, '-r', 'require ' . var_export($root . '/vendor/autoload.php', true) . '; '
-            . 'use Prosper202\License\ShellAccessCache; use Prosper202\License\CliAccessCache; '
+            . 'use Prosper202\License\ShellAccessCache; '
             . '$k = ' . var_export($this->key, true) . '; ' . $php], [], $pipes);
         self::assertIsResource($child);
         return $child;
@@ -95,7 +93,7 @@ final class LicenceCheckClaimTest extends TestCase
     {
         self::assertTrue(ShellAccessCache::beginCheck($this->key), 'the test holds the claim');
         $child = $this->claimant('usleep(300000); ShellAccessCache::markUnknown($k); '
-            . 'CliAccessCache::markUnknown($k); ShellAccessCache::endCheck($k);');
+            . 'ShellAccessCache::endCheck($k);');
         try {
             $started = microtime(true);
             self::assertFalse($this->shellAccess($this->controller()), 'no answer and nothing stale: closed');
@@ -105,14 +103,13 @@ final class LicenceCheckClaimTest extends TestCase
         }
     }
 
-    public function testAWaiterReadsBothVerdictsOfOneAnswer(): void
+    public function testAWaiterReadsARefusal(): void
     {
         self::assertTrue(ShellAccessCache::beginCheck($this->key), 'the test holds the claim');
-        // The shell verdict lands first; the CLI one 0.6 s later, then the claim goes.
-        $child = $this->claimant('usleep(200000); ShellAccessCache::write($k, true); usleep(600000); '
-            . 'CliAccessCache::write($k, false); ShellAccessCache::endCheck($k);');
+        $child = $this->claimant('usleep(200000); ShellAccessCache::write($k, false); '
+            . 'ShellAccessCache::endCheck($k);');
         try {
-            self::assertFalse($this->controller()->cliAccess(), 'the answer said not paid');
+            self::assertFalse($this->controller()->cliAccess(), 'the answer said not a valid key');
         } finally {
             proc_close($child);
         }
@@ -139,7 +136,6 @@ final class LicenceCheckClaimTest extends TestCase
         }
         // The claim is younger than a dead one: its answer is still to come.
         self::assertFalse(ShellAccessCache::recentlyUnknown($this->key), 'a slow claimant is not an outage');
-        self::assertFalse(CliAccessCache::recentlyUnknown($this->key), 'a slow claimant is not an outage');
     }
 
     public function testADeadClaimLeavesTheHoldOff(): void
@@ -152,27 +148,26 @@ final class LicenceCheckClaimTest extends TestCase
             ShellAccessCache::endCheck($this->key);
         }
         self::assertTrue(ShellAccessCache::recentlyUnknown($this->key), 'the waiter leaves the hold-off');
-        self::assertTrue(CliAccessCache::recentlyUnknown($this->key), 'the waiter leaves the hold-off');
         $started = microtime(true);
-        self::assertFalse($this->controller()->cliAccess(), 'unknown with no paid answer in the grace period: closed');
+        self::assertFalse($this->controller()->cliAccess(), 'unknown with no valid answer in the grace period: closed');
         self::assertLessThan(1.0, microtime(true) - $started, 'at once, from the hold-off');
-        CliAccessCache::recordAnswer($this->answers, $this->key, true);
-        CliAccessCache::markUnknown($this->key);
-        $path = (new \ReflectionMethod(CliAccessCache::class, 'path'))->invoke(null, $this->key);
-        self::assertTrue(touch($path, time() - CliAccessCache::TTL_SECONDS - 60), 'the paid answer is no longer fresh');
+        ShellAccessCache::recordAnswer($this->answers, $this->key, true);
+        ShellAccessCache::markUnknown($this->key);
+        $path = (new \ReflectionMethod(ShellAccessCache::class, 'path'))->invoke(null, $this->key);
+        self::assertTrue(touch($path, time() - ShellAccessCache::TTL_SECONDS - 60), 'the valid answer is no longer fresh');
         clearstatcache();
-        self::assertTrue($this->controller()->cliAccess(), 'a paid answer in the grace period lets it through');
+        self::assertTrue($this->controller()->cliAccess(), 'a valid answer in the grace period lets it through');
     }
 
     /**
      * The real checkKey(), with the service's answer faked: by the moment it
-     * releases the claim, everything a waiter will read is recorded (both
-     * verdicts, or both hold-offs). Released first, a waiter could read one
-     * verdict without the other, or nothing at all.
+     * releases the claim, everything a waiter will read is recorded (the
+     * verdict, or the hold-off). Released first, a waiter could read nothing
+     * at all.
      *
      * @dataProvider answers
      * @param array{valid: bool, paid: ?bool}|null $answer
-     * @param array{shell: ?bool, cli: ?bool, shellHeld: bool, cliHeld: bool} $atRelease
+     * @param array{verdict: ?bool, held: bool} $atRelease
      */
     public function testTheClaimantRecordsItsWholeAnswerBeforeItReleases(?array $answer, array $atRelease): void
     {
@@ -198,10 +193,8 @@ final class LicenceCheckClaimTest extends TestCase
             {
                 // The first release is the moment a waiter can read.
                 $this->seen ??= [
-                    'shell' => ShellAccessCache::readVerdict($customerKey),
-                    'cli' => CliAccessCache::readVerdict($customerKey),
-                    'shellHeld' => ShellAccessCache::recentlyUnknown($customerKey),
-                    'cliHeld' => CliAccessCache::recentlyUnknown($customerKey),
+                    'verdict' => ShellAccessCache::readVerdict($customerKey),
+                    'held' => ShellAccessCache::recentlyUnknown($customerKey),
                 ];
                 parent::releaseClaim($customerKey);
             }
@@ -214,12 +207,12 @@ final class LicenceCheckClaimTest extends TestCase
     /** @return iterable<string, array{?array<string, ?bool>, array<string, ?bool>}> */
     public static function answers(): iterable
     {
-        $seen = static fn (?bool $shell, ?bool $cli, bool $shellHeld, bool $cliHeld): array
-            => ['shell' => $shell, 'cli' => $cli, 'shellHeld' => $shellHeld, 'cliHeld' => $cliHeld];
-        yield 'paid' => [['valid' => true, 'paid' => true], $seen(true, true, false, false)];
-        yield 'not paid' => [['valid' => true, 'paid' => false], $seen(true, false, false, false)];
-        yield 'paid unknown' => [['valid' => true, 'paid' => null], $seen(true, null, false, true)];
-        yield 'no answer' => [null, $seen(null, null, true, true)];
+        $seen = static fn (?bool $verdict, bool $held): array => ['verdict' => $verdict, 'held' => $held];
+        yield 'valid, paid' => [['valid' => true, 'paid' => true], $seen(true, false)];
+        yield 'valid, not paid' => [['valid' => true, 'paid' => false], $seen(true, false)];
+        yield 'valid, paid unknown' => [['valid' => true, 'paid' => null], $seen(true, false)];
+        yield 'refused' => [['valid' => false, 'paid' => false], $seen(false, false)];
+        yield 'no answer' => [null, $seen(null, true)];
     }
 
     public function testAKeyRowThatDoesNotComeBackIsUnknown(): void

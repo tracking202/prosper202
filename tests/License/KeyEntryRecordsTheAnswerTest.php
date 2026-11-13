@@ -24,7 +24,7 @@ final class KeyEntryRecordsTheAnswerTest extends TestCase
             . ' PostReadersCheckTokenTest holds it to writing nothing',
         '202-config/functions-auth.php::askLicenceService' => 'the seam is_valid_api_key() asks; it records the answer',
         'api/v3/Controllers/CapabilitiesController.php::askLicenceService' => 'the seam checkKey() asks; it records'
-            . ' the whole answer before releasing its claim',
+            . ' the answer before releasing its claim',
     ];
 
     private const RECORDERS = ['recordlicence', 'recordanswer', 'p202_record_key_answer'];

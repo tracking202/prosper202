@@ -2265,7 +2265,7 @@ p202 report daypart --period last30 --csv
 | 3    | network  | Connection timeout, DNS failure, unreachable server |
 | 4    | server   | API returned a 5xx error |
 | 5    | partial_failure | Bulk operation completed with some failures, or a check found a problem (its rows stay on stdout) |
-| 6    | licence  | The install refuses the Go CLI: its ClickServer API key has no active Pro subscription (HTTP 402); the hint links the trial |
+| 6    | licence  | The install refuses the Go CLI: its ClickServer API key is not an active free ClickServer licence (HTTP 402). No paid subscription is needed; the hint says what a free licence needs |
 | 7    | rate_limited | The server answered 429; nothing in the request is wrong. Wait `retry_after_seconds` (in the `--json` envelope and the hint). A single request: run it again. `p202 import` stopped part-way: send only the records its hint names |
 
 Errors go to stderr; stdout stays empty on failure. In human mode:

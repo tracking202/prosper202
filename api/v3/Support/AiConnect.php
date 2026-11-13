@@ -407,10 +407,10 @@ final class AiConnect
     /**
      * POST /connect/token, after ConnectController refused unknown keys.
      * Returns [status, body]. The licence is decided here, before any key
-     * exists, as the install's CLI gate decides it (#201). The answer never
-     * carries the ClickServer key: only its hash (licenceKeyHash()), which the MCP server
-     * checks with the licence service itself (an edited install could skip
-     * the check here), and which is good for nothing else.
+     * exists, as the install's CLI gate decides it (#201): an active free
+     * ClickServer licence, no paid subscription. The answer never carries
+     * the ClickServer key: only its hash (licenceKeyHash()), when the key
+     * could be read, which is good for nothing else.
      *
      * @param array<string, mixed> $payload
      * @return array{0: int, 1: array<string, mixed>}
@@ -468,23 +468,21 @@ final class AiConnect
         if ($userName === null) {
             return $refuse(400, 'invalid_grant', 'The user who approved can no longer sign in to this install.');
         }
-        // The CLI gate's own verdict for this user, the grace period
+        // The CLI gate's own verdict for this user: an active free ClickServer
+        // licence (a valid key, no paid subscription), the grace period
         // included, and no key exists until it has answered.
         $licenceGate = new CapabilitiesController($db, $userId);
         if (!$licenceGate->cliAccess()) {
             return $refuse(402, 'licence', $licenceGate->cliRefusal(
-                'Connecting an AI assistant needs a Prosper202 ClickServer Pro licence on '
-                . 'this install\'s ClickServer API key. Start a Pro trial or subscription at '
-                . 'https://my.tracking202.com/api/customers/subscriptions/support'
+                CapabilitiesController::notLicensedMessage('Connecting an AI assistant is free')
             ));
         }
 
+        // An install with no key was refused above. A key that cannot be read
+        // is the install's own error, which cliAccess() lets through; the
+        // answer then carries no hash, which the hosted MCP server no longer
+        // requires (it takes one when sent).
         $licenceKey = CapabilitiesController::licenceKeyFor($db, $userId);
-        if ($licenceKey === null || $licenceKey === '') {
-            // cliAccess() let an unknown through; the MCP server needs the
-            // key's hash to check, so an unreadable key stops here.
-            return $refuse(500, 'server_error', 'The install could not read its ClickServer API key.' . $again);
-        }
 
         $label = self::label((string) $grant['client_name']);
         $apiKey = bin2hex(random_bytes(32));
@@ -510,8 +508,9 @@ final class AiConnect
             'user' => ['user_id' => $userId, 'user_name' => $userName],
             'version' => self::version(),
             'licensed' => true,
-            'licence_key_sha256' => self::licenceKeyHash($licenceKey),
-        ]]];
+        ] + ($licenceKey === null || $licenceKey === ''
+            ? []
+            : ['licence_key_sha256' => self::licenceKeyHash($licenceKey)])]];
     }
 
     /**

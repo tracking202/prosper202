@@ -11,9 +11,9 @@ import (
 	"p202/internal/api"
 )
 
-// An install with the Pro-only CLI gate answers 402 to p202-cli when its
-// ClickServer key has no active Pro subscription; the CLI must say why and
-// point at the trial, not blame the API key.
+// The install answers 402 to p202-cli when its ClickServer key is not an
+// active free licence; the CLI must say what a free licence needs, not blame
+// the API key (the CLI's REST key is fine).
 func TestCliExplainsProLicenceRefusal(t *testing.T) {
 	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.Header.Get("User-Agent"), "p202-cli/") {
@@ -30,8 +30,8 @@ func TestCliExplainsProLicenceRefusal(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "Pro licence") {
 		t.Fatalf("want the Pro licence refusal, got %v", err)
 	}
-	if h := hintFor(err); !strings.Contains(h, "Pro trial or subscription") || strings.Contains(h, "Verify your API key") {
-		t.Errorf("hint %q should point at the trial, not the key", h)
+	if h := hintFor(err); !strings.Contains(h, "active free ClickServer licence") || strings.Contains(h, "Verify your API key") {
+		t.Errorf("hint %q should say what a free licence needs, not blame the key", h)
 	}
 	// A stable contract for agents: its own category and exit code, not
 	// "validation"/1 (bad input) and not "auth"/2 (bad key).
@@ -95,8 +95,8 @@ func assertLicenceRefusal(t *testing.T, err error, what string) {
 	if got := exitCodeForError(err); got != ExitLicence {
 		t.Errorf("%s: exit code = %d, want %d", what, got, ExitLicence)
 	}
-	if h := hintFor(err); !strings.Contains(h, "Pro trial or subscription") {
-		t.Errorf("%s: hint %q should point at the trial", what, h)
+	if h := hintFor(err); !strings.Contains(h, "active free ClickServer licence") {
+		t.Errorf("%s: hint %q should say what a free licence needs", what, h)
 	}
 }
 
@@ -215,7 +215,7 @@ func TestABare402IsNotALicenceRefusal(t *testing.T) {
 		t.Errorf("exit code = %d, want %d (ExitServer)", got, ExitServer)
 	}
 	h := hintFor(err)
-	if strings.Contains(h, "Pro trial or subscription") {
+	if strings.Contains(h, "active free ClickServer licence") {
 		t.Errorf("hint %q must not send the user to the trial", h)
 	}
 	// It is still a failure with a next step: retry it as the server error it
@@ -331,7 +331,7 @@ func TestMultiProfileReportIsNotALicenceRefusalWhenAnotherProfileFailedOtherwise
 	if got := exitCodeForError(err); got == ExitLicence {
 		t.Errorf("exit code = %d (ExitLicence) for a run one licence cannot fix", got)
 	}
-	if h := hintFor(err); strings.Contains(h, "Pro trial or subscription") {
+	if h := hintFor(err); strings.Contains(h, "active free ClickServer licence") {
 		t.Errorf("hint %q sends the user to the trial for a failure it cannot fix", h)
 	}
 }
