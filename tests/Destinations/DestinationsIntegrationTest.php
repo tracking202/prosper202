@@ -34,7 +34,8 @@ final class DestinationsIntegrationTest extends TestCase
 
     private const SECRET = 'Sx9-secretAPIvalue';
     /** The reason a delivery of a refused click gives. */
-    private const BY_CLICK = DestinationQueue::REFUSED . ' on its click, by a visit or another of its conversions';
+    private const BY_CLICK = DestinationQueue::REFUSED
+        . ' on a visit, a conversion or a goal event of its click';
 
     /** @var list<array<string, mixed>> decoded bodies the transport was handed */
     private array $bodies = [];

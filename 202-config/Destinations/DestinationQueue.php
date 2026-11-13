@@ -646,7 +646,7 @@ final class DestinationQueue
         return match (true) {
             $refused('refused_request') => 'on the conversion\'s request',
             $refused('refused_replaced') => 'on a conversion this one replaced',
-            $refused('refused_visit') => 'on its click, by a visit or another of its conversions',
+            $refused('refused_visit') => 'on a visit, a conversion or a goal event of its click',
             default => null,
         };
     }

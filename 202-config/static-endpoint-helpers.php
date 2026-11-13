@@ -1340,9 +1340,12 @@ if (!function_exists('p202RecordLegacyConversion')) {
 
         // Fast path only: the same rule is enforced again by the writer under
         // its click lock (once_per_click below), which is what makes two
-        // concurrent id-less requests record one conversion, not two.
+        // concurrent id-less requests record one conversion, not two. A
+        // request that refuses consent goes on to the writer, which stores
+        // the click's refusal under that lock before the same rule turns it
+        // away: a refusal is never skipped because the click is a lead.
         $transactionId = trim((string) ($opts['transaction_id'] ?? ''));
-        $blocked = !empty($opts['reversal'])
+        $blocked = !empty($opts['reversal']) || ($opts['consent_withheld'] ?? false) !== false
             ? null
             : p202LegacyConversionGate((int) $click['click_lead'] === 1, $transactionId);
         if ($blocked !== null) {

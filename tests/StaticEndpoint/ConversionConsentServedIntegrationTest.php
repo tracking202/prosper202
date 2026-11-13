@@ -65,7 +65,7 @@ final class ConversionConsentServedIntegrationTest extends TestCase
             . " (SELECT conv_id FROM 202_conversion_logs WHERE click_id = $click)");
         $tables = [
             '202_clicks', '202_clicks_spy', '202_clicks_tracking', '202_click_latest_visits', '202_conversion_logs',
-            '202_dataengine',
+            '202_dataengine', '202_click_consent_refusals',
         ];
         foreach ($tables as $table) {
             self::$db->query("DELETE FROM $table WHERE click_id = $click");
@@ -135,6 +135,44 @@ final class ConversionConsentServedIntegrationTest extends TestCase
                 self::assertSame([$expected], $stored, "$endpoint '$consent'");
             }
         }
+    }
+
+    /**
+     * A repeat with no transaction id on a click that is already a lead
+     * records nothing more, but when it refuses consent (the thank-you page
+     * reloaded after the visitor declined) the refusal is the click's from
+     * then on: px, pb and gpx each store it, and a consenting repeat does
+     * not. Still one conversion row.
+     */
+    public function testARefusingRepeatOnAClickThatIsAlreadyALeadRefusesTheClick(): void
+    {
+        self::requireScratch();
+        $cookie = ['tracking202subid' => (string) self::CLICK];
+        $naming = [
+            'pb' => 'acip=' . self::CAMPAIGN . '&subid=' . self::CLICK,
+            'gpx' => 'subid=' . self::CLICK,
+            'px' => 'acip=' . self::CAMPAIGN,
+        ];
+        foreach ($naming as $endpoint => $query) {
+            self::unconvert();
+            self::q('DELETE FROM 202_click_consent_refusals WHERE click_id = ' . self::CLICK);
+            $cookies = $endpoint === 'px' ? $cookie : [];
+            foreach (['', '&p202_consent=1', '&p202_consent=0'] as $i => $consent) {
+                [$status, $body] = self::runQuery($endpoint, $query . $consent, $cookies);
+                self::assertContains($status, [200, 202], "$endpoint '$consent': $body");
+                $rows = (int) self::$db->query('SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id = '
+                    . self::CLICK)->fetch_row()[0];
+                self::assertSame(1, $rows, "$endpoint '$consent': the click converts once");
+                $what = $i < 2 ? 'a consenting request stores no refusal' : 'the refusing repeat refuses the click';
+                self::assertSame($i < 2 ? 0 : 1, self::refusals(), "$endpoint: $what");
+            }
+        }
+    }
+
+    private static function refusals(): int
+    {
+        return (int) self::$db->query('SELECT COUNT(*) FROM 202_click_consent_refusals WHERE click_id = '
+            . self::CLICK)->fetch_row()[0];
     }
 
     private function tx(): string

@@ -110,7 +110,8 @@ final class InboundReplayIntegrationTest extends TestCase
         $clicks = self::CLICK . ', ' . self::OTHER_CLICK;
         foreach (
             ['202_clicks', '202_clicks_spy', '202_clicks_advance', '202_clicks_tracking', '202_clicks_record',
-            '202_clicks_site', '202_click_latest_visits', '202_attribution_rollup_dirty_clicks', '202_dataengine'] as $table
+            '202_clicks_site', '202_click_latest_visits', '202_attribution_rollup_dirty_clicks', '202_dataengine',
+            '202_click_consent_refusals'] as $table
         ) {
             self::q("DELETE FROM $table WHERE click_id IN ($clicks)");
         }
@@ -227,6 +228,51 @@ final class InboundReplayIntegrationTest extends TestCase
         self::assertStringContainsString('converted already', $refused['message']);
         self::assertCount(1, self::conversions());
         self::assertSame([null, null], [self::logRow($plain)['conversion_id'], self::logRow($plain)['record_started_at']]);
+    }
+
+    /**
+     * The log keeps a request's p202_consent redacted; given back, a row
+     * that carried one is read as refusing, never as consent by its absence:
+     * the conversion is recorded refused, and its click with it.
+     */
+    public function testARefusingRowGivenBackIsRecordedRefused(): void
+    {
+        $id = self::refused('gpb', ['subid' => (string) self::CLICK, 'txid' => 'NW-C1', 'p202_consent' => '0']);
+        $logged = self::logRow($id)['fields']['p202_consent'];
+        self::assertSame(\Prosper202\InboundLog\Redactor::REDACTED, $logged, 'the log keeps it redacted');
+
+        $answer = (new InboundReplay(self::requireScratch()))->replay(self::ACCOUNT, $id);
+
+        self::assertSame('recorded', $answer['status'], $answer['message']);
+        $stored = self::$db->query('SELECT consent_withheld FROM 202_conversion_logs WHERE click_id = ' . self::CLICK)
+            ->fetch_all(MYSQLI_NUM);
+        self::assertSame([['1']], $stored, 'recorded as its request refused');
+        $refusals = self::$db->query('SELECT COUNT(*) FROM 202_click_consent_refusals WHERE click_id = ' . self::CLICK)
+            ->fetch_row()[0];
+        self::assertSame('1', (string) $refusals, 'and its click refused');
+    }
+
+    /**
+     * A row given back that refused consent, on a click that is already a
+     * lead, records no second conversion, but its refusal is the click's
+     * from then on, as at the endpoint.
+     */
+    public function testARefusingRowGivenBackOnALeadClickRefusesTheClick(): void
+    {
+        $replay = new InboundReplay(self::requireScratch());
+        $first = self::refused('gpb', ['subid' => (string) self::CLICK]);
+        self::assertSame('recorded', $replay->replay(self::ACCOUNT, $first)['status']);
+        $refusals = static fn (): int => (int) self::$db->query(
+            'SELECT COUNT(*) FROM 202_click_consent_refusals WHERE click_id = ' . self::CLICK
+        )->fetch_row()[0];
+        self::assertSame(0, $refusals(), 'a consenting request stores no refusal');
+
+        $refusing = self::refused('gpb', ['subid' => (string) self::CLICK, 'p202_consent' => '0']);
+        $answer = $replay->replay(self::ACCOUNT, $refusing);
+
+        self::assertSame('refused', $answer['status'], $answer['message']);
+        self::assertCount(1, self::conversions(), 'the click converts once');
+        self::assertSame(1, $refusals(), 'the refusal is the click\'s');
     }
 
     /** @return array{0: string, 1: array<string, mixed>} the question asked of the row, and what recording it did */

@@ -139,7 +139,12 @@ if (is_numeric($mysql['click_id'])) {
         // the same click (LTV), while a replayed txid is safely de-duplicated
         // by p202RecordConversion. Without a txid a retry cannot be told apart
         // from a repeat, so the legacy one-conversion-per-click gate stands.
-        if (!$cpa_row['click_lead'] || p202ExtractTransactionId($_GET) !== '') {
+        // A pixel that refuses consent goes on to the writer too: it stores the
+        // click's refusal under its lock, then applies the same gate.
+        if (
+            !$cpa_row['click_lead'] || p202ExtractTransactionId($_GET) !== ''
+            || !\Prosper202\Identity\RequestSignals::consentGiven($_GET)
+        ) {
 
                 $mysql['campaign_id'] = $db->real_escape_string((string) ($cpa_row['aff_campaign_id'] ?? ''));
                 $mysql['click_user_id'] = $db->real_escape_string((string) ($cpa_row['user_id'] ?? ''));

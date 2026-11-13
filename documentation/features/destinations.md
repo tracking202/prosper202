@@ -156,12 +156,21 @@ once.
     or not the event reaches a goal. It refuses the click, so the
     click's other conversions are withheld too. A repeat of the same
     conversion or event that refuses (a reloaded thank-you page) refuses it
-    and its click from then on; a repeat that consents does not undo a
-    refusal;
+    and its click from then on, also when it records nothing more (a click
+    that converted already, and a request with no transaction id); a repeat
+    that consents does not undo a refusal. A request recorded later from the
+    inbound log keeps the refusal it arrived with;
   - on a conversion a replacing one goes by: on a campaign that pays the
     latest conversion, a sale that replaces a refused one is withheld too,
     and a goal conversion written again (a re-evaluation, a replay) keeps
     its event's refusal.
+
+  A request that fails records nothing, its refusal included, and its
+  sender is told it failed: a click that is not found or not your account's,
+  a postback naming a campaign the click never visited, a reversal with no
+  sale to reverse, a goal event refused as a conflict or past its cap. The
+  visitor's next request that refuses, or the same one sent again once it
+  can succeed, stores it.
 
   What cannot carry a refusal, and so reads as consent given: a conversion
   sent with the API (`POST /conversions`) and goal events sent with the API
