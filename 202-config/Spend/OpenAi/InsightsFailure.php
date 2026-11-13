@@ -12,6 +12,12 @@ final class InsightsFailure extends \RuntimeException
     public const int KEY_REFUSED = 2;
     public const int TOO_LARGE = 3;
 
+    /** @param int|null $retryAfter seconds OpenAI asked to wait (its Retry-After), null when it named none */
+    public function __construct(string $message, int $code = self::FAILED, public readonly ?int $retryAfter = null)
+    {
+        parent::__construct($message, $code);
+    }
+
     public function tooLarge(): bool
     {
         return $this->getCode() === self::TOO_LARGE;

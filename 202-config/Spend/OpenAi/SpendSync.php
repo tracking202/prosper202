@@ -21,9 +21,12 @@ use Prosper202\Spend\SpendLedger;
  * Refused by name, with nothing pulled: an ad account whose currency is
  * not the Prosper202 account's (nothing here converts currencies). A 429
  * leaves the connection alone for an hour, doubling with each one in a row
- * up to a day. A row OpenAI sends that the ledger cannot read exactly is
+ * up to a day, or for as long as its Retry-After asks when that is longer
+ * (up to a week). A row OpenAI sends that the ledger cannot read exactly is
  * left out and named in the run's note; the readable rows are written and
  * the run counts as done (a cron run has nobody to answer, CLAUDE.md #4).
+ * One connection's run that throws anything else is recorded on its row,
+ * and the next connection still runs.
  */
 final class SpendSync
 {
@@ -40,17 +43,22 @@ final class SpendSync
 
     private const int BACKOFF_SECONDS = 3600;
     private const int BACKOFF_MAX_SECONDS = 86400;
+    /** The longest Retry-After honoured: a longer one would read as the sync turned off. */
+    private const int RETRY_AFTER_MAX_SECONDS = 7 * 86400;
 
     /** @var \Closure(): int */
     private \Closure $clock;
+
+    private readonly InsightsClient $insights;
 
     /** @param (\Closure(): int)|null $clock */
     public function __construct(
         private readonly Connection $conn,
         private readonly SpendConnections $connections,
-        private readonly InsightsClient $insights = new InsightsClient(),
+        ?InsightsClient $insights = null,
         ?\Closure $clock = null
     ) {
+        $this->insights = $insights ?? InsightsClient::forInstall($conn->writeConnection());
         $this->clock = $clock ?? static fn (): int => time();
     }
 
@@ -140,7 +148,15 @@ final class SpendSync
                 $done['failed']++;
                 continue;
             }
-            $result = $this->run($connection);
+            try {
+                $result = $this->run($connection);
+            } catch (\Throwable $e) {
+                // run() holds no transaction open here: the ledger's and the
+                // conversions' writes each end theirs before they throw.
+                $this->recordCrash($connectionId, $userId, $e, $connection->apiKey);
+                $done['failed']++;
+                continue;
+            }
             $done[$result['error'] === null ? 'synced' : 'failed']++;
             $done['rows'] += $result['rows'];
         }
@@ -165,6 +181,7 @@ final class SpendSync
         $error = null;
         $note = null;
         $rateLimited = false;
+        $waitAtLeast = null;
         $refused = false;
         try {
             $rows = $this->pull($connection, $ledger, $from, $now, $note);
@@ -175,12 +192,13 @@ final class SpendSync
         } catch (InsightsFailure $e) {
             $error = $e->getMessage();
             $rateLimited = $e->rateLimited();
+            $waitAtLeast = $e->retryAfter;
         } catch (SpendSyncRefused | \Prosper202\Spend\SpendLedgerRefused $e) {
             // A refused page wrote nothing; the pages before it stand.
             $error = $e->getMessage();
             $refused = true;
         }
-        $this->recordRun($connection, $now, $rows, $error, $note, $rateLimited, $backfill && $error === null, (int) ($state['rate_limited'] ?? 0));
+        $this->recordRun($connection, $now, $rows, $error, $note, $rateLimited, $waitAtLeast, $backfill && $error === null, (int) ($state['rate_limited'] ?? 0));
 
         return ['rows' => $rows, 'from' => $from, 'to' => $now, 'error' => $error, 'note' => $note,
             'refused' => $refused, 'rate_limited' => $rateLimited];
@@ -242,7 +260,9 @@ final class SpendSync
 
     /**
      * The conversions OpenAI attributes to the connection's ads per day of
-     * the ad account's zone, over the days [$from, $to] touches, beside
+     * the ad account's zone, over the whole days [$from, $to] touches that
+     * have ended (OpenAI takes conversions over whole days only, and no bound
+     * in the future: today's are read once today is over), beside
      * Prosper202's for reconciliation (Prosper202\Spend\PlatformConversions).
      * The ads are the ones the ledger holds for the connection in those
      * hours. OpenAI answers at most 2000 rows (ads x days) and refuses more
@@ -263,7 +283,10 @@ final class SpendSync
         }
         $zone = new \DateTimeZone($connection->timezone);
         $start = (new \DateTimeImmutable('@' . $from))->setTimezone($zone)->setTime(0, 0);
-        $end = (new \DateTimeImmutable('@' . $to))->setTimezone($zone)->setTime(0, 0)->modify('+1 day');
+        $end = (new \DateTimeImmutable('@' . $to))->setTimezone($zone)->setTime(0, 0);
+        if ($end <= $start) {
+            return null;
+        }
         $days = max(1, (int) round(($end->getTimestamp() - $start->getTimestamp()) / 86400));
         $store = new \Prosper202\Spend\PlatformConversions($this->conn, $this->clock);
         $size = max(1, intdiv(2000, $days));
@@ -410,13 +433,29 @@ final class SpendSync
     }
 
     /**
+     * A run that threw something no failure of OpenAI's or the ledger's
+     * explains: recorded on its row as last_error, and logged when even that
+     * write fails, so the next connection still runs.
+     */
+    private function recordCrash(int $connectionId, int $userId, \Throwable $e, #[\SensitiveParameter] string $apiKey): void
+    {
+        $why = \Prosper202\Destinations\GoogleAdsOAuth::redact('the run stopped: ' . get_class($e) . ': ' . $e->getMessage(), [$apiKey]);
+        try {
+            $this->recordUnreachable($connectionId, $userId, $why, false);
+        } catch (\Throwable $again) {
+            error_log('ChatGPT Ads spend sync, connection ' . $connectionId . ': ' . $why . '; and it could not be recorded: ' . $again->getMessage());
+        }
+    }
+
+    /**
      * The run's outcome on the sync row: a failure in last_error (and no
      * success), a note on a run that succeeded in last_note.
      */
-    private function recordRun(SpendConnection $connection, int $now, int $rows, ?string $error, ?string $note, bool $rateLimited, bool $backfilled, int $limitedBefore): void
+    private function recordRun(SpendConnection $connection, int $now, int $rows, ?string $error, ?string $note, bool $rateLimited, ?int $waitAtLeast, bool $backfilled, int $limitedBefore): void
     {
         $limited = $rateLimited ? min($limitedBefore + 1, 60) : 0;
-        $retryAfter = $rateLimited ? $now + min(self::BACKOFF_SECONDS * (2 ** ($limited - 1)), self::BACKOFF_MAX_SECONDS) : 0;
+        $wait = $limited === 0 ? 0 : (int) min(self::BACKOFF_SECONDS * (2 ** min($limited - 1, 5)), self::BACKOFF_MAX_SECONDS);
+        $retryAfter = $rateLimited ? $now + max($wait, min($waitAtLeast ?? 0, self::RETRY_AFTER_MAX_SECONDS)) : 0;
         $stmt = $this->conn->prepareWrite(
             'UPDATE 202_ad_spend_sync SET last_run_at = ?, last_rows = ?, last_error = ?, last_note = ?, rate_limited = ?,'
             . ' retry_after = ?, last_success_at = IF(? = 1, ?, last_success_at),'

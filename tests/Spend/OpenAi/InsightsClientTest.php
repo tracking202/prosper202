@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Spend\OpenAi;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi;
 use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookSender;
 use Prosper202\Spend\OpenAi\InsightsClient;
@@ -35,7 +36,7 @@ final class InsightsClientTest extends TestCase
             return (array_shift($this->answers) ?? []) + ['status' => 200, 'error' => null, 'primary_ip' => '203.0.113.20', 'location' => null, 'body' => ''];
         };
 
-        return new InsightsClient(new WebhookSender($guard, $transport));
+        return new InsightsClient(new AdvertiserApi(new WebhookSender($guard, $transport)));
     }
 
     public static function fixture(string $name, int $hour): string
@@ -88,7 +89,7 @@ final class InsightsClientTest extends TestCase
         yield 'not JSON' => [['body' => '<html>'], 'not its JSON', InsightsFailure::FAILED];
         yield 'too many conversion rows' => [['status' => 413, 'body' => '{}'], 'answered 413', InsightsFailure::TOO_LARGE];
         yield 'more without a cursor' => [['body' => '{"object":"list","data":[],"count":0,"first_id":null,"last_id":null,"has_more":true}'], 'gave no cursor', InsightsFailure::FAILED];
-        yield 'no answer' => [['status' => 0, 'error' => 'timed out after ' . self::KEY], 'no answer from OpenAI: timed out after [key]', InsightsFailure::FAILED];
+        yield 'no answer' => [['status' => 0, 'error' => 'timed out after ' . self::KEY], 'no answer from OpenAI: timed out after …', InsightsFailure::FAILED];
         yield 'cut off' => [['body' => '{"object":"list","data":[],"has_more":false}', 'error' => 'the answer was longer than 2097152 bytes'], 'cut off', InsightsFailure::FAILED];
     }
 
@@ -112,11 +113,11 @@ final class InsightsClientTest extends TestCase
     public function testAnAddressOutsideTheCheckIsNeverAsked(): void
     {
         $guard = new WebhookGuard(static fn (string $host): array => ['10.0.0.5'], '');
-        $client = new InsightsClient(new WebhookSender($guard, function (array $o): array {
+        $client = new InsightsClient(new AdvertiserApi(new WebhookSender($guard, function (array $o): array {
             $this->sent[] = $o;
 
             return ['status' => 200, 'error' => null, 'primary_ip' => '10.0.0.5', 'location' => null, 'body' => '{}'];
-        }));
+        })));
         try {
             $client->page(self::KEY, 0, 1, null);
             self::fail('a private address was asked');
@@ -124,5 +125,56 @@ final class InsightsClientTest extends TestCase
             self::assertStringStartsWith('not sent:', $e->getMessage());
         }
         self::assertSame([], $this->sent);
+    }
+    /** @return iterable<string, array{string|null, int|null}> */
+    public static function retryAfters(): iterable
+    {
+        yield 'seconds' => ['120', 120];
+        yield 'an HTTP-date' => [gmdate('D, d M Y H:i:s \\G\\M\\T', 1794300000 + 5400), 5400];
+        yield 'a date passed' => [gmdate('D, d M Y H:i:s \\G\\M\\T', 1794300000 - 60), 0];
+        yield 'none' => [null, null];
+        yield 'unreadable' => ['soon', null];
+    }
+
+    /** @dataProvider retryAfters */
+    public function testA429CarriesItsRetryAfter(?string $header, ?int $seconds): void
+    {
+        $guard = new WebhookGuard(static fn (string $host): array => ['203.0.113.20'], '203.0.113.0/24');
+        $transport = static fn (array $o): array => ['status' => 429, 'error' => null, 'primary_ip' => '203.0.113.20', 'location' => null,
+            'body' => '{}', 'retry_after' => $header];
+        $client = new InsightsClient(new AdvertiserApi(new WebhookSender($guard, $transport), static fn (): float => 1794300000.0));
+        foreach (['page' => fn () => $client->page(self::KEY, 0, 1, null), 'conversions' => fn () => $client->conversions(self::KEY, 0, 86400, ['ad_1'])] as $what => $call) {
+            try {
+                $call();
+                self::fail("a 429 was answered as $what");
+            } catch (InsightsFailure $e) {
+                self::assertTrue($e->rateLimited(), $what);
+                self::assertSame($seconds, $e->retryAfter, $what);
+            }
+        }
+    }
+
+    public function testTheEndpointOverrideIsHonouredAndOnlyOnLoopback(): void
+    {
+        $before = getenv(AdvertiserApi::ENV_ENDPOINT);
+        try {
+            // Nothing listens on port 1: no answer, where OpenAI itself would have answered 401 to this key.
+            putenv(AdvertiserApi::ENV_ENDPOINT . '=https://127.0.0.1:1');
+            try {
+                (new InsightsClient())->page(self::KEY, 0, 1, null);
+                self::fail('a page was read from a port nothing listens on');
+            } catch (InsightsFailure $e) {
+                self::assertStringStartsWith('no answer from OpenAI', $e->getMessage());
+            }
+            putenv(AdvertiserApi::ENV_ENDPOINT . '=https://api.ads.openai.com');
+            try {
+                (new InsightsClient())->conversions(self::KEY, 0, 86400, ['ad_1']);
+                self::fail('an endpoint off this machine was used');
+            } catch (InsightsFailure $e) {
+                self::assertStringStartsWith('not sent: ' . AdvertiserApi::ENV_ENDPOINT . ' must be https://127.0.0.1', $e->getMessage());
+            }
+        } finally {
+            putenv($before === false ? AdvertiserApi::ENV_ENDPOINT : AdvertiserApi::ENV_ENDPOINT . '=' . $before);
+        }
     }
 }

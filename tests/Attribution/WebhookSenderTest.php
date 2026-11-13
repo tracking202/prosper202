@@ -295,4 +295,42 @@ final class WebhookSenderTest extends TestCase
             proc_close($process);
         }
     }
+    public function testTheRealTransportKeepsRetryAfterAndReadPassesItOn(): void
+    {
+        $listener = <<<'PHP'
+            $s = @stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr);
+            if ($s === false) { echo "no: $errstr\n"; exit; }
+            $name = stream_socket_get_name($s, false);
+            echo substr($name, strrpos($name, ':') + 1), "\n";
+            $c = @stream_socket_accept($s, 10);
+            if ($c === false) { exit; }
+            fread($c, 65536);
+            fwrite($c, "HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nretry-after:  120 \r\nContent-Length: 2\r\n\r\n{}");
+            fclose($c);
+            PHP;
+        $process = proc_open([PHP_BINARY, '-r', $listener], [1 => ['pipe', 'w']], $pipes);
+        self::assertIsResource($process);
+        try {
+            $port = trim((string) fgets($pipes[1]));
+            if (!ctype_digit($port)) {
+                self::markTestSkipped('no listener on 127.0.0.1 here: ' . $port);
+            }
+            $target = (new WebhookGuard(static fn (): array => ['127.0.0.1'], '127.0.0.1/32'))->check('https://list.invalid:' . $port . '/p202');
+            $options = WebhookSender::curlOptions($target, '', []);
+            $options[CURLOPT_URL] = 'http://list.invalid:' . $port . '/p202';
+            $options[CURLOPT_PROTOCOLS] = CURLPROTO_HTTP;
+            $answer = WebhookSender::curlTransport($options);
+            self::assertSame([429, '120'], [$answer['status'], $answer['retry_after'] ?? null]);
+        } finally {
+            proc_terminate($process);
+            proc_close($process);
+        }
+
+        $sender = new WebhookSender(
+            new WebhookGuard(static fn (): array => ['93.184.216.34'], ''),
+            static fn (array $o): array => ['status' => 429, 'error' => null, 'primary_ip' => null, 'location' => null, 'body' => '', 'retry_after' => '30']
+        );
+        self::assertSame('30', $sender->read('https://api.example.com/x', null, [])['retry_after']);
+        self::assertNull($this->sender(static fn (): array => ['93.184.216.34'], ['status' => 429])->read('https://api.example.com/x', null, [])['retry_after'], 'none sent, none kept');
+    }
 }
