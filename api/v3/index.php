@@ -2013,6 +2013,7 @@ try {
     Bootstrap::errorResponse($e->getMessage(), 429, ['retry_after_seconds' => $e->retryAfter] + $e->getDetails());
 } catch (UpstreamUnavailableException $e) {
     // Another service's failure, in its own words: nothing here is broken, so the upgrade is not named for it.
+    error_log(p202UncaughtLogLine('API v3 answered ' . $e->getHttpStatus() . ' for an ad platform', $e));
     $extra = ['details' => $e->getDetails()];
     if ($e->retryAfter !== null) {
         header('Retry-After: ' . $e->retryAfter);

@@ -90,15 +90,35 @@ func withHint(err error, format string, args ...interface{}) error {
 	return &hintedError{err: err, hint: canonicalFlags(fmt.Sprintf(format, args...))}
 }
 
-// withValidationHint attaches a command's own hint only to a refusal of what
-// was sent (category validation: a wrong id, a refused field). A failure of
-// another class (network, auth, server) keeps the hint api.HintFor has for
-// its class, which a command's hint would otherwise replace.
-func withValidationHint(err error, format string, args ...interface{}) error {
-	if err == nil || api.ErrorCategory(err) != "validation" {
+// statusHint is a command's own hint for one answer of the API: its HTTP
+// status and, for a 422, the field it names ("" for any field).
+type statusHint struct {
+	status int
+	field  string
+	hint   string
+}
+
+// withStatusHint attaches the first hint whose status (and field) the API's
+// answer matches, so a hint says what is true of that answer: where the key
+// is only for a refused key, which command lists ids only for an unknown id.
+// Any other failure keeps the hint api.HintFor has for its class.
+func withStatusHint(err error, hints ...statusHint) error {
+	var apiErr *api.APIError
+	if err == nil || !errors.As(err, &apiErr) {
 		return err
 	}
-	return withHint(err, format, args...)
+	for _, h := range hints {
+		if h.status != apiErr.Status {
+			continue
+		}
+		if h.field != "" {
+			if _, named := apiErr.FieldErrors[h.field]; !named {
+				continue
+			}
+		}
+		return withHint(err, "%s", h.hint)
+	}
+	return err
 }
 
 // validationError creates a CLI validation error (bad input, missing flags, etc.).

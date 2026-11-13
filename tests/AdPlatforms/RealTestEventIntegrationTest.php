@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\AdPlatforms;
 
+use Api\V3\Exception\TooManyRequestsException;
+use Api\V3\Exception\UpstreamUnavailableException;
 use PHPUnit\Framework\TestCase;
 use Prosper202\AdPlatforms\AdConnectionInputException;
 use Prosper202\AdPlatforms\AdConnectionStore;
@@ -171,6 +173,39 @@ final class RealTestEventIntegrationTest extends TestCase
 
         $answer = $controller->test($destination, ['real' => true, 'confirm_counted' => true])['data'];
         self::assertSame([true, true], [$answer['sent'], $answer['arrived']], $answer['message']);
+    }
+
+    /** OpenAI not reached or limiting requests is no verdict on the event: a 503 or 429, never a 200 "not sent". */
+    public function testOverTheApiARealEventOpenAiDidNotTakeIsAFailureStatus(): void
+    {
+        $destination = $this->setUpConnection();
+        $controller = new \Api\V3\Controllers\DestinationsController(self::$db, 1);
+        $body = ['real' => true, 'confirm_counted' => true];
+        $cases = [
+            'an outage' => [503, UpstreamUnavailableException::class, 'unreachable', 'could not be reached'],
+            'its rate limit' => [429, TooManyRequestsException::class, 'rate_limited', 'is limiting requests'],
+        ];
+        foreach ($cases as $what => [$status, $class, $reason, $said]) {
+            $this->control('answer', ['status' => $status, 'body' => '{"error":{"message":"Try later"}}']);
+            try {
+                $controller->test($destination, $body);
+                self::fail($what . ' was answered as a verdict');
+            } catch (\Api\V3\HttpException $e) {
+                self::assertInstanceOf($class, $e, $what);
+                self::assertSame($status, $e->getHttpStatus(), $what);
+                self::assertSame(60, $e->retryAfter, $what);
+                $details = $e instanceof TooManyRequestsException ? $e->getDetails()['details'] : $e->getDetails();
+                self::assertSame(['upstream' => 'openai_ads', 'reason' => $reason], $details, $what);
+                self::assertStringContainsString($said . ', so no test event was sent', $e->getMessage(), $what);
+                self::assertStringNotContainsString('did not take', $e->getMessage(), $what . ': not a refusal');
+            }
+        }
+
+        // A refusal of the event is OpenAI's verdict on it: the 200 that says so.
+        $this->control('answer', ['status' => 400, 'body' => '{"error":{"message":"bad event"}}']);
+        $answer = $controller->test($destination, $body)['data'];
+        self::assertSame([false, false, 400], [$answer['sent'], $answer['arrived'], $answer['status_code']]);
+        self::assertStringContainsString('OpenAI did not take the test event', $answer['message']);
     }
 
     public function testAnotherAccountsDestinationIsNone(): void

@@ -30,6 +30,9 @@ Control (for whoever drives it):
                                         without the feature
   POST /control/account                 {"id": "adacct_999"}: the key now reaches that ad account, until the reset
   GET  /control/requests                every request seen, in order (keys masked)
+  POST /control/answer                  {"status": 503, "body": "..."}: every /v1 request answers that status and raw
+                                        body (an outage, a rate limit, a refusal, an answer it does not document),
+                                        until the reset
 
 Usage: fake_openai_ads.py --port 8242 --tls-dir DIR [--api-key KEY]
 It writes DIR/cert.pem (self-signed for 127.0.0.1, localhost and bzr.openai.com: the CA the
@@ -91,6 +94,7 @@ class State:
         self.data = copy.deepcopy(SEED)
         self.pixels, self.event_settings, self.api_keys = [], [], []
         self.idempotent, self.requests, self.disabled, self.events = {}, [], set(), []
+        self.forced = None
         self.counter = 900
 
 
@@ -122,6 +126,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def raw(self, status, text):
+        body = text.encode()
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def body(self):
         length = int(self.headers.get('Content-Length') or 0)
         raw = self.rfile.read(length) if length else b''
@@ -145,6 +157,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.control(method, path)
             body = self.body() if method == 'POST' else {}
             auth = self.headers.get('Authorization', '')
+            if STATE.forced is not None:
+                STATE.requests.append({'method': method, 'path': path, 'query': url.query, 'forced': STATE.forced['status']})
+                return self.raw(STATE.forced['status'], STATE.forced['body'])
             if path == '/v1/events' and method == 'POST':
                 return self.events(query, body, auth)
             STATE.requests.append({'method': method, 'path': path, 'query': url.query, 'body': body,
@@ -275,6 +290,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.answer(400, {'error': {'message': 'id is required'}})
             STATE.data['account']['id'] = body['id']
             return self.answer(200, {'id': body['id']})
+        if path == '/control/answer' and method == 'POST':
+            body = self.body() or {}
+            if not isinstance(body.get('status'), int) or not isinstance(body.get('body'), str):
+                return self.answer(400, {'error': {'message': 'status (a number) and body (a string) are required'}})
+            STATE.forced = {'status': body['status'], 'body': body['body']}
+            return self.answer(200, STATE.forced)
         if path == '/control/requests' and method == 'GET':
             return self.answer(200, {'requests': STATE.requests})
         return self.answer(404, {'error': {'message': 'no such control'}})

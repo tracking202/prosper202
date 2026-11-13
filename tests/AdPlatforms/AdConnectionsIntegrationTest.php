@@ -648,11 +648,12 @@ final class AdConnectionsIntegrationTest extends TestCase
         $outcomes = array_column($answer['data']['steps'], 'outcome', 'step');
         self::assertSame(['created', 'failed'], [$outcomes['pixel'], $outcomes['conversions_key']]);
 
-        // Everything is down again, and the pixel made before is kept: still an answer.
+        // Everything is down again: the pixel made before is kept, and nothing else was reached. Keeping what an
+        // earlier run made is not this run doing something, so the run is the outage's.
         $this->routes = array_fill_keys(array_keys($routes), $down);
-        [$got, $answer] = self::answered(fn (): array => $this->controller()->setup($id, []));
-        self::assertSame(200, $got, 'a kept step is something the run stands on');
-        self::assertSame('kept', array_column($answer['data']['steps'], 'outcome', 'step')['pixel']);
+        [$got, $e] = self::answered(fn (): array => $this->controller()->setup($id, []));
+        self::assertSame(503, $got, 'a run that only kept what was there set nothing up');
+        self::assertSame('kept', array_column($e->getDetails()['steps'], 'outcome', 'step')['pixel']);
 
         // Input that needs no call and no outage: needs_input alone is an answer, not an outage.
         $this->routes = $routes;
@@ -661,6 +662,47 @@ final class AdConnectionsIntegrationTest extends TestCase
         $this->routes = array_fill_keys(array_keys($routes), $off);
         [$got] = self::answered(fn (): array => $this->controller(2)->setup($second, []));
         self::assertSame(200, $got);
+    }
+
+    /** A setup in which OpenAI refused the stored key and nothing was made is the caller's to mend: a 422. */
+    public function testASetupWithARefusedKeyIsARefusalAndMarksTheConnection(): void
+    {
+        $id = $this->connect();
+        $routes = $this->routes;
+        $refused = [['status' => 401, 'body' => '{"error":{"message":"Invalid"}}']];
+        $this->routes = array_fill_keys(array_keys($routes), $refused);
+        $before = count($this->requests);
+        [$got, $e] = self::answered(fn (): array => $this->controller()->setup($id, []));
+        self::assertGreaterThan($before, count($this->requests), 'OpenAI was asked');
+        self::assertSame(422, $got);
+        $said = $e->getFieldErrors()['api_key'];
+        self::assertStringContainsString('OpenAI refused the stored Advertiser API key', $said);
+        self::assertStringContainsString('p202 ad-connection update', $said);
+        $connection = $this->store()->get(1, $id);
+        self::assertSame('key_refused', $connection['status'], 'marked as a check marks it');
+        self::assertStringContainsString('refused the stored key', (string) $connection['last_error']);
+        self::assertSame(0, self::destinationsOf(1));
+
+        // A good key again: the run makes what it makes, and the status is the check's to restore.
+        $this->routes = $routes;
+        [$got] = self::answered(fn (): array => $this->controller()->setup($id, []));
+        self::assertSame(200, $got);
+    }
+
+    /** A setup whose every answer from OpenAI is not what its API documents is OpenAI's failure: a 502. */
+    public function testASetupWhoseAnswersCannotBeUsedIsABadGateway(): void
+    {
+        $id = $this->connect();
+        $routes = $this->routes;
+        $this->routes = array_fill_keys(array_keys($routes), [['status' => 200, 'body' => '{"object":"list"}']]);
+        [$got, $e] = self::answered(fn (): array => $this->controller()->setup($id, []));
+        self::assertSame(502, $got);
+        self::assertInstanceOf(UpstreamUnavailableException::class, $e);
+        self::assertNull($e->retryAfter);
+        self::assertSame('unreadable_answer', $e->getDetails()['reason']);
+        self::assertStringContainsString('could not be used, so setup made nothing', $e->getMessage());
+        self::assertSame('connected', $this->store()->get(1, $id)['status'], 'not a word about the key');
+        self::assertSame(0, self::destinationsOf(1));
     }
 
     /**

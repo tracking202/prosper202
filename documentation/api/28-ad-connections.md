@@ -57,26 +57,43 @@ API key (a new credential key is made with the first one).
 ## When OpenAI cannot be asked
 
 An outage or a rate limit at OpenAI says nothing about the key, so it is
-never a `422`. Connecting, replacing a key (`PATCH` with `api_key`), a check
-and a setup answer:
+never a `422`. Connecting, replacing a key (`PATCH` with `api_key`), a check,
+a setup and a real test event (`POST /destinations/{id}/test` with `real`)
+answer:
 
 | Status | When | Body |
 |--------|------|------|
 | `503` with `Retry-After` | No answer from OpenAI, or a 5xx of its own | `details.reason` `unreachable` |
 | `429` with `Retry-After` | OpenAI answered 429, or this install is holding to OpenAI's per-minute limits | `details.reason` `rate_limited` |
-| `502` | OpenAI answered something its API does not document (an ad account with no id, currency or time zone) | `details.reason` `unreadable_answer` |
+| `502` | OpenAI answered something its API does not document (an ad account with no id, currency or time zone; a list with no `data`; a create naming nothing it made), or refused the request itself with a 4xx that is not about the key | `details.reason` `unreadable_answer` |
 
 `details.upstream` is `openai_ads`. Nothing is stored by a connect or a key
-replacement that ends this way. A **check** still records the try
-(`last_error`, `checked_at`) and leaves `status` as it was; the connection is
-in `details.connection`. A check OpenAI *refuses* was made, and is a `200`
-with `status` `key_refused`. A **setup** is one of these only when OpenAI was
-not reached (or was limiting) and no step came out `created`, `found`, `given`
-or `kept`: the run set nothing up, and its steps are in `details.steps`
-(`429` when every such failure was the rate limit, else `503`). A run in which
-any step did or kept something is a `200` with each step's outcome, failed
-ones included. `p202 ad-connection` exits 4 (server) or 7 (rate limited) for
-these, with a hint to wait and run the command again.
+replacement that ends this way, and no test event was sent. A **check** still
+records the try (`last_error`, `checked_at`) and leaves `status` as it was
+(so a connection already `key_refused` stays so beside an outage's
+`last_error`, until a check that is answered); the connection is in
+`details.connection`. A check OpenAI *refuses* was made, and is a `200` with
+`status` `key_refused`.
+
+A **setup** answers by this rule. A step *did something* when it came out
+`created`, `found` or `given`, or when event settings were made or found
+though the step failed. `kept` (what an earlier run made) is not this run
+doing something.
+
+| A setup in which | Answer |
+|------------------|--------|
+| a step did something | `200`, each step's outcome, failed ones included |
+| no step did something, and OpenAI refused the stored key (401, 403) | `422` naming `api_key`; the connection's `status` becomes `key_refused` |
+| no step did something, OpenAI was not reached or was limiting requests | `503`, or `429` when every such answer was the rate limit; the steps in `details.steps` |
+| no step did something, and OpenAI's answers could not be used | `502`; the steps in `details.steps` |
+| no call to OpenAI failed (every step kept, skipped or needs input) | `200` |
+
+A refused key also marks the connection `key_refused` in a run that did
+something. A real test event that OpenAI refuses (a 400 about the event, a
+refused Conversions API key) is OpenAI's verdict, a `200` with `sent` false.
+`p202 ad-connection` and `p202 destination test --real` exit 4 (server) or 7
+(rate limited) for the 5xx and 429 answers, with a hint to wait and run the
+command again, and 1 with the key hint for a refused key.
 
 ## Setup
 

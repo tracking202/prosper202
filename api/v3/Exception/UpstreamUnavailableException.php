@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Api\V3\Exception;
 
 use Api\V3\HttpException;
+use Prosper202\AdPlatforms\AdPlatformUnavailable;
 
 /**
  * A service this install had to ask (an ad platform's API) could not be
@@ -16,6 +17,26 @@ use Api\V3\HttpException;
  */
 final class UpstreamUnavailableException extends HttpException
 {
+    /** OpenAI's limits are per minute, and its own failures say "try again in a minute". */
+    public const RETRY_AFTER = 60;
+
+    /**
+     * How the API answers an ad platform that could not be asked: its rate limit a 429, not reached a 503, an
+     * answer that cannot be used a 502. None of them says anything about what the caller sent (CLAUDE.md #11).
+     *
+     * @param array<string, mixed> $details added beside the platform and the reason
+     */
+    public static function forAdPlatform(AdPlatformUnavailable $e, string $platform, array $details = []): HttpException
+    {
+        $details = ['upstream' => $platform, 'reason' => $e->reason] + $details + $e->context;
+        if ($e->reason === AdPlatformUnavailable::RATE_LIMITED) {
+            return new TooManyRequestsException($e->getMessage(), self::RETRY_AFTER, ['details' => $details]);
+        }
+        $retryAfter = $e->reason === AdPlatformUnavailable::UNREACHABLE ? self::RETRY_AFTER : null;
+
+        return new self($e->getMessage(), $retryAfter, $details, $e);
+    }
+
     /**
      * @param int|null $retryAfter seconds, for a service that was not reached; null for an answer that cannot be used
      * @param array<string, mixed> $details added to the answer's body

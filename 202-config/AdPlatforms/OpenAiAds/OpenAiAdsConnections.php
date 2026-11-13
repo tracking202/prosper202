@@ -45,12 +45,16 @@ final class OpenAiAdsConnections
     public const PIXEL_NAME = 'Prosper202';
     public const KEY_NAME = 'Prosper202 server events';
     private const MAX_PAGES = 10;
-    /** A step with one of these outcomes did something, or kept what an earlier run did. */
-    private const DONE_OUTCOMES = ['created', 'found', 'given', 'kept'];
+    /** A step with one of these outcomes got a usable answer from OpenAI or stored what it was given. */
+    private const DONE_OUTCOMES = ['created', 'found', 'given'];
     private const NOT_ENABLED = 'OpenAI answered 404 Not found: %s is not switched on for this ad account. Ask your OpenAI partner representative to enable it, or %s';
 
     /** @var list<string> the kinds of the answers a setup run did not get from OpenAI (an outage, its limit) */
     private array $unreached = [];
+    /** @var list<string> why OpenAI's answers in a setup run could not be used (not about the key, not an outage) */
+    private array $unusable = [];
+    /** What OpenAI said when it refused the stored key during a setup run, or null. */
+    private ?string $keyRefused = null;
 
     public function __construct(
         private readonly AdConnectionStore $store,
@@ -164,6 +168,8 @@ final class OpenAiAdsConnections
         $key = $connection['credentials']['advertiser_api_key'] ?? '';
         $steps = [];
         $this->unreached = [];
+        $this->unusable = [];
+        $this->keyRefused = null;
         $skip = static fn (string $step): bool => in_array($step, $options['skip'], true);
 
         $reread = fn (): array => $this->store->forCalling($userId, $connectionId) ?? throw new \RuntimeException('ad connection ' . $connectionId . ' was deleted during its setup');
@@ -180,11 +186,33 @@ final class OpenAiAdsConnections
         $steps[] = $skip('event_settings') ? self::step('event_settings', 'skipped', 'Skipped: no event settings were made.') : $this->eventSettingsStep($userId, $connection, $key, $setup, $pixel, $options, $now);
 
         $gone = 'ad connection ' . $connectionId . ' was deleted during its setup';
+        if ($this->keyRefused !== null) {
+            // A refusal is a fact about the stored key, as a check records it.
+            $refused = 'OpenAI refused the stored key during setup (' . $this->keyRefused . '); replace it.';
+            $kept = AdConnectionStore::STATUS_KEY_REFUSED;
+            $this->store->recordCheck($userId, $connectionId, null, $kept, $refused, $now);
+        }
         $stands = $this->store->get($userId, $connectionId) ?? throw new \RuntimeException($gone);
         $ran = ['connection' => $stands, 'steps' => $steps];
-        // A run in which OpenAI was not reached and no step made, found, took or kept anything did not set
-        // anything up: that is a failure of the run, not an answer with four failed steps in it.
-        $did = array_intersect(array_column($steps, 'outcome'), self::DONE_OUTCOMES) !== [];
+        // A run in which some call to OpenAI failed and no step made, found or took anything set nothing up
+        // (steps that only kept what an earlier run made do not count): that is a failure of the run, not an
+        // answer with its steps failed in it. A refused key is the caller's to mend, an outage or the rate limit
+        // is for later, and an answer that cannot be used is OpenAI's.
+        $made = static fn (array $step): bool => in_array($step['outcome'], self::DONE_OUTCOMES, true)
+            || ($step['step'] === 'event_settings' && ($step['event_settings'] ?? []) !== []);
+        $did = array_filter($steps, $made) !== [];
+        if (!$did && $this->keyRefused !== null) {
+            throw new AdConnectionInputException('api_key', 'OpenAI refused the stored Advertiser API key ('
+                . $this->keyRefused . '), so setup made nothing. Replace it with a key for ad account '
+                . $connection['account_ref'] . ' (p202 ad-connection update --api-key-file), then run setup again.');
+        }
+        if (!$did && $this->unreached === [] && $this->unusable !== []) {
+            throw new AdPlatformUnavailable(
+                AdPlatformUnavailable::UNREADABLE,
+                'OpenAI\'s answers could not be used, so setup made nothing: ' . $this->unusable[0] . '.',
+                $ran
+            );
+        }
         if (!$did && $this->unreached !== []) {
             $limited = array_unique($this->unreached) === [AdvertiserAnswer::RATE_LIMITED];
 
@@ -199,14 +227,29 @@ final class OpenAiAdsConnections
         return $ran;
     }
 
-    /** What a setup run asked of OpenAI: an answer it did not get (an outage, the limit) is counted for the run. */
+    /**
+     * What a setup run asked of OpenAI: an answer it did not get (an outage, the limit), a refused key and a
+     * refusal of the request itself are counted for the run.
+     */
     private function heard(AdvertiserAnswer $answer): AdvertiserAnswer
     {
         if ($answer->kind === AdvertiserAnswer::UNAVAILABLE || $answer->kind === AdvertiserAnswer::RATE_LIMITED) {
             $this->unreached[] = $answer->kind;
+        } elseif ($answer->kind === AdvertiserAnswer::KEY_REFUSED) {
+            $this->keyRefused ??= (string) $answer->error;
+        } elseif ($answer->kind === AdvertiserAnswer::REFUSED) {
+            $this->unusable[] = (string) $answer->error;
         }
 
         return $answer;
+    }
+
+    /** An answer OpenAI gave that is not what its API documents, counted for the run; the sentence back. */
+    private function unusable(string $why): string
+    {
+        $this->unusable[] = $why;
+
+        return $why;
     }
 
     private static function reasonOf(AdvertiserAnswer $answer): string
@@ -288,7 +331,9 @@ final class OpenAiAdsConnections
         }
         $pixel = $created->isOk() ? self::pixelOf($created->json) : null;
         if ($pixel === null) {
-            return self::step('pixel', 'failed', 'The pixel was not created: ' . ($created->error ?? 'OpenAI\'s answer names no pixel id'));
+            $why = $created->error ?? $this->unusable('OpenAI\'s answer names no pixel id');
+
+            return self::step('pixel', 'failed', 'The pixel was not created: ' . $why);
         }
         $pixel += ['how' => 'created'];
         $this->store->mergeSetup($userId, $id, ['pixel' => $pixel], $now);
@@ -319,7 +364,9 @@ final class OpenAiAdsConnections
         }
         $made = $created->json['api_key'] ?? null;
         if (!$created->isOk() || !is_string($made) || $made === '' || preg_match('/[\x00-\x20\x7f]/', $made) === 1) {
-            return self::step('conversions_key', 'failed', 'No Conversions API key was made: ' . ($created->error ?? 'OpenAI\'s answer holds no key'));
+            $why = $created->error ?? $this->unusable('OpenAI\'s answer holds no key');
+
+            return self::step('conversions_key', 'failed', 'No Conversions API key was made: ' . $why);
         }
         $this->store->putCredential($userId, $id, 'conversions_api_key', $made, $now);
 
@@ -478,7 +525,8 @@ final class OpenAiAdsConnections
             $id = $created->json['id'] ?? null;
             if (!$created->isOk() || !is_string($id) || $id === '') {
                 $failed = true;
-                $said[] = $type . ': not made (' . ($created->error ?? 'OpenAI\'s answer names no event setting') . ')';
+                $why = $created->error ?? $this->unusable('OpenAI\'s answer names no event setting');
+                $said[] = $type . ': not made (' . $why . ')';
                 continue;
             }
             $made[$type] = ['id' => $id, 'name' => is_string($created->json['name'] ?? null) ? $created->json['name'] : '', 'how' => 'created'];
@@ -534,7 +582,7 @@ final class OpenAiAdsConnections
             }
             $data = $answer->json['data'] ?? null;
             if (!is_array($data) || !array_is_list($data)) {
-                return 'OpenAI\'s answer has no list of data';
+                return $this->unusable('OpenAI\'s answer has no list of data');
             }
             foreach ($data as $row) {
                 if (is_array($row)) {

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"io"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -24,6 +25,8 @@ var (
 )
 
 const adConnectionListHint = "`p202 ad-connection list` shows your connections and their ids."
+
+const ppcAccountListHint = "`p202 ppc-account list` shows the traffic source account ids."
 
 var adConnectionCmd = &cobra.Command{
 	Use:   "ad-connection",
@@ -127,7 +130,7 @@ var adConnectionGetCmd = &cobra.Command{
 		}
 		data, err := c.Get("ad-connections/"+args[0], nil)
 		if err != nil {
-			return withValidationHint(err, "%s", adConnectionListHint)
+			return withStatusHint(err, statusHint{http.StatusNotFound, "", adConnectionListHint})
 		}
 		render(data)
 		return nil
@@ -160,7 +163,8 @@ var adConnectionCreateCmd = &cobra.Command{
 		}
 		data, err := c.Post("ad-connections", body)
 		if err != nil {
-			return withValidationHint(err, "%s", advertiserKeyWhere)
+			return withStatusHint(err, statusHint{http.StatusUnprocessableEntity, "api_key", advertiserKeyWhere},
+				statusHint{http.StatusUnprocessableEntity, "ppc_account_id", ppcAccountListHint})
 		}
 		render(data)
 		return nil
@@ -198,7 +202,9 @@ var adConnectionUpdateCmd = &cobra.Command{
 		}
 		data, err := c.Patch("ad-connections/"+args[0], body)
 		if err != nil {
-			return withValidationHint(err, "%s", adConnectionListHint)
+			return withStatusHint(err, statusHint{http.StatusNotFound, "", adConnectionListHint},
+				statusHint{http.StatusUnprocessableEntity, "api_key", advertiserKeyWhere},
+				statusHint{http.StatusUnprocessableEntity, "ppc_account_id", ppcAccountListHint})
 		}
 		render(data)
 		return nil
@@ -236,7 +242,7 @@ var adConnectionCheckCmd = &cobra.Command{
 		}
 		data, err := c.Post("ad-connections/"+args[0]+"/check", map[string]interface{}{})
 		if err != nil {
-			return withValidationHint(err, "%s", adConnectionListHint)
+			return withStatusHint(err, statusHint{http.StatusNotFound, "", adConnectionListHint})
 		}
 		render(data)
 		return nil
@@ -310,7 +316,9 @@ var adConnectionSetupCmd = &cobra.Command{
 		}
 		data, err := c.Post("ad-connections/"+args[0]+"/setup", body)
 		if err != nil {
-			return withValidationHint(err, "%s", adConnectionListHint)
+			replace := "Replace the stored key with `p202 ad-connection update " + args[0] + " --api-key-file <file>`, then run setup again. " + advertiserKeyWhere
+			return withStatusHint(err, statusHint{http.StatusNotFound, "", adConnectionListHint},
+				statusHint{http.StatusUnprocessableEntity, "api_key", replace})
 		}
 		render(data)
 		return nil

@@ -5390,11 +5390,16 @@ paths:
         Where OpenAI answers 404 to pixel or key creation (the feature is off
         for the account) the step is `needs_input`: give `pixel_id` with
         `source_id`, or `conversions_api_key`, from Ads Manager. Creates carry
-        an Idempotency-Key. A run in which OpenAI was not reached (or was
-        limiting requests) and no step is `created`, `found`, `given` or
-        `kept` set nothing up and is a 503 (429 when every such failure was
-        the rate limit), with the steps in `details.steps`; a run in which
-        any step did or kept something is a 200 with each step's outcome.
+        an Idempotency-Key. A step did something when it is `created`,
+        `found` or `given` (or made or found event settings though it
+        failed); `kept` is not this run's doing. A run in which a step did
+        something is a 200 with each step's outcome. A run in which none
+        did and a call to OpenAI failed is a failure: 422 naming `api_key`
+        when OpenAI refused the stored key (the connection becomes
+        `key_refused`), 503 when OpenAI was not reached (429 when every
+        such answer was its rate limit), else 502 for answers that cannot
+        be used, with the steps in `details.steps`. A run in which no call
+        failed (every step kept, skipped or needing input) is a 200.
         Not previewable: `dry_run` is answered 422.
       operationId: setupAdConnection
       requestBody:
@@ -5620,7 +5625,10 @@ paths:
         `status_code` and `message`. Because the event is counted, `real`
         is refused (422 naming `confirm_counted`) unless
         `"confirm_counted": true` is sent with it. Without a connection it
-        is a 422 naming `real`. Not logged as a delivery.
+        is a 422 naming `real`. OpenAI not reached is a 503, its rate limit
+        a 429 (both with Retry-After), and no event was sent; a refusal of
+        the event is OpenAI's verdict, a 200 with `sent` false. Not logged
+        as a delivery.
       operationId: testDestination
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer}}
@@ -5655,6 +5663,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/UpstreamRateLimited"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /destinations/{id}/oauth/start:
     post:

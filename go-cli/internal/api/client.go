@@ -346,7 +346,7 @@ func HintFor(err error) string {
 		// A service the install had to ask (an ad platform) was not reached,
 		// or answered what cannot be used: the install itself is fine.
 		case (apiErr.Status == 502 || apiErr.Status == 503) && upstreamOf(apiErr) != "":
-			return "Nothing in the request is wrong, and nothing is wrong with the key: the install could not get a usable answer from " + upstreamOf(apiErr) + ". Wait a minute and run the same command again; if it persists, check that service's status."
+			return "Nothing in the request was refused, and no key was judged: the install could not get a usable answer from " + upstreamOf(apiErr) + ". Wait a minute and run the same command again; if it persists, check that service's status."
 		case apiErr.Status >= 500:
 			return "Server-side failure. Retry after a short wait; if it persists, run `p202 system health` and check the server logs."
 		}

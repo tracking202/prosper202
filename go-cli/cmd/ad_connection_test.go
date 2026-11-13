@@ -148,14 +148,19 @@ func TestDestinationTestRealAsksForTheReadBack(t *testing.T) {
 	}
 }
 
-// A command's own hint (where the key is, which command lists ids) is for a
-// refusal of what was sent. A dead server, a refused API key or a 500 keeps
-// the hint of its class.
-func TestAdConnectionHintsAreForRefusedInputOnly(t *testing.T) {
-	status := http.StatusOK
+// A command's own hint is for the answer it is true of: where the key is for
+// a refused key (a 422 naming api_key), which command lists ids for an
+// unknown id (a 404). Any other refusal, a dead server, a refused API key or a
+// 500 keeps the hint of its class.
+func TestAdConnectionHintsAreForTheAnswerTheyAreTrueOf(t *testing.T) {
+	status, field := http.StatusOK, ""
 	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
-		w.Write([]byte(`{"error":true,"message":"refused","status":` + strconv.Itoa(status) + `}`))
+		fields := ""
+		if field != "" {
+			fields = `,"field_errors":{"` + field + `":"refused"}`
+		}
+		w.Write([]byte(`{"error":true,"message":"refused","status":` + strconv.Itoa(status) + fields + `}`))
 	}))
 	defer srv.Close()
 	deadSrv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
@@ -168,32 +173,41 @@ func TestAdConnectionHintsAreForRefusedInputOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	const realHint = "--real needs a ChatGPT Ads destination"
+	const replaceHint = "Replace the stored key with `p202 ad-connection update 3 --api-key-file"
 	commands := map[string]struct {
 		args []string
-		own  string
+		// the command's own hint by answer: "404", or "422 <field>"
+		own map[string]string
 	}{
-		"create":                  {[]string{"ad-connection", "create", "--api-key-file", keyFile}, advertiserKeyWhere},
-		"get":                     {[]string{"ad-connection", "get", "3"}, adConnectionListHint},
-		"check":                   {[]string{"ad-connection", "check", "3"}, adConnectionListHint},
-		"setup":                   {[]string{"ad-connection", "setup", "3"}, adConnectionListHint},
-		"update":                  {[]string{"ad-connection", "update", "3", "--api-key-file", keyFile}, adConnectionListHint},
-		"destination test --real": {[]string{"destination", "test", "3", "--real"}, realHint},
+		"create": {[]string{"ad-connection", "create", "--api-key-file", keyFile},
+			map[string]string{"422 api_key": advertiserKeyWhere, "422 ppc_account_id": ppcAccountListHint}},
+		"get":   {[]string{"ad-connection", "get", "3"}, map[string]string{"404": adConnectionListHint}},
+		"check": {[]string{"ad-connection", "check", "3"}, map[string]string{"404": adConnectionListHint}},
+		"setup": {[]string{"ad-connection", "setup", "3"},
+			map[string]string{"404": adConnectionListHint, "422 api_key": replaceHint}},
+		"update": {[]string{"ad-connection", "update", "3", "--api-key-file", keyFile},
+			map[string]string{"404": adConnectionListHint, "422 api_key": advertiserKeyWhere, "422 ppc_account_id": ppcAccountListHint}},
+		"destination test --real": {[]string{"destination", "test", "3", "--real"},
+			map[string]string{"404": destinationListHint, "422 real": realHint}},
 	}
 	for name, command := range commands {
 		for _, c := range []struct {
 			what   string
 			url    string
 			status int
+			field  string
 			exit   int
-			own    bool
 		}{
-			{"a refused field", srv.URL, http.StatusUnprocessableEntity, ExitValidation, true},
-			{"an unknown id", srv.URL, http.StatusNotFound, ExitValidation, true},
-			{"a refused API key", srv.URL, http.StatusUnauthorized, ExitAuth, false},
-			{"a server failure", srv.URL, http.StatusInternalServerError, ExitServer, false},
-			{"a dead server", dead, 0, ExitNetwork, false},
+			{"a refused key", srv.URL, http.StatusUnprocessableEntity, "api_key", ExitValidation},
+			{"a refused traffic source account", srv.URL, http.StatusUnprocessableEntity, "ppc_account_id", ExitValidation},
+			{"a refused real", srv.URL, http.StatusUnprocessableEntity, "real", ExitValidation},
+			{"another refused field", srv.URL, http.StatusUnprocessableEntity, "skip", ExitValidation},
+			{"an unknown id", srv.URL, http.StatusNotFound, "", ExitValidation},
+			{"a refused API key", srv.URL, http.StatusUnauthorized, "", ExitAuth},
+			{"a server failure", srv.URL, http.StatusInternalServerError, "", ExitServer},
+			{"a dead server", dead, 0, "", ExitNetwork},
 		} {
-			status = c.status
+			status, field = c.status, c.field
 			writeTestConfig(t, tmp, c.url, "test-key")
 			_, _, err := executeCommand(append(command.args, "--json")...)
 			if err == nil {
@@ -202,11 +216,24 @@ func TestAdConnectionHintsAreForRefusedInputOnly(t *testing.T) {
 			if got := exitCodeForError(err); got != c.exit {
 				t.Errorf("%s, %s: exit %d, want %d (%v)", name, c.what, got, c.exit, err)
 			}
-			hint := hintFor(err)
-			if has := strings.Contains(hint, command.own); has != c.own {
-				t.Errorf("%s, %s: the command's own hint present = %v, want %v; hint = %q", name, c.what, has, c.own, hint)
+			answer := strconv.Itoa(c.status)
+			if c.field != "" {
+				answer += " " + c.field
 			}
-			if !c.own && (hint == "" || hint != api.HintFor(err)) {
+			hint := hintFor(err)
+			if own, has := command.own[answer]; has {
+				if !strings.Contains(hint, own) {
+					t.Errorf("%s, %s: hint = %q, want the command's own %q", name, c.what, hint, own)
+				}
+				continue
+			}
+			for _, own := range command.own {
+				if strings.Contains(hint, own) {
+					t.Errorf("%s, %s: hint = %q holds the command's own %q, which is not true of this answer", name, c.what, hint, own)
+				}
+			}
+			// A 404 the command has no hint of its own for gets the resource's not-found hint.
+			if c.status != http.StatusNotFound && (hint == "" || hint != api.HintFor(err)) {
 				t.Errorf("%s, %s: hint = %q, want the one api.HintFor has for the class", name, c.what, hint)
 			}
 			if c.what == "a dead server" && !strings.Contains(hint, "Check the server URL") {
@@ -241,10 +268,11 @@ func TestAdConnectionOpenAiOutageIsNotABadKey(t *testing.T) {
 			`"retry_after_seconds":60,"details":{"upstream":"openai_ads","reason":"` + reason + `"}}`
 	}
 	commands := map[string][]string{
-		"create": {"ad-connection", "create", "--api-key-file", keyFile},
-		"update": {"ad-connection", "update", "3", "--api-key-file", keyFile},
-		"check":  {"ad-connection", "check", "3"},
-		"setup":  {"ad-connection", "setup", "3"},
+		"create":                  {"ad-connection", "create", "--api-key-file", keyFile},
+		"update":                  {"ad-connection", "update", "3", "--api-key-file", keyFile},
+		"check":                   {"ad-connection", "check", "3"},
+		"setup":                   {"ad-connection", "setup", "3"},
+		"destination test --real": {"destination", "test", "3", "--real"},
 	}
 	for name, args := range commands {
 		for _, c := range []struct {
@@ -254,8 +282,8 @@ func TestAdConnectionOpenAiOutageIsNotABadKey(t *testing.T) {
 			exit   int
 			retry  string
 		}{
-			{"an outage", http.StatusServiceUnavailable, upstream(503, "unreachable"), ExitServer, "Wait a minute and run the same command again"},
-			{"an unusable answer", http.StatusBadGateway, upstream(502, "unreadable_answer"), ExitServer, "Wait a minute and run the same command again"},
+			{"an outage", http.StatusServiceUnavailable, upstream(503, "unreachable"), ExitServer, "no key was judged"},
+			{"an unusable answer", http.StatusBadGateway, upstream(502, "unreadable_answer"), ExitServer, "no key was judged"},
 			{"its rate limit", http.StatusTooManyRequests, upstream(429, "rate_limited"), ExitRateLimited, ""},
 		} {
 			status, body = c.status, c.body
@@ -267,7 +295,8 @@ func TestAdConnectionOpenAiOutageIsNotABadKey(t *testing.T) {
 				t.Errorf("%s, %s: exit %d, want %d (%v)", name, c.what, got, c.exit, err)
 			}
 			hint := hintFor(err)
-			if strings.Contains(hint, advertiserKeyWhere) || strings.Contains(hint, adConnectionListHint) {
+			if strings.Contains(hint, advertiserKeyWhere) || strings.Contains(hint, adConnectionListHint) ||
+				strings.Contains(hint, "--real needs") || strings.Contains(hint, destinationListHint) {
 				t.Errorf("%s, %s: a command's own hint on an outage: %q", name, c.what, hint)
 			}
 			if hint == "" || hint != api.HintFor(err) {

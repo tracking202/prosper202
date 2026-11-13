@@ -762,7 +762,8 @@ var destinationTestCmd = &cobra.Command{
 		data, err := c.Post("destinations/"+args[0]+"/test", body)
 		if err != nil {
 			if _, real := body["real"]; real {
-				return withValidationHint(err, "--real needs a ChatGPT Ads destination and an ad connection to its pixel's account (`p202 ad-connection list`).")
+				return withStatusHint(err, statusHint{http.StatusNotFound, "", destinationListHint},
+					statusHint{http.StatusUnprocessableEntity, "real", "--real needs a ChatGPT Ads destination and an ad connection to its pixel's account (`p202 ad-connection list`)."})
 			}
 			return withHint(err, "%s", destinationListHint)
 		}

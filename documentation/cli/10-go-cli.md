@@ -724,6 +724,14 @@ records and their errors too, and a record whose create failed with a 5xx or
 on the connection may exist already: its hint says to check the entity's
 `list` first.
 
+A 502 or 503 whose `details.upstream` names an ad platform (`p202
+ad-connection create|update|check|setup`, `p202 destination test --real`)
+is `server`, exit 4: the install could not get a usable answer from OpenAI,
+and no key was judged. Its hint says to wait a minute and run the same
+command again; the command's own hints (where the key is, which command
+lists ids) are attached only to the answers they are true of, a 422 naming
+the field or a 404.
+
 Lists of valid values (supported entities, the metrics a response did
 contain) sit in the message itself, so they are visible even when the hint
 is ignored; the hint carries the next action. Every flag that takes a fixed
