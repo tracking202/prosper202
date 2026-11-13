@@ -5451,6 +5451,9 @@ class UPGRADE
                 // log (Prosper202\Destinations).
                 \Prosper202\Database\Tables\ConversionTables::destinations(),
                 \Prosper202\Database\Tables\ConversionTables::destinationDeliveries(),
+                // The ad platform accounts reached through their own API
+                // (Prosper202\AdPlatforms\AdConnectionStore).
+                \Prosper202\Database\Tables\ConversionTables::adConnections(),
                 // IPQualityScore scoring (Prosper202\Fraud\IpqsScoring): each
                 // account's cached address scores and how far it has walked.
                 \Prosper202\Database\Tables\UserTables::ipqsScores(),

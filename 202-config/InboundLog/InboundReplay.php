@@ -233,7 +233,8 @@ final class InboundReplay
      * The sentence naming the account's switched-on destinations that will
      * not take this conversion for its age ('' when none), each judged as it
      * judges a conversion: Google Analytics by the conversion's own time
-     * (Ga4Destination::MAX_AGE_SECONDS), Google Ads by its click's first
+     * (Ga4Destination::MAX_AGE_SECONDS), as ChatGPT Ads is
+     * (OpenAiAdsDestination::MAX_AGE_SECONDS), Google Ads by its click's first
      * visit, when the click carries an id Google matches it by
      * (GoogleAdsDestination::CLICK_MAX_AGE). A destination that sends only
      * some campaigns is named only for one of them.

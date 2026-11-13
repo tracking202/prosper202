@@ -977,6 +977,7 @@ p202 destination conversion-actions <id> [--customer-id N [--login-customer-id N
 p202 destination pick <id> [--account NAME|ID] [--action NAME|ID] [--json]   # sets both from Google's lists; several to choose from is a 422 listing them
 p202 destination update <id> [--enable|--disable] [--name S] [any create flag]   # only the flags given change
 p202 destination test <id> [--json]                     # made-up conversion to GA4's /debug/mp/collect: valid + messages
+p202 destination test <id> --real [--json]              # ChatGPT Ads with an ad connection: a real event (saved, counted), then arrived: true|false
 p202 destination deliveries <id> [--status pending|sent|failed|withheld|cancelled] [--kind conversion|test]
                        [--conv-id N] [--limit 50] [--offset 0] [--json]    # the log; meta.summary counts by status
 p202 destination resend <id> (--delivery-id N | --status failed|withheld) [--json]   # sent again with all their tries; `more` true: run again
@@ -998,6 +999,26 @@ old also waits; one with no gclid/wbraid/gbraid and no hashed data is `withheld`
 something only a person can fix (a developer token Google has not approved, lost access, a wrong customer ID or
 conversion action), `destination get` shows `waiting` (`reason`, `status_code`, `until`); report the `reason`,
 and after the fix `destination update` (same settings or credentials) makes them due at once.
+
+### Ad connections (ChatGPT Ads through its Advertiser API)
+
+```
+p202 ad-connection list [--json]                        # keys never shown (credentials_set)
+p202 ad-connection get <id> [--json]                    # account id, name, currency, timezone; status; what setup made
+p202 ad-connection create --api-key-file FILE|- [--ppc-account-id N]   # checked with OpenAI first; refused or unchecked = nothing stored
+p202 ad-connection update <id> [--api-key-file FILE|-] [--ppc-account-id N | --no-ppc-account]   # a new key must reach the same ad account
+p202 ad-connection check <id> [--json]                  # read the account again; 401/403 = status key_refused, an outage keeps status
+p202 ad-connection setup <id> [--skip STEP]... [--event-type T]... [--pixel SOURCE_ID]
+                    [--pixel-id ID --source-id SOURCE_ID] [--conversions-key-file FILE|-] [--json]
+p202 ad-connection delete <id> [--force] [--dry-run] [--json]   # keys erased here; nothing removed at OpenAI
+```
+
+`setup` runs `pixel`, `conversions_key`, `destination`, `event_settings` and answers each step's `outcome`
+(`created`, `found`, `given`, `kept`, `skipped`, `needs_input`, `unavailable`, `failed`) with a `detail`. Run it
+again freely: what a step made is kept. `needs_input` on `pixel` or `conversions_key` means OpenAI has that
+feature off for the account; report the `detail` and ask the person for the pixel id and source id or a
+Conversions API key from Ads Manager. `currency_matches_account` false means the ad account bills in another
+currency than the Prosper202 account; spend is not converted. `--staged` is refused.
 
 ### Reports
 

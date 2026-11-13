@@ -104,7 +104,7 @@ final class LedgerCostIntegrationTest extends TestCase
             self::q("DELETE FROM 202_ppc_networks WHERE user_id = $u");
         }
         self::q('DELETE FROM 202_ppc_network_variables WHERE ppc_network_id IN (' . self::NETWORK . ', ' . (self::NETWORK + 1)
-            . ', ' . (self::NETWORK + 2) . ')');
+            . ', ' . (self::NETWORK + 2) . ', ' . (self::NETWORK + 3) . ')');
         self::q('DELETE FROM 202_custom_variables WHERE custom_variable_id BETWEEN 630100 AND 630199');
         self::q('DELETE FROM 202_variable_sets2 WHERE variable_set_id BETWEEN 630100 AND 630199');
     }
@@ -121,7 +121,7 @@ final class LedgerCostIntegrationTest extends TestCase
         // account's with one too: its clicks share an ad id with ours.
         foreach ([self::USER => self::NETWORK, self::OTHER => self::NETWORK + 1] as $u => $network) {
             self::q("INSERT INTO 202_ppc_networks SET ppc_network_id = $network, user_id = $u,"
-                . " ppc_network_name = 'ChatGPT Ads', ppc_network_time = 0");
+                . " ppc_network_name = 'ChatGPT Ads', ppc_network_platform = 'chatgpt_ads', ppc_network_time = 0");
             self::q("INSERT INTO 202_ppc_network_variables SET ppc_variable_id = $network, ppc_network_id = $network,"
                 . " name = 'ad_id', parameter = 'ad_id', placeholder = '{ad_id}'");
             self::q("INSERT INTO 202_ppc_network_variables SET ppc_variable_id = " . ($network + 10) . ", ppc_network_id = $network,"
@@ -347,7 +347,7 @@ final class LedgerCostIntegrationTest extends TestCase
     {
         $network = self::NETWORK + 2;
         self::q("INSERT INTO 202_ppc_networks SET ppc_network_id = $network, user_id = " . self::USER
-            . ", ppc_network_name = 'ChatGPT Ads 2', ppc_network_time = 0");
+            . ", ppc_network_name = 'ChatGPT Ads 2', ppc_network_platform = 'chatgpt_ads', ppc_network_time = 0");
         self::q("INSERT INTO 202_ppc_network_variables SET ppc_variable_id = $network, ppc_network_id = $network,"
             . " name = 'ad_id', parameter = 'ad_id', placeholder = '{ad_id}'");
         self::q("INSERT INTO 202_custom_variables SET custom_variable_id = 630106, ppc_variable_id = $network, variable = 'ad_A '");
@@ -376,6 +376,121 @@ final class LedgerCostIntegrationTest extends TestCase
         self::withoutTemporaryTables(function (\mysqli $limited) use ($expected, $window): void {
             self::assertSame($expected, self::reports(new ReportsController($limited, self::USER), $window));
         });
+    }
+
+    /**
+     * ChatGPT Ads spend is shared only over clicks of a ChatGPT Ads traffic
+     * source (LedgerCost::SOURCE_PLATFORMS) on an account that has one: a
+     * click of another source carrying the same ad id keeps its CPC, on both
+     * report paths. An account whose ChatGPT Ads source was set up by hand
+     * (none marked) is matched by the ad id alone, as is spend of a platform
+     * no source marks.
+     */
+    public function testChatGptAdsSpendGoesOnlyToClicksOfAChatGptAdsSource(): void
+    {
+        // A newsletter source with its own ad_id variable, whose click carries ad_A too.
+        $network = self::NETWORK + 3;
+        self::q("INSERT INTO 202_ppc_networks SET ppc_network_id = $network, user_id = " . self::USER
+            . ", ppc_network_name = 'Newsletter', ppc_network_time = 0");
+        self::q("INSERT INTO 202_ppc_network_variables SET ppc_variable_id = $network, ppc_network_id = $network,"
+            . " name = 'ad_id', parameter = 'ad_id', placeholder = '{ad}'");
+        self::q("INSERT INTO 202_custom_variables SET custom_variable_id = 630107, ppc_variable_id = $network, variable = 'ad_A'");
+        self::q("INSERT INTO 202_variable_sets2 SET variable_set_id = 630107, variables = '630107'");
+        // And one carrying 'ad_A ', the same ad to the ledger's PAD SPACE column (CLAUDE.md #17): it keeps its CPC too.
+        self::q("INSERT INTO 202_custom_variables SET custom_variable_id = 630108, ppc_variable_id = $network, variable = 'ad_A '");
+        self::q("INSERT INTO 202_variable_sets2 SET variable_set_id = 630108, variables = '630108'");
+        self::q('INSERT INTO 202_dataengine SET user_id = ' . self::USER . ', click_id = 630011, click_time = ' . (self::$hour + 900)
+            . ", ppc_network_id = $network, ppc_account_id = 1, aff_campaign_id = 1, landing_page_id = 0,"
+            . " keyword_id = 0, variable_set_id = '630108', clicks = 1, click_out = 1, leads = 0,"
+            . ' click_lead = 0, click_filtered = 0, click_bot = 0, payout = 0, income = 0, cost = 0.9');
+        self::q('INSERT INTO 202_dataengine SET user_id = ' . self::USER . ', click_id = 630010, click_time = ' . (self::$hour + 800)
+            . ", ppc_network_id = $network, ppc_account_id = 1, aff_campaign_id = 1, landing_page_id = 0,"
+            . " keyword_id = 0, variable_set_id = '630107', clicks = 1, click_out = 1, leads = 0,"
+            . ' click_lead = 0, click_filtered = 0, click_bot = 0, payout = 0, income = 0, cost = 0.8');
+        self::write(self::USER, [self::ledgerRow('ad_A', self::$hour, '3.00')]);
+        $window = self::window(self::$hour, self::$hour + 7199);
+        // Ad A's 3.00 over its two ChatGPT Ads clicks only; the newsletter clicks keep 0.8 and 0.9.
+        $total = 3.0 + 0.5 + 0.2 + 0.3 + 0.4 + 0.6 + 0.8 + 0.9;
+
+        $expected = self::reports(new ReportsController(self::$db, self::USER), $window);
+        $summary = json_decode($expected['summary'], true);
+        self::assertEqualsWithDelta($total, $summary['data']['total_cost'], 1e-9);
+        self::assertStringContainsString(LedgerCost::TIE_NOTE, $summary['spend_ledger']['unallocated']['note']);
+        self::assertSame(LedgerCost::TIE_NOTE, $summary['spend_ledger']['tie_note']);
+        $sets = LedgerCost::sets(new Connection(self::$db), self::USER, 'USD', self::$hour, self::$hour);
+        self::assertNotContains($network, array_column($sets, 'network_id'), 'the newsletter source carries no ChatGPT Ads ad');
+        self::withoutTemporaryTables(function (\mysqli $limited) use ($expected, $window): void {
+            self::assertSame($expected, self::reports(new ReportsController($limited, self::USER), $window));
+        });
+
+        // Named ads take the platform given: the same rule for them.
+        $named = LedgerCost::sets(new Connection(self::$db), self::USER, null, 0, 0, ['ad_A'], 'openai_ads');
+        self::assertNotContains($network, array_column($named, 'network_id'));
+        self::assertContains($network, array_column(LedgerCost::sets(new Connection(self::$db), self::USER, null, 0, 0, ['ad_A'], 'other_ads'), 'network_id'));
+
+        // A ChatGPT Ads source set up by hand: no source of the account is marked, so the ad id alone
+        // matches, the newsletter clicks included (3.00 over four clicks), and the note says nothing of it.
+        self::q("UPDATE 202_ppc_networks SET ppc_network_platform = '' WHERE user_id = " . self::USER);
+        $byHand = (new ReportsController(self::$db, self::USER))->summary($window);
+        self::assertEqualsWithDelta(3.0 + 0.5 + 0.2 + 0.3 + 0.4 + 0.6, $byHand['data']['total_cost'], 1e-9);
+        self::assertStringNotContainsString('ChatGPT Ads', $byHand['spend_ledger']['unallocated']['note']);
+        self::assertArrayNotHasKey('tie_note', $byHand['spend_ledger']);
+        // A removed marked source still marks the account: its clicks carry the mark.
+        self::q("UPDATE 202_ppc_networks SET ppc_network_platform = 'chatgpt_ads', ppc_network_deleted = 1 WHERE ppc_network_id = " . self::NETWORK);
+        $removed = (new ReportsController(self::$db, self::USER))->summary($window);
+        self::assertEqualsWithDelta($total, $removed['data']['total_cost'], 1e-9);
+        self::q("UPDATE 202_ppc_networks SET ppc_network_deleted = 0 WHERE ppc_network_id = " . self::NETWORK);
+
+        // A platform no traffic source marks: its ad is matched by the ad id on any source of the account.
+        self::q('DELETE FROM 202_spend_ledger WHERE user_id = ' . self::USER);
+        self::write(self::USER, [['platform' => 'other_ads'] + self::ledgerRow('ad_A', self::$hour, '3.00')]);
+        $summary = (new ReportsController(self::$db, self::USER))->summary($window);
+        // 3.00 over the two ChatGPT Ads clicks and the two newsletter clicks.
+        self::assertEqualsWithDelta(3.0 + 0.5 + 0.2 + 0.3 + 0.4 + 0.6, $summary['data']['total_cost'], 1e-9);
+        self::assertStringNotContainsString('ChatGPT Ads', $summary['spend_ledger']['unallocated']['note'], 'a platform no source marks');
+    }
+
+    /**
+     * The tie is said where it decided and only there: spend of a ChatGPT
+     * Ads ad that only an unmarked source's click carries is all unallocated,
+     * and the note says why; a window holding only another platform's spend
+     * says nothing of it, whatever the ledger holds outside the window.
+     */
+    public function testTheTieIsSaidWhereItDecidedAndOnlyThere(): void
+    {
+        $network = self::NETWORK + 3;
+        self::q("INSERT INTO 202_ppc_networks SET ppc_network_id = $network, user_id = " . self::USER
+            . ", ppc_network_name = 'Newsletter', ppc_network_time = 0");
+        self::q("INSERT INTO 202_ppc_network_variables SET ppc_variable_id = $network, ppc_network_id = $network,"
+            . " name = 'ad_id', parameter = 'ad_id', placeholder = '{ad}'");
+        self::q("INSERT INTO 202_custom_variables SET custom_variable_id = 630109, ppc_variable_id = $network, variable = 'ad_N'");
+        self::q("INSERT INTO 202_variable_sets2 SET variable_set_id = 630109, variables = '630109'");
+        self::q('INSERT INTO 202_dataengine SET user_id = ' . self::USER . ', click_id = 630012, click_time = ' . (self::$hour + 800)
+            . ", ppc_network_id = $network, ppc_account_id = 1, aff_campaign_id = 1, landing_page_id = 0,"
+            . " keyword_id = 0, variable_set_id = '630109', clicks = 1, click_out = 1, leads = 0,"
+            . ' click_lead = 0, click_filtered = 0, click_bot = 0, payout = 0, income = 0, cost = 0.8');
+        $window = self::window(self::$hour, self::$hour + 7199);
+
+        // ad_N: only the newsletter click carries it, so the tie leaves it unallocated (forReport's early return).
+        self::write(self::USER, [self::ledgerRow('ad_N', self::$hour, '3.00')]);
+        $summary = (new ReportsController(self::$db, self::USER))->summary($window);
+        self::assertEqualsWithDelta(0.1 + 0.1 + 0.5 + 0.2 + 0.3 + 0.4 + 0.6 + 0.8, $summary['data']['total_cost'], 1e-9);
+        self::assertEqualsWithDelta(3.0, $summary['spend_ledger']['unallocated']['total_cost'], 1e-9);
+        self::assertSame(LedgerCost::TIE_NOTE, $summary['spend_ledger']['tie_note'] ?? null);
+
+        // ChatGPT Ads spend five days before; the window holds another platform's only: no tie note.
+        self::q('DELETE FROM 202_spend_ledger WHERE user_id = ' . self::USER);
+        self::write(self::USER, [
+            self::ledgerRow('ad_A', self::$hour - 5 * 86400, '3.00'),
+            ['platform' => 'other_ads'] + self::ledgerRow('ad_X', self::$hour, '1.00'),
+        ]);
+        $other = (new ReportsController(self::$db, self::USER))->summary($window);
+        self::assertArrayNotHasKey('tie_note', $other['spend_ledger']);
+        self::assertStringNotContainsString('ChatGPT Ads', $other['spend_ledger']['unallocated']['note']);
+
+        // Named ads carry their platform: without it they would escape the tie.
+        $this->expectException(\InvalidArgumentException::class);
+        LedgerCost::sets(new Connection(self::$db), self::USER, null, 0, 0, ['ad_A']);
     }
 
     /**

@@ -207,6 +207,7 @@ final class SourceScanTest extends TestCase
     public function testEveryWalkOfTheTreeSkipsOtherCheckouts(): void
     {
         $scratchWalks = [
+            'tests/AdPlatforms/AdvertiserApiSharedLimitTest.php' => 1,
             'tests/Api/V3/IdempotencyReservationTest.php' => 3,
             'tests/Api/V3/PreferenceSecretCoverageTest.php' => 1,
             'tests/Api/V3/ServerStateStoreDefaultDirTest.php' => 1,

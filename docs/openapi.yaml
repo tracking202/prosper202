@@ -197,6 +197,8 @@ tags:
     description: Server-side sync between Prosper202 instances — plans, jobs, the change feed and the audit trail (admin, scopes `sync:read` / `sync:write`)
   - name: Destinations
     description: Ad platforms (GA4 first) the account's conversions are sent to from this server, a test fire, and each one's delivery log (scopes destinations:read / destinations:write; role permission access_to_setup_section)
+  - name: Ad Connections
+    description: Ad platform accounts (ChatGPT Ads) reached through their own API with the operator's key, checked and set up from here (scopes ad-connections:read / ad-connections:write; role permission access_to_setup_section)
   - name: Events
     description: Web events — what a click went on to do, reported by click id and evaluated by its campaign's goals (also `event=` on pixels and postbacks, and `p202.track()` on landing pages)
 
@@ -3489,7 +3491,8 @@ paths:
         each row, `matched_clicks` counts this account's clicks that carried
         the ad (its traffic source variable with parameter `ad_id`) in those
         hours, and `unallocated_spend` is the spend of the hours no click
-        carried it in. `reaches` is the end of the latest hour the ledger
+        carried it in. For `openai_ads` on an account with a source marked
+        `chatgpt_ads`, only the clicks of such sources count. `reaches` is the end of the latest hour the ledger
         holds (unix seconds). Money and counts are null with `masked` for a
         role without `access_to_campaign_data`.
       operationId: listSpendLedger
@@ -5187,7 +5190,273 @@ paths:
         "409":
           description: The export is not failed.
 
-  # ─── Goals ───────────────────────────────────────────────────────────
+  # ─── Ad Connections ──────────────────────────────────────────────────
+
+  /ad-connections:
+    get:
+      tags: [Ad Connections]
+      summary: List the ad platform accounts reached through their API
+      description: |
+        The account's connections (ChatGPT Ads today). Keys are never served:
+        `credentials_set` says which are stored. Role permission
+        `access_to_setup_section`.
+      operationId: listAdConnections
+      responses:
+        "200":
+          description: Connections
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AdConnection"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Ad Connections]
+      summary: Connect an ad account with its Advertiser API key
+      description: |
+        The key is checked first with OpenAI's `GET /ad_account`, which fills
+        the account's id, name, currency and time zone; a key OpenAI refuses
+        is answered 422 and nothing is stored. When OpenAI could not be asked
+        nothing is stored either and the answer is 503 (not reached), 429
+        (its rate limit) or 502 (an answer that cannot be used), never a 422:
+        the key was not judged. The key is stored encrypted and never served. One connection
+        per ad account; at most 10 per account. A currency other than the
+        account's is allowed and said in `currency_matches_account`.
+      operationId: createAdConnection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [api_key]
+              properties:
+                platform: {type: string, enum: [openai_ads], default: openai_ads}
+                api_key: {type: string, writeOnly: true, description: The Advertiser API key from Ads Manager › Settings}
+                ppc_account_id: {type: integer, nullable: true, description: The traffic source account it is for}
+      responses:
+        "201":
+          description: Connected
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdConnection"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/UpstreamRateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
+
+  /ad-connections/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Ad Connections]
+      summary: One ad connection
+      operationId: getAdConnection
+      responses:
+        "200":
+          description: The connection
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdConnection"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Ad Connections]
+      summary: Replace the key, or link a traffic source account
+      description: |
+        A new `api_key` is checked as on create and must reach the same ad
+        account. `ppc_account_id` null unlinks. Both are checked before
+        either is written.
+      operationId: updateAdConnection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                api_key: {type: string, writeOnly: true}
+                ppc_account_id: {type: integer, nullable: true}
+      responses:
+        "200":
+          description: The connection as it now is
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdConnection"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/UpstreamRateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
+    delete:
+      tags: [Ad Connections]
+      summary: Delete an ad connection
+      description: |
+        Its stored keys are erased. Nothing is removed at OpenAI, and a
+        destination setup made keeps sending with its own copy of the pixel
+        and Conversions API key. `?dry_run=1` shows what would be removed.
+      operationId: deleteAdConnection
+      responses:
+        "204":
+          description: Deleted
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /ad-connections/{id}/check:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    post:
+      tags: [Ad Connections]
+      summary: Read the ad account again
+      description: |
+        Refreshes name, currency and time zone. A refused key sets `status`
+        `key_refused` and is a 200: the check was made. A check OpenAI did not
+        answer is a 503 (429 for its rate limit, 502 for an answer that cannot
+        be used) with the connection in `details.connection`: `status` is left
+        as it was, and `last_error` and `checked_at` record the try. Not previewable: `dry_run` is answered 422.
+      operationId: checkAdConnection
+      responses:
+        "200":
+          description: The connection as it now is
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdConnection"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/UpstreamRateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
+
+  /ad-connections/{id}/setup:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    post:
+      tags: [Ad Connections]
+      summary: Set up the pixel, Conversions API key, destination and event settings
+      description: |
+        Runs four steps in order, each reported in `steps` with an `outcome`
+        (`created`, `found`, `given`, `kept`, `skipped`, `needs_input`,
+        `unavailable`, `failed`) and a `detail`: `pixel` finds the account's
+        web pixel or creates one; `conversions_key` creates a Conversions API
+        key and stores it encrypted; `destination` creates an `openai_ads`
+        destination with both when this version has that type
+        (`unavailable` otherwise); `event_settings` finds or creates one
+        event setting per event type (30-day click window) on the pixel's
+        source. A step that ran before is kept, so setup can be run again.
+        Where OpenAI answers 404 to pixel or key creation (the feature is off
+        for the account) the step is `needs_input`: give `pixel_id` with
+        `source_id`, or `conversions_api_key`, from Ads Manager. Creates carry
+        an Idempotency-Key. A step did something when it is `created`,
+        `found` or `given` (or made or found event settings though it
+        failed); `kept` is not this run's doing. A run in which a step did
+        something is a 200 with each step's outcome. A run in which none
+        did and a call to OpenAI failed is a failure: 422 naming `api_key`
+        when OpenAI refused the stored key (the connection becomes
+        `key_refused`), 503 when OpenAI was not reached (429 when every
+        such answer was its rate limit), else 502 for answers that cannot
+        be used, with the steps in `details.steps`. A run in which no call
+        failed (every step kept, skipped or needing input) is a 200.
+        Not previewable: `dry_run` is answered 422.
+      operationId: setupAdConnection
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                skip:
+                  type: array
+                  items: {type: string, enum: [pixel, conversions_key, destination, event_settings]}
+                pixel_source_id: {type: string, description: Which of the account's web pixels (its clidsrc_ id) when it has several}
+                pixel_id: {type: string, description: A pixel id from Ads Manager, when the account cannot list or create pixels here}
+                source_id: {type: string, description: That pixel's source id (clidsrc_…), needed for event settings}
+                conversions_api_key: {type: string, writeOnly: true, description: A Conversions API key from Ads Manager}
+                event_types:
+                  type: array
+                  description: Event types to make event settings for; default those the destination sends, else order_created
+                  items:
+                    type: string
+                    enum: [order_created, lead_created, registration_completed, subscription_created, trial_started, appointment_scheduled, checkout_started, items_added, contents_viewed, page_viewed]
+      responses:
+        "200":
+          description: What each step did
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      connection:
+                        $ref: "#/components/schemas/AdConnection"
+                      steps:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            step: {type: string, enum: [pixel, conversions_key, destination, event_settings]}
+                            outcome: {type: string, enum: [created, found, given, kept, skipped, needs_input, unavailable, failed]}
+                            detail: {type: string}
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/UpstreamRateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
+
+  # ─── Destinations ────────────────────────────────────────────────────
 
   /destinations:
     get:
@@ -5346,9 +5615,32 @@ paths:
         the made-up click id it carries is expected to be refused, so
         `valid` is true when nothing else is. For ChatGPT Ads it is an event
         with `validate_only`, which OpenAI checks and does not save.
+
+        With `{"real": true}` (ChatGPT Ads only, and only when an ad
+        connection reaches the pixel's ad account) a real event is sent
+        instead, which OpenAI saves and counts as a conversion of the pixel;
+        then the account's recent events (`GET /conversions/events?pid=`)
+        are read through the connection, and `arrived` says whether it is
+        among them as a server event (`server_to_server`). The answer is
+        `sent`, `arrived`, `event_type`, `pixel_id`, `connection_id`,
+        `status_code` and `message`. Because the event is counted, `real`
+        is refused (422 naming `confirm_counted`) unless
+        `"confirm_counted": true` is sent with it. Without a connection it
+        is a 422 naming `real`. OpenAI not reached is a 503, its rate limit
+        a 429 (both with Retry-After), and no event was sent; a refusal of
+        the event is OpenAI's verdict, a 200 with `sent` false. Not logged
+        as a delivery.
       operationId: testDestination
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                real: {type: boolean, description: ChatGPT Ads with a connection - send a real event and read it back}
+                confirm_counted: {type: boolean, description: Required true with real - the event is saved and counted as a conversion}
       responses:
         "200":
           description: The platform's verdict
@@ -5372,6 +5664,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/UpstreamRateLimited"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /destinations/{id}/oauth/start:
     post:
@@ -5697,6 +5995,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+
+  # ─── Goals ───────────────────────────────────────────────────────────
 
   /goals:
     get:
@@ -13421,6 +13721,47 @@ components:
           schema:
             $ref: "#/components/schemas/ValidationError"
 
+    UpstreamUnavailable:
+      description: >-
+        The ad platform (OpenAI) could not be reached: no answer, or a 5xx of
+        its own. Nothing the request sent is wrong and the key was not judged;
+        the same request can succeed later. `details.upstream` names the
+        platform and `details.reason` is `unreachable`. A check's answer
+        carries the connection as it stands in `details.connection`; a
+        setup's carries `details.connection` and `details.steps`.
+      headers:
+        Retry-After:
+          description: Seconds to wait before asking again
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UpstreamFailure"
+    UpstreamRateLimited:
+      description: >-
+        The ad platform's rate limit (OpenAI answered 429, or this install is
+        holding to OpenAI's per-minute limits). Nothing the request sent is
+        wrong. `details.reason` is `rate_limited`; the rest is as for 503.
+      headers:
+        Retry-After:
+          description: Seconds to wait before asking again
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UpstreamFailure"
+    UpstreamUnreadable:
+      description: >-
+        The ad platform answered something its API does not document (an ad
+        account without an id, currency or time zone, or a refusal of the
+        account read that is not about the key). `details.reason` is
+        `unreadable_answer`. Nothing was stored.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UpstreamFailure"
     AppRateLimited:
       description: Per-source rate limit exceeded; retry after the indicated seconds
       headers:
@@ -13441,6 +13782,23 @@ components:
   # ─── Schemas ─────────────────────────────────────────────────────────
 
   schemas:
+    UpstreamFailure:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            retry_after_seconds: {type: integer, description: Present on 429 and 503}
+            details:
+              type: object
+              properties:
+                upstream: {type: string, enum: [openai_ads]}
+                reason: {type: string, enum: [unreachable, rate_limited, unreadable_answer]}
+                connection:
+                  $ref: "#/components/schemas/AdConnection"
+                steps:
+                  type: array
+                  items: {type: object}
+
     # ── Bulk upsert ────────────────────────────────────────────────────
 
     BulkUpsertResult:
@@ -14390,8 +14748,12 @@ components:
           description: >-
             The ad platform the source is: chatgpt_ads for the ChatGPT Ads source
             (POST /ppc-networks/chatgpt-ads sets it up), else empty. Its links get
-            that platform's tracking template (GET /trackers/{id}/url). Writable so
-            sync and import carry it; defaults to empty.
+            that platform's tracking template (GET /trackers/{id}/url). It also
+            decides cost: on an account with a source marked chatgpt_ads (removed
+            ones included), openai_ads spend in the spend ledger goes only to
+            such sources' clicks, so setting or clearing it changes which clicks
+            share that spend. Writable so sync and import carry it; defaults to
+            empty.
         ppc_network_deleted:
           type: integer
           readOnly: true
@@ -14412,8 +14774,12 @@ components:
           description: >-
             The ad platform the source is: chatgpt_ads for the ChatGPT Ads source
             (POST /ppc-networks/chatgpt-ads sets it up), else empty. Its links get
-            that platform's tracking template (GET /trackers/{id}/url). Writable so
-            sync and import carry it; defaults to empty.
+            that platform's tracking template (GET /trackers/{id}/url). It also
+            decides cost: on an account with a source marked chatgpt_ads (removed
+            ones included), openai_ads spend in the spend ledger goes only to
+            such sources' clicks, so setting or clearing it changes which clicks
+            share that spend. Writable so sync and import carry it; defaults to
+            empty.
 
     PpcNetworkUpdate:
       type: object
@@ -14427,8 +14793,12 @@ components:
           description: >-
             The ad platform the source is: chatgpt_ads for the ChatGPT Ads source
             (POST /ppc-networks/chatgpt-ads sets it up), else empty. Its links get
-            that platform's tracking template (GET /trackers/{id}/url). Writable so
-            sync and import carry it; defaults to empty.
+            that platform's tracking template (GET /trackers/{id}/url). It also
+            decides cost: on an account with a source marked chatgpt_ads (removed
+            ones included), openai_ads spend in the spend ledger goes only to
+            such sources' clicks, so setting or clearing it changes which clicks
+            share that spend. Writable so sync and import carry it; defaults to
+            empty.
 
     PpcNetworkResponse:
       type: object
@@ -16451,6 +16821,13 @@ components:
           description: Ledger rows in a currency other than the account's, not counted (only when there are any).
         other_currency_note:
           type: string
+        tie_note:
+          type: string
+          description: >-
+            Present only when the window holds openai_ads spend and the account
+            has a source marked chatgpt_ads: that spend went only to those
+            sources' clicks, and a click of another source with the same ad id
+            kept its CPC.
 
     SpendRow:
       type: object
@@ -19302,6 +19679,36 @@ components:
             revenue:
               type: number
 
+    AdConnection:
+      type: object
+      description: An ad platform account reached through its own API. Keys are never served.
+      properties:
+        connection_id: {type: integer}
+        platform: {type: string, enum: [openai_ads]}
+        ppc_account_id: {type: integer, nullable: true}
+        account:
+          type: object
+          description: The ad account as the platform described it at the last check
+          properties:
+            id: {type: string, example: adacct_123}
+            name: {type: string}
+            currency: {type: string, example: USD}
+            timezone: {type: string, example: America/New_York}
+        currency_matches_account: {type: boolean, description: Whether the ad account's currency is this account's; spend is not converted}
+        status: {type: string, enum: [connected, key_refused, credentials_unreadable]}
+        last_error: {type: string, nullable: true}
+        checked_at: {type: integer, nullable: true}
+        credentials_set:
+          type: object
+          properties:
+            advertiser_api_key: {type: boolean}
+            conversions_api_key: {type: boolean}
+        setup:
+          type: object
+          description: What setup found or made (pixel, event_settings by event type, destination_id)
+          additionalProperties: true
+        created_at: {type: integer}
+        updated_at: {type: integer}
     Destination:
       type: object
       description: An ad platform the account's conversions are sent to.
@@ -19346,8 +19753,9 @@ components:
       description: |
         What is sent and when. Every type takes `campaign_ids` and
         `send_user_data`; GA4 and Google Ads take `consent` (ChatGPT Ads
-        refuses it: OpenAI takes no consent signal, so a visitor who may be
-        in the EEA or UK is withheld from it). GA4 takes `measurement_id` to
+        refuses it: OpenAI has no field that states a visitor's consent to
+        measurement, its per-event opt_out being about personalisation only,
+        so a visitor who may be in the EEA or UK is withheld from it). GA4 takes `measurement_id` to
         `params`, Google Ads `customer_id` to `campaign_conversion_actions`,
         ChatGPT Ads `pixel_id` to `ppc_account_id`.
       properties:

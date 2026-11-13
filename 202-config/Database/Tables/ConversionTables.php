@@ -83,6 +83,7 @@ final class ConversionTables
             self::postbackAuth(),
             self::destinations(),
             self::destinationDeliveries(),
+            self::adConnections(),
             self::inboundLog(),
             self::heldPaymentNotifications(),
             self::shopifyPendingRefunds(),
@@ -525,6 +526,38 @@ final class ConversionTables
                 KEY `user_destination` (`user_id`,`destination_id`,`delivery_id`),
                 KEY `user_destination_status` (`user_id`,`destination_id`,`kind`,`status`,`created_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Conversions queued for and sent to destinations'"
+        );
+    }
+
+    /**
+     * An account's connections to an ad platform's own API (Prosper202\AdPlatforms): the platform's account it
+     * reaches, what that account says of itself (name, currency, time zone, read at each check), the key that
+     * reaches it sealed by AdConnectionStore and never served, and what setup made there (JSON).
+     */
+    public static function adConnections(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::AD_CONNECTIONS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::AD_CONNECTIONS . "` (
+                `connection_id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `platform` varchar(32) COLLATE utf8mb4_bin NOT NULL,
+                `ppc_account_id` mediumint(8) unsigned DEFAULT NULL,
+                `account_ref` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `name` varchar(100) NOT NULL,
+                `currency` char(3) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `timezone` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `credentials` text NOT NULL,
+                `setup` text NOT NULL,
+                `status` varchar(16) COLLATE utf8mb4_bin NOT NULL,
+                `last_error` varchar(255) DEFAULT NULL,
+                `checked_at` int(10) unsigned DEFAULT NULL,
+                `created_at` int(10) unsigned NOT NULL,
+                `updated_at` int(10) unsigned NOT NULL,
+                `deleted_at` int(10) unsigned DEFAULT NULL,
+                PRIMARY KEY (`connection_id`),
+                KEY `user_platform` (`user_id`,`platform`,`deleted_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Ad platform accounts reached through their API'"
         );
     }
 
