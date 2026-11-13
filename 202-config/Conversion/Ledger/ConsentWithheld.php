@@ -45,19 +45,29 @@ final class ConsentWithheld
     }
 
     /**
-     * Whether the 1.9.80 upgrade has added the column to $table
-     * (202_conversion_logs or 202_goal_events). Before it, no destination
-     * exists to send to; a ledger row that cannot carry its refusal is not
-     * queued for one (MysqlConversionRepository::recordLocked()).
+     * Whether the 1.9.80 upgrade has added the column to the ledger. Before
+     * it, no destination exists to send to; a row that cannot carry its
+     * refusal is not queued for one (MysqlConversionRepository::recordLocked()).
      */
-    public static function columnPresent(Connection $conn, string $table = '202_conversion_logs'): bool
+    public static function columnPresent(Connection $conn): bool
+    {
+        return self::probe($conn, 'ledger', 'SELECT consent_withheld FROM 202_conversion_logs LIMIT 0');
+    }
+
+    /** Whether the 1.9.80 upgrade has added it to the goal events (GoalEngine::insertEvent()). */
+    public static function goalEventsColumnPresent(Connection $conn): bool
+    {
+        return self::probe($conn, 'events', 'SELECT consent_withheld FROM 202_goal_events LIMIT 0');
+    }
+
+    private static function probe(Connection $conn, string $table, string $sql): bool
     {
         $handle = $conn->writeConnection();
         if (isset(self::$present[$handle][$table])) {
             return true;
         }
         try {
-            $stmt = $conn->prepareWrite('SELECT ' . self::COLUMN . ' FROM `' . $table . '` LIMIT 0');
+            $stmt = $conn->prepareWrite($sql);
         } catch (\RuntimeException $e) {
             for ($current = $e; $current !== null; $current = $current->getPrevious()) {
                 if (

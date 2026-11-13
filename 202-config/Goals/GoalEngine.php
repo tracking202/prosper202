@@ -2090,7 +2090,7 @@ final class GoalEngine
         // The request's refusal is stored with its event, in its transaction,
         // for every later evaluation (a replay, a re-evaluation) to carry.
         // Before the 1.9.80 upgrade adds the column no destination exists.
-        if ($event->consentWithheld && ConsentWithheld::columnPresent($this->conn, '202_goal_events')) {
+        if ($event->consentWithheld && ConsentWithheld::goalEventsColumnPresent($this->conn)) {
             $refused = $this->conn->prepareWrite('UPDATE 202_goal_events SET consent_withheld = 1'
                 . ' WHERE subject_type = ? AND subject_id = ? AND event_id = ?');
             $this->conn->bind($refused, 'sis', [$subject->type, $subject->id, $event->eventId]);
