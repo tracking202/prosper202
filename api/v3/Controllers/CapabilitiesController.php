@@ -14,11 +14,11 @@ use Prosper202\Database\Exceptions\QueryException;
 class CapabilitiesController
 {
     /**
-     * Licence answers already fetched in this request, per key, so
-     * /capabilities asks my.tracking202.com at most once per key on a cold
-     * cache. Holds null for "unknown" too.
+     * Verdicts already reached in this request, per key, so /capabilities
+     * asks my.tracking202.com at most once per key on a cold cache. Holds
+     * null for "no confirmed answer" too.
      *
-     * @var array<string, array{valid: bool, paid: ?bool}|null>
+     * @var array<string, bool|null>
      */
     private array $licenceChecks = [];
 
@@ -277,7 +277,7 @@ class CapabilitiesController
                 ],
                 // One verdict for both: the Go CLI, `p202 shell` included,
                 // needs an active free ClickServer licence (a key Tracking202
-                // answers as valid), never a paid one.
+                // confirms: ShellAccessCache::admits()), never a paid one.
                 'shell' => $licensed,
                 'cli' => $licensed,
                 'server' => [
@@ -434,12 +434,12 @@ class CapabilitiesController
             return $this->withinGrace($customerKey);
         }
 
-        $result = $this->checkKey($customerKey);
-        if ($result === null) {
-            // checkKey() recorded the hold-off, if this was an outage.
+        $verdict = $this->checkKey($customerKey);
+        if ($verdict === null) {
+            // checkKey() recorded the hold-off: no confirmed answer.
             return $this->withinGrace($customerKey);
         }
-        return ShellAccessCache::admits($result);
+        return $verdict;
     }
 
     /** The CLI gate's refusal: the licence could not be checked, or the key is not an active licence. */
@@ -540,13 +540,14 @@ class CapabilitiesController
     }
 
     /**
-     * One licence call per key per request, recording its answer.
+     * One licence call per key per request, recording its answer: whether
+     * the key admits (ShellAccessCache::admits()), or null when the service
+     * gave no answer it confirmed (an outage, or "Key valid" without a
+     * boolean paid), which is recorded as the hold-off and nothing else.
      * Short timeouts: this runs on the synchronous request path, so a slow
      * my.tracking202.com must not stall /capabilities for long.
-     *
-     * @return array{valid: bool, paid: ?bool}|null null = unknown (outage)
      */
-    private function checkKey(string $customerKey): ?array
+    private function checkKey(string $customerKey): ?bool
     {
         if (array_key_exists($customerKey, $this->licenceChecks)) {
             return $this->licenceChecks[$customerKey];
@@ -559,18 +560,23 @@ class CapabilitiesController
             return $this->licenceChecks[$customerKey] = $this->awaitClaimantVerdict($customerKey);
         }
         try {
-            $result = $this->askLicenceService($customerKey);
+            $answer = $this->askLicenceService($customerKey);
+            $result = ShellAccessCache::confirmed($answer);
+            if ($answer !== null && $result === null) {
+                error_log('p202: the licence service said "Key valid" without a boolean paid; '
+                    . 'no answer, the grace period decides');
+            }
             // The answer is recorded before the claim is released, so a
             // request waiting on it reads the verdict or the hold-off.
             if ($result === null) {
                 ShellAccessCache::markUnknown($customerKey);
             } else {
-                ShellAccessCache::recordAnswer($this->licenceAnswers(), $customerKey, $result['valid']);
+                ShellAccessCache::recordLicence($this->licenceAnswers(), $customerKey, $result);
             }
         } finally {
             $this->releaseClaim($customerKey);
         }
-        return $this->licenceChecks[$customerKey] = $result;
+        return $this->licenceChecks[$customerKey] = $result === null ? null : ShellAccessCache::admits($result);
     }
 
     /**
@@ -604,26 +610,22 @@ class CapabilitiesController
 
     /**
      * What another request recorded for $customerKey, read once it released
-     * its claim (checkKey() records the answer first): the verdict ('paid'
-     * is not kept, so it reads null), or null when it got no answer, or when it has not finished within
+     * its claim (checkKey() records the answer first): the verdict (only
+     * confirmed answers are recorded), or null when it got no confirmed
+     * answer, or when it has not finished within
      * CLAIM_WAIT_MS. When the claim is older than DEAD_CLAIM_SECONDS its
      * claimant has died, and the waiter writes the hold-off itself, so later
      * requests read unknown at once rather than each waiting while the dead
      * claim lasts; a claim younger than that is a slow claimant, whose own
      * answer is still to come, and gets none.
-     *
-     * @return array{valid: bool, paid: ?bool}|null
      */
-    private function awaitClaimantVerdict(string $customerKey): ?array
+    private function awaitClaimantVerdict(string $customerKey): ?bool
     {
         $deadline = microtime(true) + self::CLAIM_WAIT_MS / 1000;
         do {
             usleep(100_000);
             if (!ShellAccessCache::checkInProgress($customerKey)) {
-                $valid = ShellAccessCache::readVerdict($customerKey);
-                return $valid === null
-                    ? null
-                    : ['valid' => $valid, 'paid' => null];
+                return ShellAccessCache::readVerdict($customerKey);
             }
         } while (microtime(true) < $deadline);
         if ((ShellAccessCache::claimAge($customerKey) ?? 0) >= self::DEAD_CLAIM_SECONDS) {

@@ -210,7 +210,7 @@ final class LicenceCheckClaimTest extends TestCase
         $seen = static fn (?bool $verdict, bool $held): array => ['verdict' => $verdict, 'held' => $held];
         yield 'valid, paid' => [['valid' => true, 'paid' => true], $seen(true, false)];
         yield 'valid, not paid' => [['valid' => true, 'paid' => false], $seen(true, false)];
-        yield 'valid, paid unknown' => [['valid' => true, 'paid' => null], $seen(true, false)];
+        yield 'valid, paid unknown (no answer)' => [['valid' => true, 'paid' => null], $seen(null, true)];
         yield 'refused' => [['valid' => false, 'paid' => false], $seen(false, false)];
         yield 'no answer' => [null, $seen(null, true)];
     }

@@ -11,11 +11,12 @@
 # The licence check answers "Key valid" + paid:true for a non-empty key and
 # 404 "Key not found" for an empty one; a key ending in one of the suffixes
 # in Stub.ANSWERS (and -outage, -undecided, -redirect...) gets that answer
-# instead; tests/live/cli-free.sh uses -unpaid, -invalid, -refused, -outage
-# and -undecided. "-undecided" is the service that cannot decide: it answers
-# "Key not checked" to a request carrying X-P202-Licence-Grace: 1 and the
-# legacy "Key valid" (no paid) to one without, as the service and its edge
-# do. Every other path answers 200 {}. The log notes each request's header.
+# instead; tests/live/cli-free.sh uses -unpaid, -invalid, -refused, -outage,
+# -undecided, -no-paid and -odd-paid. "-undecided" is the service that
+# cannot decide: it answers "Key not checked" to a request carrying
+# X-P202-Licence-Grace: 1 and the legacy "Key valid" (no paid) to one
+# without, as the service and its edge do; the install reads both as no
+# answer. Every other path answers 200 {}. The log notes each request's header.
 #
 #   licence-stub.sh start <dir>   start it, and prove PHP's curl verifies it
 #   licence-stub.sh stop <dir>    stop it, and list the requests it answered
@@ -75,9 +76,11 @@ class Stub(http.server.BaseHTTPRequestHandler):
     # chosen by the key's suffix; "-redirect", "-redirect-away" and
     # "-redirect-loop" (in do_POST) exercise the validator's own
     # redirect handling, and "-outage" and "-undecided" (in do_POST)
-    # the service without an answer. tests/live/cli-free.sh sets the
-    # install's key to -unpaid, -invalid, -refused, -outage and
-    # -undecided keys.
+    # the service without an answer. "-no-paid" and "-odd-paid" do not say
+    # whether the key is paid, so they do not confirm it: the install reads
+    # them as no answer. tests/live/cli-free.sh sets the install's key to
+    # -unpaid, -invalid, -refused, -outage, -undecided, -no-paid and
+    # -odd-paid keys.
     ANSWERS = {
         "-unpaid":   (200, {"code": 200, "msg": "Key valid", "paid": False}),
         "-no-paid":  (200, {"code": 200, "msg": "Key valid"}),

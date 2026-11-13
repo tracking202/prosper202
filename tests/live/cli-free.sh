@@ -1,9 +1,10 @@
 #!/bin/bash
 # Live pass: the Go CLI is free but needs an active free ClickServer licence
 # (1.9.80). api/v3/index.php serves the Go CLI's User-Agent when the
-# install's ClickServer key is one my.tracking202.com answers as valid, paid
-# or not, and refuses it with 402 (category licence) otherwise, as
-# CapabilitiesController::cliAccess decides it.
+# install's ClickServer key is one my.tracking202.com confirms: valid, with a
+# boolean paid (true or false). It refuses it with 402 (category licence)
+# otherwise, as CapabilitiesController::cliAccess decides it; a "Key valid"
+# that does not say paid is no answer, as an outage is.
 #
 # Needs P202_LICENCE_STUB=1: my.tracking202.com is CI's stub
 # (tests/fixtures/agent-eval/ci/licence-stub.sh), which answers by the key's
@@ -14,11 +15,12 @@
 #   -outage   503, a valid answer 2 days   served (the 30-day grace period)
 #             old in 202_licence_answers
 #   -outage   503, nothing recorded        402 licence, "could not be checked"
-#   -undecided "Key not checked" to a      402 licence, "could not be checked"
-#             request carrying the grace   (served on a valid answer 2 days
-#             header, the legacy "Key      old); without the header the stub
-#             valid" to one without        answers "Key valid" and the case
-#                                          would be served instead
+#   -undecided "Key not checked" (to the   402 licence, "could not be checked";
+#             install's grace header)      served on a valid answer 2 days old
+#   -no-paid  "Key valid", no paid         402 licence, "could not be checked",
+#   -odd-paid "Key valid", paid "yes"      and nothing recorded for the key;
+#                                          served on a valid answer 2 days old,
+#                                          which keeps its time
 #   no key on the install at all           402 licence, api-key-required.php
 # and the built CLI (P202_BIN) on the unpaid key: exit 0 with JSON.
 # Without the stub it does nothing: the real service would refuse made-up keys.
@@ -175,6 +177,21 @@ request /campaigns; expect_refused "Key not checked, nothing recorded" "could no
 use_key undecided
 mysql_q "INSERT INTO 202_licence_answers (key_sha256, valid_yes, valid_at) VALUES (SHA2('$KEY', 256), 1, UNIX_TIMESTAMP() - 2 * 86400)"
 request /campaigns; expect_served "Key not checked, a valid answer 2 days old"
+
+# "Key valid" that does not say paid: no answer. Never confirmed: refused,
+# nothing recorded. Confirmed 2 days ago: served from that answer, whose
+# time is kept.
+for shape in no-paid odd-paid; do
+    use_key "$shape"
+    request /campaigns; expect_refused "$shape, never confirmed" "could not be checked"
+    rows=$(mysql_q "SELECT COUNT(*) FROM 202_licence_answers WHERE key_sha256 = SHA2('$KEY', 256)")
+    if [ "$rows" = 0 ]; then ok "$shape, never confirmed: nothing recorded"; else ko "$shape, never confirmed: nothing recorded" "$rows row(s)"; fi
+    use_key "$shape"
+    mysql_q "INSERT INTO 202_licence_answers (key_sha256, valid_yes, valid_at) VALUES (SHA2('$KEY', 256), 1, UNIX_TIMESTAMP() - 2 * 86400)"
+    request /campaigns; expect_served "$shape, a valid answer 2 days old"
+    age=$(mysql_q "SELECT UNIX_TIMESTAMP() - valid_at FROM 202_licence_answers WHERE key_sha256 = SHA2('$KEY', 256)")
+    if [ -n "$age" ] && [ "$age" -ge 172000 ]; then ok "$shape: the earlier answer keeps its time"; else ko "$shape: the earlier answer keeps its time" "age ${age:-none}"; fi
+done
 
 # No key: the user's, and every other on the install (the owner's key would
 # decide for a user without one).

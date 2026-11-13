@@ -9720,7 +9720,8 @@ paths:
         with the person (RFC 7636). A code works once and for five minutes.
         The licence is decided first, as the install's CLI licence gate decides
         it: connecting is free but needs an active free ClickServer licence (a
-        key Tracking202 accepts as valid; no paid subscription). The answer is
+        key Tracking202 confirms, valid with whether it is paid; no paid
+        subscription). The answer is
         then a new API key of the user who approved, with the access they
         chose. The key's scope holds it to the areas the MCP
         server's tools use (never users, system or sync). `?dry_run` and
@@ -9784,9 +9785,9 @@ paths:
                           approving user's, else the install owner's), trimmed and
                           lowercased first. Left out when the install could not read
                           its key (the install's own error, which the gate lets through).
-                          The install sends it whenever it can read its key; what the
-                          hosted MCP server does with it is documented with that server's
-                          releases. The key itself is never sent.
+                          The install sends it whenever it can read its key; from the
+                          connector's next release the hosted MCP server takes an answer
+                          without it. The key itself is never sent.
         '400':
           description: >-
             invalid_request (a missing or malformed field) or invalid_grant

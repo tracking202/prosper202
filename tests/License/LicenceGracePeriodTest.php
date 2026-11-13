@@ -207,7 +207,11 @@ final class LicenceGracePeriodTest extends TestCase
         ShellAccessCache::recordLicence($this->answers, $this->key, null);
         self::assertSame([], $this->answers->answers, 'no answer records nothing');
         ShellAccessCache::recordLicence($this->answers, $this->key, ['valid' => true, 'paid' => null]);
-        self::assertSame([ShellAccessCache::QUESTION_VALID], array_keys($this->answers->answers[$hash]));
+        self::assertSame([], $this->answers->answers, 'a valid key without a boolean paid records nothing');
+        self::assertNull(ShellAccessCache::readVerdict($this->key), 'in the cache either');
+        ShellAccessCache::recordLicence($this->answers, $this->key, ['valid' => true, 'paid' => false]);
+        $questions = array_keys($this->answers->answers[$hash]);
+        self::assertSame([ShellAccessCache::QUESTION_VALID], $questions, 'a free licence is confirmed');
         ShellAccessCache::recordLicence($this->answers, $this->key, ['valid' => true, 'paid' => true]);
         self::assertTrue(ShellAccessCache::validWithinGrace($this->answers, $this->key));
         self::assertSame(
@@ -387,12 +391,73 @@ final class LicenceGracePeriodTest extends TestCase
     {
         yield 'valid, paid' => [['valid' => true, 'paid' => true], true];
         yield 'valid, not paid (the free licence)' => [['valid' => true, 'paid' => false], true];
-        yield 'valid, paid unknown' => [['valid' => true, 'paid' => null], true];
         yield 'no such key' => [ClickServerKeyValidator::interpret(404, '{"code":404,"msg":"Key not found"}'), false];
         yield 'no CPM* newsletter subscription' => [ClickServerKeyValidator::interpret(
             404,
             '{"code":403,"msg":"API key requires an active CPM* Newsletter subscription."}'
         ), false];
+    }
+
+    /**
+     * The owner's rule (2026-11-13): only a key the licence service confirms
+     * admits the CLI, the shell and an AI connection. "Key valid" without a
+     * boolean paid does not say the key is known, so it is no answer: a key
+     * never confirmed is refused as "could not be checked", nothing is
+     * recorded, and a key confirmed earlier is served from that answer within
+     * the grace period, which keeps its time.
+     *
+     * @dataProvider unconfirmedValidAnswers
+     */
+    public function testAValidAnswerWithoutABooleanPaidIsNoAnswerAtTheCliGate(string $body): void
+    {
+        $answer = ClickServerKeyValidator::interpret(200, $body);
+        self::assertSame(['valid' => true, 'paid' => null], $answer, "$body reads as valid, paid unknown");
+        self::assertNull(ShellAccessCache::confirmed($answer));
+        self::assertFalse(ShellAccessCache::admits($answer));
+        $hash = hash('sha256', $this->key);
+
+        $controller = $this->controller($answer);
+        self::assertFalse($controller->cliAccess(), 'a key never confirmed is refused');
+        self::assertSame(CapabilitiesController::LICENCE_UNCONFIRMED_MESSAGE, $controller->cliRefusal('not licensed'));
+        self::assertSame([], $this->answers->answers, 'and nothing is recorded');
+        self::assertNull(ShellAccessCache::readVerdict($this->key), 'nor cached as a verdict');
+        self::assertTrue(ShellAccessCache::recentlyUnknown($this->key), 'held off, as an outage is');
+        self::assertFalse($this->controller($answer)->capabilities()['data']['cli'], '/capabilities says the same');
+
+        $earlier = time() - 2 * self::DAY;
+        $this->answers->saveAnswer($hash, ShellAccessCache::QUESTION_VALID, true, $earlier);
+        $this->forget();
+        self::assertTrue($this->controller($answer)->cliAccess(), 'confirmed two days ago: within the grace period');
+        $kept = [ShellAccessCache::QUESTION_VALID => [true, $earlier]];
+        self::assertSame($kept, $this->answers->answers[$hash], 'which keeps its time');
+
+        $this->answers->saveAnswer($hash, ShellAccessCache::QUESTION_VALID, false, $earlier);
+        $this->forget();
+        self::assertFalse($this->controller($answer)->cliAccess(), 'refused earlier: still refused');
+    }
+
+    /**
+     * The web sign-in keeps taking such an answer (unchanged), but records
+     * nothing from it: it shares the record the CLI gate reads, and a yes
+     * there would admit the CLI.
+     *
+     * @dataProvider unconfirmedValidAnswers
+     */
+    public function testTheSignInTakesAnUnconfirmedValidAnswerButRecordsNothing(string $body): void
+    {
+        $GLOBALS['db'] = $this->recordingDb($queries);
+        $_SESSION['user_id'] = 3;
+        self::assertTrue($this->auth(ClickServerKeyValidator::interpret(200, $body))::is_valid_api_key($this->key));
+        self::assertSame([], $this->answers->answers, 'nothing for the grace period');
+        self::assertNull(ShellAccessCache::readVerdict($this->key), 'nor for the CLI gate');
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function unconfirmedValidAnswers(): iterable
+    {
+        yield 'Key valid, no paid' => ['{"code":200,"msg":"Key valid"}'];
+        yield 'Key valid, paid not a boolean' => ['{"code":200,"msg":"Key valid","paid":"yes"}'];
+        yield 'Key valid, paid null' => ['{"code":200,"msg":"Key valid","paid":null}'];
     }
 
     public function testTheUnconfirmedMessageSaysWhatToCheckAndWhoHelps(): void

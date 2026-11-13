@@ -798,13 +798,14 @@ class AUTH
 							WHERE 	user_id='" . (int) $_SESSION['user_id'] . "'";
             _mysqli_query($user_sql);
             self::writeSessionValue('valid_key', true);
-            // Record it for the grace period; the Go CLI's gate reads the same
-            // answer, so the CLI does not ask again.
-            \Prosper202\License\ShellAccessCache::recordAnswer($answers, $cacheKey, true);
+            // Record it for the grace period when the service confirmed it
+            // (a boolean paid): the Go CLI's gate reads the same record, and
+            // admits only a confirmed key (ShellAccessCache::confirmed()).
+            \Prosper202\License\ShellAccessCache::recordLicence($answers, $cacheKey, $licence);
             return true;
         } else {
             // A refusal ends the grace period, and stops the Go CLI, at once.
-            \Prosper202\License\ShellAccessCache::recordAnswer($answers, $cacheKey, false);
+            \Prosper202\License\ShellAccessCache::recordLicence($answers, $cacheKey, $licence);
             return false;
         }
     }

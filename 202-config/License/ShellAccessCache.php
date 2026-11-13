@@ -174,15 +174,17 @@ class ShellAccessCache
 
     /**
      * Record a licence answer from ClickServerKeyValidator: the key's
-     * validity. Its 'paid' part is not recorded: nothing in Prosper202 is
-     * gated on it (the Go CLI and AI assistants need a valid key, not a paid
-     * one, since 1.9.80). No answer (null) records nothing. Every path that confirms a key calls
-     * this or recordAnswer() (KeyEntryRecordsTheAnswerTest).
+     * validity, when the service confirmed it (confirmed()). Its 'paid' part
+     * is not recorded: a free licence admits as a paid one does. No answer,
+     * or one the service did not confirm, records nothing, so the grace
+     * period keeps reading the last confirmed one. Every path that hears
+     * from the service calls this (KeyEntryRecordsTheAnswerTest).
      *
      * @param array{valid: bool, paid: ?bool}|null $licence
      */
     public static function recordLicence(?LicenceAnswerStore $answers, string $key, ?array $licence): void
     {
+        $licence = self::confirmed($licence);
         if ($licence === null) {
             return;
         }
@@ -240,18 +242,38 @@ class ShellAccessCache
     }
 
     /**
-     * Which of ClickServerKeyValidator's answers admit the Go CLI and an AI
-     * connection: the one place that decides it (CapabilitiesController's
-     * gate and AiConnect through it). What this cache and the durable
-     * record keep is the answer to licenceQuestion(), which this rule
-     * equals; a rule asking more than "valid" also needs a question of its
-     * own there, since the dashboard sign-in shares QUESTION_VALID.
+     * The answer as the licence service confirmed it, or null when it did
+     * not: a refusal, or a valid key that came with a boolean 'paid' (free
+     * or paid). "Key valid" without a boolean 'paid' does not say the key is
+     * known (an older service, an edge fallback, or one that answers keys it
+     * has not checked), so it is no answer: never admitted, never recorded,
+     * and the grace period reads the last confirmed answer instead. Every
+     * recorder (recordLicence()) and the CLI and AI-connect gate ask this.
+     *
+     * @param array{valid: bool, paid: ?bool}|null $licence
+     * @return array{valid: bool, paid: ?bool}|null
+     */
+    public static function confirmed(?array $licence): ?array
+    {
+        if ($licence === null || ($licence['valid'] && !is_bool($licence['paid']))) {
+            return null;
+        }
+        return $licence;
+    }
+
+    /**
+     * Which of ClickServerKeyValidator's answers admit the Go CLI, the shell
+     * and an AI connection: the one place that decides it
+     * (CapabilitiesController's gate, and AiConnect through it). A confirmed
+     * valid key, paid or not. What this cache and the durable record keep
+     * is the answer to licenceQuestion() for confirmed answers only, so a
+     * kept yes is one this would admit.
      *
      * @param array{valid: bool, paid: ?bool} $licence
      */
     public static function admits(array $licence): bool
     {
-        return $licence['valid'];
+        return self::confirmed($licence) !== null && $licence['valid'];
     }
 
     public static function write(string $key, bool $valid): void
