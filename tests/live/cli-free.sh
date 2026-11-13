@@ -23,7 +23,7 @@
 #                                          which keeps its time
 #   no key on the install at all           402 licence, api-key-required.php
 # and the built CLI (P202_BIN) on the unpaid key: exit 0 with JSON.
-# Without the stub it does nothing: the real service would refuse made-up keys.
+# Without the stub it does nothing: the real service would refuse the test keys.
 #
 # Restores the install's ClickServer keys and drops the answers it recorded.
 #

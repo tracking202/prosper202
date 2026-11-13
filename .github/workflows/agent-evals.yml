@@ -143,7 +143,7 @@ jobs:
 
       # The install calls my.tracking202.com (licence check on every signed-in
       # page, plus a few feeds). Production rejects unknown licence keys (since
-      # 2026-10-09) and CI's key is made up, so for this job only, resolve
+      # 2026-10-09) and CI's key is a test key, so for this job only, resolve
       # my.tracking202.com to a local HTTPS stub whose throwaway certificate is
       # trusted by the runner's CA store: TLS verification stays fully on, no
       # product code knows about it (.github/ is not in release zips), and CI

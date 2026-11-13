@@ -2,7 +2,7 @@
 #
 # CI only: answer my.tracking202.com from a local HTTPS stub, so a job that
 # installs Prosper202 never sends traffic to production. Production rejects
-# unknown licence keys (since 2026-10-09) and CI's key is made up, and the
+# unknown licence keys (since 2026-10-09) and CI's key is a test key, and the
 # installer checks the key before it creates the account.
 #
 # A throwaway certificate for my.tracking202.com is trusted by the runner's
@@ -12,11 +12,8 @@
 # 404 "Key not found" for an empty one; a key ending in one of the suffixes
 # in Stub.ANSWERS (and -outage, -undecided, -redirect...) gets that answer
 # instead; tests/live/cli-free.sh uses -unpaid, -invalid, -refused, -outage,
-# -undecided, -no-paid and -odd-paid. "-undecided" is the service that
-# cannot decide: it answers "Key not checked" to a request carrying
-# X-P202-Licence-Grace: 1 and the legacy "Key valid" (no paid) to one
-# without, as the service and its edge do; the install reads both as no
-# answer. Every other path answers 200 {}. The log notes each request's header.
+# -undecided, -no-paid and -odd-paid. "-undecided": no answer, read as an
+# outage. Every other path answers 200 {}. The log notes each request's header.
 #
 #   licence-stub.sh start <dir>   start it, and prove PHP's curl verifies it
 #   licence-stub.sh stop <dir>    stop it, and list the requests it answered
