@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\AdPlatforms\OpenAiAds;
 
 use Prosper202\AdPlatforms\AdConnectionInputException;
+use Prosper202\AdPlatforms\AdPlatformUnavailable;
 use Prosper202\AdPlatforms\AdConnectionStore;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Schema\TableRegistry;
@@ -51,6 +52,7 @@ final class OpenAiAdsTestEvent
      * Null when the account has no such destination.
      *
      * @return array{sent: bool, arrived: bool, event_type: string, pixel_id: string, connection_id: int, message: string, status_code: int|null}|null
+     * @throws AdPlatformUnavailable when OpenAI was not reached or is limiting requests: nothing was sent
      */
     public function send(int $userId, int $destinationId, int $now): ?array
     {
@@ -82,6 +84,17 @@ final class OpenAiAdsTestEvent
         );
         $result = $this->destination->send(['scope' => 'all'] + $settings, $destination['credentials'], $facts, false, $now);
         $base = ['event_type' => $type, 'pixel_id' => $pixelId, 'connection_id' => $connection['connection_id'], 'status_code' => $result->status];
+        if (!$result->delivered && $result->retry) {
+            // No verdict on the event: OpenAI was not reached, failed itself or is limiting requests. Nothing was sent.
+            $limited = $result->status === 429;
+            $why = $result->reason !== '' ? $result->reason : implode(' ', $result->messages);
+
+            throw new AdPlatformUnavailable(
+                $limited ? AdPlatformUnavailable::RATE_LIMITED : AdPlatformUnavailable::UNREACHABLE,
+                ($limited ? 'OpenAI is limiting requests' : 'OpenAI could not be reached')
+                    . ', so no test event was sent: ' . $why . '. Try again in a minute.'
+            );
+        }
         if (!$result->delivered) {
             return ['sent' => false, 'arrived' => false, 'message' => 'OpenAI did not take the test event: ' . ($result->reason !== '' ? $result->reason : implode(' ', $result->messages))] + $base;
         }

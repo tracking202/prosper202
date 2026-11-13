@@ -13,16 +13,16 @@ import (
 // user asked, call get_more_tools with the task"): it matches the task
 // against the deferred tools' names, titles, descriptions and Words, loads
 // the matches into the session (the client hears notifications/tools/
-// list_changed) and answers their names and one-line descriptions. A call to
-// a deferred tool that was never loaded is loaded and run, so a client that
-// ignores list_changed is not stuck.
+// list_changed) and answers their names, one-line descriptions and input
+// schemas. A call to a deferred tool that was never loaded is loaded and
+// run, so a client that ignores list_changed is not stuck.
 //
 // A deferred tool marked NotHosted is local only. The others the hosted
 // relay may load through its own get_more_tools, from `p202 mcp tools
 // --deferred` (whose hosted_excludes names the local ones, and whose words
-// are each tool's Words), within the areas
-// an AI connection's key reaches (TestHostedMCPToolsStayInsideTheAIKeyAreas
-// runs them). `p202 mcp call` runs them like any other tool.
+// are each tool's Words), within the areas an AI connection's key reaches
+// (TestHostedMCPToolsStayInsideTheAIKeyAreas runs them). `p202 mcp call`
+// runs them like any other tool.
 //
 // To add one: append its spec here, with Words a person would use for the
 // task (TestMCPDeferredToolsAreFoundByTheirTask asks each tool's first Word).
@@ -67,34 +67,42 @@ var mcpDeferredToolSpecs = []mcpToolSpec{
 		Words: []string{"destinations", "conversions api", "server-side conversions", "ga4", "google ads", "chatgpt ads", "openai"}},
 	{Name: "destination_deliveries", Command: []string{"destination", "deliveries"}, Title: "A destination's delivery log", Kind: mcpRead, NotHosted: true,
 		Args: []mcpArg{idArg("id", "Destination id (from destination_list).", true)}, Omit: []string{"conv-id"},
-		Note:  "Why each failed or was withheld. " + pageNote,
+		Note:  destinationDeliveriesNote,
 		Words: []string{"delivery log", "failed conversions", "withheld conversions", "why a conversion did not reach the ad platform", "destinations"}},
-	{Name: "destination_test", Command: []string{"destination", "test"}, Title: "Test a destination", Kind: mcpCreate, NotHosted: true, NotStaged: true,
-		Args:  []mcpArg{idArg("id", "Destination id (from destination_list).", true)},
+	{Name: "destination_test", Command: []string{"destination", "test"}, Title: "Test a destination", Kind: mcpCreate, NotHosted: true, NotStaged: true, OpenWorld: true,
+		Args: []mcpArg{idArg("id", "Destination id (from destination_list).", true)},
+		// --real sends an event the platform saves and counts; the page asks before it, a tool call cannot.
+		Omit:  []string{"real"},
 		Words: []string{"test destination", "test fire", "validate destination", "destinations"}},
 	// ChatGPT Ads connections (Setup › Destinations › ChatGPT Ads): an ad account reached with its Advertiser API key.
-	{Name: "ad_connection_list", Command: []string{"ad-connection", "list"}, Title: "ChatGPT Ads connections", Kind: mcpRead,
-		Note:  "Each ad account's id, name, currency, time zone, status and what setup made; keys are never shown.",
+	{Name: "ad_connection_list", Command: []string{"ad-connection", "list"}, Title: "ChatGPT Ads connections", Kind: mcpRead, NotHosted: true,
+		Note:  "Each ad account's id, name, currency, time zone, status and what setup made.",
 		Words: []string{"chatgpt ads connection", "openai ads account", "advertiser api key", "chatgpt ads"}},
-	{Name: "ad_connection_check", Command: []string{"ad-connection", "check"}, Title: "Check a ChatGPT Ads connection", Kind: mcpRead,
+	{Name: "ad_connection_check", Command: []string{"ad-connection", "check"}, Title: "Check a ChatGPT Ads connection", Kind: mcpUpdate, NotHosted: true, NotStaged: true, OpenWorld: true, Refreshes: true,
 		Args:  []mcpArg{idArg("id", "Ad connection id (from ad_connection_list).", true)},
-		Note:  "Reads the ad account from OpenAI again: name, currency, time zone, and whether the key still works.",
+		Note:  "The answer is recorded on the connection (status, last_error); nothing is changed at OpenAI.",
 		Words: []string{"is my chatgpt ads key working", "check chatgpt ads connection", "chatgpt ads"}},
 	// ChatGPT Ads campaigns, live at OpenAI through an ad connection.
-	{Name: "ad_campaign_list", Command: []string{"ad-campaign", "list"}, Title: "ChatGPT Ads campaigns", Kind: mcpRead,
+	{Name: "ad_campaign_list", Command: []string{"ad-campaign", "list"}, Title: "ChatGPT Ads campaigns", Kind: mcpRead, OpenWorld: true,
 		Args: []mcpArg{idArg("connection_id", "Ad connection id (from ad_connection_list).", true)}, Omit: []string{"after"},
 		Note:  "Status, budget, serving issues and tracking template; level ad-groups or ads for the rest.",
 		Words: []string{"chatgpt ads campaigns", "openai ads campaign status", "why is my chatgpt ad not serving", "chatgpt ads"}},
-	{Name: "ad_campaign_pause", Command: []string{"ad-campaign", "pause"}, Title: "Pause a ChatGPT Ads campaign", Kind: mcpUpdate,
+	{Name: "ad_campaign_pause", Command: []string{"ad-campaign", "pause"}, Title: "Pause a ChatGPT Ads campaign", Kind: mcpUpdate, OpenWorld: true,
 		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true), adObjectArg()}, Note: adWriteNote,
 		Words: []string{"pause chatgpt ads campaign", "stop a losing chatgpt campaign", "chatgpt ads"}},
-	{Name: "ad_campaign_activate", Command: []string{"ad-campaign", "activate"}, Title: "Activate a ChatGPT Ads campaign", Kind: mcpUpdate,
+	{Name: "ad_campaign_activate", Command: []string{"ad-campaign", "activate"}, Title: "Activate a ChatGPT Ads campaign", Kind: mcpUpdate, OpenWorld: true,
 		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true), adObjectArg()}, Note: adWriteNote,
 		Words: []string{"activate chatgpt ads campaign", "resume a chatgpt campaign", "chatgpt ads"}},
-	{Name: "ad_campaign_spend", Command: []string{"ad-campaign", "spend"}, Title: "ChatGPT Ads spend by campaign", Kind: mcpRead,
+	{Name: "ad_campaign_spend", Command: []string{"ad-campaign", "spend"}, Title: "ChatGPT Ads spend by campaign", Kind: mcpRead, OpenWorld: true,
 		Args:  []mcpArg{idArg("connection_id", "Ad connection id.", true)},
 		Words: []string{"chatgpt ads spend", "what did chatgpt ads cost", "openai ads spend", "chatgpt ads"}},
 }
+
+// destinationDeliveriesNote names only keys the install's answer carries
+// (DestinationsController::deliveries; TestMCPDeferredNotesNameKeysTheAnswerCarries):
+// it has no truncated, unlike the report tools' pageNote.
+const destinationDeliveriesNote = "Why each failed or was withheld. meta.summary counts each status; " +
+	"pagination.total counts every row the filters match, so more remain while it is past offset plus the rows returned."
 
 // mcpAllToolSpecs is every tool `p202 mcp call` can run.
 func mcpAllToolSpecs() []mcpToolSpec {

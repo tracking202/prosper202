@@ -188,6 +188,10 @@ func TestSetupErrorsNameTheNextStep(t *testing.T) {
 			[]string{"ppc-account", "pixel", "list", "3"}, ExitAuth, "access_to_setup_section (Super user, Admin or Campaign manager)"},
 		{"a role without the variables dialog", setupFeatures, 403, `{"error":true,"message":"This account's role does not have the 'remove_traffic_source' permission.","status":403}`,
 			[]string{"ppc-network", "variable", "create", "3", "--name", "Ad", "--parameter", "adid", "--placeholder", "{ad_id}"}, ExitAuth, "remove_traffic_source (Super user or Admin)"},
+		{"Add ChatGPT Ads by a role without the Setup section", setupFeatures, 403, `{"error":true,"message":"This account's role does not have the 'access_to_setup_section' permission.","status":403}`,
+			[]string{"ppc-network", "add-chatgpt-ads"}, ExitAuth, "access_to_setup_section (Super user, Admin or Campaign manager)"},
+		{"Add ChatGPT Ads when the server fails", setupFeatures, 500, `{"error":true,"message":"Internal server error","status":500}`,
+			[]string{"ppc-network", "add-chatgpt-ads"}, ExitServer, "p202 system health"},
 		{"an advanced page with no offer", setupFeatures, 422, `{"error":true,"message":"Please select an affiliate campaign or rotator","status":422,"field_errors":{"offers":"An advanced landing page links out to one or more offers."}}`,
 			[]string{"landing-page", "code", "14"}, ExitValidation, "--offer campaign:<id>"},
 	}

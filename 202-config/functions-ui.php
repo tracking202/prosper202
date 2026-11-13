@@ -206,6 +206,46 @@ function p202_flash(string $kind, string $text): string
 }
 
 /**
+ * What a report page says beside figures costed from the spend ledger
+ * (DataEngine::spendLedger(), ReportSummaryForm::getSpendLedger(), a REST
+ * report's spend_ledger): how far the spend data reaches, and the spend in
+ * the window that no click carries, which is in no row or total. The amount
+ * is left out where campaign figures are masked. '' for no ledger.
+ *
+ * @param array<string, mixed>|null $meta
+ */
+function p202_spend_ledger_text(?array $meta, bool $masked = false): string
+{
+    if ($meta === null || !isset($meta['note']) || !is_string($meta['note'])) {
+        return '';
+    }
+    $text = $meta['note'];
+    $unallocated = (float) ($meta['unallocated']['total_cost'] ?? 0);
+    if ($unallocated > 0) {
+        $text .= $masked
+            ? ' Some spend in this window is on no click here, and is in no row or total.'
+            : ' ' . dollar_format($unallocated, (string) ($meta['currency'] ?? 'USD'))
+                . ' of spend in this window is on no click here, and is in no row or total.';
+    }
+    if (($meta['other_currency_rows'] ?? 0) > 0) {
+        $text .= ' Spend recorded in another currency than the account\'s is not counted.';
+    }
+    if (isset($meta['tie_note']) && is_string($meta['tie_note'])) {
+        $text .= ' ' . $meta['tie_note'];
+    }
+
+    return $text;
+}
+
+/** p202_spend_ledger_text() as the page's information flash; '' for no ledger. @param array<string, mixed>|null $meta */
+function p202_spend_ledger_note(?array $meta, bool $masked = false): string
+{
+    $text = p202_spend_ledger_text($meta, $masked);
+
+    return $text === '' ? '' : p202_flash('info', $text);
+}
+
+/**
  * The warning that the account's queued traffic-source postbacks are not
  * being sent (Prosper202\Notifications\OutboxBacklog), with the page that
  * fixes it; '' when they are. A check that fails is logged and shows

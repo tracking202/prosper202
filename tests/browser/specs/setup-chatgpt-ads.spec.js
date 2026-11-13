@@ -3,7 +3,7 @@
 /*
  * Setup › Destinations › ChatGPT Ads, driven the way a person drives it:
  * paste an Advertiser API key, check it was verified and sealed, run setup,
- * and delete the connection.
+ * replace the key, and delete the connection.
  *
  * Needs the instance pointed at the stand-in Advertiser API
  * (tests/fixtures/openai-ads/fake_openai_ads.py, started with
@@ -111,6 +111,26 @@ module.exports = {
         await app.confirmAnd('accept', button);
         expect.match(await app.messages(), /OpenAI received the test event from this server \(server_to_server/, 'the event is read back as a server event');
         await keyIsNowhere(ctx, 'after the real test');
+      },
+    },
+
+    {
+      name: 'Replace key takes a new key for the same ad account',
+      async run(ctx) {
+        const { app, ui, db, expect, state } = ctx;
+        await app.goto(PAGE);
+        const block = '#ac' + state.connection;
+        const before = db.value('SELECT credentials FROM 202_ad_connections WHERE deleted_at IS NULL LIMIT 1');
+        await app.openDisclosure(block + ' details:has(input[value="ad_replace_key"])');
+        await ui.fill({ [block + '_api_key']: 'sk-ads-wrong-key-0000' });
+        await app.submit(block + ' form:has(input[value="ad_replace_key"]) button:has-text("Replace key")');
+        expect.match(await ui.text(block), /OpenAI refused that key/, 'a refused key is said in the connection\'s block');
+        expect.eq(db.value('SELECT credentials FROM 202_ad_connections WHERE deleted_at IS NULL LIMIT 1'), before, 'and nothing was stored');
+        await ui.fill({ [block + '_api_key']: KEY });
+        await app.submit(block + ' form:has(input[value="ad_replace_key"]) button:has-text("Replace key")');
+        expect.match(await app.messages(), /Advertiser API key replaced/, 'the page says it was replaced');
+        expect.ok(db.value('SELECT credentials FROM 202_ad_connections WHERE deleted_at IS NULL LIMIT 1') !== before, 'the key was sealed again');
+        await keyIsNowhere(ctx, 'after replacing the key');
       },
     },
 

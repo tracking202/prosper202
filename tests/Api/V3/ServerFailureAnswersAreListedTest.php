@@ -76,9 +76,10 @@ final class ServerFailureAnswersAreListedTest extends TestCase
             self::CARRIES . 'a handler\'s `_status`, never a 5xx; a failure throws to the last catches'],
         'api/v3/index.php | errorresponse | $message | $code' => [2,
             'the AuthException and HttpException catches: a 5xx ' . self::UPGRADE],
-        'api/v3/index.php | errorresponse | $e->getMessage() | $e->getHttpStatus()' => [1,
+        'api/v3/index.php | errorresponse | $e->getMessage() | $e->getHttpStatus()' => [2,
             'WriteCommittedException: the write stands and the answer says so, and that a retry would make a '
-            . 'second one (CLAUDE.md #13); a 503 would read as "send it again"'],
+            . 'second one (CLAUDE.md #13); a 503 would read as "send it again". UpstreamUnavailableException: '
+            . 'a 502 or 503 that names the ad platform that could not be asked; the upgrade is not its cause'],
         "api/v3/index.php | errorresponse | \$pending ?? 'Internal server error' | \$pending !== null ? 503 : 500"
             => [1, 'the last catch: ' . self::UPGRADE],
     ];

@@ -42,15 +42,63 @@ POST /api/v3/ad-connections
 ```
 
 The key is checked with OpenAI's `GET /ad_account` first. A key OpenAI
-refuses (401, 403), or one that could not be checked (no answer, 5xx), is
-answered `422` naming `api_key`, and nothing is stored. One connection per
-ad account. `currency_matches_account` is false when the ad account bills in
+refuses (401, 403) is answered `422` naming `api_key`, and nothing is stored.
+One connection per ad account. `currency_matches_account` is false when the ad account bills in
 another currency than this account's: conversions are sent as they are,
 and spend is not converted.
 
 `status` is `connected`, `key_refused` (the last check was refused: replace
 the key) or `credentials_unreadable`. A check that got no answer keeps the
-status and says why in `last_error`.
+status and says why in `last_error` (see below for its HTTP answer).
+
+The keys are sealed with one credential key per install, the row of
+`202_deployment_secrets` whose `secret_name` is `ad_connection_credential`.
+When that row is there and is not 64 lower-case hex characters, nothing can
+be sealed or opened: connecting, replacing a key, a check and a setup answer
+`422` naming `api_key` with the mend, which is for someone with database
+access to delete that one row and then replace each connection's Advertiser
+API key (a new credential key is made with the first one).
+
+## When OpenAI cannot be asked
+
+An outage or a rate limit at OpenAI says nothing about the key, so it is
+never a `422`. Connecting, replacing a key (`PATCH` with `api_key`), a check,
+a setup and a real test event (`POST /destinations/{id}/test` with `real`)
+answer:
+
+| Status | When | Body |
+|--------|------|------|
+| `503` with `Retry-After` | No answer from OpenAI, or a 5xx of its own | `details.reason` `unreachable` |
+| `429` with `Retry-After` | OpenAI answered 429, or this install is holding to OpenAI's per-minute limits | `details.reason` `rate_limited` |
+| `502` | OpenAI answered something its API does not document (an ad account with no id, currency or time zone; a list with no `data`; a create naming nothing it made), or refused the request itself with a 4xx that is not about the key | `details.reason` `unreadable_answer` |
+
+`details.upstream` is `openai_ads`. Nothing is stored by a connect or a key
+replacement that ends this way, and no test event was sent. A **check** still
+records the try (`last_error`, `checked_at`) and leaves `status` as it was
+(so a connection already `key_refused` stays so beside an outage's
+`last_error`, until a check that is answered); the connection is in
+`details.connection`. A check OpenAI *refuses* was made, and is a `200` with
+`status` `key_refused`.
+
+A **setup** answers by this rule. A step *did something* when it came out
+`created`, `found` or `given`, or when event settings were made or found
+though the step failed. `kept` (what an earlier run made) is not this run
+doing something.
+
+| A setup in which | Answer |
+|------------------|--------|
+| a step did something | `200`, each step's outcome, failed ones included |
+| no step did something, and OpenAI refused the stored key (401, 403) | `422` naming `api_key`; the connection's `status` becomes `key_refused` |
+| no step did something, OpenAI was not reached or was limiting requests | `503`, or `429` when every such answer was the rate limit; the steps in `details.steps` |
+| no step did something, and OpenAI's answers could not be used | `502`; the steps in `details.steps` |
+| no call to OpenAI failed (every step kept, skipped or needs input) | `200` |
+
+A refused key also marks the connection `key_refused` in a run that did
+something. A real test event that OpenAI refuses (a 400 about the event, a
+refused Conversions API key) is OpenAI's verdict, a `200` with `sent` false.
+`p202 ad-connection` and `p202 destination test --real` exit 4 (server) or 7
+(rate limited) for the 5xx and 429 answers, with a hint to wait and run the
+command again, and 1 with the key hint for a refused key.
 
 ## Setup
 
@@ -70,9 +118,19 @@ Four steps run in order, each answered in `steps` with an `outcome` and a
 | `event_settings` | Finds or makes one event setting per event type on the pixel's source, 30-day click window | `created`, `found`, `needs_input`, `failed` |
 
 `skip` leaves steps out (`["destination"]`). What a step made is kept, so
-setup can be run again without making anything twice; every create carries
-an `Idempotency-Key` built from this install, the connection, the ad account
-and what is made, so a retry after a lost answer gets the same object back.
+setup run again makes nothing it already recorded: the pixel and event
+settings are looked for in the ad account first, and the destination is made
+and recorded under one lock. An enabled `openai_ads` destination of the
+account that already sends to the pixel (one made by hand, or by a connection
+since deleted) is used instead of a second one: the step is `kept`, and its
+Conversions API key is replaced with this connection's. One that is switched
+off is left as it is and the step is `needs_input`: switch it on or delete
+it, then run setup again. Every create carries an `Idempotency-Key` built
+from this install, the connection, the ad account and what is made, but
+OpenAI documents that header for campaigns, ad groups and ads, not for
+pixels, Conversions API keys or event settings, so do not rely on it there.
+If the answer to making a Conversions API key is lost (a timeout), the next
+run makes another, and the first stays in Ads Manager unused: delete it there.
 
 Pixel management and Conversions API key creation are switched on per ad
 account by OpenAI. Where they are off, OpenAI answers `404 Not found`, and

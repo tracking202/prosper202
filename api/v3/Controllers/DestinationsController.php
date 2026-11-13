@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\UpstreamUnavailableException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\PayloadKeys;
 use Prosper202\AdPlatforms\AdConnectionInputException;
 use Prosper202\AdPlatforms\AdConnectionStore;
+use Prosper202\AdPlatforms\AdPlatformUnavailable;
 use Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi;
+use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsConnections;
 use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsTestEvent;
 use Prosper202\Database\Connection;
 use Prosper202\Destinations\DestinationInputException;
@@ -116,10 +119,21 @@ final class DestinationsController
      */
     public function test(int $id, array $payload = []): array
     {
-        PayloadKeys::refuseUnknown($payload, ['real'], 'a test');
+        PayloadKeys::refuseUnknown($payload, ['real', 'confirm_counted'], 'a test');
         $real = $payload['real'] ?? false;
         if (!is_bool($real)) {
             throw new ValidationException('Validation failed', ['real' => 'true sends a real ChatGPT Ads event and reads it back; leave it out for a check that saves nothing.']);
+        }
+        // A real event is saved and counted by OpenAI: it is sent only when the request says it knows that.
+        if ($real && ($payload['confirm_counted'] ?? null) !== true) {
+            $counted = 'A real test event is saved by OpenAI and counted as a conversion of the pixel.'
+                . ' Send "confirm_counted": true with "real": true to send it, or leave real out for a check'
+                . ' that saves nothing.';
+            throw new ValidationException('Validation failed', ['confirm_counted' => $counted]);
+        }
+        if (!$real && array_key_exists('confirm_counted', $payload)) {
+            $alone = 'Goes with "real": true; leave both out for a check that saves nothing.';
+            throw new ValidationException('Validation failed', ['confirm_counted' => $alone]);
         }
         if ($real) {
             try {
@@ -132,6 +146,8 @@ final class DestinationsController
                 ))->send($this->userId, $id, time());
             } catch (AdConnectionInputException $e) {
                 throw new ValidationException($e->getMessage(), ['real' => $e->getMessage()], $e);
+            } catch (AdPlatformUnavailable $e) {
+                throw UpstreamUnavailableException::forAdPlatform($e, OpenAiAdsConnections::PLATFORM);
             }
 
             return ['data' => $answer ?? throw self::notFound($id)];

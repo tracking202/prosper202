@@ -59,6 +59,36 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$error['token'] = 'Invalid or expired form token. Please reload the page and try again.';
 	}
 
+	// "Add ChatGPT Ads": the source, an account and its two variables in one
+	// step, or what an existing ChatGPT Ads source lacks (ChatGptAdsSource).
+	if (isset($_POST['add_chatgpt_ads']) && empty($error)) {
+		$chatGpt = null;
+		try {
+			$chatGpt = (new \Prosper202\Setup\ChatGptAdsSource(new \Prosper202\Database\Connection($db)))
+				->add((int) $_SESSION['user_id']);
+		} catch (\RuntimeException | \mysqli_sql_exception $e) {
+			record_mysql_error($db, 'INSERT INTO 202_ppc_networks (Add ChatGPT Ads)', $e->getMessage());
+		}
+		$changed = $chatGpt['source_created'] || $chatGpt['source_adopted'] || $chatGpt['account_created'] || $chatGpt['variables_added'] !== [];
+		if ($changed) {
+			\Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
+		}
+		if ($chatGpt['source_created']) {
+			if ($slack) {
+				$slack->push('traffic_source_created', ['name' => \Prosper202\Setup\ChatGptAdsSource::SOURCE_NAME, 'user' => $user_row['username']]);
+			}
+			require_once dirname(__DIR__, 2) . '/202-config/Messaging/Analytics.class.php';
+			Analytics::event('traffic_source_added', ['via' => 'ui'], 'analytics');
+		}
+		if ($chatGpt['source_created'] && $chatGpt['account_created'] && $slack) {
+			$slack->push('traffic_source_account_created', ['account_name' => \Prosper202\Setup\ChatGptAdsSource::ACCOUNT_NAME, 'network_name' => \Prosper202\Setup\ChatGptAdsSource::SOURCE_NAME, 'user' => $user_row['username']]);
+		}
+		$flash = $chatGpt['source_created'] ? 'chatgpt_added'
+			: ($chatGpt['source_adopted'] ? 'chatgpt_adopted' : ($changed ? 'chatgpt_completed' : 'chatgpt_exists'));
+		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php?' . $flash . '=1');
+		exit;
+	}
+
 	if (isset($_POST['ppc_network_name'])) {
 		$ppc_network_name = trim((string) $_POST['ppc_network_name']);
 		if (empty($ppc_network_name)) {
@@ -80,30 +110,43 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     ? (int) $rawSourceId : 0;
                 $newName = (string) $_POST['ppc_network_name'];
                 $ownerId = (int) $_SESSION['user_id'];
-                try {
-                    $sourceConn = new \Prosper202\Database\Connection($db);
-                    $renamedFrom = $sourceConn->transaction(
-                        static function () use ($sourceConn, $sourceId, $newName, $ownerId): ?string {
-                            $owned = $sourceConn->prepareWrite('SELECT ppc_network_name FROM 202_ppc_networks'
-                                . ' WHERE ppc_network_id = ? AND user_id = ? AND ppc_network_deleted = 0 FOR UPDATE');
-                            $sourceConn->bind($owned, 'ii', [$sourceId, $ownerId]);
-                            $found = $sourceConn->fetchOne($owned);
-                            if ($found === null) {
-                                return null;
-                            }
-                            $rename = $sourceConn->prepareWrite('UPDATE 202_ppc_networks SET ppc_network_name = ?,'
-                                . ' ppc_network_time = ? WHERE ppc_network_id = ? AND user_id = ?');
-                            $sourceConn->bind($rename, 'siii', [$newName, time(), $sourceId, $ownerId]);
-                            $sourceConn->executeUpdate($rename);
-
-                            return (string) $found['ppc_network_name'];
-                        }
-                    );
-                } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
-                    $what = 'UPDATE 202_ppc_networks (traffic source ' . $sourceId . ')';
-                    record_mysql_error($db, $what, $e->getMessage());
+                // The ChatGPT Ads mark, only from the form that shows it (a
+                // checkbox posts nothing when clear); '1' marks, nothing clears.
+                $newPlatform = null;
+                if (($_POST['ppc_network_platform_shown'] ?? null) === '1') {
+                    $posted = $_POST['ppc_network_chatgpt'] ?? null;
+                    if ($posted !== null && $posted !== '1') {
+                        $error['ppc_network_chatgpt'] = 'The ChatGPT Ads choice was not one the form offers. Nothing was saved.';
+                    }
+                    $newPlatform = $posted === '1' ? \Prosper202\Setup\ChatGptAdsSource::PLATFORM : '';
                 }
-                if ($renamedFrom === null) {
+                if (!isset($error['ppc_network_chatgpt'])) {
+                    try {
+                        $sourceConn = new \Prosper202\Database\Connection($db);
+                        $renamedFrom = $sourceConn->transaction(
+                            static function () use ($sourceConn, $sourceId, $newName, $ownerId, $newPlatform): ?string {
+                                $owned = $sourceConn->prepareWrite('SELECT ppc_network_name FROM 202_ppc_networks'
+                                    . ' WHERE ppc_network_id = ? AND user_id = ? AND ppc_network_deleted = 0 FOR UPDATE');
+                                $sourceConn->bind($owned, 'ii', [$sourceId, $ownerId]);
+                                $found = $sourceConn->fetchOne($owned);
+                                if ($found === null) {
+                                    return null;
+                                }
+                                $rename = $sourceConn->prepareWrite('UPDATE 202_ppc_networks SET ppc_network_name = ?,'
+                                    . ' ppc_network_platform = COALESCE(?, ppc_network_platform),'
+                                    . ' ppc_network_time = ? WHERE ppc_network_id = ? AND user_id = ?');
+                                $sourceConn->bind($rename, 'ssiii', [$newName, $newPlatform, time(), $sourceId, $ownerId]);
+                                $sourceConn->executeUpdate($rename);
+
+                                return (string) $found['ppc_network_name'];
+                            }
+                        );
+                    } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+                        $what = 'UPDATE 202_ppc_networks (traffic source ' . $sourceId . ')';
+                        record_mysql_error($db, $what, $e->getMessage());
+                    }
+                }
+                if ($renamedFrom === null && !isset($error['ppc_network_chatgpt'])) {
                     $error['ppc_network_edit'] = 'That traffic source was not found on this account.'
                         . ' Nothing was saved.';
                 }
@@ -580,9 +623,29 @@ echo p202_setup_query_flashes([
 	'account_saved' => 'Account saved.',
 	'deleted' => 'Removed. Clicks already tracked keep their history.',
 	'variables_saved' => 'Custom variables saved. New tracking links for this source carry them.',
+	'chatgpt_added' => 'ChatGPT Ads added, with an account and the campaign_id and ad_id variables. On Get Links, pick it as the traffic source: you get the destination URL and the tracking template to paste into Ads Manager.',
+	'chatgpt_completed' => 'ChatGPT Ads was already set up, so no second source was made. The account or variables it was missing were added back; nothing you changed was touched.',
+	'chatgpt_adopted' => 'Your traffic source named ChatGPT Ads is now set up as ChatGPT Ads: it kept its links and reports, and was given what it was missing (an account, the campaign_id and ad_id variables). Get Links now gives its destination URL and tracking template.',
+	'chatgpt_exists' => 'ChatGPT Ads is already set up, so nothing was added. Get Links gives its destination URL and tracking template.',
 ], $_GET);
+if (isset($_GET['chatgpt_added']) || isset($_GET['chatgpt_adopted']) || isset($_GET['chatgpt_completed']) || isset($_GET['chatgpt_exists'])) {
+	// The button marked a source, so ChatGPT Ads spend now goes to marked
+	// sources' clicks only: say which sources with an ad_id variable are not.
+	$unmarkedConn = new \Prosper202\Database\Connection($db);
+	$unmarkedStmt = $unmarkedConn->prepareWrite('SELECT DISTINCT n.ppc_network_id, n.ppc_network_name FROM 202_ppc_networks n'
+		. ' JOIN 202_ppc_network_variables v ON v.ppc_network_id = n.ppc_network_id AND v.deleted = 0'
+		. " AND v.parameter COLLATE utf8mb4_bin = '" . \Prosper202\Spend\LedgerCost::AD_PARAMETER . "'"
+		. " WHERE n.user_id = ? AND n.ppc_network_deleted = 0 AND n.ppc_network_platform = '' ORDER BY n.ppc_network_name");
+	$unmarkedConn->bind($unmarkedStmt, 'i', [(int) $_SESSION['user_id']]);
+	$unmarked = array_map(static fn (array $r): string => (string) $r['ppc_network_name'], $unmarkedConn->fetchAll($unmarkedStmt));
+	if ($unmarked !== []) {
+		echo p202_flash('warn', 'These traffic sources have an ad_id variable but are not marked as ChatGPT Ads, so their clicks'
+			. ' do not share ChatGPT Ads spend: ' . implode(', ', $unmarked) . '. If one of them is where your'
+			. ' ChatGPT ads send clicks, mark it: edit it and open Advanced.');
+	}
+}
 if ($error) {
-	echo p202_setup_error_flashes($error, ['ppc_network_name', 'ppc_network_id', 'ppc_account_name']);
+	echo p202_setup_error_flashes($error, ['ppc_network_name', 'ppc_network_id', 'ppc_account_name', 'ppc_network_chatgpt']);
 	if (isset($error['pixel_correction_url']) || isset($error['pixel_type_id']) || isset($error['pixel_code'])) {
 		// The pixels sit under a disclosure, so the sentence is said at the
 		// top as well as opening it (below).
@@ -609,6 +672,23 @@ if ($error) {
 						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'ppc_network_name'); ?>" id="ppc_network_name" name="ppc_network_name" value="<?php echo p202_setup_e($sourceFormName); ?>" maxlength="255" required<?php echo $sourceIsPrimary ? ' autofocus' : ''; ?>>
 						<?php echo p202_setup_feedback($error, 'ppc_network_name'); ?>
 					</div>
+					<?php if ($network_editing) {
+						$markedChatGpt = isset($_POST['ppc_network_platform_shown'])
+							? ($_POST['ppc_network_chatgpt'] ?? null) === '1'
+							: \Prosper202\Setup\ChatGptAdsSource::isSourceRow($ppc_network_row ?? []); ?>
+					<details class="p202-disclosure mb-3" data-p202-remember="setup-traffic-sources-chatgpt"<?php echo isset($error['ppc_network_chatgpt']) ? ' open' : ''; ?>>
+						<summary>Advanced <span class="p202-disclosure__hint">whether this is a ChatGPT Ads source</span></summary>
+						<div class="p202-disclosure__body">
+							<input type="hidden" name="ppc_network_platform_shown" value="1">
+							<div class="form-check">
+								<input class="form-check-input<?php echo p202_setup_invalid($error, 'ppc_network_chatgpt'); ?>" type="checkbox" id="ppc_network_chatgpt" name="ppc_network_chatgpt" value="1"<?php echo $markedChatGpt ? ' checked' : ''; ?>>
+								<label class="form-check-label" for="ppc_network_chatgpt">This is a ChatGPT Ads source</label>
+								<?php echo p202_setup_feedback($error, 'ppc_network_chatgpt'); ?>
+							</div>
+							<div class="form-text">Get Links gives a ChatGPT Ads source's links the tracking template Ads Manager takes. Once a source of yours is marked, ChatGPT Ads spend goes only to marked sources' clicks, so mark every source your ChatGPT ads send clicks through.</div>
+						</div>
+					</details>
+					<?php } ?>
 					<div class="p202-form-actions">
 						<?php if ($network_editing) { ?>
 							<a class="btn btn-link" href="<?php echo p202_setup_e($self); ?>">Cancel</a>
@@ -616,6 +696,16 @@ if ($error) {
 						<button type="submit" class="btn <?php echo $sourceIsPrimary ? 'btn-primary' : 'btn-secondary'; ?>"><?php echo $network_editing ? 'Save changes' : 'Add traffic source'; ?></button>
 					</div>
 				</form>
+				<?php if (!$network_editing) { ?>
+				<form method="post" action="<?php echo p202_setup_e($self); ?>" class="mt-3 pt-3 border-top" id="chatgpt-ads-form">
+					<?php echo p202_setup_token_field($token); ?>
+					<input type="hidden" name="add_chatgpt_ads" value="1">
+					<div class="form-text mt-0 mb-2">Buying ads in ChatGPT? One click adds the source, an account and the <code>campaign_id</code> and <code>ad_id</code> variables Ads Manager fills in. A second click adds nothing twice.</div>
+					<div class="p202-form-actions">
+						<button type="submit" class="btn btn-secondary">Add ChatGPT Ads</button>
+					</div>
+				</form>
+				<?php } ?>
 			</div>
 		</section>
 
@@ -692,6 +782,7 @@ if ($error) {
 							$accounts = $accountsBySource[$sid] ?? []; ?>
 							<li class="p202-list__item<?php echo $editSourceId === $sid ? ' is-active' : ''; ?>" data-p202-filter-text="<?php echo p202_setup_e($sname); ?>">
 								<span class="p202-list__name"><?php echo p202_setup_e($sname); ?></span>
+								<?php if (\Prosper202\Setup\ChatGptAdsSource::isSourceRow($source)) { ?><span class="p202-pill p202-pill--accent" title="Get Links gives this source's links the ChatGPT Ads tracking template">ChatGPT Ads</span><?php } ?>
 								<span class="p202-pill"><?php echo count($accounts) . ' ' . (count($accounts) === 1 ? 'account' : 'accounts'); ?></span>
 								<span class="p202-list__actions">
 									<a class="p202-list__action" href="<?php echo p202_setup_e($self . '?edit_ppc_network_id=' . $sid . '&edit_ppc_network_name=' . rawurlencode($sname)); ?>">edit</a>

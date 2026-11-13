@@ -21,6 +21,7 @@ use Api\V3\RequestContext;
 use Api\V3\Router;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\TooManyRequestsException;
+use Api\V3\Exception\UpstreamUnavailableException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\PathId;
@@ -525,6 +526,20 @@ try {
             $auth->requireScope('conversions:write');
             $auth->requirePermission($db, 'access_to_api_integrations');
         }]);
+        // Setup › Traffic Sources' "Add ChatGPT Ads": the source, an account
+        // and its two variables, or what an existing ChatGPT Ads source lacks
+        // (Prosper202\Setup\ChatGptAdsSource). Idempotent by itself: 201 when
+        // the source was made, 200 when it was already there. The page asks
+        // for Setup alone, as adding a source does. It also makes a traffic
+        // source account, so a scoped key needs ppc-accounts:write as well as
+        // the ppc-networks:write its path asks for (CLAUDE.md #5).
+        $router->group('/ppc-networks', function (Router $r) use ($crud, $payload) {
+            $r->post('/chatgpt-ads', function () use ($crud, $payload): array {
+                $answer = $crud(\Api\V3\Controllers\PpcNetworksController::class)->addChatGptAds($payload);
+
+                return ['_status' => $answer['data']['source_created'] ? 201 : 200] + $answer;
+            });
+        }, [$setupSection, static function () use ($auth): void { $auth->requireScope('ppc-accounts:write'); }]);
         $router->group('/ppc-networks/{id}/variables', function (Router $r) use ($crud, $idempotent, $payload) {
             $vars = \Api\V3\Controllers\PpcNetworkVariablesController::class;
             $r->get('', fn($ctx) => $crud($vars)->list(PathId::of($ctx)));
@@ -675,6 +690,15 @@ try {
         $router->group('/clicks', function (Router $r) use ($crud, $payload, $queryParams) {
             $r->post('/cpc', fn() => $crud(\Api\V3\Controllers\UpdateController::class)->cpc($payload, writeDryRunRequested($queryParams)));
         }, [$updateSection]);
+        // ── Spend ledger: what each ad platform billed per ad per hour ───
+        // It replaces click CPCs in the reports, so writing it asks for the
+        // Update section as POST /clicks/cpc does; `?dry_run=1` previews.
+        // Reading it shows money and clicks, masked as the reports' are.
+        $spendFigures = \Api\V3\Support\CampaignFigures::SPEND;
+        $router->group('/spend-ledger', function (Router $r) use ($crud, $payload, $queryParams) {
+            $r->post('', fn() => $crud(\Api\V3\Controllers\SpendLedgerController::class)->write($payload, writeDryRunRequested($queryParams)));
+        }, [$updateSection]);
+        $router->get('/spend-ledger', fn() => $campaignFigures($crud(\Api\V3\Controllers\SpendLedgerController::class)->read($queryParams), $spendFigures));
         $router->group('/conversions', function (Router $r) use ($crud, $payload, $queryParams, $auth, $db) {
             $cls = \Api\V3\Controllers\UpdateController::class;
             $r->post('/subids',        fn() => $crud($cls)->markSubids($payload, writeDryRunRequested($queryParams)));
@@ -1505,6 +1529,7 @@ try {
                 'conversions'   => '/conversions',
                 'update'        => '/clicks/cpc, /conversions/{subids|subids/delete|subids/reset|uploads}',
                 'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart|groups}',
+                'spend_ledger'  => '/spend-ledger',
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}[/{id}][/deliveries]',
                 'rotators'      => '/rotators[/{id}/rules|/{id}/stats]',
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
@@ -1642,6 +1667,7 @@ try {
     $writePreviewRouter = new Router();
     $writePreview = static fn() => true;
     $writePreviewRouter->post('/clicks/cpc', $writePreview);
+    $writePreviewRouter->post('/spend-ledger', $writePreview);
     $writePreviewRouter->group('/conversions', function (Router $r) use ($writePreview) {
         $r->post('/subids', $writePreview);
         $r->post('/subids/delete', $writePreview);
@@ -2056,6 +2082,15 @@ try {
 } catch (TooManyRequestsException $e) {
     header('Retry-After: ' . $e->retryAfter);
     Bootstrap::errorResponse($e->getMessage(), 429, ['retry_after_seconds' => $e->retryAfter] + $e->getDetails());
+} catch (UpstreamUnavailableException $e) {
+    // Another service's failure, in its own words: nothing here is broken, so the upgrade is not named for it.
+    error_log(p202UncaughtLogLine('API v3 answered ' . $e->getHttpStatus() . ' for an ad platform', $e));
+    $extra = ['details' => $e->getDetails()];
+    if ($e->retryAfter !== null) {
+        header('Retry-After: ' . $e->retryAfter);
+        $extra = ['retry_after_seconds' => $e->retryAfter] + $extra;
+    }
+    Bootstrap::errorResponse($e->getMessage(), $e->getHttpStatus(), $extra);
 } catch (HttpException $e) {
     $code = $e->getHttpStatus();
     $message = $e->getMessage();

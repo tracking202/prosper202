@@ -279,6 +279,54 @@ clicks an `epc` of `0.666666666`. The group report (`/reports/groups`) is the
 exception: it divides the same sums in floating point, unrounded
 (`16.666666666666664`).
 
+## Cost from the spend ledger
+
+Where the [spend ledger](29-spend-ledger.md) has an ad's spend for an hour,
+the clicks that carry that ad in that hour are costed at an equal share of
+it instead of their CPC. A click carries an ad when its traffic source has
+a variable with the parameter `ad_id` (the ChatGPT Ads tracking template
+sets `ad_id={ad_id}`) and the click came with a value for it; a click with
+two different values for it carries none. The hour is the UTC hour the click
+arrived in, and the share counts every click of the account in that whole
+hour, so a window that starts mid-hour costs its clicks as the whole hour
+does. Every other click keeps its CPC: clicks after the latest hour the
+ledger holds, clicks with no `ad_id`, and ads the ledger has no row for.
+
+On an account with a traffic source marked as ChatGPT Ads
+(`ppc_network_platform` `chatgpt_ads`, set by Setup › Traffic Sources' **Add
+ChatGPT Ads**, which makes one or marks yours when it is the only source named
+ChatGPT Ads, or by a source's edit form under Advanced, which marks any
+source and clears the mark), ChatGPT Ads spend (platform `openai_ads`) goes only to the
+clicks of marked sources, all of them if there are several, so a click of
+another source that happens to carry the same ad id keeps its CPC. A marked
+source that was removed still marks the account: its clicks still carry the
+mark. An account with no marked source, such as one whose ChatGPT Ads source
+was set up by hand, is matched by the ad id on any of its traffic sources, as
+spend of every other platform is. Where this decided something in the
+window, `spend_ledger.tie_note` says so (the report pages show it too).
+
+A report whose cost read the ledger carries `spend_ledger`:
+
+```json
+"spend_ledger": {
+  "reaches": 1794297600,
+  "reaches_at": "2026-11-11T07:00:00Z",
+  "note": "Spend data reaches 2026-11-11 02:00 (America/New_York). Clicks after that are costed at their CPC.",
+  "unallocated": {"total_cost": 4.1, "note": "…"}
+}
+```
+
+`unallocated.total_cost` is the spend in the window's hours for ads that no
+click of the account carries in that hour. It is in no row or total, and is
+not narrowed by the report's filters. Rows in a currency other than the
+account's are not counted (`other_currency_rows` says how many). With no
+ledger row in the window, a report has no `spend_ledger` and is exactly what
+it was before the ledger existed. The report pages in the browser cost
+clicks the same way (Overview's tables and chart, Group Overview, Breakdown,
+Day and Week Parting, every Analyze report and Custom Variables) and say how
+far the spend data reaches above their figures. A page reading every
+account's clicks at once costs them at CPC, as the ledger is an account's.
+
 ## A click a redirector link re-clicked
 
 A visitor who comes back through a redirector link with `?lpr=` re-clicks

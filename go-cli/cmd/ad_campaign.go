@@ -73,7 +73,7 @@ func adCampaignWrite(cmd *cobra.Command, name, path string, body map[string]inte
 
 var adCampaignListCmd = &cobra.Command{
 	Use:   "list <connection-id>",
-	Short: "List ChatGPT Ads campaigns, ad groups or ads: status, budget, serving issues",
+	Short: "List ChatGPT Ads campaigns, ad groups or ads, with serving issues",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := adCampaignArgs(args); err != nil {
@@ -117,7 +117,7 @@ var adCampaignListCmd = &cobra.Command{
 
 var adCampaignGetCmd = &cobra.Command{
 	Use:   "get <connection-id> <id>",
-	Short: "Show one ChatGPT Ads campaign (or ad group, ad) as OpenAI describes it now",
+	Short: "Show one ChatGPT Ads campaign, ad group or ad as OpenAI has it",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := adCampaignArgs(args); err != nil {
@@ -151,13 +151,13 @@ func adCampaignStatusCmd(action, short string) *cobra.Command {
 }
 
 var (
-	adCampaignPauseCmd    = adCampaignStatusCmd("pause", "Pause a ChatGPT Ads campaign, ad group or ad at OpenAI")
-	adCampaignActivateCmd = adCampaignStatusCmd("activate", "Activate (resume, turn back on) a ChatGPT Ads campaign, ad group or ad at OpenAI")
+	adCampaignPauseCmd    = adCampaignStatusCmd("pause", "Pause a ChatGPT Ads campaign, ad group or ad")
+	adCampaignActivateCmd = adCampaignStatusCmd("activate", "Activate (resume) a ChatGPT Ads campaign, ad group or ad")
 )
 
 var adCampaignSetTemplateCmd = &cobra.Command{
 	Use:   "set-template <connection-id> <id>",
-	Short: "Set the tracking template OpenAI appends to the ad's URL (default: the ChatGPT Ads template Get Links gives)",
+	Short: "Set the tracking template OpenAI appends to ad URLs",
 	Long: "Sets the query string OpenAI appends to the ad's URL on a campaign (or --level ad-groups, ads; the\n" +
 		"lowest level set wins). Without --template it is the template Get Links shows for the ChatGPT Ads source;\n" +
 		"for a tracker that sends visitors straight to your site, pass the one `p202 tracker get-url <id>` gives (with t202id).",
@@ -182,7 +182,7 @@ var adCampaignSetTemplateCmd = &cobra.Command{
 
 var adCampaignAttachEventsCmd = &cobra.Command{
 	Use:   "attach-events <connection-id> <campaign-id>",
-	Short: "Add conversion event settings to a ChatGPT Ads campaign, keeping the ones it has",
+	Short: "Add conversion event settings to a ChatGPT Ads campaign",
 	Long: "OpenAI replaces a campaign's list of event settings whole, so this reads the campaign, adds the ones\n" +
 		"named (or, without --event-setting-id, the ones made when the connection was set up) and writes the list back.",
 	Args: cobra.ExactArgs(2),
@@ -207,7 +207,7 @@ var adCampaignAttachEventsCmd = &cobra.Command{
 
 var adCampaignSpendCmd = &cobra.Command{
 	Use:   "spend <connection-id> [--since YYYY-MM-DD --until YYYY-MM-DD]",
-	Short: "ChatGPT Ads spend by campaign, live from OpenAI (default yesterday)",
+	Short: "ChatGPT Ads spend by campaign (default yesterday)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := adCampaignArgs(args); err != nil {

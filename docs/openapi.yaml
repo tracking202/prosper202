@@ -170,7 +170,15 @@ tags:
   - name: Update
     description: The UI's Update section — set past clicks' CPC, mark subids converted, delete subids, reset a campaign's subids, upload a revenue report. Role permission `access_to_update_section` (and `delete_individual_subids` to delete subids); every write has a `?dry_run=1` preview
   - name: Reports
-    description: Performance reports
+    description: >-
+      Performance reports. Where the spend ledger has the click's ad and hour,
+      a report's cost is the ledger's (the hour's spend shared by the clicks
+      carrying the ad) instead of the click's CPC, and the answer carries
+      `spend_ledger` (SpendLedgerNote) saying how far spend data reaches and
+      what spend no click carries. With no ledger rows in the window, the
+      answer is the same as before the ledger existed.
+  - name: Spend Ledger
+    description: What each ad platform billed per external ad per hour, written by the platform's puller (or any client) and read by the reports as cost (scopes `spend-ledger:read` / `spend-ledger:write`; writing asks for the role permission `access_to_update_section`)
   - name: Rotators
     description: Traffic rotator and rule management
   - name: Attribution
@@ -2206,6 +2214,14 @@ paths:
                         type: string
                         description: The link's query from t202id on, for appending to a URL of your own
                         example: "?t202id=8837291&adid={ad_id}&t202kw={keyword}"
+                      chatgpt_ads:
+                        description: >-
+                          For a tracker whose traffic source account is on the ChatGPT Ads
+                          source (POST /ppc-networks/chatgpt-ads), what to paste into Ads
+                          Manager, as Get Links shows it; null for any other tracker.
+                        nullable: true
+                        allOf:
+                          - $ref: "#/components/schemas/ChatGptAdsLinks"
         "404":
           $ref: "#/components/responses/NotFound"
         "422":
@@ -3464,6 +3480,94 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /spend-ledger:
+    get:
+      tags: [Spend Ledger]
+      summary: What the ad platforms billed, per ad per day or hour
+      description: >-
+        The account's spend ledger summed per period (`day` in the account's
+        time zone, each hour converted at its own instant, or `hour`) and per
+        platform, ad account, campaign, ad group and ad, newest first. Beside
+        each row, `matched_clicks` counts this account's clicks that carried
+        the ad (its traffic source variable with parameter `ad_id`) in those
+        hours, and `unallocated_spend` is the spend of the hours no click
+        carried it in. For `openai_ads` on an account with a source marked
+        `chatgpt_ads`, only the clicks of such sources count. `reaches` is the end of the latest hour the ledger
+        holds (unix seconds). Money and counts are null with `masked` for a
+        role without `access_to_campaign_data`.
+      operationId: listSpendLedger
+      parameters:
+        - $ref: "#/components/parameters/period"
+        - $ref: "#/components/parameters/windowFrom"
+        - $ref: "#/components/parameters/windowTo"
+        - name: interval
+          in: query
+          schema:
+            type: string
+            enum: [day, hour]
+            default: day
+        - name: platform
+          in: query
+          description: Only this platform's rows (e.g. `openai_ads`).
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5000
+            default: 500
+      responses:
+        "200":
+          description: The ledger's rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpendLedgerList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    post:
+      tags: [Spend Ledger]
+      summary: Record what an ad platform billed, per ad per hour
+      description: >-
+        Each row is one UTC hour of one external ad. A row is stored under its
+        platform, ad account, ad and hour, so sending an hour again replaces
+        it (spend settles after the clicks; re-send the trailing hours) and
+        sending the same rows twice changes nothing, so retrying a write that
+        may have failed is safe; the last write of an hour wins. An ad id names
+        one ad: one the account already holds under another platform or ad
+        account is refused. All
+        rows are written in one transaction, or none. Refused by field name
+        (`rows.3.spend`), with nothing written: an unknown field, a value
+        that is not exact (a spend with more than six decimals, an hour that
+        is not a multiple of 3600 or has not started), one key twice, and a
+        currency other than the account's (nothing here converts
+        currencies). `?dry_run=1` answers the same counts and writes nothing.
+        Needs `access_to_update_section` and `spend-ledger:write`.
+      operationId: writeSpendLedger
+      parameters:
+        - $ref: "#/components/parameters/writeDryRun"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SpendLedgerWrite"
+      responses:
+        "200":
+          description: "What was written (`dry_run: false`) or would be"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpendLedgerWriteResponse"
+        "403":
+          description: The role lacks `access_to_update_section`, or the key lacks `spend-ledger:write`.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /conversions/subids:
     post:
       tags: [Update]
@@ -3740,6 +3844,8 @@ paths:
                       beside `currency`.
                     items:
                       $ref: "#/components/schemas/OtherCurrencyRevenue"
+                  spend_ledger:
+                    $ref: "#/components/schemas/SpendLedgerNote"
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -5084,7 +5190,7 @@ paths:
         "409":
           description: The export is not failed.
 
-  # ─── Goals ───────────────────────────────────────────────────────────
+  # ─── Ad Connections ──────────────────────────────────────────────────
 
   /ad-connections:
     get:
@@ -5114,9 +5220,11 @@ paths:
       summary: Connect an ad account with its Advertiser API key
       description: |
         The key is checked first with OpenAI's `GET /ad_account`, which fills
-        the account's id, name, currency and time zone; a key OpenAI refuses,
-        or one that could not be checked, is answered 422 and nothing is
-        stored. The key is stored encrypted and never served. One connection
+        the account's id, name, currency and time zone; a key OpenAI refuses
+        is answered 422 and nothing is stored. When OpenAI could not be asked
+        nothing is stored either and the answer is 503 (not reached), 429
+        (its rate limit) or 502 (an answer that cannot be used), never a 422:
+        the key was not judged. The key is stored encrypted and never served. One connection
         per ad account; at most 10 per account. A currency other than the
         account's is allowed and said in `currency_matches_account`.
       operationId: createAdConnection
@@ -5145,6 +5253,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/UpstreamRateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}:
     parameters:
@@ -5200,6 +5314,12 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/UpstreamRateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
     delete:
       tags: [Ad Connections]
       summary: Delete an ad connection
@@ -5224,8 +5344,10 @@ paths:
       summary: Read the ad account again
       description: |
         Refreshes name, currency and time zone. A refused key sets `status`
-        `key_refused`; a request that got no answer leaves `status` as it was
-        and says why in `last_error`. Not previewable: `dry_run` is answered 422.
+        `key_refused` and is a 200: the check was made. A check OpenAI did not
+        answer is a 503 (429 for its rate limit, 502 for an answer that cannot
+        be used) with the connection in `details.connection`: `status` is left
+        as it was, and `last_error` and `checked_at` record the try. Not previewable: `dry_run` is answered 422.
       operationId: checkAdConnection
       responses:
         "200":
@@ -5243,6 +5365,12 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/UpstreamRateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/setup:
     parameters:
@@ -5263,7 +5391,17 @@ paths:
         Where OpenAI answers 404 to pixel or key creation (the feature is off
         for the account) the step is `needs_input`: give `pixel_id` with
         `source_id`, or `conversions_api_key`, from Ads Manager. Creates carry
-        an Idempotency-Key. Not previewable: `dry_run` is answered 422.
+        an Idempotency-Key. A step did something when it is `created`,
+        `found` or `given` (or made or found event settings though it
+        failed); `kept` is not this run's doing. A run in which a step did
+        something is a 200 with each step's outcome. A run in which none
+        did and a call to OpenAI failed is a failure: 422 naming `api_key`
+        when OpenAI refused the stored key (the connection becomes
+        `key_refused`), 503 when OpenAI was not reached (429 when every
+        such answer was its rate limit), else 502 for answers that cannot
+        be used, with the steps in `details.steps`. A run in which no call
+        failed (every step kept, skipped or needing input) is a 200.
+        Not previewable: `dry_run` is answered 422.
       operationId: setupAdConnection
       requestBody:
         content:
@@ -5311,6 +5449,12 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/UpstreamRateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/campaigns:
     parameters:
@@ -5923,6 +6067,8 @@ paths:
         "502":
           description: OpenAI did not answer or failed; the message is its own
 
+  # ─── Destinations ────────────────────────────────────────────────────
+
   /destinations:
     get:
       tags: [Destinations]
@@ -6088,8 +6234,13 @@ paths:
         are read through the connection, and `arrived` says whether it is
         among them as a server event (`server_to_server`). The answer is
         `sent`, `arrived`, `event_type`, `pixel_id`, `connection_id`,
-        `status_code` and `message`. Without a connection it is a 422 naming
-        `real`. Not logged as a delivery.
+        `status_code` and `message`. Because the event is counted, `real`
+        is refused (422 naming `confirm_counted`) unless
+        `"confirm_counted": true` is sent with it. Without a connection it
+        is a 422 naming `real`. OpenAI not reached is a 503, its rate limit
+        a 429 (both with Retry-After), and no event was sent; a refusal of
+        the event is OpenAI's verdict, a 200 with `sent` false. Not logged
+        as a delivery.
       operationId: testDestination
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer}}
@@ -6100,6 +6251,7 @@ paths:
               type: object
               properties:
                 real: {type: boolean, description: ChatGPT Ads with a connection - send a real event and read it back}
+                confirm_counted: {type: boolean, description: Required true with real - the event is saved and counted as a conversion}
       responses:
         "200":
           description: The platform's verdict
@@ -6123,6 +6275,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/UpstreamRateLimited"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /destinations/{id}/oauth/start:
     post:
@@ -6448,6 +6606,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+
+  # ─── Goals ───────────────────────────────────────────────────────────
 
   /goals:
     get:
@@ -13379,6 +13539,49 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+  /ppc-networks/chatgpt-ads:
+    post:
+      tags: [Setup]
+      summary: Add ChatGPT Ads as a traffic source
+      description: |
+        Setup > Traffic Sources' "Add ChatGPT Ads" button: makes the traffic
+        source ChatGPT Ads, an account on it, and the custom variables
+        `campaign_id={campaign_id}` and `ad_id={ad_id}`, which Ads Manager
+        fills in. `GET /trackers/{id}/url` then answers `chatgpt_ads` for a
+        tracker on it.
+
+        Safe to call again: when the account already has a live ChatGPT Ads
+        source, no second one is made. That source is given what it lacks (a
+        live account, a live variable for `campaign_id` or `ad_id`), and
+        nothing the user changed (its name, a placeholder) is touched. The
+        answer is `201` when the source was made and `200` when it was
+        already there. The source is found by what this call stored on it,
+        never by its name; but when no source is marked and exactly one live
+        source is named ChatGPT Ads (made by hand), that one is marked instead
+        of making a second (`source_adopted`). What it makes is listed in the
+        change feed. The body is empty; any field is refused. Needs
+        `access_to_setup_section`, as adding a traffic source does, and a key
+        scoped to both `ppc-networks:write` and `ppc-accounts:write` (it makes
+        an account).
+      operationId: addChatGptAdsSource
+      responses:
+        "201":
+          description: The source was made
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatGptAdsSetup"
+        "200":
+          description: The source was already there; what it lacked was added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatGptAdsSetup"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /ppc-networks/{id}/variables:
     parameters:
       - $ref: "#/components/parameters/resourceId"
@@ -14129,6 +14332,47 @@ components:
           schema:
             $ref: "#/components/schemas/ValidationError"
 
+    UpstreamUnavailable:
+      description: >-
+        The ad platform (OpenAI) could not be reached: no answer, or a 5xx of
+        its own. Nothing the request sent is wrong and the key was not judged;
+        the same request can succeed later. `details.upstream` names the
+        platform and `details.reason` is `unreachable`. A check's answer
+        carries the connection as it stands in `details.connection`; a
+        setup's carries `details.connection` and `details.steps`.
+      headers:
+        Retry-After:
+          description: Seconds to wait before asking again
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UpstreamFailure"
+    UpstreamRateLimited:
+      description: >-
+        The ad platform's rate limit (OpenAI answered 429, or this install is
+        holding to OpenAI's per-minute limits). Nothing the request sent is
+        wrong. `details.reason` is `rate_limited`; the rest is as for 503.
+      headers:
+        Retry-After:
+          description: Seconds to wait before asking again
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UpstreamFailure"
+    UpstreamUnreadable:
+      description: >-
+        The ad platform answered something its API does not document (an ad
+        account without an id, currency or time zone, or a refusal of the
+        account read that is not about the key). `details.reason` is
+        `unreadable_answer`. Nothing was stored.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UpstreamFailure"
     AppRateLimited:
       description: Per-source rate limit exceeded; retry after the indicated seconds
       headers:
@@ -14149,6 +14393,23 @@ components:
   # ─── Schemas ─────────────────────────────────────────────────────────
 
   schemas:
+    UpstreamFailure:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            retry_after_seconds: {type: integer, description: Present on 429 and 503}
+            details:
+              type: object
+              properties:
+                upstream: {type: string, enum: [openai_ads]}
+                reason: {type: string, enum: [unreachable, rate_limited, unreadable_answer]}
+                connection:
+                  $ref: "#/components/schemas/AdConnection"
+                steps:
+                  type: array
+                  items: {type: object}
+
     # ── Bulk upsert ────────────────────────────────────────────────────
 
     BulkUpsertResult:
@@ -14442,6 +14703,52 @@ components:
             iframe:
               type: string
 
+    ChatGptAdsSetup:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            ppc_network_id:
+              type: integer
+              description: The ChatGPT Ads traffic source
+            ppc_account_id:
+              type: integer
+              description: Its account (the first live one when it already had one)
+            source_created:
+              type: boolean
+            source_adopted:
+              type: boolean
+              description: >-
+                The account's one live source named ChatGPT Ads, made by hand, became
+                the ChatGPT Ads source (its name, accounts and links kept)
+            account_created:
+              type: boolean
+            variables_added:
+              type: array
+              description: The parameters given a variable by this call; empty when both were there
+              items:
+                type: string
+                enum: [campaign_id, ad_id]
+    ChatGptAdsLinks:
+      type: object
+      properties:
+        destination:
+          type: string
+          enum: [landing_page, tracking_link]
+          description: >-
+            landing_page for a tracker whose landing page has a URL (the visitor goes
+            straight to it, and its landing page code records the click), else tracking_link
+        destination_url:
+          type: string
+          description: The ad's destination URL in Ads Manager. Carries no ChatGPT macro.
+          example: "https://shop.example.com/sale"
+        tracking_template:
+          type: string
+          description: >-
+            The ad's tracking template (OpenAI's query_string_template), appended to the
+            destination URL. On a landing page it also carries t202id and t202kw.
+          example: "utm_source=chatgpt&utm_medium=paid&utm_campaign={campaign_id}&utm_content={ad_id}&campaign_id={campaign_id}&ad_id={ad_id}&oppref={oppref}&t202id=8837291&t202kw="
     PpcNetworkVariable:
       type: object
       properties:
@@ -15046,6 +15353,18 @@ components:
         ppc_network_name:
           type: string
           maxLength: 50
+        ppc_network_platform:
+          type: string
+          enum: ["", chatgpt_ads]
+          description: >-
+            The ad platform the source is: chatgpt_ads for the ChatGPT Ads source
+            (POST /ppc-networks/chatgpt-ads sets it up), else empty. Its links get
+            that platform's tracking template (GET /trackers/{id}/url). It also
+            decides cost: on an account with a source marked chatgpt_ads (removed
+            ones included), openai_ads spend in the spend ledger goes only to
+            such sources' clicks, so setting or clearing it changes which clicks
+            share that spend. Writable so sync and import carry it; defaults to
+            empty.
         ppc_network_deleted:
           type: integer
           readOnly: true
@@ -15060,6 +15379,18 @@ components:
         ppc_network_name:
           type: string
           maxLength: 50
+        ppc_network_platform:
+          type: string
+          enum: ["", chatgpt_ads]
+          description: >-
+            The ad platform the source is: chatgpt_ads for the ChatGPT Ads source
+            (POST /ppc-networks/chatgpt-ads sets it up), else empty. Its links get
+            that platform's tracking template (GET /trackers/{id}/url). It also
+            decides cost: on an account with a source marked chatgpt_ads (removed
+            ones included), openai_ads spend in the spend ledger goes only to
+            such sources' clicks, so setting or clearing it changes which clicks
+            share that spend. Writable so sync and import carry it; defaults to
+            empty.
 
     PpcNetworkUpdate:
       type: object
@@ -15067,6 +15398,18 @@ components:
         ppc_network_name:
           type: string
           maxLength: 50
+        ppc_network_platform:
+          type: string
+          enum: ["", chatgpt_ads]
+          description: >-
+            The ad platform the source is: chatgpt_ads for the ChatGPT Ads source
+            (POST /ppc-networks/chatgpt-ads sets it up), else empty. Its links get
+            that platform's tracking template (GET /trackers/{id}/url). It also
+            decides cost: on an account with a source marked chatgpt_ads (removed
+            ones included), openai_ads spend in the spend ledger goes only to
+            such sources' clicks, so setting or clearing it changes which clicks
+            share that spend. Writable so sync and import carry it; defaults to
+            empty.
 
     PpcNetworkResponse:
       type: object
@@ -17059,6 +17402,171 @@ components:
           $ref: "#/components/schemas/Pagination"
 
     # ── Reports ────────────────────────────────────────────────────────
+
+    SpendLedgerNote:
+      type: object
+      description: >-
+        Present only when the report's cost read the spend ledger. Clicks after
+        `reaches` are costed at their CPC.
+      properties:
+        reaches:
+          type: integer
+          description: The end of the latest hour the account's ledger holds, unix seconds.
+        reaches_at:
+          type: string
+          example: "2026-11-11T15:00:00Z"
+        note:
+          type: string
+          example: Spend data reaches 2026-11-11 10:00 (America/New_York). Clicks after that are costed at their CPC.
+        unallocated:
+          type: object
+          properties:
+            total_cost:
+              type: number
+              nullable: true
+              description: Spend in the window's hours that no click of the account carries the ad of; in no row or total. Not narrowed by the report's filters.
+            note:
+              type: string
+        other_currency_rows:
+          type: integer
+          description: Ledger rows in a currency other than the account's, not counted (only when there are any).
+        other_currency_note:
+          type: string
+        tie_note:
+          type: string
+          description: >-
+            Present only when the window holds openai_ads spend and the account
+            has a source marked chatgpt_ads: that spend went only to those
+            sources' clicks, and a click of another source with the same ad id
+            kept its CPC.
+
+    SpendRow:
+      type: object
+      required: [platform, account_ref, ad_ref, hour_start, impressions, clicks, spend, currency]
+      properties:
+        platform:
+          type: string
+          maxLength: 32
+          example: openai_ads
+        account_ref:
+          type: string
+          maxLength: 64
+          description: The platform's ad account id.
+        campaign_ref:
+          type: string
+          nullable: true
+          maxLength: 128
+        ad_group_ref:
+          type: string
+          nullable: true
+          maxLength: 128
+        ad_ref:
+          type: string
+          maxLength: 128
+          description: The platform's ad id, as the click's `ad_id` variable carries it.
+        hour_start:
+          type: integer
+          description: The UTC hour's first second (a multiple of 3600).
+        impressions:
+          type: integer
+          minimum: 0
+        clicks:
+          type: integer
+          minimum: 0
+          description: Clicks the platform counted.
+        spend:
+          description: In the currency's major units, at most six decimals (a number, or a string to be exact).
+          oneOf:
+            - type: number
+            - type: string
+        currency:
+          type: string
+          example: USD
+
+    SpendLedgerWrite:
+      type: object
+      required: [rows]
+      additionalProperties: false
+      properties:
+        rows:
+          type: array
+          minItems: 1
+          maxItems: 2000
+          items:
+            $ref: "#/components/schemas/SpendRow"
+
+    SpendLedgerWriteResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            dry_run:
+              type: boolean
+            received:
+              type: integer
+            inserted:
+              type: integer
+            replaced:
+              type: integer
+            unchanged:
+              type: integer
+
+    SpendLedgerList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              period:
+                type: string
+                example: "2026-11-11"
+              platform:
+                type: string
+              account_ref:
+                type: string
+              campaign_ref:
+                type: string
+                nullable: true
+              ad_group_ref:
+                type: string
+                nullable: true
+              ad_ref:
+                type: string
+              impressions:
+                type: integer
+                nullable: true
+              platform_clicks:
+                type: integer
+                nullable: true
+              spend:
+                type: number
+                nullable: true
+              currency:
+                type: string
+              matched_clicks:
+                type: integer
+                nullable: true
+              unallocated_spend:
+                type: number
+                nullable: true
+              updated_at:
+                type: integer
+        interval:
+          type: string
+        timezone:
+          type: string
+        currency:
+          type: string
+        reaches:
+          type: integer
+          nullable: true
+        truncated:
+          type: boolean
+        limit:
+          type: integer
 
     ReportMetrics:
       type: object
@@ -19915,8 +20423,9 @@ components:
       description: |
         What is sent and when. Every type takes `campaign_ids` and
         `send_user_data`; GA4 and Google Ads take `consent` (ChatGPT Ads
-        refuses it: OpenAI takes no consent signal, so a visitor who may be
-        in the EEA or UK is withheld from it). GA4 takes `measurement_id` to
+        refuses it: OpenAI has no field that states a visitor's consent to
+        measurement, its per-event opt_out being about personalisation only,
+        so a visitor who may be in the EEA or UK is withheld from it). GA4 takes `measurement_id` to
         `params`, Google Ads `customer_id` to `campaign_conversion_actions`,
         ChatGPT Ads `pixel_id` to `ppc_account_id`.
       properties:
@@ -20005,7 +20514,7 @@ components:
         custom_event_name:
           type: string
           description: >-
-            ChatGPT Ads, with event_type custom only: 1-64 lowercase letters, digits, - or _,
+            ChatGPT Ads, with event_type custom only: 1-64 lowercase letters, digits, - or _, starting and ending with a letter or digit,
             not a standard event type.
         event_types:
           type: object

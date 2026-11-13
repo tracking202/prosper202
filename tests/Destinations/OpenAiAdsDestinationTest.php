@@ -105,6 +105,7 @@ final class OpenAiAdsDestinationTest extends TestCase
 
     public function testEveryBadSettingIsRefusedNamingItsField(): void
     {
+        $custom = ['pixel_id' => 'p', 'event_type' => 'custom'];
         $refused = [
             ['settings.pixel_id', ['pixel_id' => '']],
             ['settings.pixel_id', ['pixel_id' => 'has space']],
@@ -114,6 +115,10 @@ final class OpenAiAdsDestinationTest extends TestCase
             ['settings.custom_event_name', ['pixel_id' => 'p', 'event_type' => 'custom', 'custom_event_name' => 'Demo Booked']],
             ['settings.custom_event_name', ['pixel_id' => 'p', 'event_type' => 'custom', 'custom_event_name' => 'order_created']],
             ['settings.custom_event_name', ['pixel_id' => 'p', 'event_type' => 'custom', 'custom_event_name' => str_repeat('a', 65)]],
+            ['settings.custom_event_name', $custom + ['custom_event_name' => '_demo']],
+            ['settings.custom_event_name', $custom + ['custom_event_name' => 'demo-']],
+            ['settings.custom_event_name', $custom + ['custom_event_name' => '-']],
+            ['settings.custom_event_name', $custom + ['custom_event_name' => 'demo_']],
             ['settings.custom_event_name', ['pixel_id' => 'p', 'custom_event_name' => 'demo_booked']],
             ['settings.scope', ['pixel_id' => 'p', 'scope' => 'everything']],
             ['settings.ppc_account_id', ['pixel_id' => 'p', 'scope' => 'source']],
@@ -126,6 +131,11 @@ final class OpenAiAdsDestinationTest extends TestCase
         ];
         foreach ($refused as [$field, $settings]) {
             self::refused(fn () => $this->oai()->validate($settings, null), $field);
+        }
+        // OpenAI's rule: 1-64 of letters, digits, _ or -, starting and ending with a letter or digit.
+        foreach (['a', '7', 'a_b', 'a-b', 'a1', str_repeat('a', 64)] as $name) {
+            $kept = $this->settings(['event_type' => 'custom', 'custom_event_name' => $name]);
+            self::assertSame($name, $kept['custom_event_name']);
         }
         self::refused(fn () => $this->oai()->validate(['pixel_id' => 'p'], ['conversions_api_key' => 'short']), 'credentials.conversions_api_key');
         self::refused(fn () => $this->oai()->validate(['pixel_id' => 'p'], ['conversions_api_key' => 'has a space in it 0123456789']), 'credentials.conversions_api_key');
@@ -164,8 +174,37 @@ final class OpenAiAdsDestinationTest extends TestCase
         self::assertSame(['lead_created', 'customer_action'], [$event['type'], $event['data']['type']]);
         $custom = OpenAiAdsDestination::body($this->settings(['event_type' => 'custom', 'custom_event_name' => 'demo_booked']), self::facts())['events'][0];
         self::assertSame(['custom', 'demo_booked', 'custom'], [$custom['type'], $custom['custom_event_name'], $custom['data']['type']]);
-        foreach (OpenAiAdsDestination::EVENT_TYPES as $type => $dataType) {
-            self::assertContains($dataType, ['contents', 'customer_action', 'plan_enrollment', 'custom'], $type);
+    }
+
+    /**
+     * OpenAI's own table (developers.openai.com/ads/supported-events, read
+     * 2026-11-12), typed out here and not read from the class: an event sent
+     * with another data type is refused. The app events (app_installed,
+     * app_opened) are not offered: a web conversion is never one.
+     */
+    public function testEachEventTypeCarriesTheDataTypeOpenAisTableGivesIt(): void
+    {
+        $table = [
+            'order_created' => 'contents',
+            'checkout_started' => 'contents',
+            'items_added' => 'contents',
+            'contents_viewed' => 'contents',
+            'page_viewed' => 'contents',
+            'lead_created' => 'customer_action',
+            'registration_completed' => 'customer_action',
+            'appointment_scheduled' => 'customer_action',
+            'subscription_created' => 'plan_enrollment',
+            'trial_started' => 'plan_enrollment',
+            'custom' => 'custom',
+        ];
+        $offered = OpenAiAdsDestination::EVENT_TYPES;
+        ksort($table);
+        ksort($offered);
+        self::assertSame(array_keys($table), array_keys($offered), 'the types offered are the table\'s web events');
+        foreach ($table as $type => $dataType) {
+            $given = ['event_type' => $type] + ($type === 'custom' ? ['custom_event_name' => 'demo_booked'] : []);
+            $event = OpenAiAdsDestination::body($this->settings($given), self::facts())['events'][0];
+            self::assertSame([$type, $dataType], [$event['type'], $event['data']['type']], $type);
         }
     }
 

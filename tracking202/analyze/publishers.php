@@ -124,6 +124,11 @@ template_top('Analyze Your Publishers');
     'note' => 'A click counts for the publisher whose link it came on. The range is shared with your other reports.',
 ]); ?>
 
+<?php if ($report !== null && isset($report['spend_ledger'])) {
+    $ledger = $report['spend_ledger'] + ['currency' => $currency];
+    echo p202_spend_ledger_note($ledger, \Prosper202\Report\CampaignDataMask::hidden());
+} ?>
+
 <?php if ($report === null) { ?>
     <?php echo p202_flash('bad', 'The report could not be read. Try again in a moment; if it keeps happening, the server log says why.'); ?>
     <?php echo $empty('bi-exclamation-triangle', 'The report could not be read', 'This is not a statement that there were no clicks.'); ?>

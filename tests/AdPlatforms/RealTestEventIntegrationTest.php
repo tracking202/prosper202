@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\AdPlatforms;
 
+use Api\V3\Exception\TooManyRequestsException;
+use Api\V3\Exception\UpstreamUnavailableException;
 use PHPUnit\Framework\TestCase;
 use Prosper202\AdPlatforms\AdConnectionInputException;
 use Prosper202\AdPlatforms\AdConnectionStore;
@@ -136,6 +138,74 @@ final class RealTestEventIntegrationTest extends TestCase
         $this->expectException(AdConnectionInputException::class);
         $this->expectExceptionMessage('needs a ChatGPT Ads connection');
         $this->testEvent()->send(1, $destination, time());
+    }
+
+    /** Over the API a real, counted event is sent only when the request says it knows it is counted. */
+    public function testOverTheApiARealEventNeedsItsConfirmation(): void
+    {
+        $destination = $this->setUpConnection();
+        $controller = new \Api\V3\Controllers\DestinationsController(self::$db, 1);
+        $requests = function (): int {
+            $context = stream_context_create(['ssl' => ['cafile' => self::$tls . '/cert.pem', 'verify_peer' => true]]);
+            $read = (string) file_get_contents(self::$origin . '/control/requests', false, $context);
+            $seen = json_decode($read, true, 512, JSON_THROW_ON_ERROR);
+
+            return count($seen['requests']);
+        };
+        $before = $requests();
+        $refusals = [
+            'real alone' => [['real' => true], 'confirm_counted'],
+            'real with a false confirmation' => [['real' => true, 'confirm_counted' => false], 'confirm_counted'],
+            'a confirmation without real' => [['confirm_counted' => true], 'confirm_counted'],
+        ];
+        foreach ($refusals as $what => [$body, $field]) {
+            try {
+                $controller->test($destination, $body);
+                self::fail($what . ' was sent');
+            } catch (\Api\V3\Exception\ValidationException $e) {
+                self::assertArrayHasKey($field, $e->getFieldErrors(), $what);
+                if ($what === 'real alone') {
+                    self::assertStringContainsString('counted as a conversion', $e->getFieldErrors()[$field]);
+                }
+            }
+        }
+        self::assertSame($before, $requests(), 'nothing was asked of OpenAI for a refused test');
+
+        $answer = $controller->test($destination, ['real' => true, 'confirm_counted' => true])['data'];
+        self::assertSame([true, true], [$answer['sent'], $answer['arrived']], $answer['message']);
+    }
+
+    /** OpenAI not reached or limiting requests is no verdict on the event: a 503 or 429, never a 200 "not sent". */
+    public function testOverTheApiARealEventOpenAiDidNotTakeIsAFailureStatus(): void
+    {
+        $destination = $this->setUpConnection();
+        $controller = new \Api\V3\Controllers\DestinationsController(self::$db, 1);
+        $body = ['real' => true, 'confirm_counted' => true];
+        $cases = [
+            'an outage' => [503, UpstreamUnavailableException::class, 'unreachable', 'could not be reached'],
+            'its rate limit' => [429, TooManyRequestsException::class, 'rate_limited', 'is limiting requests'],
+        ];
+        foreach ($cases as $what => [$status, $class, $reason, $said]) {
+            $this->control('answer', ['status' => $status, 'body' => '{"error":{"message":"Try later"}}']);
+            try {
+                $controller->test($destination, $body);
+                self::fail($what . ' was answered as a verdict');
+            } catch (\Api\V3\HttpException $e) {
+                self::assertInstanceOf($class, $e, $what);
+                self::assertSame($status, $e->getHttpStatus(), $what);
+                self::assertSame(60, $e->retryAfter, $what);
+                $details = $e instanceof TooManyRequestsException ? $e->getDetails()['details'] : $e->getDetails();
+                self::assertSame(['upstream' => 'openai_ads', 'reason' => $reason], $details, $what);
+                self::assertStringContainsString($said . ', so no test event was sent', $e->getMessage(), $what);
+                self::assertStringNotContainsString('did not take', $e->getMessage(), $what . ': not a refusal');
+            }
+        }
+
+        // A refusal of the event is OpenAI's verdict on it: the 200 that says so.
+        $this->control('answer', ['status' => 400, 'body' => '{"error":{"message":"bad event"}}']);
+        $answer = $controller->test($destination, $body)['data'];
+        self::assertSame([false, false, 400], [$answer['sent'], $answer['arrived'], $answer['status_code']]);
+        self::assertStringContainsString('OpenAI did not take the test event', $answer['message']);
     }
 
     public function testAnotherAccountsDestinationIsNone(): void

@@ -91,9 +91,17 @@ func runMCPCall(cmd *cobra.Command, args []string) error {
 		return validationError("%s changes data, and this server is read-only", spec.Name).
 			WithHint("Use a read tool, or run the server without --read-only.")
 	}
+	if mcpHostedRun && spec.NotHosted {
+		// The relay never lists it; a name sent anyway is refused before
+		// anything is read, as its keys could not reach the area.
+		return validationError("%s is not offered by the hosted server: its connection cannot reach what the tool reads or changes", spec.Name).
+			WithHint("Run it with `p202 mcp` on the user's own computer, or use a listed tool.")
+	}
 	if api.StagedMode() && spec.NotStaged {
-		return validationError("%s acts on a proposed change itself, and this server only proposes changes", spec.Name).
-			WithHint("Applying or discarding a proposal is the user's to do: `p202 change apply <id>` or `p202 change discard <id>`.")
+		// Both kinds (acting on a proposal, acting at once) are the user's
+		// to run, with the command itself.
+		return validationError("%s cannot be proposed as a change, and this server only proposes changes (--staged)", spec.Name).
+			WithHint("It is the user's to run, without --staged: `%s`.", mcpUsageLine(spec))
 	}
 	input := []byte(mcpCallInput)
 	if mcpCallInput == "-" {
@@ -166,6 +174,15 @@ func runMCPCall(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Note: part of this answer is missing: the install's answers to %s held more than %d JSON values, more than a hosted call decodes, and the rest were not read. %s\n", spec.Name, hostedAnswerValues, mcpAskForLess(spec))
 	}
 	return err
+}
+
+// mcpUsageLine is the command a tool runs, with its positionals.
+func mcpUsageLine(s mcpToolSpec) string {
+	c, err := s.command(rootCmd)
+	if err != nil {
+		return "p202 " + strings.Join(s.Command, " ")
+	}
+	return strings.TrimSuffix(c.UseLine(), " [flags]")
 }
 
 // mcpAskForLess is the hint on a hosted call whose answers held more values
