@@ -165,6 +165,7 @@ final class InsightsClient
             $status === 401 || $status === 403 => ['OpenAI refused the Advertiser API key (' . $status . '); replace it with a key that can read insights', InsightsFailure::KEY_REFUSED],
             $answer->kind === AdvertiserAnswer::KEY_REFUSED => [$error, InsightsFailure::KEY_REFUSED],
             $answer->kind === AdvertiserAnswer::UNAVAILABLE && ($status === 0 || $status >= 500) => [$error, InsightsFailure::UNAVAILABLE],
+            $status >= 400 && $status < 500 => [$error, InsightsFailure::REQUEST_REFUSED],
             default => [$error, InsightsFailure::UNREADABLE],
         };
 

@@ -163,7 +163,7 @@ final class AdConnectionStore
             $this->touch($userId, $connectionId, $now);
             if ($name === 'advertiser_api_key' && $value !== null) {
                 // A new key ends the spend sync's back-off (a refused key's, Prosper202\Spend\OpenAi\SpendSync).
-                $stmt = $this->conn->prepareWrite('UPDATE 202_ad_spend_sync SET retry_after = 0, rate_limited = 0, updated_at = ?'
+                $stmt = $this->conn->prepareWrite('UPDATE 202_ad_spend_sync SET retry_after = 0, rate_limited = 0, key_refusals = 0, updated_at = ?'
                     . ' WHERE connection_id = ? AND user_id = ?');
                 $this->conn->bind($stmt, 'iii', [$now, $connectionId, $userId]);
                 $this->conn->executeUpdate($stmt);

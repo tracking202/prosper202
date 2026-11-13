@@ -42,6 +42,12 @@ final class AdConnectionSpendConnections implements SpendConnections
         );
     }
 
+    public function keyRefused(int $userId, int $connectionId, string $why, int $now): void
+    {
+        // As OpenAiAdsConnections::check() records a refused key.
+        $this->store->recordCheck($userId, $connectionId, null, AdConnectionStore::STATUS_KEY_REFUSED, $why, $now);
+    }
+
     public function ofAccount(int $userId): array
     {
         $out = [];

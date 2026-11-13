@@ -11,6 +11,7 @@ use Api\V3\Exception\ValidationException;
 use Api\V3\Support\PayloadKeys;
 use Prosper202\AdPlatforms\AdConnectionStore;
 use Prosper202\AdPlatforms\AdPlatformUnavailable;
+use Prosper202\Attribution\WebhookSender;
 use Prosper202\Database\Connection;
 use Prosper202\Spend\OpenAi\AdConnectionSpendConnections;
 use Prosper202\Spend\OpenAi\SpendSync;
@@ -22,6 +23,12 @@ use Prosper202\Spend\OpenAi\SpendSync;
  */
 final class SpendSyncController
 {
+    /** How long a run asked for here reads. */
+    private const int RUN_SECONDS = 30;
+
+    /** Time left after the last page for its write and the run's record. */
+    private const int WRITE_SECONDS = 15;
+
     private readonly SpendSync $sync;
     private readonly AdConnectionSpendConnections $connections;
 
@@ -76,22 +83,35 @@ final class SpendSyncController
         $result = $this->sync->run($connection, self::deadline());
         // A failed run is answered as one (CLAUDE.md #1), as the ad
         // connections answer OpenAI (AdConnectionsController::refusing()):
-        // refused here or a refused key is the account's to change (422);
-        // OpenAI's limit 429, OpenAI not reached 503, its answer unusable
-        // 502. The run is recorded either way (GET /spend-ledger/sync).
+        // refused here, a refused key or a request OpenAI refused is not
+        // fixed by sending it again (422); OpenAI's limit 429, OpenAI not
+        // reached 503, its answer unusable 502. The run is recorded either
+        // way (GET /spend-ledger/sync), and what it wrote first stands
+        // (CLAUDE.md #13): rows_written says how much.
         if ($result['error'] !== null) {
-            $said = 'Spend sync run for connection ' . $connectionId . ' failed: ' . $result['error'];
-            $details = ['upstream' => SpendSync::PLATFORM, 'connection_id' => $connectionId];
+            $wrote = $result['rows'] === 0 ? '' : '; ' . $result['rows'] . ' hour row(s) were written before it stopped, and they stand'
+                . ' (the ledger replaces each hour, so running it again adds nothing twice)';
+            $said = 'Spend sync run for connection ' . $connectionId . ' failed: ' . $result['error'] . $wrote;
+            $details = ['upstream' => SpendSync::PLATFORM, 'connection_id' => $connectionId, 'rows_written' => $result['rows']];
             switch ($result['outcome']) {
                 case SpendSync::REFUSED:
-                    throw new ValidationException('Spend sync refused', ['connection' => $result['error']]);
+                    throw new ValidationException('Spend sync refused' . $wrote, ['connection' => $result['error']]);
+                case SpendSync::PAGE_REFUSED:
+                    throw new ValidationException('Spend sync stopped at a page the spend ledger refused' . $wrote, ['spend' => $result['error']]);
                 case SpendSync::KEY_REFUSED:
-                    throw new ValidationException('OpenAI refused connection ' . $connectionId . '\'s Advertiser API key', [
-                        'api_key' => 'OpenAI refused the Advertiser API key of connection ' . $connectionId . ' (' . $result['error']
-                            . '); replace it (PATCH /ad-connections/' . $connectionId . ' {"api_key": ...}); the hourly run waits until then or until retry_after',
+                    throw new ValidationException('OpenAI refused connection ' . $connectionId . '\'s Advertiser API key' . $wrote, [
+                        'api_key' => $result['error'] . '. Replace the key of connection ' . $connectionId . ' (PATCH /ad-connections/' . $connectionId
+                            . ' {"api_key": ...}); the hourly run waits until then or until retry_after',
+                    ]);
+                case SpendSync::REQUEST_REFUSED:
+                    throw new ValidationException('OpenAI refused the spend sync\'s request for connection ' . $connectionId . $wrote, [
+                        'request' => $result['error'] . '. Sending the same request again gets the same answer; the ad account or OpenAI\'s API has to change first',
                     ]);
                 case SpendSync::RATE_LIMITED:
-                    throw new TooManyRequestsException($said . '; the hourly run waits until retry_after', max(1, $result['retry_after'] - time()),
+                    // OpenAI's wait is this request's; the hourly run's longer back-off is in details.retry_after.
+                    $wait = $result['wait'] === null || $result['wait'] < 1 ? UpstreamUnavailableException::RETRY_AFTER : min($result['wait'], 7 * 86400);
+
+                    throw new TooManyRequestsException($said . '; a run asked for here may go again after ' . $wait . ' seconds, the hourly run waits until retry_after', $wait,
                         ['details' => $details + ['reason' => AdPlatformUnavailable::RATE_LIMITED, 'retry_after' => $result['retry_after']]]);
                 case SpendSync::UNAVAILABLE:
                     $wait = $result['wait'] === null || $result['wait'] < 1 ? UpstreamUnavailableException::RETRY_AFTER : min($result['wait'], 3600);
@@ -108,14 +128,25 @@ final class SpendSyncController
     }
 
     /**
-     * When a run asked for here stops reading: well inside PHP's time limit,
-     * so what it read is recorded and the next run goes on from there.
+     * When a run asked for here stops reading. The deadline is checked
+     * between pages, so the last page may still take a whole request
+     * (WebhookSender::TIMEOUT) and its write: PHP's time limit is raised to
+     * cover that where it is lower and may be raised, else the run's time is
+     * what the limit leaves after it. The run also records how far it read
+     * after each day, so a limit that still ends it keeps that.
      */
     private static function deadline(): int
     {
+        $after = WebhookSender::TIMEOUT + self::WRITE_SECONDS;
         $limit = (int) ini_get('max_execution_time');
+        if ($limit === 0) {
+            return time() + self::RUN_SECONDS;
+        }
+        if ($limit >= self::RUN_SECONDS + $after || (function_exists('set_time_limit') && set_time_limit(self::RUN_SECONDS + $after))) {
+            return time() + self::RUN_SECONDS;
+        }
 
-        return time() + ($limit > 0 ? max(5, intdiv($limit * 2, 3)) : 60);
+        return time() + max(1, $limit - $after);
     }
 
     /** @return array<string, mixed> */

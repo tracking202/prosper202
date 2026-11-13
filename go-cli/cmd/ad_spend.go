@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -128,13 +129,28 @@ var adSpendSyncRunCmd = &cobra.Command{
 
 // adSpendSyncRunError gives each refusal of a run its own next step; OpenAI's
 // limit (429), outage (503) and unusable answer (502) keep the hint api.HintFor
-// has for their class: nothing in the request is wrong, run it again later.
+// has for their class (nothing in the request is wrong, run it again later),
+// unless the run wrote rows first: then the hint says so, since the class's
+// "nothing was done" would be false (CLAUDE.md #13).
 func adSpendSyncRunError(err error, id string) error {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) && apiErr.Status != http.StatusUnprocessableEntity {
+		details, _ := apiErr.Raw["details"].(map[string]interface{})
+		if rows, _ := details["rows_written"].(float64); rows >= 1 {
+			wait := "Wait a minute"
+			if apiErr.Status == http.StatusTooManyRequests && apiErr.RetryAfter > 0 {
+				wait = fmt.Sprintf("Wait %d seconds (the server's Retry-After)", apiErr.RetryAfter)
+			}
+			return withHint(err, "This run wrote %d hour row(s) before it stopped, and they stand; the ledger replaces each hour, so running it again adds nothing twice. %s, then run `p202 spend sync run %s` again, or leave it to the hourly run.", int(rows), wait, id)
+		}
+	}
 	return withStatusHint(err,
 		statusHint{http.StatusNotFound, "", adSpendSyncListHint},
 		statusHint{http.StatusUnprocessableEntity, "enabled", "The sync is off: `p202 spend sync enable " + id + "` turns it on (the first run reads 30 days)."},
 		statusHint{http.StatusUnprocessableEntity, "api_key", "Replace the key: `p202 ad-connection update " + id + " --api-key-file <file>`; that also ends the hourly run's wait. " + advertiserKeyWhere},
 		statusHint{http.StatusUnprocessableEntity, "connection", "Spend is not converted between currencies: the ad account's currency must be your account's (`p202 user prefs update <user-id> --user-account-currency <code>`), or record the spend with `p202 spend import`."},
+		statusHint{http.StatusUnprocessableEntity, "spend", "The spend ledger refused a page OpenAI sent (the message names why); the pages before it stand. Running it again gets the same page: record those hours with `p202 spend import`, or report the page."},
+		statusHint{http.StatusUnprocessableEntity, "request", "OpenAI refused the request itself (its words are in the message); running it again sends the same request. Check the ad account in Ads Manager, then `p202 ad-connection check " + id + "`."},
 	)
 }
 

@@ -339,8 +339,10 @@ final class LedgerCost
     /**
      * An ad id as sets() matches a click's to the ledger's or a platform's
      * (cc.variable = ad_ref COLLATE utf8mb4_general_ci): case and trailing
-     * spaces do not count. Exact for the ASCII ids ad platforms issue; a
-     * caller that keys either side of that match keys both by this.
+     * spaces do not count. Exact for ASCII only (é, ß and ı fold otherwise
+     * in that collation), so the ledger holds only ASCII ad ids: SpendRow
+     * refuses any other by name. A caller that keys either side of that
+     * match keys both by this.
      */
     public static function tieKey(string $ref): string
     {
@@ -677,8 +679,13 @@ final class LedgerCost
             $stmt = $conn->prepareRead($sql);
             $conn->bind($stmt, 'i' . str_repeat('s', count($chunk)), [$userId, ...$chunk]);
             foreach ($conn->fetchAll($stmt) as $row) {
-                // The ad as the candidates' match above compares it (tieKey()).
-                $mark = self::SOURCE_PLATFORMS[$byKey[self::tieKey((string) $row['ad_ref'])] ?? ''] ?? null;
+                // The ad as the candidates' match above compares it (tieKey()); a click id
+                // the collation folds onto an ad only past ASCII (é7 to e7) is not the ad.
+                $platform = $byKey[self::tieKey((string) $row['ad_ref'])] ?? null;
+                if ($platform === null) {
+                    continue;
+                }
+                $mark = self::SOURCE_PLATFORMS[$platform] ?? null;
                 if ($mark !== null && isset($marks[$mark]) && (string) ($row['source_platform'] ?? '') !== $mark) {
                     continue;
                 }

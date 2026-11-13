@@ -12,7 +12,7 @@ use Prosper202\Database\DataSeeder;
  * over the scratch database, the install pointed at the stand-in Advertiser
  * API (tests/fixtures/openai-ads/fake_openai_ads.py). Each way OpenAI can
  * fail is answered as the ad connections answer it
- * (AdPlatformAnswersServedIntegrationTest): its limit 429 with Retry-After,
+ * (AdPlatformAnswersServedIntegrationTest): its limit 429 with its Retry-After,
  * an outage 503 with Retry-After, an answer that cannot be used 502, a
  * refused key 422 naming the connection; and a new key ends the refused
  * key's back-off.
@@ -240,7 +240,8 @@ final class SpendSyncServedIntegrationTest extends TestCase
         self::control('/control/answer', ['status' => 503, 'body' => '{"error":{"message":"Service unavailable"}}', 'retry_after' => '120']);
         [$status, $body, $header] = self::request('POST', $run, []);
         self::assertSame([503, '120', 120], [$status, $header, $body['retry_after_seconds'] ?? null], (string) json_encode($body));
-        self::assertSame(['upstream' => 'openai_ads', 'connection_id' => $id, 'reason' => 'unreachable'], $body['details'] ?? null);
+        self::assertSame(['upstream' => 'openai_ads', 'connection_id' => $id, 'rows_written' => 0, 'reason' => 'unreachable'], $body['details'] ?? null);
+        self::assertStringNotContainsString('were written', (string) $body['message'], 'nothing was');
         self::assertArrayNotHasKey('field_errors', $body);
         self::assertStringContainsString('Spend sync run for connection ' . $id . ' failed: OpenAI answered 503', (string) $body['message']);
 
@@ -255,6 +256,12 @@ final class SpendSyncServedIntegrationTest extends TestCase
         self::assertSame([502, null], [$status, $header], (string) json_encode($body));
         self::assertSame('unreadable_answer', $body['details']['reason'] ?? null);
 
+        // A request OpenAI refused (another 4xx): 422 naming it in OpenAI's words, not a retry.
+        self::control('/control/answer', ['status' => 400, 'body' => '{"error":{"message":"time_ranges is invalid"}}']);
+        [$status, $body, $header] = self::request('POST', $run, []);
+        self::assertSame([422, null, ['request']], [$status, $header, array_keys($body['field_errors'] ?? [])], (string) json_encode($body));
+        self::assertStringContainsString('OpenAI answered 400: time_ranges is invalid', (string) $body['field_errors']['request']);
+
         // A refused key: 422 naming the connection, and the hourly run waits.
         self::control('/control/answer', ['status' => 401, 'body' => '{"error":{"message":"Invalid API key"}}']);
         [$status, $body, $header] = self::request('POST', $run, []);
@@ -263,25 +270,37 @@ final class SpendSyncServedIntegrationTest extends TestCase
         self::assertStringContainsString('connection ' . $id, (string) $body['message']);
         self::assertStringContainsString('PATCH /ad-connections/' . $id, (string) $body['field_errors']['api_key']);
         self::assertGreaterThan(time() + 3500, self::syncState($id)['retry_after'], 'left alone for an hour');
+        [$status, $body] = self::request('GET', 'ad-connections/' . $id);
+        self::assertSame([200, 'key_refused'], [$status, $body['data']['status'] ?? null], 'marked as its check marks it');
 
         // A new key ends that wait.
         self::control('/control/reset', []);
         [$status, $body] = self::request('PATCH', 'ad-connections/' . $id, ['api_key' => self::AD_KEY]);
         self::assertSame(200, $status, (string) json_encode($body));
         self::assertNull(self::syncState($id)['retry_after']);
+        self::assertSame('connected', self::request('GET', 'ad-connections/' . $id)[1]['data']['status'] ?? null);
 
         [$status, $body] = self::request('POST', $run, []);
         self::assertSame(200, $status, (string) json_encode($body));
-        self::assertSame([true, 12, null], [$body['data']['run']['complete'], $body['data']['run']['rows'], $body['data']['left_out']]);
+        self::assertSame([true, 12, null, true], [$body['data']['run']['complete'], $body['data']['run']['rows'], $body['data']['left_out'], $body['data']['complete']]);
 
-        // OpenAI's limit: 429 with the wait the hourly run keeps (its Retry-After, over the hour).
-        self::control('/control/answer', ['status' => 429, 'body' => '{"error":{"message":"Too many requests"}}', 'retry_after' => '7200']);
+        // OpenAI's limit: 429 with OpenAI's own wait; the hourly run's longer back-off is details.retry_after.
+        self::control('/control/answer', ['status' => 429, 'body' => '{"error":{"message":"Too many requests"}}', 'retry_after' => '60']);
         [$status, $body, $header] = self::request('POST', $run, []);
-        self::assertSame(429, $status, (string) json_encode($body));
-        self::assertGreaterThanOrEqual(7190, (int) $header);
-        self::assertLessThanOrEqual(7200, (int) $header);
-        self::assertSame((int) $header, $body['retry_after_seconds'] ?? null);
+        self::assertSame([429, '60', 60], [$status, $header, $body['retry_after_seconds'] ?? null], (string) json_encode($body));
         self::assertSame('rate_limited', $body['details']['reason'] ?? null);
         self::assertSame(self::syncState($id)['retry_after'], $body['details']['retry_after'] ?? null);
+        self::assertGreaterThan(time() + 3500, $body['details']['retry_after']);
+
+        // A run that wrote spend and then failed (its conversions met the limit) says what it wrote.
+        self::control('/control/reset', []);
+        self::control('/control/answer', ['status' => 429, 'body' => '{"error":{"message":"Too many requests"}}', 'path' => '/v1/conversions/insights']);
+        [$status, $body] = self::request('POST', $run, []);
+        self::assertSame(429, $status, (string) json_encode($body));
+        self::assertSame(12, $body['details']['rows_written'] ?? null);
+        self::assertStringContainsString('12 hour row(s) were written before it stopped, and they stand', (string) $body['message']);
+        $state = self::syncState($id);
+        self::assertFalse($state['complete']);
+        self::assertNotNull($state['last_error']);
     }
 }

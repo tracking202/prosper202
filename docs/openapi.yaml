@@ -3659,17 +3659,18 @@ paths:
       summary: Each ChatGPT Ads connection's hourly spend pull, on or off, and its last run
       description: >-
         One entry per live ChatGPT Ads connection (`GET /ad-connections`):
-        `enabled` (off until turned on), `backfilled_at` (when the first
-        30 days were read whole; null until then), the last run,
+        `enabled` (off until turned on), `backfilled_at` (when a run first
+        read through the 30 days to now; null until then), the last run,
         `last_success_at` (the last complete run), `last_error` (a run that
         failed: another currency than the account's, a refused key, OpenAI's
         answer), `last_note` (what the last run noted), `left_out` (spend
         rows OpenAI sent that the ledger refused, kept until a run reads
         those hours again cleanly, or until the sync is turned off and on
-        once OpenAI no longer keeps them), `pending_from` (the first hour not
-        yet read whole; every run starts there) and `retry_after` while a 429
-        or a refused key is waited out (an hour, doubling up to a day; a new
-        key ends it). Role permission `access_to_setup_section`.
+        once OpenAI no longer keeps them; those hours are read again by each
+        run that reaches now), `pending_from` (the first hour not yet
+        reached; every run starts there) and `retry_after` while a 429 or a
+        refused key is waited out (an hour, doubling up to a day with each of
+        the same kind in a row; a new key ends it). Role permission `access_to_setup_section`.
       operationId: listSpendSync
       responses:
         "200":
@@ -3736,9 +3737,11 @@ paths:
       summary: Pull a ChatGPT Ads connection's spend now
       description: >-
         The hourly run for one connection, now; it takes no body. It reads a
-        day at a time from `pending_from` (or its usual window) and stops
-        between pages at its budget (500 pages, or two thirds of PHP's time
-        limit); the next run goes on from there. The run is recorded either
+        day at a time from `pending_from` (or its usual window), then the
+        trailing 72 hours and the hours rows were left out of, and stops
+        between pages at its budget (500 pages, or 30 seconds with PHP's time
+        limit raised to cover the last request where it may be); the next
+        run goes on from there. The run is recorded either
         way (GET /spend-ledger/sync). On success `data.run` is this run:
         `rows` written, how far it read (`from`, `to`), `complete` (false
         when it stopped early or left a row out, which `left_out` names) and
@@ -3746,7 +3749,8 @@ paths:
         its rate limit `429` and its outage `503`, both with `Retry-After`,
         an answer that cannot be used `502` (`details.reason`
         `rate_limited`, `unreachable`, `unreadable_answer`; `details.upstream`
-        `openai_ads`), and a refused key a `422` naming `api_key`.
+        `openai_ads`; `details.rows_written` what the run wrote before it
+        failed, which stands), and a refused key a `422` naming `api_key`.
       operationId: runSpendSync
       parameters:
         - name: id
@@ -3796,9 +3800,12 @@ paths:
         "422":
           description: >-
             The sync is off (`enabled`), the run is refused here (`connection`:
-            an ad account in another currency, a page the ledger refused),
-            OpenAI refused the connection's key (`api_key`; the hourly run
-            waits until the key is replaced), or a body was sent.
+            an ad account in another currency; `spend`: a page the ledger
+            refused), OpenAI refused the request itself (`request`: a 4xx
+            other than 401, 403, 413 and 429, in its words),
+            OpenAI refused the connection's key (`api_key`; the connection is
+            marked `key_refused` and the hourly run waits until the key is
+            replaced), or a body was sent.
           content:
             application/json:
               schema:
@@ -3806,8 +3813,9 @@ paths:
         "429":
           description: >-
             OpenAI answered 429, or this install is holding to its per-minute
-            limits. `Retry-After` and `retry_after_seconds` are the seconds
-            until the hourly run tries again (`details.retry_after`).
+            limits. `Retry-After` and `retry_after_seconds` are OpenAI's own
+            wait (60 when it named none), after which a run may be asked for
+            again; `details.retry_after` is when the hourly run tries again.
           headers:
             Retry-After:
               schema:
@@ -17107,7 +17115,7 @@ components:
         ad_ref:
           type: string
           maxLength: 128
-          description: The platform's ad id, as the click's `ad_id` variable carries it.
+          description: The platform's ad id, as the click's `ad_id` variable carries it; ASCII only.
         hour_start:
           type: integer
           description: The UTC hour's first second (a multiple of 3600).
@@ -17165,6 +17173,9 @@ components:
           type: string
         enabled:
           type: boolean
+        complete:
+          type: boolean
+          description: Whether the last run read through to now and left nothing out
         backfilled_at:
           type: integer
           nullable: true

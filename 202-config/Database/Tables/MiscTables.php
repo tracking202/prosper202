@@ -353,12 +353,16 @@ final class MiscTables
     /**
      * Each ad connection's spend sync (Prosper202\Spend\OpenAi\SpendSync),
      * from 1.9.80 on: whether the operator turned it on (no row is off), when
-     * the first 30-day backfill finished (null: not yet), the last run, its
+     * the first 30-day backfill finished (null: not yet), the last run and
+     * whether it was complete (last_complete), its
      * failure (last_error) and notes (last_note), rows still left out of the
-     * ledger (left_out, kept until those hours are read cleanly), the first
-     * hour not yet read cleanly (pending_from), and how long a rate-limited
-     * platform or a refused key is left alone (rate_limited counts the
-     * back-offs in a row).
+     * ledger (left_out, kept until those hours are read cleanly) and the
+     * hours they were in (left_out_hours, hour starts, comma-separated, each
+     * read again until it reads cleanly), the first hour the forward read has
+     * not reached (pending_from), the first hour whose conversions are still
+     * to read (conversions_from), and how long a rate-limited platform or a
+     * refused key is left alone (rate_limited and key_refusals count each
+     * kind's back-offs in a row).
      */
     public static function adSpendSync(): SchemaDefinition
     {
@@ -371,12 +375,16 @@ final class MiscTables
                 `backfilled_at` int(10) unsigned DEFAULT NULL,
                 `last_run_at` int(10) unsigned DEFAULT NULL,
                 `last_success_at` int(10) unsigned DEFAULT NULL,
+                `last_complete` tinyint(1) NOT NULL DEFAULT '0',
                 `last_rows` int(10) unsigned NOT NULL DEFAULT '0',
                 `last_error` text DEFAULT NULL,
                 `last_note` text DEFAULT NULL,
                 `left_out` text DEFAULT NULL,
+                `left_out_hours` text DEFAULT NULL,
                 `pending_from` int(10) unsigned DEFAULT NULL,
+                `conversions_from` int(10) unsigned DEFAULT NULL,
                 `rate_limited` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `key_refusals` smallint(5) unsigned NOT NULL DEFAULT '0',
                 `retry_after` int(10) unsigned NOT NULL DEFAULT '0',
                 `updated_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`connection_id`),

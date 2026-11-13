@@ -19,8 +19,10 @@ final class InsightsFailure extends \RuntimeException
     public const int TOO_LARGE = 3;
     /** Not reached: no answer, a 5xx, or a request that was not sent. */
     public const int UNAVAILABLE = 4;
-    /** An answer that arrived and cannot be used: not JSON, cut off, not the documented shape, another 4xx. */
+    /** An answer that arrived and cannot be used: not JSON, cut off, not the documented shape. */
     public const int UNREADABLE = 5;
+    /** Another 4xx: OpenAI refused the request itself, and sending it again gets the same answer. */
+    public const int REQUEST_REFUSED = 6;
 
     /** @param int|null $retryAfter seconds OpenAI asked to wait (its Retry-After), null when it named none */
     public function __construct(string $message, int $code, public readonly ?int $retryAfter = null)
@@ -43,13 +45,14 @@ final class InsightsFailure extends \RuntimeException
         return $this->getCode() === self::KEY_REFUSED;
     }
 
-    /** The run's outcome this failure is: rate_limited, key_refused, unavailable or unreadable_answer. */
+    /** The run's outcome this failure is: rate_limited, key_refused, unavailable, request_refused or unreadable_answer. */
     public function outcome(): string
     {
         return match ($this->getCode()) {
             self::RATE_LIMITED => SpendSync::RATE_LIMITED,
             self::KEY_REFUSED => SpendSync::KEY_REFUSED,
             self::UNAVAILABLE => SpendSync::UNAVAILABLE,
+            self::REQUEST_REFUSED => SpendSync::REQUEST_REFUSED,
             default => SpendSync::UNREADABLE,
         };
     }

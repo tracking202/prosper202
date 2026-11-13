@@ -60,6 +60,12 @@ final class SpendSyncIntegrationTest extends TestCase
     /** @var string|null a key whose every request throws, as a fault below the client would */
     private ?string $throwFor = null;
 
+    /** @var list<array{int, int, string}> the connections marked key_refused: account, connection, why */
+    private array $marked = [];
+
+    /** @var (\Closure(array{start: int, end: int}): ?string)|null a page's body by its window, before $answers */
+    private ?\Closure $pageFor = null;
+
     public static function setUpBeforeClass(): void
     {
         $host = getenv('P202_TEST_DB_HOST');
@@ -119,6 +125,8 @@ final class SpendSyncIntegrationTest extends TestCase
         $this->conversionAnswers = [];
         $this->repeat = null;
         $this->throwFor = null;
+        $this->marked = [];
+        $this->pageFor = null;
     }
 
     private static function q(string $sql): void
@@ -140,7 +148,7 @@ final class SpendSyncIntegrationTest extends TestCase
         }
     }
 
-    private function sync(int $now = self::NOW): SpendSync
+    private function sync(int $now = self::NOW, int $budget = SpendSync::PAGE_BUDGET): SpendSync
     {
         $guard = new WebhookGuard(static fn (string $host): array => ['203.0.113.20'], '203.0.113.0/24');
         $transport = function (array $options): array {
@@ -155,21 +163,36 @@ final class SpendSyncIntegrationTest extends TestCase
                     + ['status' => 200, 'error' => null, 'primary_ip' => '203.0.113.20', 'location' => null, 'body' => ''];
             }
 
+            $body = $this->pageFor === null ? null : ($this->pageFor)(self::window((string) $options[CURLOPT_URL]));
+            if ($body !== null) {
+                return ['status' => 200, 'error' => null, 'primary_ip' => '203.0.113.20', 'location' => null, 'body' => $body];
+            }
+
             return (array_shift($this->answers) ?? $this->repeat ?? ['body' => '{"object":"list","data":[],"count":0,"first_id":null,"last_id":null,"has_more":false}'])
                 + ['status' => 200, 'error' => null, 'primary_ip' => '203.0.113.20', 'location' => null, 'body' => ''];
         };
         $connections = $this->connections($this->live);
 
-        return new SpendSync(new Connection(self::$db), $connections, new InsightsClient(new AdvertiserApi(new WebhookSender($guard, $transport))), static fn (): int => $now);
+        return new SpendSync(new Connection(self::$db), $connections, new InsightsClient(new AdvertiserApi(new WebhookSender($guard, $transport))), static fn (): int => $now, $budget);
     }
 
     /** @param array<int, SpendConnection> $live */
     private function connections(array $live): SpendConnections
     {
-        return new class ($live) implements SpendConnections {
-            /** @param array<int, SpendConnection> $live */
-            public function __construct(private array $live)
+        $marked = &$this->marked;
+
+        return new class ($live, $marked) implements SpendConnections {
+            /**
+             * @param array<int, SpendConnection> $live
+             * @param list<array{int, int, string}> $marked
+             */
+            public function __construct(private array $live, private array &$marked)
             {
+            }
+
+            public function keyRefused(int $userId, int $connectionId, string $why, int $now): void
+            {
+                $this->marked[] = [$userId, $connectionId, $why];
             }
 
             public function find(int $userId, int $connectionId): ?SpendConnection
@@ -270,6 +293,7 @@ final class SpendSyncIntegrationTest extends TestCase
         $state = $this->sync()->status(self::USER)[0];
         self::assertSame(self::NOW, $state['backfilled_at']);
         self::assertSame(self::NOW, $state['last_success_at']);
+        self::assertTrue($state['complete']);
         self::assertSame(4, $state['last_rows']);
         self::assertNull($state['last_error']);
         self::assertNull($state['last_note']);
@@ -514,6 +538,7 @@ final class SpendSyncIntegrationTest extends TestCase
         self::assertStringContainsString($said, (string) $state['last_error']);
         self::assertStringNotContainsString('conversions not read', (string) $state['last_note']);
         self::assertSame(self::NOW + 3600, $state['retry_after'], 'both wait an hour');
+        self::assertSame($status === 401 ? [[self::USER, self::CONNECTION]] : [], array_map(static fn (array $m): array => [$m[0], $m[1]], $this->marked));
     }
 
     public function testConversionsOpenAiRefusesAreANoteAndTheSpendStands(): void
@@ -557,8 +582,9 @@ final class SpendSyncIntegrationTest extends TestCase
 
     /**
      * Spend with more than six decimals is rounded half up from its text;
-     * a row still refused keeps the run incomplete and the backfill unset,
-     * and is named in left_out until a run reads its hour again cleanly.
+     * a row still refused keeps the run incomplete, is named in left_out,
+     * and its hour is read again by later runs until it reads cleanly. The
+     * forward read is not held back by it: the backfill is done.
      *
      * @dataProvider spendTheLedgerStillRefuses
      */
@@ -573,10 +599,12 @@ final class SpendSyncIntegrationTest extends TestCase
         $spend = array_column(self::ledger(), 'spend', 'ad_ref');
         self::assertSame(['ad_501' => '0.000001', 'ad_502' => '1.234568', 'ad_503' => '1.000001'], $spend, 'rounded half up from the text');
         $state = $this->sync()->status(self::USER)[0];
-        self::assertNull($state['backfilled_at'], 'not complete: the backfill is read again');
+        self::assertSame(self::NOW, $state['backfilled_at'], 'the 30 days were read; the hour is read again on its own');
+        self::assertFalse($state['complete']);
         self::assertNull($state['last_success_at']);
         self::assertNull($state['last_error']);
-        self::assertSame($hour, $state['pending_from'], 'from the left-out row\'s hour');
+        self::assertNull($state['pending_from'], 'the forward read is not held at the left-out hour (CLAUDE.md #37)');
+        self::assertSame((string) $hour, self::row()['left_out_hours']);
         self::assertStringContainsString('1 row(s) of hours from ' . gmdate('Y-m-d H:i', $hour) . ' UTC were left out', (string) $state['left_out']);
         self::assertStringContainsString('ad "ad_504"', (string) $state['left_out']);
         self::assertStringContainsString($why, (string) $state['left_out']);
@@ -585,34 +613,235 @@ final class SpendSyncIntegrationTest extends TestCase
         $this->answers[] = ['status' => 503, 'body' => '{}'];
         $this->sync(self::NOW + 600)->run($this->live[self::CONNECTION]);
         self::assertStringContainsString('ad "ad_504"', (string) $this->sync()->status(self::USER)[0]['left_out']);
+        self::assertSame((string) $hour, self::row()['left_out_hours']);
 
-        // The next run starts at that hour, not 30 days back; OpenAI now sends it readably.
+        // A later run reads the window it is in, then that hour again: OpenAI now sends it readably.
         $this->urls = [];
         $later = self::NOW + 3600;
-        $this->answers[] = ['body' => self::pageOf($hour, ['1', '2', '3', '4'])];
+        $this->pageFor = static fn (array $w): ?string => $w['start'] === $hour ? self::pageOf($hour, ['1', '2', '3', '4']) : null;
         self::assertSame(1, $this->sync($later)->runDue($later + 60)['synced']);
-        self::assertSame($hour, self::window($this->urls[0])['start']);
+        $windows = array_map(self::window(...), array_values(array_filter($this->urls, static fn (string $u): bool => str_contains($u, '/ad_account/insights'))));
+        self::assertSame(['start' => $hour, 'end' => $later], $windows[array_key_last($windows)], 'read again last, up to now');
         $state = $this->sync()->status(self::USER)[0];
         self::assertNull($state['left_out']);
         self::assertNull($state['pending_from']);
-        self::assertSame($later, $state['backfilled_at']);
+        self::assertNull(self::row()['left_out_hours']);
+        self::assertSame($later, $state['last_success_at']);
+        self::assertSame(self::NOW, $state['backfilled_at']);
         self::assertSame('4.000000', self::ledger()['ad_504@' . $hour]['spend']);
     }
 
-    /** A later clean run that does not re-read the left-out hours does not erase the warning. */
+    /** @return array<string, ?string> the sync row's columns status() does not show */
+    private static function row(): array
+    {
+        return self::$db->query('SELECT left_out_hours, conversions_from, rate_limited, key_refusals FROM 202_ad_spend_sync WHERE connection_id = '
+            . self::CONNECTION)->fetch_assoc();
+    }
+
+    /**
+     * The blocker of CLAUDE.md #37: a row OpenAI keeps sending unreadably in
+     * the first day of the backfill, on an account whose 30 days take more
+     * than one run. Every run reads further than the one before until it
+     * reaches now; the backfill is then done and the warning stays, the hour
+     * read again by each later run.
+     */
+    public function testAPersistentBadRowDoesNotHoldTheBackfillBack(): void
+    {
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $reach = self::NOW - self::NOW % 3600 - 30 * 86400;
+        $bad = $reach + 5 * 3600;
+        $this->pageFor = static fn (array $w): string => $w['start'] <= $bad && $bad < $w['end'] ? self::pageOf($bad, ['2.5', '-1']) : self::pageOf($bad, []);
+
+        $furthest = 0;
+        $caughtUpAt = null;
+        for ($run = 1; $run <= 12; $run++) {
+            $this->urls = [];
+            $result = $this->sync(self::NOW, 5)->run($this->live[self::CONNECTION]);
+            $ends = array_map(static fn (string $u): int => self::window($u)['end'], array_filter($this->urls, static fn (string $u): bool => str_contains($u, '/ad_account/insights')));
+            $state = $this->sync()->status(self::USER)[0];
+            self::assertFalse($result['complete'], 'the row is still left out');
+            self::assertNotNull($state['left_out']);
+            if ($caughtUpAt === null) {
+                self::assertGreaterThan($furthest, max($ends), 'run ' . $run . ' reads further than the one before');
+                $furthest = max($ends);
+                if ($state['pending_from'] === null) {
+                    $caughtUpAt = $run;
+                    self::assertSame(self::NOW, $furthest);
+                    self::assertSame(self::NOW, $state['backfilled_at']);
+                } else {
+                    self::assertSame($result['to'], $state['pending_from']);
+                    self::assertNull($state['backfilled_at']);
+                }
+            } else {
+                self::assertSame(self::NOW, $state['backfilled_at']);
+                self::assertNull($state['pending_from']);
+                self::assertContains($bad, array_map(static fn (string $u): int => self::window($u)['start'], $this->urls), 'the bad hour is read again');
+            }
+            self::assertSame((string) $bad, self::row()['left_out_hours']);
+        }
+        self::assertSame(7, $caughtUpAt, '31 windows, 5 pages a run');
+        self::assertSame('2.500000', self::ledger()['ad_501@' . $bad]['spend']);
+    }
+
+    /** Left-out hours are read again oldest first; one still left out goes behind the rest, so none is starved. */
+    public function testALeftOutHourStillLeftOutGoesToTheBack(): void
+    {
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $base = self::NOW - self::NOW % 3600;
+        [$h1, $h2] = [$base - 10 * 86400, $base - 5 * 86400];
+        self::q('UPDATE 202_ad_spend_sync SET backfilled_at = 1, left_out = \'2 row(s) left out\', left_out_hours = \'' . $h1 . ',' . $h2
+            . '\' WHERE connection_id = ' . self::CONNECTION);
+        $this->pageFor = static fn (array $w): string => $w['start'] === $h1 ? self::pageOf($h1, ['-1']) : self::pageOf($h2, []);
+
+        // The trailing 72 hours are four pages; the fifth reads h1 again, still bad.
+        $this->sync(self::NOW, 5)->run($this->live[self::CONNECTION]);
+        self::assertSame($h2 . ',' . $h1, self::row()['left_out_hours']);
+        // The next run reads h2 first: clean, so only h1 is left.
+        $this->sync(self::NOW, 5)->run($this->live[self::CONNECTION]);
+        self::assertSame((string) $h1, self::row()['left_out_hours']);
+        self::assertNotNull($this->sync()->status(self::USER)[0]['left_out']);
+    }
+
+    /** A run reads at most REREAD_WINDOWS left-out windows again, so a poison hour costs a bounded slice an hour. */
+    public function testARunReadsABoundedSliceOfLeftOutHoursAgain(): void
+    {
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $base = self::NOW - self::NOW % 3600;
+        $hours = array_map(static fn (int $d): int => $base - $d * 86400, [20, 16, 12, 8, 5]);
+        self::q('UPDATE 202_ad_spend_sync SET backfilled_at = 1, left_out = \'5 row(s) left out\', left_out_hours = \'' . implode(',', $hours)
+            . '\' WHERE connection_id = ' . self::CONNECTION);
+        $reread = fn (): array => array_values(array_intersect($hours, array_map(static fn (string $u): int => self::window($u)['start'], $this->urls)));
+
+        $this->sync()->run($this->live[self::CONNECTION]);
+        self::assertSame(array_slice($hours, 0, SpendSync::REREAD_WINDOWS), $reread(), 'the oldest three');
+        self::assertSame(implode(',', array_slice($hours, 3)), self::row()['left_out_hours']);
+        self::assertFalse($this->sync()->status(self::USER)[0]['complete']);
+
+        $this->urls = [];
+        $this->sync()->run($this->live[self::CONNECTION]);
+        self::assertSame(array_slice($hours, 3), $reread());
+        self::assertNull(self::row()['left_out_hours']);
+        $state = $this->sync()->status(self::USER)[0];
+        self::assertNull($state['left_out'], 'every hour read again cleanly');
+        self::assertTrue($state['complete']);
+    }
+
+    /** Some left-out hours past OpenAI's reach and some still read again: one sentence says both. */
+    public function testLeftOutSaysWhichHoursAreStillReadAgain(): void
+    {
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $base = self::NOW - self::NOW % 3600;
+        [$gone, $kept] = [$base - 31 * 86400, $base - 10 * 86400];
+        self::q("UPDATE 202_ad_spend_sync SET backfilled_at = 1, left_out = '2 row(s) left out; those hours are read again every run until OpenAI sends them readably',"
+            . " left_out_hours = '$gone,$kept' WHERE connection_id = " . self::CONNECTION);
+        $this->pageFor = static fn (array $w): string => $w['start'] === $kept ? self::pageOf($kept, ['-1']) : self::pageOf($kept, []);
+
+        $this->sync()->run($this->live[self::CONNECTION]);
+        $text = (string) $this->sync()->status(self::USER)[0]['left_out'];
+        self::assertStringContainsString('those hours are read again every run', $text);
+        self::assertStringContainsString('some of them are older than the 30 days', $text);
+        self::assertSame((string) $kept, self::row()['left_out_hours']);
+
+        // Once the rest reads cleanly, only what cannot be read again is said.
+        $this->pageFor = null;
+        $this->sync()->run($this->live[self::CONNECTION]);
+        $text = (string) $this->sync()->status(self::USER)[0]['left_out'];
+        self::assertStringNotContainsString('read again every run', $text);
+        self::assertStringNotContainsString('some of them', $text);
+        self::assertStringContainsString('those hours are older than the 30 days', $text);
+    }
+
+    /** While the backfill is not done, a run that reaches now also reads the trailing 72 hours. */
+    public function testARunThatReachesNowReadsTheTrailingSeventyTwoHours(): void
+    {
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $hour = self::NOW - self::NOW % 3600;
+        self::q('UPDATE 202_ad_spend_sync SET pending_from = ' . ($hour - 7200) . ' WHERE connection_id = ' . self::CONNECTION);
+        $result = $this->sync()->run($this->live[self::CONNECTION]);
+        $windows = array_map(self::window(...), array_values(array_filter($this->urls, static fn (string $u): bool => str_contains($u, '/ad_account/insights'))));
+        self::assertSame(['start' => $hour - 7200, 'end' => self::NOW], $windows[0]);
+        self::assertSame($hour - 72 * 3600, $windows[1]['start']);
+        self::assertSame($hour - 7200, $windows[array_key_last($windows)]['end']);
+        self::assertTrue($result['complete']);
+        self::assertSame($hour - 72 * 3600, $result['from']);
+    }
+
+    /**
+     * Conversions the run could not read stay owed: a backfill whose
+     * conversions met a 429 has the next run read them from 30 days back,
+     * not from where its spend read stopped.
+     */
+    public function testConversionsARunCouldNotReadAreReadByTheNext(): void
+    {
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $reach = self::NOW - self::NOW % 3600 - 30 * 86400;
+        $this->pages(self::NOW - self::NOW % 3600 - 7200);
+        $this->conversionAnswers[] = ['status' => 429, 'body' => '{}'];
+        $this->sync()->runDue(self::NOW + 60);
+        self::assertSame((string) $reach, self::row()['conversions_from']);
+        self::assertNull($this->sync()->status(self::USER)[0]['pending_from'], 'the spend was read');
+
+        $this->bodies = [];
+        $later = self::NOW + 3700;
+        $this->sync($later)->run($this->live[self::CONNECTION]);
+        $range = json_decode(json_decode($this->bodies[0], true)['time_ranges'][0], true);
+        self::assertSame($reach - $reach % 86400, $range['start'], 'from 30 days back');
+        self::assertNull(self::row()['conversions_from']);
+    }
+
+    /** A multi-run backfill owes the conversions of every run's days, read by the run that reaches now. */
+    public function testABackfillInSeveralRunsReadsTheConversionsOfAllItsDays(): void
+    {
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $reach = self::NOW - self::NOW % 3600 - 30 * 86400;
+        $this->pageFor = static fn (array $w): string => self::pageOf($w['start'], ['1']);
+        for ($run = 0; $run < 10 && $this->bodies === []; $run++) {
+            $this->sync(self::NOW, 5)->run($this->live[self::CONNECTION]);
+        }
+        self::assertSame(7, $run, 'read once, by the run that reaches now');
+        self::assertSame($reach - $reach % 86400, json_decode(json_decode($this->bodies[0], true)['time_ranges'][0], true)['start']);
+    }
+
+    /** A run PHP or the server ends part-way keeps the days it read: they are recorded as it goes. */
+    public function testARunEndedPartWayKeepsTheDaysItRead(): void
+    {
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $reach = self::NOW - self::NOW % 3600 - 30 * 86400;
+        $sync = $this->sync();
+        $calls = 0;
+        $this->pageFor = function (array $w) use (&$calls): ?string {
+            if (++$calls > 2) {
+                throw new \Error('the time limit');
+            }
+
+            return null;
+        };
+        try {
+            $sync->run($this->live[self::CONNECTION]);
+            self::fail('the run went on');
+        } catch (\Error $e) {
+            self::assertSame('the time limit', $e->getMessage());
+        }
+        self::assertSame($reach + 2 * 86400, $this->sync()->status(self::USER)[0]['pending_from']);
+        self::assertSame((string) $reach, self::row()['conversions_from']);
+    }
+
+    /** A left-out hour OpenAI no longer keeps is said once and stays named until a person acts. */
     public function testALeftOutHourOpenAiNoLongerKeepsStaysNamedUntilAPersonActs(): void
     {
         $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
         $old = self::NOW - self::NOW % 3600 - 31 * 86400;
-        self::q('UPDATE 202_ad_spend_sync SET backfilled_at = 1, pending_from = ' . $old
-            . ", left_out = '1 row(s) of hours from then were left out' WHERE connection_id = " . self::CONNECTION);
+        self::q('UPDATE 202_ad_spend_sync SET backfilled_at = 1, left_out_hours = \'' . $old . "', left_out = '1 row(s) of hours from then were left out;"
+            . " those hours are read again every run until OpenAI sends them readably' WHERE connection_id = " . self::CONNECTION);
 
         foreach ([self::NOW, self::NOW + 3600] as $now) {
             $this->sync($now)->runDue($now + 60);
             $state = $this->sync()->status(self::USER)[0];
             self::assertStringStartsWith('1 row(s) of hours from then were left out; those hours are older than the 30 days', (string) $state['left_out']);
             self::assertSame(1, substr_count((string) $state['left_out'], 'older than the 30 days'), 'said once');
-            self::assertNull($state['pending_from'], 'not read again: OpenAI no longer has them');
+            self::assertStringNotContainsString('read again every run', (string) $state['left_out'], 'one sentence: no longer read again');
+            self::assertNull(self::row()['left_out_hours'], 'not read again: OpenAI no longer has them');
+            self::assertNull($state['pending_from']);
         }
 
         // Turning it off and on is the person's word that it is dealt with.
@@ -625,7 +854,8 @@ final class SpendSyncIntegrationTest extends TestCase
     /**
      * A run reads a day at a time and stops at its page budget: what it read
      * stands, the run is not complete, and each next run goes on from the
-     * first day it did not read until the window is whole.
+     * first day it did not read until the window is whole; the run that
+     * reaches now also reads the trailing 72 hours.
      */
     public function testAPageBudgetStopsTheRunAndTheNextOneGoesOn(): void
     {
@@ -643,7 +873,7 @@ final class SpendSyncIntegrationTest extends TestCase
             $body = $window['start'] <= $hour && $hour < $window['end'] ? self::pageOf($hour, ['2.5']) : self::pageOf($hour, []);
 
             return ['status' => 200, 'error' => null, 'primary_ip' => '203.0.113.20', 'location' => null, 'body' => $body];
-        }))), static fn (): int => self::NOW, 3);
+        }))), static fn (): int => self::NOW, 5);
 
         $runs = 0;
         $windows = [];
@@ -654,23 +884,26 @@ final class SpendSyncIntegrationTest extends TestCase
             $windows = [...$windows, ...array_map(self::window(...), array_filter($this->urls, static fn (string $u): bool => str_contains($u, '/ad_account/insights')))];
             $state = $budgeted->status(self::USER)[0];
             if (!$result['complete']) {
-                self::assertLessThanOrEqual(3, count($this->urls) - count(array_filter($this->urls, static fn (string $u): bool => str_contains($u, '/conversions/'))));
+                self::assertLessThanOrEqual(5, count($this->urls) - count(array_filter($this->urls, static fn (string $u): bool => str_contains($u, '/conversions/'))));
                 self::assertNull($state['backfilled_at']);
                 self::assertSame($result['to'], $state['pending_from']);
-                self::assertStringContainsString('stopped after 3 page(s)', (string) $result['note']);
+                self::assertStringContainsString('stopped after 5 page(s)', (string) $result['note']);
                 self::assertStringContainsString('the next run goes on from there', (string) $state['last_note']);
                 self::assertNull($state['last_error']);
             }
         } while (!$result['complete'] && $runs < 20);
 
-        self::assertSame(11, $runs, '31 days, 3 a run');
+        self::assertSame(7, $runs, '31 days, 5 a run, the last with the trailing 72 hours');
         self::assertSame($from, $windows[0]['start']);
-        foreach ($windows as $i => $w) {
+        $forward = array_slice($windows, 0, 31);
+        foreach ($forward as $i => $w) {
             if ($i > 0) {
-                self::assertSame($windows[$i - 1]['end'], $w['start'], 'each day read once, in order');
+                self::assertSame($forward[$i - 1]['end'], $w['start'], 'each day read once, in order');
             }
         }
-        self::assertSame(self::NOW, $windows[array_key_last($windows)]['end']);
+        self::assertSame(self::NOW, $forward[30]['end']);
+        $trailing = array_slice($windows, 31);
+        self::assertSame([self::NOW - self::NOW % 3600 - 72 * 3600, self::NOW - self::NOW % 3600], [$trailing[0]['start'], $trailing[array_key_last($trailing)]['end']]);
         $state = $budgeted->status(self::USER)[0];
         self::assertSame(self::NOW, $state['backfilled_at']);
         self::assertNull($state['pending_from']);
@@ -715,6 +948,35 @@ final class SpendSyncIntegrationTest extends TestCase
         $this->answers[] = ['status' => 403, 'body' => '{}'];
         $this->sync(self::NOW + 3600)->runDue(self::NOW + 3660);
         self::assertSame(self::NOW + 3600 + 7200, $this->sync()->status(self::USER)[0]['retry_after']);
+        // Each refusal marks the connection key_refused, as its check would.
+        self::assertSame([self::USER, self::USER], array_column($this->marked, 0));
+        self::assertSame([self::CONNECTION, self::CONNECTION], array_column($this->marked, 1));
+        self::assertStringContainsString('refused the Advertiser API key', $this->marked[0][2]);
+    }
+
+    /** A 429 does not take on the refused key's count of back-offs, nor a refused key the 429's. */
+    public function testA429AndARefusedKeyCountTheirBackOffsApart(): void
+    {
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $at = self::NOW;
+        foreach ([401, 401, 429] as $status) {
+            $this->answers[] = ['status' => $status, 'body' => '{}'];
+            $this->sync($at)->run($this->live[self::CONNECTION]);
+            $last = $this->sync()->status(self::USER)[0]['retry_after'] - $at;
+            $at += 86400;
+        }
+        self::assertSame(3600, $last, 'the first 429: an hour, not the third back-off\'s four');
+        self::assertSame(['1', '0'], [self::row()['rate_limited'], self::row()['key_refusals']]);
+        foreach ([429, 401] as $status) {
+            $this->answers[] = ['status' => $status, 'body' => '{}'];
+            $this->sync($at)->run($this->live[self::CONNECTION]);
+            $last = $this->sync()->status(self::USER)[0]['retry_after'] - $at;
+            $at += 86400;
+        }
+        self::assertSame(3600, $last, 'the first refusal after two 429s: an hour');
+        self::assertSame(['0', '1'], [self::row()['rate_limited'], self::row()['key_refusals']]);
+        $this->sync($at)->run($this->live[self::CONNECTION]);
+        self::assertSame(['0', '0'], [self::row()['rate_limited'], self::row()['key_refusals']], 'a run that gets through clears both');
     }
 
     /** @return iterable<string, array{array<string, mixed>, string}> */
@@ -725,7 +987,8 @@ final class SpendSyncIntegrationTest extends TestCase
         yield 'no answer' => [['status' => 0, 'error' => 'timed out'], SpendSync::UNAVAILABLE];
         yield 'not JSON' => [['body' => '<html>'], SpendSync::UNREADABLE];
         yield 'cut off' => [['body' => '{"object":"list"', 'error' => 'the answer was longer than allowed'], SpendSync::UNREADABLE];
-        yield 'OpenAI 400' => [['status' => 400, 'body' => '{}'], SpendSync::UNREADABLE];
+        yield 'OpenAI 400' => [['status' => 400, 'body' => '{}'], SpendSync::REQUEST_REFUSED];
+        yield 'OpenAI 404' => [['status' => 404, 'body' => '{}'], SpendSync::REQUEST_REFUSED];
         yield 'not a page' => [['body' => '{"object":"list"}'], SpendSync::UNREADABLE];
         yield 'key refused' => [['status' => 403, 'body' => '{}'], SpendSync::KEY_REFUSED];
     }

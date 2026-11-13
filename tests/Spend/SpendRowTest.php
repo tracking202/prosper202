@@ -64,6 +64,7 @@ final class SpendRowTest extends TestCase
         yield 'empty ad' => [['ad_ref' => ''], 'ad_ref'];
         yield 'ad too long' => [['ad_ref' => str_repeat('a', 129)], 'ad_ref'];
         yield 'ad with a control character' => [['ad_ref' => "ad\n1"], 'ad_ref'];
+        yield 'ad not ASCII' => [['ad_ref' => 'ad_é7'], 'ad_ref'];
         yield 'platform capitals' => [['platform' => 'OpenAI'], 'platform'];
     }
 

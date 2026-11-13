@@ -26,4 +26,10 @@ interface SpendConnections
      * @return array<int, string>
      */
     public function ofAccount(int $userId): array;
+
+    /**
+     * OpenAI refused the connection's key during a run: mark the connection
+     * key_refused, as a check of it would (its last_error $why).
+     */
+    public function keyRefused(int $userId, int $connectionId, string $why, int $now): void;
 }

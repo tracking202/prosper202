@@ -84,7 +84,7 @@ final class InsightsClientTest extends TestCase
         yield 'rate limited' => [['status' => 429, 'body' => '{}'], 'answered 429', InsightsFailure::RATE_LIMITED];
         yield 'key refused' => [['status' => 401, 'body' => '{}'], 'refused the Advertiser API key', InsightsFailure::KEY_REFUSED];
         yield 'invalid request, in its words' => [['status' => 400, 'body' => (string) file_get_contents(dirname(__DIR__, 2) . '/fixtures/openai-ads/error-invalid-request.json')],
-            'answered 400: time_ranges must not be in the future', InsightsFailure::UNREADABLE];
+            'answered 400: time_ranges must not be in the future', InsightsFailure::REQUEST_REFUSED];
         yield 'not a page' => [['body' => '{"object":"list"}'], 'not a page of insights', InsightsFailure::UNREADABLE];
         yield 'not JSON' => [['body' => '<html>'], 'not its JSON', InsightsFailure::UNREADABLE];
         yield 'an outage' => [['status' => 503, 'body' => '{}'], 'answered 503', InsightsFailure::UNAVAILABLE];

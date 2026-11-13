@@ -29,12 +29,16 @@ func TestSpendSyncRunAnswersEachFailureAsItsClass(t *testing.T) {
 		exit   int
 		hint   string // what the hint must say
 	}{
-		{"OpenAI's rate limit", http.StatusTooManyRequests, upstream(429, "rate_limited", `"retry_after_seconds":7200,`), ExitRateLimited, "Wait 7200 seconds"},
+		// OpenAI's own wait, not the hourly run's back-off in details.retry_after (a unix time).
+		{"OpenAI's rate limit", http.StatusTooManyRequests, `{"error":true,"status":429,"message":"Spend sync run for connection 3 failed: OpenAI answered 429",` +
+			`"retry_after_seconds":60,"details":{"upstream":"openai_ads","connection_id":3,"reason":"rate_limited","retry_after":1794303600}}`, ExitRateLimited, "Wait 60 seconds"},
 		{"an outage", http.StatusServiceUnavailable, upstream(503, "unreachable", `"retry_after_seconds":120,`), ExitServer, "could not get a usable answer from OpenAI's Advertiser API"},
 		{"an unusable answer", http.StatusBadGateway, upstream(502, "unreadable_answer", ""), ExitServer, "could not get a usable answer from OpenAI's Advertiser API"},
 		{"a refused key", http.StatusUnprocessableEntity, refusal("api_key", "OpenAI refused connection 3's Advertiser API key"), ExitValidation, "p202 ad-connection update 3 --api-key-file"},
 		{"a sync that is off", http.StatusUnprocessableEntity, refusal("enabled", "Spend sync is off"), ExitValidation, "p202 spend sync enable 3"},
 		{"another currency", http.StatusUnprocessableEntity, refusal("connection", "billed in EUR"), ExitValidation, "not converted between currencies"},
+		{"a page the ledger refused", http.StatusUnprocessableEntity, refusal("spend", "spend must be an amount"), ExitValidation, "The spend ledger refused a page"},
+		{"a request OpenAI refused", http.StatusUnprocessableEntity, refusal("request", "OpenAI answered 400: bad time range"), ExitValidation, "running it again sends the same request"},
 		{"an unknown id", http.StatusNotFound, `{"error":true,"status":404,"message":"No ChatGPT Ads connection 3"}`, ExitValidation, adSpendSyncListHint},
 	} {
 		t.Run(c.what, func(t *testing.T) {
@@ -56,10 +60,44 @@ func TestSpendSyncRunAnswersEachFailureAsItsClass(t *testing.T) {
 			if c.status != http.StatusUnprocessableEntity && c.status != http.StatusNotFound && hint != api.HintFor(err) {
 				t.Errorf("hint = %q, want the class's (nothing in the request is wrong)", hint)
 			}
+			if strings.Contains(hint, "1794303600") {
+				t.Errorf("hint = %q: the hourly run's back-off is not this request's wait", hint)
+			}
 			if c.what != "a sync that is off" && strings.Contains(hint, "spend sync enable") {
 				t.Errorf("hint = %q: the sync is on", hint)
 			}
 		})
+	}
+}
+
+// A failed run that wrote rows first says so, with how to go on: the class
+// hint's "nothing was done" would be false.
+func TestSpendSyncRunThatWroteRowsBeforeFailingSaysSo(t *testing.T) {
+	for _, c := range []struct {
+		status int
+		body   string
+		exit   int
+		wait   string
+	}{
+		{http.StatusServiceUnavailable, `{"error":true,"status":503,"message":"failed: OpenAI answered 503; 360 hour row(s) were written","retry_after_seconds":60,` +
+			`"details":{"upstream":"openai_ads","connection_id":3,"reason":"unreachable","rows_written":360}}`, ExitServer, "Wait a minute"},
+		{http.StatusTooManyRequests, `{"error":true,"status":429,"message":"failed: OpenAI answered 429","retry_after_seconds":60,` +
+			`"details":{"upstream":"openai_ads","connection_id":3,"reason":"rate_limited","rows_written":12,"retry_after":1794303600}}`, ExitRateLimited, "Wait 60 seconds"},
+	} {
+		spendServer(t, c.status, c.body)
+		_, _, err := executeCommand("--json", "spend", "sync", "run", "3")
+		if got := exitCodeForError(err); got != c.exit {
+			t.Errorf("%d: exit %d, want %d", c.status, got, c.exit)
+		}
+		hint := hintFor(err)
+		for _, want := range []string{"wrote", "running it again adds nothing twice", c.wait, "p202 spend sync run 3"} {
+			if !strings.Contains(hint, want) {
+				t.Errorf("%d: hint = %q, want it to say %q", c.status, hint, want)
+			}
+		}
+		if strings.Contains(hint, "nothing was done") {
+			t.Errorf("%d: hint = %q says nothing was done", c.status, hint)
+		}
 	}
 }
 

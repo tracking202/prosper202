@@ -37,7 +37,8 @@ Control (for whoever drives it):
   GET  /control/requests                every request seen, in order (keys masked)
   POST /control/answer                  {"status": 503, "body": "...", "retry_after": "120"}: every /v1 request answers
                                         that status and raw body (an outage, a rate limit, a refusal, an answer it
-                                        does not document), with that Retry-After header when given, until the reset
+                                        does not document), with that Retry-After header when given, until the reset;
+                                        with "path": "/v1/..." only requests to that path
 
 Usage: fake_openai_ads.py --port 8242 --tls-dir DIR [--api-key KEY]
 It writes DIR/cert.pem (self-signed for 127.0.0.1, localhost and bzr.openai.com: the CA the
@@ -228,7 +229,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.control(method, path)
             body = self.body() if method == 'POST' else {}
             auth = self.headers.get('Authorization', '')
-            if STATE.forced is not None:
+            if STATE.forced is not None and STATE.forced.get('path') in (None, path):
                 STATE.requests.append({'method': method, 'path': path, 'query': url.query, 'forced': STATE.forced['status']})
                 return self.raw(STATE.forced['status'], STATE.forced['body'], STATE.forced.get('retry_after'))
             if path == '/v1/events' and method == 'POST':
@@ -371,7 +372,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.answer(400, {'error': {'message': 'status (a number) and body (a string) are required'}})
             if body.get('retry_after') is not None and not isinstance(body['retry_after'], str):
                 return self.answer(400, {'error': {'message': 'retry_after is a string (seconds or an HTTP-date)'}})
-            STATE.forced = {'status': body['status'], 'body': body['body'], 'retry_after': body.get('retry_after')}
+            STATE.forced = {'status': body['status'], 'body': body['body'], 'retry_after': body.get('retry_after'), 'path': body.get('path')}
             return self.answer(200, STATE.forced)
         if path == '/control/requests' and method == 'GET':
             return self.answer(200, {'requests': STATE.requests})
