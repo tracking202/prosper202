@@ -117,6 +117,7 @@ final class AiConnectExchangeTest extends TestCase
         self::assertStringContainsString('Connecting an AI assistant is free', $body['message']);
         self::assertStringContainsString('active free ClickServer licence', $body['message']);
         self::assertStringContainsString('CPM* newsletter', $body['message'], 'how to keep a free licence active');
+        self::assertStringContainsString('https://my.tracking202.com/api/customers/subscriptions/support', $body['message']);
         self::assertStringNotContainsString('Pro', $body['message']);
         self::assertSame([], $db->statementsContaining('INSERT INTO 202_api_keys'));
     }

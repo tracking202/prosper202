@@ -280,7 +280,7 @@ func HintFor(err error) string {
 		case apiErr.Status == 402 && apiErr.Category == "licence":
 			// From 1.9.80 the CLI is free and needs only a valid key; older
 			// installs refused on a paid subscription, so upgrading helps too.
-			return "The CLI is free, but it needs an active free ClickServer licence on the install: Tracking202 did not accept the install's ClickServer API key. No paid subscription is needed. For accounts made since October 2026 the free licence stays active with a CPM* newsletter subscription (subscribe with your my.tracking202.com account's email address); an install with no key enters one on its api-key-required.php page. Then run the command again (the install checks a refusal again within five minutes). An install older than Prosper202 1.9.80 also asks for a paid subscription: upgrade it."
+			return "The CLI is free, but it needs an active free ClickServer licence on the install: Tracking202 did not accept the install's ClickServer API key. No paid subscription is needed. Get or reactivate the free licence at https://my.tracking202.com/api/customers/subscriptions/support (for accounts made since October 2026 it stays active with a CPM* newsletter subscription); an install with no key enters one on its api-key-required.php page. Then run the command again (the install checks a refusal again within five minutes). An install older than Prosper202 1.9.80 also asks for a paid subscription: upgrade it."
 		case apiErr.Status == 402:
 			// categoryForHTTPStatus files it under server (exit 4); it needs
 			// that category's next step, not silence.

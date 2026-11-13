@@ -30,7 +30,7 @@ func TestCliExplainsProLicenceRefusal(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "Pro licence") {
 		t.Fatalf("want the Pro licence refusal, got %v", err)
 	}
-	if h := hintFor(err); !strings.Contains(h, "active free ClickServer licence") || strings.Contains(h, "Verify your API key") {
+	if h := hintFor(err); !strings.Contains(h, "active free ClickServer licence") || !strings.Contains(h, "https://my.tracking202.com/api/customers/subscriptions/support") || strings.Contains(h, "Verify your API key") {
 		t.Errorf("hint %q should say what a free licence needs, not blame the key", h)
 	}
 	// A stable contract for agents: its own category and exit code, not

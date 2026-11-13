@@ -38,14 +38,17 @@ class CapabilitiesController
      * no CPM* newsletter subscription; the verdict does not say which, so the
      * message says what to do for both.
      */
+    /** Where a customer gets or reactivates the free licence, the newsletter included. */
+    public const LICENCE_SUPPORT_URL = 'https://my.tracking202.com/api/customers/subscriptions/support';
+
     public static function notLicensedMessage(string $what): string
     {
         return $what . ', but it needs an active free ClickServer licence on this install, and Tracking202 '
             . 'did not accept the install\'s ClickServer API key as one. No paid subscription is needed. '
-            . 'For accounts made since October 2026 the free licence stays active with a CPM* newsletter '
-            . 'subscription: subscribe with the email address of your my.tracking202.com account, then try '
-            . 'again (the install checks a refusal again within five minutes). An install with no ClickServer '
-            . 'API key enters a valid one on its api-key-required.php page.';
+            . 'Get or reactivate your free licence at ' . self::LICENCE_SUPPORT_URL . ' (for accounts made '
+            . 'since October 2026 it stays active with a CPM* newsletter subscription), then try again (the '
+            . 'install checks a refusal again within five minutes). An install with no ClickServer API key '
+            . 'enters a valid one on its api-key-required.php page.';
     }
 
     /**
