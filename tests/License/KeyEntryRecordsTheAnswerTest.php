@@ -9,8 +9,8 @@ use Tests\Support\SourceScan;
 
 /**
  * Every path that asks the licence service about a key records the answer
- * for the grace period (ShellAccessCache::recordLicence() or recordAnswer(),
- * or p202_record_key_answer()), in the same function, or in the script when
+ * for the grace period (ShellAccessCache::recordLicence(), or
+ * p202_record_key_answer() which calls it), in the same function, or in the script when
  * the ask is at its top level. A key confirmed where nothing records it
  * counts as never checked once the service cannot be reached.
  *
@@ -24,10 +24,10 @@ final class KeyEntryRecordsTheAnswerTest extends TestCase
             . ' PostReadersCheckTokenTest holds it to writing nothing',
         '202-config/functions-auth.php::askLicenceService' => 'the seam is_valid_api_key() asks; it records the answer',
         'api/v3/Controllers/CapabilitiesController.php::askLicenceService' => 'the seam checkKey() asks; it records'
-            . ' the whole answer before releasing its claim',
+            . ' the answer before releasing its claim',
     ];
 
-    private const RECORDERS = ['recordlicence', 'recordanswer', 'p202_record_key_answer'];
+    private const RECORDERS = ['recordlicence', 'p202_record_key_answer'];
 
     public function testEveryAskRecordsTheAnswer(): void
     {
@@ -51,6 +51,31 @@ final class KeyEntryRecordsTheAnswerTest extends TestCase
             array_values(array_diff(array_keys(self::EXEMPT), array_keys($exemptSeen))),
             'every exemption still names an ask'
         );
+    }
+
+    /**
+     * Served code records an answer only through recordLicence(), which
+     * keeps only what the service confirmed (ShellAccessCache::confirmed()):
+     * a bare recordAnswer() or write() could record a "Key valid" that did
+     * not say whether the key is known, and the CLI gate would admit it.
+     */
+    public function testServedCodeRecordsOnlyThroughRecordLicence(): void
+    {
+        $writers = [];
+        foreach (SourceScan::phpFiles() as $file => $source) {
+            if ($file === '202-config/License/ShellAccessCache.php') {
+                continue;
+            }
+            $code = '';
+            foreach (token_get_all($source) as $token) {
+                $comment = is_array($token) && in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true);
+                $code .= $comment ? ' ' : (is_array($token) ? $token[1] : $token);
+            }
+            if (preg_match('/ShellAccessCache\s*::\s*(recordAnswer|write)\s*\(|->\s*saveAnswer\s*\(/i', $code) === 1) {
+                $writers[$file] = true;
+            }
+        }
+        self::assertSame([], array_keys($writers), 'record licence answers with ShellAccessCache::recordLicence()');
     }
 
     public function testTheScanFindsTheKnownAsks(): void

@@ -353,13 +353,14 @@ try {
         }
     }
 
-    // Pro-only Go CLI: requests from the Go CLI need this install's ClickServer
-    // key to belong to an active Prosper202 ClickServer subscription (trials
-    // count). /capabilities, the API root and three diagnostic reads stay
-    // open, so the CLI can explain the refusal (isCliGateExempt). When
-    // my.tracking202.com can't be reached, a paid answer within the grace
-    // period still counts (see CapabilitiesController::cliAccess). The PHP
-    // bin/p202 CLI is not gated.
+    // The Go CLI is free, but it needs an active free ClickServer licence:
+    // this install's ClickServer key must be one my.tracking202.com answers as
+    // valid (no paid subscription; the web sign-in asks the same question).
+    // /capabilities, the API root and three diagnostic reads stay open, so the
+    // CLI can explain the refusal (isCliGateExempt). When my.tracking202.com
+    // can't be reached, a valid answer within the grace period still counts
+    // (see CapabilitiesController::cliAccess). The PHP bin/p202 CLI is not
+    // gated.
     // The check keys on the User-Agent the Go CLI sends — a licensing prompt,
     // not an access control (see isGoCliUserAgent) — and runs after the rate
     // limiter above, so a burst that is refused there never reaches
@@ -370,10 +371,7 @@ try {
         && !$licenceGate->cliAccess()) {
         Bootstrap::errorResponse(
             $licenceGate->cliRefusal(
-                'The Prosper202 CLI requires a Prosper202 ClickServer Pro licence on this install\'s '
-                . 'ClickServer API key. Start a Pro trial or subscription at '
-                . 'https://my.tracking202.com/api/customers/subscriptions/support; an install with no '
-                . 'ClickServer API key yet enters one on its api-key-required.php page first.'
+                \Api\V3\Controllers\CapabilitiesController::notLicensedMessage('The Prosper202 CLI is free')
             ),
             402,
             ['category' => 'licence']

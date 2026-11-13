@@ -169,7 +169,7 @@ func fetchMultiProfileObjects(endpoint string, params map[string]string, profile
 	}
 	if len(results) == 0 && len(errorsOut) > 0 {
 		if refused := licenceRefusal(rawErrors...); refused != nil {
-			// Keep the licence category (exit 6, the trial hint) when every
+			// Keep the licence category (exit 6, the licence hint) when every
 			// profile was refused for it, instead of a generic failure.
 			return nil, errorsOut, fmt.Errorf("all profile requests failed: %w", refused)
 		}

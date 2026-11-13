@@ -2,7 +2,7 @@
 #
 # CI only: answer my.tracking202.com from a local HTTPS stub, so a job that
 # installs Prosper202 never sends traffic to production. Production rejects
-# unknown licence keys (since 2026-10-09) and CI's key is made up, and the
+# unknown licence keys (since 2026-10-09) and CI's key is a test key, and the
 # installer checks the key before it creates the account.
 #
 # A throwaway certificate for my.tracking202.com is trusted by the runner's
@@ -10,8 +10,10 @@
 # verification stays fully on and no product code knows about the stub.
 # The licence check answers "Key valid" + paid:true for a non-empty key and
 # 404 "Key not found" for an empty one; a key ending in one of the suffixes
-# in Stub.ANSWERS (and -outage, -redirect...) gets that answer instead, for
-# tests/live/cli-licence-gate.sh. Every other path answers 200 {}.
+# in Stub.ANSWERS (and -outage, -undecided, -redirect...) gets that answer
+# instead; tests/live/cli-free.sh uses -unpaid, -invalid, -refused, -outage,
+# -undecided, -no-paid and -odd-paid. "-undecided": no answer, read as an
+# outage. Every other path answers 200 {}. The log notes each request's header.
 #
 #   licence-stub.sh start <dir>   start it, and prove PHP's curl verifies it
 #   licence-stub.sh stop <dir>    stop it, and list the requests it answered
@@ -70,8 +72,12 @@ class Stub(http.server.BaseHTTPRequestHandler):
     # Every answer the real service gives, plus three it never does,
     # chosen by the key's suffix; "-redirect", "-redirect-away" and
     # "-redirect-loop" (in do_POST) exercise the validator's own
-    # redirect handling. tests/live/cli-licence-gate.sh sets the
-    # install's key to each; keep the two lists in step.
+    # redirect handling, and "-outage" and "-undecided" (in do_POST)
+    # the service without an answer. "-no-paid" and "-odd-paid" do not say
+    # whether the key is paid, so they do not confirm it: the install reads
+    # them as no answer. tests/live/cli-free.sh sets the install's key to
+    # -unpaid, -invalid, -refused, -outage, -undecided, -no-paid and
+    # -odd-paid keys.
     ANSWERS = {
         "-unpaid":   (200, {"code": 200, "msg": "Key valid", "paid": False}),
         "-no-paid":  (200, {"code": 200, "msg": "Key valid"}),
@@ -103,6 +109,10 @@ class Stub(http.server.BaseHTTPRequestHandler):
                 return self.send_json(404, {"code": 404, "msg": "Key not found"})
             if key.endswith("-outage"):
                 return self.send_raw(503, "text/html", b"<html><body>Service Unavailable</body></html>")
+            if key.endswith("-undecided"):
+                if self.headers.get("X-P202-Licence-Grace") == "1":
+                    return self.send_json(200, {"code": 200, "msg": "Key not checked", "checked": False})
+                return self.send_json(200, {"code": 200, "msg": "Key valid"})
             if key.endswith("-redirect"):
                 return self.redirect("https://my.tracking202.com/api/v2/validate-customers-key/moved")
             if key.endswith("-redirect-away"):
@@ -119,7 +129,8 @@ class Stub(http.server.BaseHTTPRequestHandler):
         self.send_json(200, {})
 
     def log_message(self, fmt, *args):
-        sys.stderr.write("%s %s\n" % (self.command, self.path.split("?")[0]))
+        grace = "grace header" if self.headers.get("X-P202-Licence-Grace") == "1" else "no grace header"
+        sys.stderr.write("%s %s (%s)\n" % (self.command, self.path.split("?")[0], grace))
         sys.stderr.flush()
 
 with open(sys.argv[3], "w") as pid:

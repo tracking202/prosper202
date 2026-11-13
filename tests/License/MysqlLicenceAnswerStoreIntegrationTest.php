@@ -6,7 +6,6 @@ namespace Tests\License;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\SchemaInstaller;
-use Prosper202\License\CliAccessCache;
 use Prosper202\License\MysqlLicenceAnswerStore;
 use Prosper202\License\ShellAccessCache;
 
@@ -79,7 +78,6 @@ final class MysqlLicenceAnswerStoreIntegrationTest extends TestCase
     {
         if (isset($this->key)) {
             ShellAccessCache::invalidate($this->key);
-            CliAccessCache::invalidate($this->key);
         }
     }
 
@@ -87,19 +85,23 @@ final class MysqlLicenceAnswerStoreIntegrationTest extends TestCase
     {
         $store = new MysqlLicenceAnswerStore(self::$db);
         ShellAccessCache::recordAnswer($store, $this->key, true);
-        CliAccessCache::recordAnswer($store, $this->key, true);
+        $store->saveAnswer(hash('sha256', $this->key), ShellAccessCache::QUESTION_PAID, true, time());
         ShellAccessCache::invalidate($this->key);
-        CliAccessCache::invalidate($this->key);
         $this->age('valid_at', 29 * self::DAY);
         $this->age('paid_at', 29 * self::DAY);
 
         $fresh = new MysqlLicenceAnswerStore(self::$db);
         self::assertTrue(ShellAccessCache::validWithinGrace($fresh, $this->key), 'valid 29 days ago');
-        self::assertTrue(CliAccessCache::validWithinGrace($fresh, $this->key), 'paid 29 days ago');
+        self::assertSame(true, $fresh->lastAnswer(hash('sha256', $this->key), ShellAccessCache::QUESTION_PAID)[0] ?? null);
 
         $this->age('valid_at', 31 * self::DAY);
         self::assertFalse(ShellAccessCache::validWithinGrace($fresh, $this->key), 'valid 31 days ago');
-        self::assertTrue(CliAccessCache::validWithinGrace($fresh, $this->key), 'each question keeps its own time');
+        self::assertEqualsWithDelta(
+            time() - 29 * self::DAY,
+            $fresh->lastAnswer(hash('sha256', $this->key), ShellAccessCache::QUESTION_PAID)[1] ?? 0,
+            2,
+            'each question keeps its own time'
+        );
     }
 
     public function testANewerAnswerReplacesTheOlder(): void

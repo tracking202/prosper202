@@ -5,9 +5,10 @@ declare(strict_types=1);
 namespace Prosper202\License;
 
 /**
- * File-backed cache of CLI shell license checks, shared by web auth (which
- * warms and invalidates entries as it validates keys) and the v3 capabilities
- * endpoint (which reads and refreshes them).
+ * File-backed cache of ClickServer key checks ("is this key an active
+ * licence"), shared by web auth (which warms and invalidates entries as it
+ * validates keys) and the v3 API's Go CLI gate and AI connection
+ * (CapabilitiesController::cliAccess, which read and refresh them).
  *
  * Entries live in a private 0700 directory under the system temp dir. The
  * directory and every entry must be owned by the current process user and
@@ -22,8 +23,8 @@ class ShellAccessCache
 
     /**
      * How long a refusal is believed. Shorter than an allow: a customer who
-     * starts the trial after a "not paid" is served within this, not after
-     * TTL_SECONDS, and nothing else invalidates the entry when they pay.
+     * gets or reactivates the free licence after a refusal is served within
+     * this, not after TTL_SECONDS, and nothing else invalidates the entry.
      */
     public const int DENIAL_TTL_SECONDS = 300;
 
@@ -33,7 +34,12 @@ class ShellAccessCache
      */
     public const int GRACE_SECONDS = 30 * 86400;
 
-    /** The questions a LicenceAnswerStore records an answer to. */
+    /**
+     * The questions a LicenceAnswerStore records an answer to. Only
+     * QUESTION_VALID is asked; QUESTION_PAID is the column the Go CLI's
+     * paid-licence gate used before 1.9.80, kept so the record's shape is
+     * unchanged and a future paid tier can use it.
+     */
     public const string QUESTION_VALID = 'valid';
     public const string QUESTION_PAID = 'paid';
 
@@ -113,8 +119,7 @@ class ShellAccessCache
 
     /**
      * Whether $key is licensed while ClickServer gives no answer: the durable
-     * record's last answer to this cache's question (a valid key here, a paid
-     * licence in CliAccessCache) was a yes, given at most GRACE_SECONDS ago.
+     * record's last answer to this cache's question (a valid key) was a yes, given at most GRACE_SECONDS ago.
      * With nothing recorded for the key yet (an install upgraded from before
      * the record), or a record that cannot be read (its table not made yet),
      * this cache's own last answer within the same window decides instead.
@@ -168,22 +173,22 @@ class ShellAccessCache
     }
 
     /**
-     * Record a whole licence answer from ClickServerKeyValidator: the key's
-     * validity here, its paid licence in CliAccessCache when the answer says.
-     * No answer (null) records nothing. Every path that confirms a key calls
-     * this or recordAnswer() (KeyEntryRecordsTheAnswerTest).
+     * Record a licence answer from ClickServerKeyValidator: the key's
+     * validity, when the service confirmed it (confirmed()). Its 'paid' part
+     * is not recorded: a free licence admits as a paid one does. No answer,
+     * or one the service did not confirm, records nothing, so the grace
+     * period keeps reading the last confirmed one. Every path that hears
+     * from the service calls this (KeyEntryRecordsTheAnswerTest).
      *
      * @param array{valid: bool, paid: ?bool}|null $licence
      */
     public static function recordLicence(?LicenceAnswerStore $answers, string $key, ?array $licence): void
     {
+        $licence = self::confirmed($licence);
         if ($licence === null) {
             return;
         }
         ShellAccessCache::recordAnswer($answers, $key, $licence['valid']);
-        if ($licence['paid'] !== null) {
-            CliAccessCache::recordAnswer($answers, $key, $licence['paid']);
-        }
     }
 
     /**
@@ -234,6 +239,40 @@ class ShellAccessCache
     protected static function licenceQuestion(): string
     {
         return self::QUESTION_VALID;
+    }
+
+    /**
+     * The answer as the licence service confirmed it, or null when it did
+     * not: a refusal, or a valid key that came with a boolean 'paid' (free
+     * or paid). An answer that does not say whether the key is paid is no
+     * answer: never admitted, never recorded,
+     * and the grace period reads the last confirmed answer instead. Every
+     * recorder (recordLicence()) and the CLI and AI-connect gate ask this.
+     *
+     * @param array{valid: bool, paid: ?bool}|null $licence
+     * @return array{valid: bool, paid: ?bool}|null
+     */
+    public static function confirmed(?array $licence): ?array
+    {
+        if ($licence === null || ($licence['valid'] && !is_bool($licence['paid']))) {
+            return null;
+        }
+        return $licence;
+    }
+
+    /**
+     * Which of ClickServerKeyValidator's answers admit the Go CLI, the shell
+     * and an AI connection: the one place that decides it
+     * (CapabilitiesController's gate, and AiConnect through it). A confirmed
+     * valid key, paid or not. What this cache and the durable record keep
+     * is the answer to licenceQuestion() for confirmed answers only, so a
+     * kept yes is one this would admit.
+     *
+     * @param array{valid: bool, paid: ?bool} $licence
+     */
+    public static function admits(array $licence): bool
+    {
+        return self::confirmed($licence) !== null && $licence['valid'];
     }
 
     public static function write(string $key, bool $valid): void

@@ -236,7 +236,6 @@ if (!function_exists('_upgrade_seed_licence_answers')) {
             $conn = ($db instanceof \mysqli) ? $db : $db->getConnection();
             $answers = new \Prosper202\License\MysqlLicenceAnswerStore($conn);
             \Prosper202\License\ShellAccessCache::seedAnswers($answers);
-            \Prosper202\License\CliAccessCache::seedAnswers($answers);
         } catch (\Throwable $e) {
             _upgrade_note('the cached licence answers could not be copied', ': ' . $e->getMessage());
         }

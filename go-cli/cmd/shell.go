@@ -81,20 +81,14 @@ func runShell(cmd *cobra.Command, args []string) error {
 	return runInteractive(state)
 }
 
-// verifyShellAccess checks that the user has a valid API key and that
-// the server grants shell access via the capabilities endpoint.
+// verifyShellAccess checks that the active profile has a URL and an API key.
+// The shell does not refuse on capabilities.shell on its own: the install's
+// licence gate answers each command (a 402 with the licence category, exit 6
+// and the hint on what a free licence needs), which says more than the
+// shell's old "contact support to enable shell access" did.
 func verifyShellAccess() error {
-	client, err := api.NewFromConfig()
-	if err != nil {
+	if _, err := api.NewFromConfig(); err != nil {
 		return withHint(fmt.Errorf("shell requires a configured API key: %w", err), "Run `p202 config set-url <url>` and `p202 config set-key <key>` first.")
-	}
-
-	if !client.SupportsCapability("shell") {
-		// Distinguish "the server said no" from "we couldn't ask the server".
-		if capErr := client.CapabilitiesError(); capErr != nil {
-			return fmt.Errorf("could not verify shell access: %w", capErr)
-		}
-		return validationError("shell access is not enabled for this API key").WithHint("Contact support to enable shell access, or run commands directly (`p202 <command>`) instead of the shell.")
 	}
 	return nil
 }
@@ -229,7 +223,7 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 	if len(failures) > 0 {
 		if refused := licenceRefusal(failures...); refused != nil {
 			// Every failed command met the install's 402: say so with the
-			// licence category, exit 6 and the trial hint, not a generic failure.
+			// licence category, exit 6 and the licence hint, not a generic failure.
 			return fmt.Errorf("one or more commands failed: %w", refused)
 		}
 		if limited := rateLimited(failures...); limited != nil {
@@ -439,9 +433,7 @@ func switchProfile(name string) (string, error) {
 		return "", validationError("profile %q not found. available: %s", name, strings.Join(cfg.ProfileNames(), ", "))
 	}
 
-	// Shell access is granted per API key, so switching profiles must pass
-	// the same gate as shell startup — otherwise "use" would let a licensed
-	// profile bootstrap a session for an unlicensed one.
+	// The profile switched to must be configured, as at shell startup.
 	previous := configpkg.GetActiveOverride()
 	configpkg.SetActiveOverride(name)
 	if err := verifyShellAccess(); err != nil {

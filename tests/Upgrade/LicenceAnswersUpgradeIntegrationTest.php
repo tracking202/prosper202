@@ -6,7 +6,6 @@ namespace Tests\Upgrade;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Tables\SecretTables;
-use Prosper202\License\CliAccessCache;
 use Prosper202\License\MysqlLicenceAnswerStore;
 use Prosper202\License\ShellAccessCache;
 
@@ -65,7 +64,6 @@ final class LicenceAnswersUpgradeIntegrationTest extends TestCase
     {
         if ($this->key !== '') {
             ShellAccessCache::invalidate($this->key);
-            CliAccessCache::invalidate($this->key);
         }
     }
 
@@ -76,8 +74,6 @@ final class LicenceAnswersUpgradeIntegrationTest extends TestCase
         self::q('DROP TABLE 202_licence_answers');
         ShellAccessCache::write($this->key, true);
         $validAt = $this->age(ShellAccessCache::class, 86400);
-        CliAccessCache::write($this->key, true);
-        $paidAt = $this->age(CliAccessCache::class, 2 * 86400);
         self::q('DELETE FROM 202_version');
         self::row('202_version', ['version' => '1.9.78']);
 
@@ -89,13 +85,10 @@ final class LicenceAnswersUpgradeIntegrationTest extends TestCase
         $store = new MysqlLicenceAnswerStore(self::$db);
         $hash = hash('sha256', $this->key);
         self::assertSame([true, $validAt], $store->lastAnswer($hash, ShellAccessCache::QUESTION_VALID));
-        self::assertSame([true, $paidAt], $store->lastAnswer($hash, ShellAccessCache::QUESTION_PAID));
 
         // The caches gone, as after a restart: the record carries the key.
         ShellAccessCache::invalidate($this->key);
-        CliAccessCache::invalidate($this->key);
         self::assertTrue(ShellAccessCache::validWithinGrace($store, $this->key));
-        self::assertTrue(CliAccessCache::validWithinGrace($store, $this->key));
         self::q("DELETE FROM 202_licence_answers WHERE key_sha256 = '$hash'");
     }
 

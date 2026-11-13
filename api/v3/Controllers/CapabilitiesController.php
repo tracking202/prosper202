@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Prosper202\License\ClickServerKeyValidator;
-use Prosper202\License\CliAccessCache;
 use Prosper202\License\LicenceAnswerStore;
 use Prosper202\License\MysqlLicenceAnswerStore;
 use Prosper202\License\ShellAccessCache;
@@ -15,11 +14,11 @@ use Prosper202\Database\Exceptions\QueryException;
 class CapabilitiesController
 {
     /**
-     * Licence answers already fetched in this request, per key, so
-     * /capabilities asks my.tracking202.com at most once per key on a cold
-     * cache (shell and cli share it). Holds null for "unknown" too.
+     * Verdicts already reached in this request, per key, so /capabilities
+     * asks my.tracking202.com at most once per key on a cold cache. Holds
+     * null for "no confirmed answer" too.
      *
-     * @var array<string, array{valid: bool, paid: ?bool}|null>
+     * @var array<string, bool|null>
      */
     private array $licenceChecks = [];
 
@@ -28,8 +27,29 @@ class CapabilitiesController
 
     /** The refusal a gate gives when ClickServer gave no answer and the grace period does not cover the key. */
     public const LICENCE_UNCONFIRMED_MESSAGE = 'This install\'s licence could not be checked with Tracking202. '
-        . 'Make sure this server can reach my.tracking202.com over HTTPS; Pro features come back once it can. '
+        . 'Make sure this server can reach my.tracking202.com over HTTPS; the CLI and AI assistants work again once it can. '
         . 'For help, contact support@tracking202.com or the support chat.';
+
+    /** Where a customer gets or reactivates the free licence, the newsletter included. */
+    public const LICENCE_SUPPORT_URL = 'https://my.tracking202.com/api/customers/subscriptions/support';
+
+    /**
+     * The refusal when Tracking202 does not accept the install's ClickServer
+     * key as an active licence. $what names what is free but needs it ("The
+     * Prosper202 CLI is free", ...). The service refuses a key it does not
+     * know and, for accounts made since 2026-10-01, a key whose account has
+     * no CPM* newsletter subscription; the verdict does not say which, so the
+     * message says what to do for both.
+     */
+    public static function notLicensedMessage(string $what): string
+    {
+        return $what . ', but it needs an active free ClickServer licence on this install, and Tracking202 '
+            . 'did not accept the install\'s ClickServer API key as one. No paid subscription is needed. '
+            . 'Get or reactivate your free licence at ' . self::LICENCE_SUPPORT_URL . ' (for accounts made '
+            . 'since October 2026 it stays active with a CPM* newsletter subscription), then try again (the '
+            . 'install checks a refusal again within five minutes). An install with no ClickServer API key '
+            . 'enters a valid one on its api-key-required.php page.';
+    }
 
     /**
      * How long a request that finds another one checking the same key waits
@@ -62,8 +82,8 @@ class CapabilitiesController
     }
 
     /**
-     * Whether a request comes from the Go CLI, the only client the Pro gate
-     * applies to. The legacy PHP CLI (cli/ApiClient.php, "p202-cli/1.0") is
+     * Whether a request comes from the Go CLI, the only client the licence
+     * gate applies to. The legacy PHP CLI (cli/ApiClient.php, "p202-cli/1.0") is
      * deliberately not gated; the Go CLI sends "p202-cli/<version> (Go)".
      *
      * The User-Agent is the client's own claim, so this is a licensing
@@ -95,6 +115,7 @@ class CapabilitiesController
 
     public function capabilities(): array
     {
+        $licensed = $this->cliAccess();
         return [
             'data' => [
                 'api_version' => 'v3',
@@ -254,8 +275,11 @@ class CapabilitiesController
                         'bulk_upsert_per_minute' => 60,
                     ],
                 ],
-                'shell' => $this->shellAccess(),
-                'cli' => $this->cliAccess(),
+                // One verdict for both: the Go CLI, `p202 shell` included,
+                // needs an active free ClickServer licence (a key Tracking202
+                // confirms: ShellAccessCache::admits()), never a paid one.
+                'shell' => $licensed,
+                'cli' => $licensed,
                 'server' => [
                     'build' => $this->resolveBuildVersion(),
                     'commit' => defined('P202_GIT_COMMIT') ? (string)P202_GIT_COMMIT : 'unknown',
@@ -350,68 +374,25 @@ class CapabilitiesController
     }
 
     /**
-     * Determine shell access by validating the user's ClickServer API key
-     * against my.tracking202.com. Returns false if the user has no key or
-     * the key is invalid.
+     * Whether the Go CLI (and an AI assistant's connection, AiConnect) may
+     * run against this install: the ClickServer key is an active free
+     * ClickServer licence, i.e. my.tracking202.com answers it "Key valid".
+     * A paid subscription is not needed: "valid, not paid" is allowed. The
+     * service refuses a key it does not know, and one whose account needs
+     * the CPM* newsletter and has none (its 404 with code 403); both are
+     * refused here. This is the web sign-in's own question, so the two share
+     * the cache and the durable record (ShellAccessCache, QUESTION_VALID).
      *
-     * Results are cached per-key (ShellAccessCache: an allow for TTL_SECONDS,
-     * a refusal for DENIAL_TTL_SECONDS) to avoid hitting my.tracking202.com
-     * on every capabilities request. If ClickServer
-     * is unreachable the key is licensed only on a valid answer within the
-     * grace period (ShellAccessCache::validWithinGrace, the durable record); the
-     * unanswered check is not repeated for UNKNOWN_TTL_SECONDS.
-     */
-    private function shellAccess(): bool
-    {
-        if ($this->userId === null) {
-            return false;
-        }
-
-        $customerKey = $this->loadClickServerKey();
-        if ($customerKey === null || $customerKey === '') {
-            return false; // no key, or a lookup that failed: the shell is fail-closed
-        }
-
-        // A refusal is believed for DENIAL_TTL_SECONDS, an allow for
-        // TTL_SECONDS, as for the CLI: nothing else refreshes the entry when
-        // the key becomes valid, and the two verdicts on /capabilities should
-        // not disagree about it for an hour.
-        $cached = ShellAccessCache::readVerdict($customerKey);
-        if ($cached !== null) {
-            return $cached;
-        }
-        // An unanswered check holds off the next for UNKNOWN_TTL_SECONDS, as
-        // for the CLI: /capabilities is what the Go CLI opens with, and
-        // during an outage every call would otherwise pay the timeouts.
-        if (ShellAccessCache::recentlyUnknown($customerKey)) {
-            return $this->withinGrace(ShellAccessCache::class, $customerKey);
-        }
-
-        $result = $this->checkKey($customerKey);
-        if ($result === null) {
-            // checkKey() recorded the hold-off, if this was an outage.
-            return $this->withinGrace(ShellAccessCache::class, $customerKey);
-        }
-        return $result['valid'];
-    }
-
-    /**
-     * Whether the Go CLI may run against this install: the ClickServer key's
-     * account has an active Prosper202 ClickServer subscription (trials count).
-     *
-     * Cached per key (CliAccessCache). Only an authoritative answer is
-     * cached, a refusal included: "valid, not paid" and "no such key" are the
-     * service's own words. An allow holds for TTL_SECONDS (an hour, which a
-     * lapsed subscription outlives), a refusal for DENIAL_TTL_SECONDS (five
-     * minutes, which is how long a customer who starts the trial waits).
-     * When ClickServer gives no answer (my.tracking202.com unreachable, an
-     * error page, an answer without a boolean 'paid'), the CLI is licensed
-     * only on a paid answer within the grace period
-     * (CliAccessCache::validWithinGrace), and the
+     * Only an authoritative answer is cached, a refusal included. An allow
+     * holds for TTL_SECONDS, a refusal for DENIAL_TTL_SECONDS (five minutes,
+     * so a key fixed at Tracking202 is served soon). When ClickServer gives
+     * no answer (my.tracking202.com unreachable, an error page), the CLI is
+     * licensed only on a valid answer within the grace period
+     * (ShellAccessCache::validWithinGrace), and the
      * unanswered check holds off the next for UNKNOWN_TTL_SECONDS so a burst
      * of CLI requests during one pays the connect timeout once. Falls back
      * to the install owner's key when the API user has none, so sub-users of
-     * a paid install are covered. Known residual: a cache
+     * a licensed install are covered. Known residual: a cache
      * directory another local user pre-created is refused (ShellAccessCache::dir,
      * which logs it), and without it nothing is cached, hold-off included.
      */
@@ -445,23 +426,23 @@ class CapabilitiesController
             return false; // no key on the install is a real "not licensed"
         }
 
-        $cached = CliAccessCache::readVerdict($customerKey);
+        $cached = ShellAccessCache::readVerdict($customerKey);
         if ($cached !== null) {
             return $cached;
         }
-        if (CliAccessCache::recentlyUnknown($customerKey)) {
-            return $this->withinGrace(CliAccessCache::class, $customerKey);
+        if (ShellAccessCache::recentlyUnknown($customerKey)) {
+            return $this->withinGrace($customerKey);
         }
 
-        $result = $this->checkKey($customerKey);
-        if ($result === null || $result['paid'] === null) {
-            // checkKey() recorded the hold-off, if this was an outage.
-            return $this->withinGrace(CliAccessCache::class, $customerKey);
+        $verdict = $this->checkKey($customerKey);
+        if ($verdict === null) {
+            // checkKey() recorded the hold-off: no confirmed answer.
+            return $this->withinGrace($customerKey);
         }
-        return $result['paid'];
+        return $verdict;
     }
 
-    /** The CLI gate's refusal: the licence could not be checked, or it is not a Pro licence. */
+    /** The CLI gate's refusal: the licence could not be checked, or the key is not an active licence. */
     public function cliRefusal(string $notLicensed): string
     {
         return $this->licenceUnconfirmed ? self::LICENCE_UNCONFIRMED_MESSAGE : $notLicensed;
@@ -470,12 +451,10 @@ class CapabilitiesController
     /**
      * The verdict with no answer: the grace period, from the durable record.
      * Remembers when it refused for want of an answer (cliRefusal()).
-     *
-     * @param class-string<ShellAccessCache> $cache whose question: a valid key, or a paid licence
      */
-    private function withinGrace(string $cache, string $customerKey): bool
+    private function withinGrace(string $customerKey): bool
     {
-        $licensed = $cache::validWithinGrace($this->licenceAnswers(), $customerKey);
+        $licensed = ShellAccessCache::validWithinGrace($this->licenceAnswers(), $customerKey);
         if (!$licensed) {
             $this->licenceUnconfirmed = true;
         }
@@ -561,13 +540,14 @@ class CapabilitiesController
     }
 
     /**
-     * One licence call per key per request, filling both caches from it.
+     * One licence call per key per request, recording its answer: whether
+     * the key admits (ShellAccessCache::admits()), or null when the service
+     * gave no answer it confirmed (an outage, or "Key valid" without a
+     * boolean paid), which is recorded as the hold-off and nothing else.
      * Short timeouts: this runs on the synchronous request path, so a slow
      * my.tracking202.com must not stall /capabilities for long.
-     *
-     * @return array{valid: bool, paid: ?bool}|null null = unknown (outage)
      */
-    private function checkKey(string $customerKey): ?array
+    private function checkKey(string $customerKey): ?bool
     {
         if (array_key_exists($customerKey, $this->licenceChecks)) {
             return $this->licenceChecks[$customerKey];
@@ -580,25 +560,23 @@ class CapabilitiesController
             return $this->licenceChecks[$customerKey] = $this->awaitClaimantVerdict($customerKey);
         }
         try {
-            $result = $this->askLicenceService($customerKey);
-            // The whole answer is recorded before the claim is released, so a
-            // request waiting on it reads both verdicts, or the hold-off, and
-            // never one without the other.
+            $answer = $this->askLicenceService($customerKey);
+            $result = ShellAccessCache::confirmed($answer);
+            if ($answer !== null && $result === null) {
+                error_log('p202: the licence service said "Key valid" without a boolean paid; '
+                    . 'no answer, the grace period decides');
+            }
+            // The answer is recorded before the claim is released, so a
+            // request waiting on it reads the verdict or the hold-off.
             if ($result === null) {
                 ShellAccessCache::markUnknown($customerKey);
-                CliAccessCache::markUnknown($customerKey);
             } else {
-                ShellAccessCache::recordAnswer($this->licenceAnswers(), $customerKey, $result['valid']);
-                if ($result['paid'] !== null) {
-                    CliAccessCache::recordAnswer($this->licenceAnswers(), $customerKey, $result['paid']);
-                } else {
-                    CliAccessCache::markUnknown($customerKey);
-                }
+                ShellAccessCache::recordLicence($this->licenceAnswers(), $customerKey, $result);
             }
         } finally {
             $this->releaseClaim($customerKey);
         }
-        return $this->licenceChecks[$customerKey] = $result;
+        return $this->licenceChecks[$customerKey] = $result === null ? null : ShellAccessCache::admits($result);
     }
 
     /**
@@ -632,31 +610,26 @@ class CapabilitiesController
 
     /**
      * What another request recorded for $customerKey, read once it released
-     * its claim (checkKey() records the whole answer first): both verdicts,
-     * or null when it got no answer, or when it has not finished within
+     * its claim (checkKey() records the answer first): the verdict (only
+     * confirmed answers are recorded), or null when it got no confirmed
+     * answer, or when it has not finished within
      * CLAIM_WAIT_MS. When the claim is older than DEAD_CLAIM_SECONDS its
      * claimant has died, and the waiter writes the hold-off itself, so later
      * requests read unknown at once rather than each waiting while the dead
      * claim lasts; a claim younger than that is a slow claimant, whose own
      * answer is still to come, and gets none.
-     *
-     * @return array{valid: bool, paid: ?bool}|null
      */
-    private function awaitClaimantVerdict(string $customerKey): ?array
+    private function awaitClaimantVerdict(string $customerKey): ?bool
     {
         $deadline = microtime(true) + self::CLAIM_WAIT_MS / 1000;
         do {
             usleep(100_000);
             if (!ShellAccessCache::checkInProgress($customerKey)) {
-                $valid = ShellAccessCache::readVerdict($customerKey);
-                return $valid === null
-                    ? null
-                    : ['valid' => $valid, 'paid' => CliAccessCache::readVerdict($customerKey)];
+                return ShellAccessCache::readVerdict($customerKey);
             }
         } while (microtime(true) < $deadline);
         if ((ShellAccessCache::claimAge($customerKey) ?? 0) >= self::DEAD_CLAIM_SECONDS) {
             ShellAccessCache::markUnknown($customerKey);
-            CliAccessCache::markUnknown($customerKey);
         }
         return null;
     }
@@ -665,10 +638,7 @@ class CapabilitiesController
      * The requesting user's own ClickServer key.
      *
      * @return string|null the key, '' when they have none, null when the
-     *         lookup failed (unknown: never read as "no key"). A value, not a
-     *         flag on the controller: /capabilities runs the shell check and
-     *         the CLI check on one instance, and a flag set by the first
-     *         lookup would have coloured the second.
+     *         lookup failed (unknown: never read as "no key").
      */
     private function loadClickServerKey(): ?string
     {
