@@ -843,8 +843,9 @@ keyed with the signing secret, which no URL carries (`get` prints both, and
 the [Setup API](../documentation/api/27-setup.md#postback-authentication)
 says how to sign). `--mode off` accepts requests without credentials,
 `token` needs the token or a signature, `signed` only a signature: the
-token alone is refused, and so is every pixel, which cannot sign. A wrong
-token or signature is refused in every mode. Accounts from before 1.9.80
+token alone is refused, and so is every pixel, which cannot sign. Under
+`token` and `signed` a wrong token or signature is refused; `off` checks
+nothing. Accounts from before 1.9.80
 start at `off`, later ones at `token`. `rotate` replaces the token (the
 default) or the signing secret; the old one keeps working for
 `--grace-hours` (0 stops it at once). `conversion simulate` sends the token
