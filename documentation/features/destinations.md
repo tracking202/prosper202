@@ -121,43 +121,56 @@ once.
   refuse consent (`p202_consent`), and the click stored the address
   unmasked (a masked address names a network, not the visitor). The raw
   values are never written to the queue, the log or an error.
-- **A visitor who refused consent is sent to no destination.** When a
+- **A visitor who refused consent is sent to no ad platform.** When a
   visitor refuses (`p202_consent` with any value but `1`), none of their
-  conversions goes to GA4, Google Ads or ChatGPT Ads: not the event, not
-  the click's ids (`gclid`, `oppref` and the rest), not user data. The
-  delivery is still listed, as *withheld*, with the reason "the visitor
-  refused consent", and sending it again checks again and withholds it
-  again. Your own reports still count the conversion, and the conversion
-  log keeps what it always kept, the request's IP address and user agent
-  included: the rule is about what is sent, not what your install records.
-  A refusal counts when it arrives:
+  conversions goes to GA4, Google Ads or ChatGPT Ads, as a destination or in
+  an [offline conversion file](offline-conversions.md) (the download, the
+  API, `p202 conversion offline-export` and the fetch URL a platform pulls):
+  not the event, not the click's ids (`gclid`, `msclkid`, `oppref` and the
+  rest), not user data. A destination's delivery is still listed, as
+  *withheld*, with the reason "the visitor refused consent", and sending it
+  again checks again and withholds it again; a file counts it as left out
+  (`refused_consent`). Your own reports still count the conversion, and the
+  conversion log and its CSV keep what they always kept, the request's IP
+  address and user agent included: the rule is about what is sent to an ad
+  platform, not what your install records.
+
+  A refusal belongs to the click it came with, and counts when it arrives:
   - on the click's visit: the tracking link, a click through a rotator, or
-    the landing page's pageview (`p202.consent(false)`). It holds
-    for the whole visit, so a later request of that visit that carries no
+    the landing page's pageview (`p202.consent(false)`). It holds for the
+    whole visit, so a later request of that visit that carries no
     `p202_consent`, or `1`, does not give it back. A click-through in the
-    same second is the same visit. A later visit, when the visitor clicks
-    through again in a later second, is read on its own: its conversions
-    are sent unless it refuses too;
+    same second is the same visit. A later visit of the same click, a
+    click-through in a later second, is read on its own: its conversions
+    are sent unless it refuses too, and one that refuses keeps the earlier
+    visit's unsent conversions back as well. Another click of the same
+    person is another click: a refusal on one is not read on the other;
   - on the conversion's own request: a conversion pixel (`px.php`,
     `gpx.php`, `upx.php`), a postback (`pb.php`, `gpb.php`) that passes on
-    the visitor's `p202_consent=0`, or an `event=` that reaches a goal. A
-    repeat of the same conversion that refuses (a reloaded thank-you page)
-    withholds it from then on; a repeat that consents does not undo a
-    refusal. A delivery already sent before the refusal arrived stays sent;
+    the visitor's `p202_consent=0`, or an `event=` on one of them that
+    reaches a goal. A repeat of the same conversion or event that refuses
+    (a reloaded thank-you page) withholds it from then on; a repeat that
+    consents does not undo a refusal. A delivery already sent before the
+    refusal arrived stays sent;
   - on a conversion a replacing one goes by: on a campaign that pays the
-    latest conversion, a sale that replaces a refused one is withheld too.
+    latest conversion, a sale that replaces a refused one is withheld too,
+    and a goal conversion written again (a re-evaluation, a replay) keeps
+    its event's refusal and the visit it first credited.
 
   What cannot carry a refusal, and so reads as consent given: a conversion
-  sent with the API (`POST /conversions`), a CSV or SubID import, a payment
+  sent with the API (`POST /conversions`) and goal events sent with the API
+  or by an app (there is no field for it), a CSV or SubID import, a payment
   provider's notification or webhook, and an Android app install.
   Conversions and clicks recorded before the 1.9.80 upgrade, and in the
   time between deploying 1.9.80 and running its upgrade, carry no stored
   refusal either. A campaign whose identity capture is off is not a refusal:
   its conversions are sent, without the visitor's address.
 
-  This applies to destinations only. Your traffic sources' pixels and
-  postbacks and the Meta Purchase pixel follow their own rules and are not
-  changed by it.
+  What it does not cover: your traffic sources' pixels and postbacks and
+  the Meta Purchase pixel follow their own rules and are not changed by it,
+  and the conversion webhooks (Event Bridge `conversion.recorded`, the LTV
+  webhooks) that go to endpoints you set still carry a refused visitor's
+  conversion, with its click id and the request's IP address.
 - **Consent signals** (`ad_user_data`, `ad_personalization`) are what you
   state, per destination, from your consent banner: Prosper202 does not
   record a visitor's consent. Hashed data (and `user_id`) go only when

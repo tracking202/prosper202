@@ -804,8 +804,12 @@ final class DestinationsIntegrationTest extends TestCase
      */
     public function testARefusalOnTheClicksVisitIsSentToNoDestination(): void
     {
-        foreach (['202_identity_observations', '202_click_consent_refusals'] as $t) {
-            self::fixture("DELETE FROM $t WHERE click_id BETWEEN 155 AND 159");
+        // Every row a click id names, so the test runs again on the same database.
+        $perClick = self::$db->query("SELECT TABLE_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()"
+            . " AND COLUMN_NAME = 'click_id' AND TABLE_NAME IN (SELECT TABLE_NAME FROM information_schema.TABLES"
+            . " WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE')")->fetch_all(MYSQLI_NUM);
+        foreach (array_column($perClick, 0) as $t) {
+            self::fixture("DELETE FROM `$t` WHERE click_id BETWEEN 155 AND 159");
         }
         self::fixture("INSERT INTO 202_ips SET ip_id=5, ip_address='198.51.100.7'");
         $this->campaign(33, null);
@@ -996,6 +1000,112 @@ final class DestinationsIntegrationTest extends TestCase
         sort($sent);
         sort($consentingRows);
         self::assertSame($consentingRows, $sent, 'every consenting one is');
+    }
+
+    /**
+     * A goal event reported again (the same event id, a reloaded pixel or a
+     * retried postback) by a request that refuses tightens the stored event
+     * and the conversion its outcome wrote; a repeat that consents loosens
+     * nothing.
+     */
+    public function testARepeatedGoalEventThatRefusesTightens(): void
+    {
+        $conn = new Connection(self::$db);
+        foreach ([160, 161] as $click) {
+            $this->click($click);
+        }
+        $facts = [];
+        $store = new DestinationStore($conn, [Ga4Destination::TYPE => $this->capturing($facts)]);
+        $ga4 = ['measurement_id' => 'G-ABC123'];
+        $store->create(1, Ga4Destination::TYPE, 'Store GA4', $ga4, ['api_secret' => self::SECRET], time());
+        $goal = static fn (int $amount): array
+            => ['name' => 'Order', 'trigger' => ['event' => 'order'],
+                'value' => ['type' => 'fixed', 'amount' => $amount]];
+        $this->campaignGoal(30, $goal(4));
+        $engine = new \Prosper202\Goals\GoalEngine($conn);
+        $ingest = static function (int $click, string $id, array $get) use ($engine): void {
+            $engine->ingest(1, $engine->clickSubject(1, $click), [
+                \Prosper202\Goals\WebEvents::fromQuery(
+                    ['event' => 'order', 'event_id' => $id] + $get,
+                    '',
+                    self::CLICK_TIME + 500,
+                    true
+                ),
+            ], MatchMethod::CLICK_ID);
+        };
+        $flags = static fn (int $click): array => [
+            (string) self::$db->query("SELECT consent_withheld FROM 202_goal_events WHERE subject_type = 'click'"
+                . " AND subject_id = $click")->fetch_row()[0],
+            (string) self::$db->query("SELECT consent_withheld FROM 202_conversion_logs WHERE click_id = $click"
+                . ' AND deleted = 0 AND superseded_by IS NULL')->fetch_row()[0],
+        ];
+        $ingest(160, 'e-1', []);
+        self::assertSame(['0', '0'], $flags(160));
+        $ingest(160, 'e-1', ['p202_consent' => '0']);
+        self::assertSame(['1', '1'], $flags(160), 'a refusing repeat tightens the event and its conversion');
+        $ingest(160, 'e-1', []);
+        self::assertSame(['1', '1'], $flags(160), 'a consenting repeat does not loosen');
+        $ingest(161, 'e-2', ['p202_consent' => '0']);
+        $ingest(161, 'e-2', []);
+        self::assertSame(['1', '1'], $flags(161), 'refused first, it stays refused');
+
+        (new DestinationQueue($conn, $store, static fn (string $ip): bool => false))->sendDue(30, 5, time() + 1);
+        self::assertSame([], $facts, 'none of them is sent');
+    }
+
+    /**
+     * A goal conversion written again (a re-evaluation) credits the visit the
+     * row it replaces credited, not the click's latest: a sale made on a
+     * visit that refused is not sent because a later visit consented before
+     * the re-evaluation.
+     */
+    public function testAGoalRowWrittenAgainCreditsTheVisitTheFirstDid(): void
+    {
+        $conn = new Connection(self::$db);
+        $perClick = self::$db->query("SELECT TABLE_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()"
+            . " AND COLUMN_NAME = 'click_id' AND TABLE_NAME IN (SELECT TABLE_NAME FROM information_schema.TABLES"
+            . " WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE')")->fetch_all(MYSQLI_NUM);
+        foreach (array_column($perClick, 0) as $t) {
+            self::fixture("DELETE FROM `$t` WHERE click_id = 163");
+        }
+        $repo = new \Prosper202\Click\MysqlClickRepository($conn);
+        $visit = static function (array $get, int $time, bool $again) use ($repo): void {
+            $record = new \Prosper202\Click\ClickRecord(
+                clickId: 163,
+                userId: 1,
+                clickTime: $time,
+                affCampaignId: 30,
+                ppcAccountId: 70,
+                clickPayout: '2.5',
+                ipId: 5,
+                recordsCampaignRows: false,
+                rotator: $again ? new \Prosper202\Click\RotatorRoute(1, 1, 1) : null,
+                identity: \Prosper202\Identity\ClickIdentity::fromRequest($get, [], true, false),
+            );
+            $again ? $repo->recordReClick($record, static fn (): int => 0) : $repo->recordClick($record);
+        };
+        $facts = [];
+        $store = new DestinationStore($conn, [Ga4Destination::TYPE => $this->capturing($facts)]);
+        $ga4 = ['measurement_id' => 'G-ABC123'];
+        $store->create(1, Ga4Destination::TYPE, 'Store GA4', $ga4, ['api_secret' => self::SECRET], time());
+        $goal = static fn (int $amount): array
+            => ['name' => 'Sale', 'trigger' => ['event' => 'sale'],
+                'value' => ['type' => 'fixed', 'amount' => $amount]];
+        $sale = $this->campaignGoal(30, $goal(4));
+        $engine = new \Prosper202\Goals\GoalEngine($conn);
+        $visit([], self::CLICK_TIME, false);
+        $visit(['p202_consent' => '0'], self::CLICK_TIME + 100, true);
+        $engine->ingest(1, $engine->clickSubject(1, 163), [
+            \Prosper202\Goals\WebEvents::fromQuery(['event' => 'sale'], '', self::CLICK_TIME + 150, true),
+        ], MatchMethod::CLICK_ID);
+        $visit([], self::CLICK_TIME + 200, true);
+        $this->goals->addVersion(1, $sale, \Prosper202\Goals\GoalDefinition::parse($goal(6)), 2);
+        $engine->reevaluate(1, $sale, null, true);
+        $live = self::$db->query('SELECT click_time FROM 202_conversion_logs WHERE click_id = 163'
+            . ' AND deleted = 0 AND superseded_by IS NULL')->fetch_all(MYSQLI_NUM);
+        self::assertSame([[(string) (self::CLICK_TIME + 100)]], $live, 'the new row credits the refusing visit');
+        (new DestinationQueue($conn, $store, static fn (string $ip): bool => false))->sendDue(30, 5, time() + 1);
+        self::assertSame([], $facts, 'and is not sent');
     }
 
     /**

@@ -13,7 +13,8 @@ use Prosper202\Database\Schema\TableRegistry;
  * holds it back for the whole visit: 202_click_consent_refusals keeps, per
  * click, the time of the latest visit a request refused it from. No
  * destination is sent a conversion of a click whose latest visit is at or
- * before that time (standsAt(), DestinationQueue::deliver()), whatever a
+ * before that time (standsAtSql(), DestinationQueue::deliver(),
+ * OfflineExport::query()), whatever a
  * later request of the same visit carries: one that names no p202_consent
  * does not give back what an earlier one refused. A later visit (a re-click
  * in a later second) that consents is read on its own. A campaign's
@@ -67,19 +68,16 @@ final class ConsentRefusal
     }
 
     /**
-     * Whether consent was withheld from the click's latest visit, the one
-     * at $latestVisitTime. A failed read is thrown: no answer is not "no
-     * refusal" (CLAUDE.md #11).
+     * The SQL that is 1 when a request of click $click refused at or after
+     * the visit at $visitTime (two SQL expressions), else 0: the one reading
+     * of the table, for every reader that hands a conversion to an ad
+     * platform (Ledger\ConsentWithheld::refusedSql()). A read that fails is
+     * the statement's failure, never "no refusal" (CLAUDE.md #11).
      */
-    public static function standsAt(Connection $conn, int $clickId, int $latestVisitTime): bool
+    public static function standsAtSql(string $click, string $visitTime): string
     {
-        // The write handle: a refusal just stored is not on a replica yet.
-        $stmt = $conn->prepareWrite(
-            'SELECT 1 AS refused FROM `' . self::TABLE . '` WHERE click_id = ? AND refused_at >= ?'
-        );
-        $conn->bind($stmt, 'ii', [$clickId, $latestVisitTime]);
-
-        return $conn->fetchOne($stmt) !== null;
+        return 'EXISTS (SELECT 1 FROM `' . self::TABLE . "` AS cr WHERE cr.click_id = $click"
+            . " AND cr.refused_at >= $visitTime)";
     }
 
     /** The click's latest visit as recorded, read by its key; 0 for a click with one visit. */

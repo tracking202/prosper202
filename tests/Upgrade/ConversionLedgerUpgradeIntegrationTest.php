@@ -275,6 +275,7 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
                     . ' AFTER `currency_basis`',
                 'ALTER TABLE `202_conversion_logs` ADD KEY `user_conv_time` (`user_id`,`conv_time`)',
                 'ALTER TABLE `202_conversion_logs` ADD KEY `user_currency_click_time` (`user_id`,`currency`,`click_time`)',
+                'ALTER TABLE `202_conversion_logs` ADD KEY `superseded_by` (`superseded_by`)',
             ],
             $reconciler->getApplied()
         );

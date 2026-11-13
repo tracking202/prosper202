@@ -10,10 +10,10 @@ use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\Ledger\RowCurrency;
 use Prosper202\Conversion\TrafficSourcePixels;
 use Prosper202\DataEngine\IpAddressSql;
+use Prosper202\Conversion\Ledger\ConsentWithheld;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\Database\Schema\TableRegistry;
-use Prosper202\Identity\ConsentRefusal;
 use Prosper202\Identity\RequestSignals;
 use Prosper202\Identity\SignalType;
 use Prosper202\Http\EuropeanVisitor;
@@ -448,7 +448,10 @@ final class DestinationQueue
         $userId = $destination['user_id'];
         // The primary, not a replica: a row a lagging replica lacks is not a deleted one.
         // 202_clicks_advance and 202_clicks_site are one row per click, written by its latest visit.
-        $stmt = $this->conn->prepareWrite('SELECT cl.click_id, cl.campaign_id, cl.conv_time, cl.click_payout, cl.transaction_id, cl.deleted, cl.superseded_by, cl.customer_id, cl.match_method, cl.currency, cl.consent_withheld, cl.click_time, '
+        $stmt = $this->conn->prepareWrite('SELECT cl.click_id, cl.campaign_id, cl.conv_time, cl.click_payout, cl.transaction_id, cl.deleted, cl.superseded_by, cl.customer_id, cl.match_method, cl.currency, '
+            . ConsentWithheld::requestRefusedSql('cl') . ' AS refused_request, '
+            . ConsentWithheld::replacedRefusedSql('cl') . ' AS refused_replaced, '
+            . ConsentWithheld::visitRefusedSql('cl') . ' AS refused_visit, '
             . IpAddressSql::address('ip', 'ip6') . ' AS ip_address, landing.site_url_address AS landing_url, outbound.site_url_address AS outbound_url,
                    ac.aff_campaign_id AS campaign_found, ac.identity_signals
             FROM 202_conversion_logs cl LEFT JOIN 202_clicks_advance ca ON ca.click_id = cl.click_id LEFT JOIN 202_ips ip ON ip.ip_id = ca.ip_id'
@@ -476,7 +479,7 @@ final class DestinationQueue
         }
         // A visitor who refused consent is sent nothing: not the event, not
         // the click's ids, not the user data. Reports still count the sale.
-        $refused = $this->refusedConsent($conv, $convId, $userId);
+        $refused = self::refusedConsent($conv);
         if ($refused !== null) {
             return ['withheld', new SendResult(false, false, null, self::REFUSED . ' ' . $refused)];
         }
@@ -629,41 +632,23 @@ final class DestinationQueue
 
     /**
      * Why the conversion's visitor refused consent, or null when nothing
-     * says they did. Each record is read, and a read that fails is thrown,
-     * never "no refusal" (CLAUDE.md #11):
-     * - the conversion's own request refused (ConsentWithheld; anything but
-     *   a stored 0 reads as a refusal);
-     * - it replaced a row that was refused and goes by that row's event id
-     *   (DestinationEventId::of()): a sale first refused is not sent later
-     *   under the name it was refused under;
-     * - a request of the visit it credits (202_conversion_logs.click_time,
-     *   read under the click's lock when it was recorded), or of a later
-     *   visit, refused (ConsentRefusal::standsAt()): a later visit that
-     *   refuses before the send withholds an earlier visit's conversion too.
-     *   A later visit that consents, with no refusal at or after it, credits
-     *   its own conversions.
+     * says they did: the three parts of ConsentWithheld::refusedSql(), read
+     * with the conversion (deliver()), the rule the offline export applies
+     * too. Anything but a 0 reads as a refusal (CLAUDE.md #11), and a read
+     * that fails fails the delivery, which is tried again.
      *
      * @param array<string, mixed> $conv
      */
-    private function refusedConsent(array $conv, int $convId, int $userId): ?string
+    private static function refusedConsent(array $conv): ?string
     {
-        if ((string) ($conv['consent_withheld'] ?? '') !== '0') {
-            return 'on the conversion\'s request';
-        }
-        $clickId = (int) $conv['click_id'];
-        $stmt = $this->conn->prepareWrite('SELECT 1 AS refused FROM 202_conversion_logs'
-            . " WHERE click_id = ? AND user_id = ? AND superseded_by = ? AND superseded_reason IN ('replace', 'batch')"
-            . ' AND consent_withheld <> 0 LIMIT 1');
-        $this->conn->bind($stmt, 'iii', [$clickId, $userId, $convId]);
-        if ($this->conn->fetchOne($stmt) !== null) {
-            return 'on a conversion this one replaced';
-        }
-        // At or after the visit the conversion credits: that visit, or a later one.
-        if (ConsentRefusal::standsAt($this->conn, $clickId, (int) ($conv['click_time'] ?? 0))) {
-            return 'on the click\'s visit';
-        }
+        $refused = static fn (string $key): bool => (string) ($conv[$key] ?? '1') !== '0';
 
-        return null;
+        return match (true) {
+            $refused('refused_request') => 'on the conversion\'s request',
+            $refused('refused_replaced') => 'on a conversion this one replaced',
+            $refused('refused_visit') => 'on the click\'s visit',
+            default => null,
+        };
     }
 
     /**

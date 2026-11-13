@@ -1116,6 +1116,33 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     }
 
     /**
+     * The goal engine's ledger rows $convIds of the account, whose reaching
+     * event a later request refused consent for (GoalEngine), refused from
+     * now on: consent_withheld = 1, never set back (ConsentWithheld). Inside
+     * the caller's transaction. Before the 1.9.80 upgrade adds the column
+     * there is no destination to keep them from.
+     *
+     * @param list<int> $convIds
+     */
+    public function withholdGoalRowsInTransaction(int $userId, array $convIds): void
+    {
+        if ($convIds === []) {
+            return;
+        }
+        $this->conn->joinTransaction(function () use ($userId, $convIds): void {
+            if (!ConsentWithheld::columnPresent($this->conn)) {
+                return;
+            }
+            $stmt = $this->conn->prepareWrite('UPDATE 202_conversion_logs SET consent_withheld = 1'
+                . ' WHERE conv_id = ? AND user_id = ? AND consent_withheld = 0');
+            foreach ($convIds as $convId) {
+                $this->conn->bind($stmt, 'ii', [$convId, $userId]);
+                $this->conn->executeUpdate($stmt);
+            }
+        });
+    }
+
+    /**
      * Undo the engine's retirement of a goal row: a reconciliation re-derived
      * exactly the outcome this row records (same goal, version, n and event),
      * so the row counts again as it did before the engine retired it.

@@ -5487,7 +5487,9 @@ class UPGRADE
                 // the rows already there take the currency that can be known
                 // (_upgrade_ledger_currency_backfill(), run by the reconcile),
                 // and consent_withheld, 1 on a row whose request withheld
-                // consent (Ledger\ConsentWithheld); every row already there is 0.
+                // consent (Ledger\ConsentWithheld); every row already there is 0,
+                // with a key on superseded_by, which the refusal's reading asks
+                // of every row an export reads.
                 \Prosper202\Database\Tables\ConversionTables::conversionLogs(),
                 // PurLinks: click-out ordering, deferred pixels fired, per-offer goal subjects.
                 \Prosper202\Database\Tables\ClickTables::purLinkExitOrder(),

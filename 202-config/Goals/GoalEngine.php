@@ -549,6 +549,10 @@ final class GoalEngine
                     );
                 }
                 $duplicates[] = $event->eventId;
+                if ($event->consentWithheld) {
+                    // A repeat that refuses tightens; nothing loosens.
+                    $byId[$event->eventId] = $event;
+                }
                 continue;
             }
             $byId[$event->eventId] = $event;
@@ -570,6 +574,9 @@ final class GoalEngine
                     );
                 }
                 $duplicates[] = $id;
+                if ($event->consentWithheld) {
+                    $this->tightenStoredEvent($userId, $subject, $id);
+                }
                 continue;
             }
             $new[] = $event;
@@ -1341,7 +1348,23 @@ final class GoalEngine
         $conversionNew = false;
         $dedupeKey = null;
         if ($subject->clickId !== null) {
-            [$convId, $conversionNew, $dedupeKey] = $this->recordLedgerRow($userId, $subject, $o, $event, $v, $outcomeId, $post);
+            // Written in place of a retired row for the same goal and event (a
+            // re-evaluation, a replay), it credits the visit that row did, not
+            // the click's latest now: what a later visit did is not this sale's
+            // (Ledger\ConsentWithheld::refusedSql() reads the credited visit).
+            $credited = $decided !== null && $decided['conversion_id'] !== null
+                ? $this->creditedVisit($userId, (int) $decided['conversion_id'])
+                : null;
+            [$convId, $conversionNew, $dedupeKey] = $this->recordLedgerRow(
+                $userId,
+                $subject,
+                $o,
+                $event,
+                $v,
+                $outcomeId,
+                $post,
+                $credited
+            );
         }
 
         return [
@@ -1432,8 +1455,16 @@ final class GoalEngine
      * @param array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>} $post
      * @return array{0: int, 1: bool, 2: string|null} the conversion id, whether the row is new, and its dedupe key
      */
-    private function recordLedgerRow(int $userId, GoalSubject $subject, Outcome $o, ?GoalEvent $event, array $v, int $outcomeId, array &$post): array
-    {
+    private function recordLedgerRow(
+        int $userId,
+        GoalSubject $subject,
+        Outcome $o,
+        ?GoalEvent $event,
+        array $v,
+        int $outcomeId,
+        array &$post,
+        ?int $creditedVisit = null
+    ): array {
         if ($subject->clickId === null) {
             throw new \LogicException('a ledger row is written only on a click');
         }
@@ -1473,6 +1504,9 @@ final class GoalEngine
         }
         if ($event?->transactionId !== null) {
             $data['transaction_id'] = $event->transactionId;
+        }
+        if ($creditedVisit !== null) {
+            $data['click_time'] = $creditedVisit;
         }
         if ($event?->consentWithheld === true) {
             // The request that reported the reaching event refused consent, as
@@ -2101,6 +2135,49 @@ final class GoalEngine
                 );
             }
         }
+    }
+
+    /** The visit ledger row $convId of the account credits (its click_time). */
+    private function creditedVisit(int $userId, int $convId): int
+    {
+        $stmt = $this->conn->prepareWrite('SELECT click_time FROM 202_conversion_logs'
+            . ' WHERE conv_id = ? AND user_id = ?');
+        $this->conn->bind($stmt, 'ii', [$convId, $userId]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new GoalEngineException(
+                'conversion ' . $convId . ' of a retired outcome is gone',
+                GoalEngineException::INTEGRITY
+            );
+        }
+
+        return (int) $row['click_time'];
+    }
+
+    /**
+     * A stored event reported again by a request that refused consent: the
+     * event and every ledger row its outcomes wrote are refused from now on
+     * (Ledger\ConsentWithheld), in the ingest's transaction; nothing sets
+     * either back. A delivery already sent stays sent. Before the 1.9.80
+     * upgrade adds the columns there is no destination to keep them from.
+     */
+    private function tightenStoredEvent(int $userId, GoalSubject $subject, string $eventId): void
+    {
+        if (ConsentWithheld::goalEventsColumnPresent($this->conn)) {
+            $stmt = $this->conn->prepareWrite('UPDATE 202_goal_events SET consent_withheld = 1'
+                . ' WHERE subject_type = ? AND subject_id = ? AND event_id = ? AND user_id = ?'
+                . ' AND consent_withheld = 0');
+            $this->conn->bind($stmt, 'sisi', [$subject->type, $subject->id, $eventId, $userId]);
+            $this->conn->executeUpdate($stmt);
+        }
+        $convIds = [];
+        $filters = ['subject_type' => $subject->type, 'subject_id' => $subject->id];
+        foreach ($this->allLiveOutcomes($userId, $subject, $filters, false) as $row) {
+            if ((string) $row['event_id'] === $eventId && $row['conversion_id'] !== null) {
+                $convIds[] = (int) $row['conversion_id'];
+            }
+        }
+        $this->conversions->withholdGoalRowsInTransaction($userId, $convIds);
     }
 
     /** @return list<GoalEvent> */

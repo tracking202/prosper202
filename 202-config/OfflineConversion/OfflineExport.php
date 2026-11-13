@@ -7,6 +7,7 @@ namespace Prosper202\OfflineConversion;
 use Prosper202\Attribution\CountedAmount;
 use Prosper202\Click\AdClickIdColumns;
 use Prosper202\Conversion\Ledger\Amount;
+use Prosper202\Conversion\Ledger\ConsentWithheld;
 use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\Ledger\RowCurrency;
 use Prosper202\Database\Connection;
@@ -26,6 +27,11 @@ use Prosper202\Report\AccountZone;
  *    the currency its ledger row recorded (RowCurrency), which a later
  *    change of the account's currency does not alter; a conversion with no
  *    currency recorded is left out, never sent under the account's;
+ *  - never a conversion whose visitor refused consent, on its own request
+ *    or on the click's visit (ConsentWithheld::refusedSql(), the rule the
+ *    destinations apply): counted and left out. A refusal that cannot be
+ *    read (the 1.9.80 upgrade has not made its table or column) fails the
+ *    export: no file is made that could hold a refused visitor;
  *  - only when the conversion named its click (MatchMethod::namesTheClick():
  *    CLICK_ID, the postback, pixel, API call or upload named it; AD_CLICK_ID,
  *    a postback sent back the ad click id the click carries; COOKIE, a
@@ -103,6 +109,10 @@ final class OfflineExport
         $counted = StoredRow::nullableText($row, 'counted_amount');
         if ($counted === null) {
             return LeftOut::NOT_COUNTED;
+        }
+        // Anything but a 0 is a refusal (CLAUDE.md #11).
+        if (StoredRow::nullableInt($row, 'refused') !== 0) {
+            return LeftOut::REFUSED_CONSENT;
         }
         // A value no writer produces is not a method that named the click.
         $method = MatchMethod::tryFrom(StoredRow::text($row, 'match_method')) ?? MatchMethod::UNKNOWN;
@@ -202,6 +212,7 @@ final class OfflineExport
         $oldest = $options->now - self::CLICK_MAX_AGE;
         $sql = 'SELECT cl.conv_id, cl.click_time, cl.conv_time, cl.match_method, cl.currency, '
             . CountedAmount::sqlOrNull('cl') . ' AS counted_amount,' . $ids
+            . ' ' . ConsentWithheld::refusedSql('cl') . ' AS refused,'
             . ' COALESCE(cn.conversion_name, dn.conversion_name) AS conversion_name,'
             . " CASE WHEN cl.match_method IN ($named) AND cl.click_time BETWEEN ? AND ?"
             . ' THEN EXISTS (SELECT 1 FROM 202_clicks AS oc WHERE oc.click_id = cl.click_id AND oc.user_id = cl.user_id'

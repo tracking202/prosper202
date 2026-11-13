@@ -133,7 +133,8 @@ final class ConversionTables
                 KEY `customer_id` (`customer_id`),
                 KEY `reverses_conv_id` (`reverses_conv_id`),
                 KEY `user_conv_time` (`user_id`,`conv_time`),
-                KEY `user_currency_click_time` (`user_id`,`currency`,`click_time`)
+                KEY `user_currency_click_time` (`user_id`,`currency`,`click_time`),
+                KEY `superseded_by` (`superseded_by`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
