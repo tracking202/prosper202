@@ -386,8 +386,12 @@ final class DestinationsIntegrationTest extends TestCase
 
     public function testTheFactsCarryTheVisitorsAddressOnlyUnmaskedAndWithUserDataAndThePageTheClickCameFrom(): void
     {
-        foreach (['202_clicks_visitor', '202_identity_observations'] as $t) {
-            self::fixture("DELETE FROM $t WHERE click_id BETWEEN 100 AND 120");
+        $perClick = [
+            '202_clicks_visitor', '202_identity_observations', '202_click_consent_refusals', '202_clicks_tracking',
+            '202_clicks_record', '202_clicks_rotator',
+        ];
+        foreach ($perClick as $t) {
+            self::fixture("DELETE FROM $t WHERE click_id BETWEEN 100 AND 130");
         }
         self::fixture("INSERT INTO 202_site_urls SET site_url_id=11, site_domain_id=1, site_url_address='https://shop.example.com/spring?utm_source=chatgpt&email=jane%40example.com#top'");
         self::fixture("INSERT INTO 202_site_urls SET site_url_id=12, site_domain_id=1, site_url_address='https://track.example.com/tracking202/redirect/dl.php?t202id=7'");
@@ -416,13 +420,40 @@ final class DestinationsIntegrationTest extends TestCase
             111 => [5, 11, 0, 30, 'cookie'],
             112 => [5, 11, 0, 30, 'cookie'],
             113 => [5, 11, 0, 30, 'cookie'],
-            114 => [5, 11, 0, 30, 'refused'],
+            114 => [5, 11, 0, 30, 'refused link'],
             115 => [5, 11, 0, 30, 'cookie'],
             116 => [5, 11, 0, 30, 'page'],
             117 => [5, 11, 0, 30, 'cookie'],
             118 => [5, 11, 0, 30, 'cookie'],
+            119 => [5, 11, 0, 30, 'refused link'],
+            120 => [5, 11, 0, 30, 'refused link'],
+            121 => [5, 11, 0, 30, 'cookie'],
+            122 => [5, 11, 0, 30, 'cookie'],
+            123 => [5, 11, 0, 30, 'cookie'],
         ];
+        $repo = new \Prosper202\Click\MysqlClickRepository($conn);
+        $refusals = static fn (int $click): array => self::$db->query(
+            "SELECT refused_at FROM 202_click_consent_refusals WHERE click_id=$click"
+        )->fetch_all(MYSQLI_NUM);
         foreach ($clicks as $click => [$ip, $landing, $outbound, $campaign, $carried]) {
+            if ($carried === 'refused link') {
+                // A tracking link that refuses, through the click's one writer: every row and the refusal with them.
+                $repo->recordClick(new \Prosper202\Click\ClickRecord(
+                    clickId: $click,
+                    userId: 1,
+                    clickTime: self::CLICK_TIME,
+                    affCampaignId: $campaign,
+                    ppcAccountId: 70,
+                    clickPayout: '2.5',
+                    ipId: $ip,
+                    recordsCampaignRows: false,
+                    clickLandingSiteUrlId: $landing,
+                    clickOutboundSiteUrlId: $outbound,
+                    identity: \Prosper202\Identity\ClickIdentity::fromRequest(['p202_consent' => '0'], [], true),
+                ));
+                self::assertSame([[(string) self::CLICK_TIME]], $refusals($click), "click $click's refusal is stored");
+                continue;
+            }
             self::fixture("INSERT INTO 202_clicks_advance SET click_id=$click, ip_id=$ip");
             self::fixture("INSERT INTO 202_clicks_site SET click_id=$click, click_landing_site_url_id=$landing, click_outbound_site_url_id=$outbound");
             $this->click($click, $campaign);
@@ -444,12 +475,11 @@ final class DestinationsIntegrationTest extends TestCase
         }
         // The same second, through the real re-click (a visit in a second the click has a row at rewrites it):
         // 113 consented and then refuses, 114 refused and then consents.
-        $repo = new \Prosper202\Click\MysqlClickRepository($conn);
-        foreach ([113 => ['p202_consent' => '0'], 114 => []] as $click => $get) {
+        $reClick = static function (int $click, array $get, int $time) use ($repo, $cookie): void {
             $repo->recordReClick(new \Prosper202\Click\ClickRecord(
                 clickId: $click,
                 userId: 1,
-                clickTime: self::CLICK_TIME,
+                clickTime: $time,
                 affCampaignId: 30,
                 ppcAccountId: 70,
                 clickPayout: '2.5',
@@ -458,6 +488,9 @@ final class DestinationsIntegrationTest extends TestCase
                 rotator: new \Prosper202\Click\RotatorRoute(1, 1, 1),
                 identity: \Prosper202\Identity\ClickIdentity::fromRequest($get, $cookie, true, false),
             ), static fn (): int => 0);
+        };
+        foreach ([113 => ['p202_consent' => '0'], 114 => []] as $click => $get) {
+            $reClick($click, $get, self::CLICK_TIME);
         }
         $rows = self::$db->query('SELECT MAX(n) FROM (SELECT COUNT(*) AS n FROM 202_clicks WHERE click_id IN (113, 114)'
             . ' GROUP BY click_id) AS per_click')->fetch_row()[0];
@@ -465,12 +498,43 @@ final class DestinationsIntegrationTest extends TestCase
         // 115's landing page withholds consent after the tracking template's hit gave a cookie: the same visit,
         // no new row.
         \Prosper202\Identity\ClickIdentity::fromRequest(['p202_consent' => '0'], $cookie, true, false)
-            ->withdrawIfWithheld($conn, 115);
+            ->withdrawIfWithheld($conn, 115, self::CLICK_TIME);
         // 116 was marked by its landing page id alone, and the page then withholds.
         $withheld = \Prosper202\Identity\ClickIdentity::fromRequest(['p202_consent' => '0'], [], true, false);
-        $withheld->withdrawIfWithheld($conn, 116);
+        $withheld->withdrawIfWithheld($conn, 116, self::CLICK_TIME);
+        // A refusal holds for the whole visit: a later request of it that names no p202_consent (the landing
+        // page's, absent meaning given) leaves its mark and gives nothing back. 119's tracking link refused.
+        $page = static fn (string $lpid): \Prosper202\Identity\ClickIdentity
+            => \Prosper202\Identity\ClickIdentity::fromRequest(['p202lpid' => str_repeat($lpid, 16)], [], true, false);
+        $marked = static fn (int $click, int $at): int => (int) self::$db->query(
+            "SELECT COUNT(*) FROM 202_identity_observations WHERE click_id=$click AND signal_type='lpid'"
+            . " AND observed_at >= $at"
+        )->fetch_row()[0];
+        self::assertNotNull($page('c1')->attach($conn, 1, 119, self::CLICK_TIME), 'the page\'s request was linked');
+        self::assertSame(1, $marked(119, self::CLICK_TIME), 'and left its mark at the visit\'s time');
+        self::assertSame([[(string) self::CLICK_TIME]], $refusals(119), 'a later request does not take a refusal away');
+        // 120 refused, and is clicked again later, consenting: another visit, read on its own.
+        $reClick(120, [], self::CLICK_TIME + 100);
+        self::assertSame([[(string) self::CLICK_TIME]], $refusals(120), 'the refusal stays with its own visit');
+        // 121's landing page withholds, and a later request of the page names no consent.
+        $withheld->withdrawIfWithheld($conn, 121, self::CLICK_TIME);
+        self::assertNotNull($page('c2')->attach($conn, 1, 121, self::CLICK_TIME));
+        self::assertSame(1, $marked(121, self::CLICK_TIME));
+        // 122 is clicked again later and refuses; the page that visit lands on names no consent.
+        $reClick(122, ['p202_consent' => '0'], self::CLICK_TIME + 100);
+        self::assertNotNull($page('c3')->attach($conn, 1, 122, self::CLICK_TIME + 100));
+        self::assertSame(1, $marked(122, self::CLICK_TIME + 100));
+        // 123's refusing re-click is stamped before the visit it follows (a web server's clock): the refusal
+        // covers the latest visit recorded, which a late request of that visit then marks.
+        $reClick(123, [], self::CLICK_TIME + 100);
+        $reClick(123, ['p202_consent' => '0'], self::CLICK_TIME + 50);
+        self::assertSame([[(string) (self::CLICK_TIME + 100)]], $refusals(123), 'it covers every visit so far');
+        self::assertNotNull($page('c4')->attach($conn, 1, 123, self::CLICK_TIME + 100));
+        self::assertSame(1, $marked(123, self::CLICK_TIME + 100));
+        self::assertSame([], $refusals(100), 'a click that never withheld consent stores no refusal');
+        self::assertSame([], $refusals(111), 'nor does one clicked again with consent');
         // A withdrawal that meets a lock: one that clears is waited out (117); one that does not is the
-        // caller's failure, never a log line with the mark left standing (118).
+        // caller's failure, never a log line with the mark left standing (118); its refusal is stored first.
         $open = static function (): \mysqli {
             return new \mysqli(
                 (string) getenv('P202_TEST_DB_HOST'),
@@ -494,13 +558,13 @@ final class DestinationsIntegrationTest extends TestCase
         // The server closes 117's holder after two idle seconds; the first try has timed out by then.
         $transient = $hold(117, 2);
         $started = microtime(true);
-        $withheld->withdrawIfWithheld(new Connection($impatient), 117);
+        $withheld->withdrawIfWithheld(new Connection($impatient), 117, self::CLICK_TIME);
         self::assertGreaterThan(0.9, microtime(true) - $started, 'the first try met the lock');
         unset($transient);
         $holder = $hold(118, 600);
         $thrown = null;
         try {
-            $withheld->withdrawIfWithheld(new Connection($impatient), 118);
+            $withheld->withdrawIfWithheld(new Connection($impatient), 118, self::CLICK_TIME);
         } catch (\Throwable $e) {
             $thrown = $e;
         }
@@ -509,6 +573,11 @@ final class DestinationsIntegrationTest extends TestCase
         $impatient->close();
         self::assertNotNull($thrown, 'a withdrawal that could not be made is thrown, not logged');
         self::assertTrue(Connection::isRetryableLockError($thrown), 'and it is the lock that is thrown');
+        $standing = (int) self::$db->query('SELECT COUNT(*) FROM 202_identity_observations WHERE click_id=118'
+            . " AND signal_type='vid' AND observed_at >= " . self::CLICK_TIME)->fetch_row()[0];
+        self::assertSame(1, $standing, '118\'s mark could not be taken back');
+        self::assertSame([[(string) self::CLICK_TIME]], $refusals(118), 'and its refusal is stored all the same');
+        self::assertSame([[(string) self::CLICK_TIME]], $refusals(117), 'the one that cleared stored the refusal too');
         // The refused click is linked afterwards by a customer id its conversion names (the v3 customer_ref path).
         self::assertNotNull(\Prosper202\Identity\ClickIdentity::trustedCustomer('crm-104')->attachToStoredClick($conn, 104), 'the customer link was written');
         $facts = [];
@@ -519,7 +588,10 @@ final class DestinationsIntegrationTest extends TestCase
 
         $on = $create(['send_user_data' => true]);
         $ids = ['ORD-60' => $this->record(100, 'ORD-60'), '' => $this->record(101, ''), 'ORD-62' => $this->record(102, 'ORD-62')];
-        foreach ([103, 104, 105, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117] as $click) {
+        $converting = [
+            103, 104, 105, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123,
+        ];
+        foreach ($converting as $click) {
             $conv = $this->record($click, 'ORD-' . $click);
             if ($click === 108) {
                 // A campaign id that names another account's campaign reads as no campaign (CLAUDE.md #27).
@@ -538,7 +610,7 @@ final class DestinationsIntegrationTest extends TestCase
         $marks = self::$db->query('SELECT COUNT(*) FROM 202_identity_observations WHERE click_id=112'
             . " AND signal_type='vid' AND observed_at >= $foreign")->fetch_row()[0];
         self::assertGreaterThan(0, (int) $marks, 'the mark is there to be read');
-        self::assertSame(17, $queue()->sendDue(20, 5, time() + 1)['sent']);
+        self::assertSame(23, $queue()->sendDue(30, 5, time() + 1)['sent']);
         $by = [];
         foreach ($facts as $f) {
             $by[$f->clickId] = $f;
@@ -555,10 +627,16 @@ final class DestinationsIntegrationTest extends TestCase
         self::assertSame('198.51.100.7', $by[111]->ipAddress, 'and a re-click that gave it sends the address');
         self::assertNull($by[112]->ipAddress, 'another account\'s latest visit is no visit of it, whatever its mark');
         self::assertNull($by[113]->ipAddress, 'a refusing re-click in a consenting visit\'s second sends no address');
-        self::assertSame('198.51.100.7', $by[114]->ipAddress, 'a consenting one in a refusing visit\'s second sends');
+        self::assertNull($by[114]->ipAddress, 'a consenting re-click in a refusing visit\'s second is that visit');
+        self::assertNull($by[119]->ipAddress, 'a link that refused holds for its visit, whatever its page sends');
+        self::assertSame('198.51.100.7', $by[120]->ipAddress, 'a later visit that consents is read on its own');
+        self::assertNull($by[121]->ipAddress, 'a page that withheld holds for its visit, whatever it sends next');
+        self::assertNull($by[122]->ipAddress, 'a re-click that refused holds for its visit, whatever its page sends');
+        self::assertNull($by[123]->ipAddress, 'a refusal stamped before the latest visit recorded covers that visit');
         self::assertNull($by[115]->ipAddress, 'a landing page that withheld consent takes back its click\'s mark');
         self::assertNull($by[116]->ipAddress, 'a mark the landing page id left is taken back as the cookie\'s is');
         self::assertNull($by[117]->ipAddress, 'a withdrawal that met a lock was made once the lock cleared');
+        self::assertNull($by[118]->ipAddress, 'a refusal holds though the mark it could not take back still stands');
         self::assertNull($by[105]->ipAddress, 'nor one whose campaign has identity capture off');
         self::assertSame('198.51.100.7', $by[102]->ipAddress, 'and for the landing page id');
         self::assertSame('https://shop.example.com/spring', $by[100]->pageUrl, 'the landing page, without what its query and fragment carry');

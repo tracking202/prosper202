@@ -62,6 +62,7 @@ final class TableRegistry
     public const string CLICKS_ROTATOR = '202_clicks_rotator';
     public const string CLICKS_TOTAL = '202_clicks_total';
     public const string CLICK_LATEST_VISITS = '202_click_latest_visits';
+    public const string CLICK_CONSENT_REFUSALS = '202_click_consent_refusals';
     public const string PURLINK_EXIT_ORDER = '202_purlink_exit_order';
     public const string PURLINK_PIXEL_FIRES = '202_purlink_pixel_fires';
     public const string RECLICK_BACKFILL = '202_reclick_backfill';

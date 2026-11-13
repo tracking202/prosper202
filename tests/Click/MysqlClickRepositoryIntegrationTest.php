@@ -65,10 +65,15 @@ final class MysqlClickRepositoryIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         $range = 'BETWEEN ' . self::FIRST_CLICK . ' AND ' . (self::FIRST_CLICK + 99);
-        foreach ([...self::TABLES, '202_attribution_rollup_dirty_clicks', '202_click_latest_visits'] as $table) {
+        $tables = [
+            ...self::TABLES, '202_attribution_rollup_dirty_clicks', '202_click_latest_visits',
+            '202_click_consent_refusals',
+        ];
+        foreach ($tables as $table) {
             self::q("DELETE FROM $table WHERE click_id $range");
         }
         self::q('DROP TRIGGER IF EXISTS p202_test_record_refused');
+        self::q('DROP TRIGGER IF EXISTS p202_test_refusal_refused');
     }
 
     /** A landing page click as record_simple.php builds one. */
@@ -905,6 +910,147 @@ final class MysqlClickRepositoryIntegrationTest extends TestCase
         }
 
         self::assertSame(self::rowsOf([]), self::rows($clickId));
+    }
+
+    /** A redirector visit (new, or a re-click at $clickTime) whose request carried $get. */
+    private static function visitCarrying(int $clickId, int $clickTime, array $get): ClickRecord
+    {
+        return new ClickRecord(
+            clickId: $clickId,
+            userId: self::USER,
+            clickTime: $clickTime,
+            ppcAccountId: 3,
+            ipId: 13,
+            recordsCampaignRows: false,
+            rotator: new RotatorRoute(7, 8, 9),
+            identity: \Prosper202\Identity\ClickIdentity::fromRequest($get, [], true, false),
+        );
+    }
+
+    private static function refusedAt(int $clickId): ?string
+    {
+        $result = self::requireScratch()->query(
+            "SELECT refused_at FROM 202_click_consent_refusals WHERE click_id = $clickId"
+        );
+        self::assertInstanceOf(\mysqli_result::class, $result, self::$db->error);
+        $row = $result->fetch_row();
+
+        return $row === null ? null : (string) $row[0];
+    }
+
+    /**
+     * Consent a click's request withheld is stored with its rows (ConsentRefusal), at the visit's time; a
+     * click that did not withhold stores none; and a re-click that withholds raises it to its own visit.
+     */
+    public function testConsentAVisitWithheldIsStoredWithIt(): void
+    {
+        $refused = self::FIRST_CLICK + 60;
+        $given = self::FIRST_CLICK + 61;
+        $at = time() - 600;
+        self::repo()->recordClick(self::visitCarrying($refused, $at, ['p202_consent' => '0']), static fn (): int => 52);
+        self::repo()->recordClick(self::visitCarrying($given, $at, []), static fn (): int => 52);
+
+        self::assertSame((string) $at, self::refusedAt($refused), 'a click that withheld stores it at its time');
+        self::assertNull(self::refusedAt($given), 'one that did not stores none');
+
+        self::repo()->recordReClick(self::visitCarrying($given, $at + 60, []), static fn (): int => 53);
+        self::assertNull(self::refusedAt($given), 'a consenting re-click stores none');
+        self::repo()->recordReClick(self::visitCarrying($refused, $at + 60, []), static fn (): int => 53);
+        self::assertSame((string) $at, self::refusedAt($refused), 'nor does it move the one its click has');
+        $refusing = self::visitCarrying($given, $at + 120, ['p202_consent' => '0']);
+        self::repo()->recordReClick($refusing, static fn (): int => 53);
+        self::assertSame((string) ($at + 120), self::refusedAt($given), 'a re-click that withheld stores it');
+
+        $conn = new Connection(self::requireScratch());
+        \Prosper202\Identity\ConsentRefusal::record($conn, $given, $at);
+        self::assertSame((string) ($at + 120), self::refusedAt($given), 'nothing lowers a refusal');
+    }
+
+    /** A refusal the server will not store fails the click, which leaves nothing: never the click without it. */
+    public function testARefusalThatCannotBeStoredFailsTheVisit(): void
+    {
+        $new = self::FIRST_CLICK + 62;
+        $stored = self::FIRST_CLICK + 63;
+        $at = time() - 600;
+        self::repo()->recordClick(self::visitCarrying($stored, $at, []), static fn (): int => 52);
+        self::q('CREATE TRIGGER p202_test_refusal_refused BEFORE INSERT ON 202_click_consent_refusals FOR EACH ROW'
+            . " BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'refused by the test'; END");
+        try {
+            foreach ([$new => 'recordClick', $stored => 'recordReClick'] as $clickId => $method) {
+                try {
+                    self::repo()->$method(
+                        self::visitCarrying($clickId, $at + 60, ['p202_consent' => '0']),
+                        static fn (): int => 53
+                    );
+                    self::fail("$method: the refused statement reaches the caller");
+                } catch (QueryException $e) {
+                    self::assertStringContainsString('refused by the test', $e->getMessage(), $method);
+                }
+            }
+        } finally {
+            self::q('DROP TRIGGER IF EXISTS p202_test_refusal_refused');
+        }
+
+        self::assertSame(self::rowsOf([]), self::rows($new));
+        self::assertSame(['n' => '1'], self::one("SELECT COUNT(*) AS n FROM 202_clicks WHERE click_id = $stored"));
+        self::assertSame(0, self::marks($stored));
+    }
+
+    /** A click whose later statement fails takes its refusal with it. */
+    public function testAFailedClickLeavesNoRefusal(): void
+    {
+        $clickId = self::FIRST_CLICK + 64;
+        try {
+            self::repo()->recordClick(
+                self::visitCarrying($clickId, time() - 600, ['p202_consent' => '0']),
+                static fn (): int => -1
+            );
+            self::fail('the refused statement reaches the caller');
+        } catch (QueryException $e) {
+            self::assertStringContainsString('click_redirect_site_url_id', $e->getMessage());
+        }
+
+        self::assertSame(self::rowsOf([]), self::rows($clickId));
+        self::assertNull(self::refusedAt($clickId));
+    }
+
+    /**
+     * Code deployed before the 1.9.80 upgrade has made 202_click_consent_refusals: the visitor goes on, the
+     * click and the re-click are stored, and each refusal that was not is logged. No destination exists until
+     * that upgrade, which makes its tables in the same step.
+     */
+    public function testAVisitThatWithheldBeforeTheUpgradeCreatedTheTableIsStoredAndLogged(): void
+    {
+        $clickId = self::FIRST_CLICK + 65;
+        $at = time() - 600;
+        $log = tempnam(sys_get_temp_dir(), 'p202-refusal-log');
+        self::assertIsString($log);
+        $before = ini_get('error_log');
+        self::q('RENAME TABLE 202_click_consent_refusals TO p202_test_refusals_away');
+        try {
+            ini_set('error_log', $log);
+            self::repo()->recordClick(
+                self::visitCarrying($clickId, $at, ['p202_consent' => '0']),
+                static fn (): int => 52
+            );
+            self::repo()->recordReClick(
+                self::visitCarrying($clickId, $at + 60, ['p202_consent' => '0']),
+                static fn (): int => 53
+            );
+        } finally {
+            ini_set('error_log', (string) $before);
+            self::q('RENAME TABLE p202_test_refusals_away TO 202_click_consent_refusals');
+        }
+        $logged = (string) file_get_contents($log);
+        unlink($log);
+
+        self::assertSame(['n' => '2'], self::one("SELECT COUNT(*) AS n FROM 202_clicks WHERE click_id = $clickId"));
+        self::assertNull(self::refusedAt($clickId));
+        self::assertSame(2, substr_count($logged, "\n"), $logged);
+        self::assertStringContainsString(
+            "p202 consent: click $clickId withheld consent before the 1.9.80 upgrade",
+            $logged
+        );
     }
 
     /** Every allocated id is noted for the redirect to sign (RecordedClicks), and each is new. */

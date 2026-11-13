@@ -493,6 +493,71 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
         self::assertStringContainsString('var pci = ' . json_encode((string) $click['click_id_public']) . ';', $body);
     }
 
+    /** @return list<array{string, string}> the click's browser marks: signal type, observed_at */
+    private static function marks(int $clickId): array
+    {
+        return self::requireScratch()->query(
+            "SELECT signal_type, observed_at FROM 202_identity_observations WHERE click_id = $clickId"
+            . " AND signal_type IN ('vid', 'lpid') ORDER BY signal_type"
+        )->fetch_all(MYSQLI_NUM);
+    }
+
+    private static function refusedAt(int $clickId): ?string
+    {
+        $row = self::requireScratch()->query(
+            "SELECT refused_at FROM 202_click_consent_refusals WHERE click_id = $clickId"
+        )->fetch_row();
+
+        return $row === null ? null : (string) $row[0];
+    }
+
+    /**
+     * A refusal holds for the whole visit, as the scripts are served. The
+     * template's hit refuses and the page's own request names no consent:
+     * the refusal is stored with the click and stays, though the page's
+     * request leaves its mark at the visit's time. And the other way round:
+     * the page refuses after the template's hit consented.
+     *
+     * @dataProvider pages
+     */
+    public function testConsentARequestOfTheVisitRefusedIsStoredWithTheClick(
+        int $tracker,
+        int $page,
+        string $script,
+    ): void {
+        $lpip = $page + self::PUBLIC;
+        $refused = 'G-refused-' . $page;
+        [$status, $headers] = self::get(self::pt($tracker, "&gclid=$refused&p202_consent=0"));
+        self::assertSame(302, $status, $headers . $this->serverLog());
+        $click = self::clickWithGclid($refused);
+        $id = (int) $click['click_id'];
+        $at = self::requireScratch()->query("SELECT click_time FROM 202_clicks WHERE click_id = $id")->fetch_row()[0];
+        self::assertSame((string) $at, self::refusedAt($id), 'the template\'s refusal is stored at its visit');
+        self::assertSame([], self::marks($id));
+
+        $before = self::clicks();
+        $lpid = str_repeat('d4', 16);
+        [$status, $headers] = self::get("/tracking202/static/$script?lpip=$lpip&gclid=$refused&p202lpid=$lpid");
+        self::assertSame(200, $status, $headers . $this->serverLog());
+        self::assertSame($before, self::clicks(), 'the page took the template\'s click');
+        $marks = [['lpid', (string) $at], ['vid', (string) $at]];
+        self::assertSame($marks, self::marks($id), 'the page\'s request left its marks');
+        self::assertSame((string) $at, self::refusedAt($id), 'and the refusal stands');
+
+        $given = 'G-given-' . $page;
+        [$status, $headers] = self::get(self::pt($tracker, "&gclid=$given"));
+        self::assertSame(302, $status, $headers . $this->serverLog());
+        $id = (int) self::clickWithGclid($given)['click_id'];
+        $at = self::requireScratch()->query("SELECT click_time FROM 202_clicks WHERE click_id = $id")->fetch_row()[0];
+        self::assertNull(self::refusedAt($id), 'a click that did not refuse stores none');
+        self::assertSame([['vid', (string) $at]], self::marks($id));
+
+        [$status, $headers] = self::get("/tracking202/static/$script?lpip=$lpip&gclid=$given&p202_consent=0");
+        self::assertSame(200, $status, $headers . $this->serverLog());
+        self::assertSame((string) $at, self::refusedAt($id), 'the page\'s refusal is stored at the click\'s visit');
+        self::assertSame([['vid', '0']], self::marks($id), 'and the template\'s mark is taken back');
+    }
+
     public function testGooglesBackgroundCallEndsAtItsStandIn(): void
     {
         $standIn = 'https://www.google.com/asnc/dGVzdA';

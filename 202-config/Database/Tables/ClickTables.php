@@ -33,6 +33,7 @@ final class ClickTables
             self::clicksRotator(),
             self::clicksTotal(),
             self::clickLatestVisits(),
+            self::clickConsentRefusals(),
             self::reClickBackfill(),
             self::clicksFilterReason(),
             self::clicksPublisher(),
@@ -276,6 +277,24 @@ final class ClickTables
             "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CLICK_LATEST_VISITS . "` (
                 `click_id` bigint(20) unsigned NOT NULL,
                 `click_time` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`click_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The clicks a request withheld consent for, and the visit it held
+     * from (Prosper202\Identity\ConsentRefusal): one row per such click,
+     * from 1.9.80 on, written with the visit that withheld and deleted with
+     * the click (ClickRetention). click_id is 202_clicks.click_id's type.
+     */
+    public static function clickConsentRefusals(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::CLICK_CONSENT_REFUSALS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CLICK_CONSENT_REFUSALS . "` (
+                `click_id` bigint(20) unsigned NOT NULL,
+                `refused_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`click_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );

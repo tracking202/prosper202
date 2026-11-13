@@ -5509,6 +5509,9 @@ class UPGRADE
                 // filled for the clicks of the last 30 days
                 // (_upgrade_fill_click_ad_ids()).
                 \Prosper202\Database\Tables\ClickTables::clicksAdIds(),
+                // The clicks a request withheld consent for
+                // (Prosper202\Identity\ConsentRefusal).
+                \Prosper202\Database\Tables\ClickTables::clickConsentRefusals(),
                 // 202_google gains oppref, OpenAI's click id (ClickRecord), filled
                 // into the lookup above with the other ids.
                 \Prosper202\Database\Tables\TrackingTables::google(),

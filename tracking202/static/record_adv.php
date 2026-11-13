@@ -408,8 +408,9 @@ $clickIdentity = p202ClickIdentity(
 // database failure, and the uncaught handler logs it as one.
 if ($raParallelClick !== null) {
     // The page's identity signals go to the click it took; a page that
-    // withheld consent takes back the marks the template's hit left.
-    $clickIdentity->withdrawIfWithheld($conn, $click_id);
+    // withheld consent holds it back for the whole visit, and takes back
+    // the marks the template's hit left.
+    $clickIdentity->withdrawIfWithheld($conn, $click_id, $raParallelClick->clickTime);
     $clickIdentity->attach($conn, (int) $mysql['user_id'], $click_id, $raParallelClick->clickTime);
     // The template's hit (pt.php) that finds the page's click brings the
     // tracker's cost, keyword and c1-c4 the page's URL did not carry.

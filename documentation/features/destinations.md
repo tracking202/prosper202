@@ -119,7 +119,12 @@ once.
   without the `+`, as OpenAI hashes them, and the visitor's IP address is
   sent too, only when the campaign captures identity, the visitor did not
   refuse consent (`p202_consent`), and the click stored the address
-  unmasked (a masked address names a network, not the visitor). The raw values are never written to the queue,
+  unmasked (a masked address names a network, not the visitor). A refusal
+  holds for the whole visit: once the tracking link, a click through a
+  rotator or the landing page's pageview carries `p202_consent=0`, no later
+  request of that visit gives consent back, also one that carries no
+  `p202_consent` at all. A later visit, when the visitor clicks through
+  again, is read on its own. The raw values are never written to the queue,
   the log or an error.
 - **Consent signals** (`ad_user_data`, `ad_personalization`) are what you
   state, per destination, from your consent banner: Prosper202 does not

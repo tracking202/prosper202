@@ -53,6 +53,7 @@ final class ClickRetentionIntegrationTest extends TestCase
         '202_purlink_pixel_fires' => 'conv_id = {id}, user_id = {u}, expires_at = {t}',
         '202_clicks_publisher' => 'publisher_user_id = {u}',
         '202_clicks_ad_ids' => "id_hash = UNHEX(LEFT(SHA2('g{id}', 256), 16))",
+        '202_click_consent_refusals' => 'refused_at = {t}',
         '202_click_latest_visits' => 'click_time = {t}',
     ];
 

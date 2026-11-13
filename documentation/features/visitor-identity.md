@@ -75,6 +75,12 @@ One switch turns all of it off:
 Then no cookie is set or read, the landing-page id is deleted, and each click
 is a journey of one.
 
+A refusal holds for the whole visit: once the tracking link, a click through
+a rotator or the landing page's pageview refuses, a
+[destination](destinations.md) is not sent that visitor's IP address,
+whatever a later request of the same visit carries. The next visit, when the
+visitor clicks through again, is read on its own.
+
 The privacy setting ([`user_pref_privacy`](../api/14-users.md#privacy-user_pref_privacy))
 withholds the `p202vid` cookie too: a visitor it holds back is neither given
 one nor read for one, as they are given no click cookie. A new account starts
