@@ -834,8 +834,8 @@ p202 conversion postback-auth set --mode token
 p202 conversion postback-auth rotate --credential signing_secret --grace-hours 168
 ```
 
-Click ids count up, so a bare postback URL lets anyone who guesses one record
-or reverse a conversion. The postback and pixel URLs (`conversion
+Authentication makes sure only your own networks and pages record or reverse
+a conversion. The postback and pixel URLs (`conversion
 postback-url`, `conversion pixel`) carry the account's token as
 `p202_token`; a sender that can sign sends `p202_ts` + `p202_sig` instead,
 keyed with the signing secret, which no URL carries (`get` prints both, and

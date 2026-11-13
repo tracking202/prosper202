@@ -32,15 +32,15 @@ var postbackCredentials = []string{"token", "signing_secret"}
 var conversionPostbackAuthCmd = &cobra.Command{
 	Use:   "postback-auth",
 	Short: "Postback authentication: the token your postbacks and pixels carry, the signing secret, and what is required",
-	Long: "Click ids count up, so a bare postback lets anyone who guesses one record or reverse a\n" +
+	Long: "Authentication makes sure only your own networks and pages record or reverse a\n" +
 		"conversion. Your postbacks and pixels (`p202 conversion postback-url`, `p202 conversion pixel`)\n" +
 		"carry your account's token as p202_token. A sender that can compute an HMAC signs instead,\n" +
 		"with p202_ts and p202_sig keyed with the signing secret, which no URL carries. The mode says\n" +
 		"what gpb.php, pb.php, upx.php, px.php and gpx.php require: off (nothing; accounts from before\n" +
 		"1.9.80 start here), token (the token or a signature; new accounts) or signed (a signature only:\n" +
 		"the token alone is refused, and so is every pixel, which cannot sign). Under token and\n" +
-		"signed a wrong token or signature is refused; off accepts any. A pixel's token can be read on the advertiser's page: it\n" +
-		"stops guessing, not someone who saw the page.",
+		"signed a wrong token or signature is refused; off accepts any. A pixel's token is visible\n" +
+		"on the page that carries it.",
 }
 
 var conversionPostbackAuthGetCmd = &cobra.Command{

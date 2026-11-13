@@ -13632,8 +13632,8 @@ paths:
       summary: Get the account's postback mode, token and signing secret
       description: |
         Postback authentication, as Account > API Integrations > Postback
-        authentication shows it. Click ids count up, so a bare postback URL
-        lets anyone who guesses one record or reverse a conversion. The
+        authentication shows it: it makes sure only the account's own
+        networks and pages record or reverse a conversion. The
         postback and pixel URLs Setup hands out carry the account's token as
         `p202_token`; a sender that can sign keys `p202_sig` with the
         signing secret, which no URL carries. Both are minted here the first

@@ -251,9 +251,8 @@ before.
 
 ## Postback authentication
 
-Click ids count up. Without authentication, anyone who can guess one can send
-`gpb.php?subid=<id>` and record a sale, or `&status=reversed` and take one
-back. So each account has two credentials:
+Authentication makes sure only your own networks and pages can record or
+reverse a conversion. Each account has two credentials:
 
 - a **postback token**, 32 hex characters, which every pixel and postback URL
   Setup hands out carries as `p202_token`;
