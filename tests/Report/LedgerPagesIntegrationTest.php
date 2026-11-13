@@ -7,6 +7,7 @@ namespace Tests\Report;
 use Api\V3\Controllers\ReportsController;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Connection;
+use Prosper202\Spend\LedgerCost;
 use Prosper202\Spend\SpendLedger;
 
 /**
@@ -164,7 +165,7 @@ final class LedgerPagesIntegrationTest extends TestCase
             }
         }
         self::q('DELETE FROM 202_ppc_network_variables WHERE ppc_network_id IN ('
-            . self::NETWORK . ', ' . (self::NETWORK + 1) . ')');
+            . self::NETWORK . ', ' . (self::NETWORK + 1) . ', ' . (self::NETWORK + 3) . ')');
         self::q('DELETE FROM 202_custom_variables WHERE custom_variable_id BETWEEN 650100 AND 650199');
         self::q('DELETE FROM 202_variable_sets2 WHERE variable_set_id BETWEEN 650100 AND 650199');
     }
@@ -185,7 +186,7 @@ final class LedgerPagesIntegrationTest extends TestCase
             . ' aff_campaign_foreign_payout = 0, aff_campaign_time = 0, aff_network_id = 0');
         foreach ([self::USER => self::NETWORK, self::OTHER => self::NETWORK + 1] as $u => $network) {
             self::q("INSERT INTO 202_ppc_networks SET ppc_network_id = $network, user_id = $u,"
-                . " ppc_network_name = 'ChatGPT Ads', ppc_network_time = 0");
+                . " ppc_network_name = 'ChatGPT Ads', ppc_network_platform = 'chatgpt_ads', ppc_network_time = 0");
             self::q("INSERT INTO 202_ppc_network_variables SET ppc_variable_id = $network, ppc_network_id = $network,"
                 . " name = 'ad_id', parameter = 'ad_id', placeholder = '{ad_id}'");
             self::q("INSERT INTO 202_ppc_network_variables SET ppc_variable_id = " . ($network + 10)
@@ -407,5 +408,41 @@ final class LedgerPagesIntegrationTest extends TestCase
         foreach (['breakdown', 'hourly', 'weekly'] as $page) {
             self::assertSame($money, self::totalCost($kolkata[$page]), "$page in Asia/Kolkata");
         }
+    }
+
+    /**
+     * The pages tie as the REST reports do: a click of an unmarked traffic
+     * source carrying ad A keeps its CPC beside the ChatGPT Ads source's,
+     * and every page says why.
+     */
+    public function testAClickOfAnotherSourceWithTheSameAdIdKeepsItsCpcOnEveryPage(): void
+    {
+        $network = self::NETWORK + 3;
+        self::q("INSERT INTO 202_ppc_networks SET ppc_network_id = $network, user_id = " . self::USER
+            . ", ppc_network_name = 'Newsletter', ppc_network_time = 0");
+        self::q("INSERT INTO 202_ppc_network_variables SET ppc_variable_id = $network, ppc_network_id = $network,"
+            . " name = 'ad_id', parameter = 'ad_id', placeholder = '{ad}'");
+        self::q("INSERT INTO 202_custom_variables SET custom_variable_id = 650107, ppc_variable_id = $network, variable = 'ad_A'");
+        self::q("INSERT INTO 202_variable_sets2 SET variable_set_id = 650107, variables = '650107'");
+        self::q('INSERT INTO 202_dataengine SET user_id = ' . self::USER . ', click_id = 650009, click_time = ' . (self::$hour + 800)
+            . ", ppc_network_id = $network, ppc_account_id = 0, aff_campaign_id = " . self::CAMPAIGN . ', landing_page_id = 0,'
+            . " keyword_id = 0, variable_set_id = '650107', clicks = 1, click_out = 1, leads = 0,"
+            . ' click_lead = 0, click_filtered = 0, click_bot = 0, payout = 0, income = 1, cost = 0.8');
+        self::write(self::USER, 'ad_A', self::$hour, '3.00');
+        [$from, $to] = self::window();
+        $summary = (new ReportsController(self::$db, self::USER))
+            ->summary(['time_from' => (string) $from, 'time_to' => (string) $to]);
+        // Ad A's 3.00 over its two ChatGPT Ads clicks, the newsletter click's own 0.80, and the rest as before.
+        self::assertEqualsWithDelta(5.8, $summary['data']['total_cost'], 1e-9);
+        self::assertSame(LedgerCost::TIE_NOTE, $summary['spend_ledger']['tie_note']);
+
+        $all = self::pages();
+        foreach ([...self::GROUPED, 'LpOverview', 'campaignOverview', 'breakdown', 'hourly', 'weekly'] as $page) {
+            self::assertSame('$5.80', self::totalCost($all['pages'][$page]), $page);
+        }
+        foreach ($all['notes'] as $page => $note) {
+            self::assertSame(LedgerCost::TIE_NOTE, $note['tie_note'] ?? null, $page);
+        }
+        self::assertStringContainsString(LedgerCost::TIE_NOTE, p202_spend_ledger_text($all['notes']['overview']));
     }
 }

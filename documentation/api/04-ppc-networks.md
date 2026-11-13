@@ -23,7 +23,7 @@ Manage pay-per-click ad networks (Google Ads, Bing Ads, Facebook, etc.).
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
 | `ppc_network_name` | string | Yes | Network name (max 50) |
-| `ppc_network_platform` | string | No | `chatgpt_ads` for the ChatGPT Ads source, else `''` (the default). Set up the source with [Add ChatGPT Ads](#add-chatgpt-ads); the field is writable so `p202 sync` and `p202 import` carry it, and a source on no platform is sent without it |
+| `ppc_network_platform` | string | No | `chatgpt_ads` for the ChatGPT Ads source, else `''` (the default). Set up the source with [Add ChatGPT Ads](#add-chatgpt-ads), or mark one you set up yourself here or on its edit form in Setup › Traffic Sources (under Advanced). The field is writable so `p202 sync` and `p202 import` carry it, and a source on no platform is sent without it. It also decides cost: once a source of the account is marked, ChatGPT Ads spend goes only to marked sources' clicks ([Cost from the spend ledger](11-reports.md#cost-from-the-spend-ledger)) |
 
 A traffic source's custom variables are the extra `parameter=placeholder`
 pairs its tracking links carry; they are edited under

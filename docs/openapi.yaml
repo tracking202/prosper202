@@ -3489,7 +3489,8 @@ paths:
         each row, `matched_clicks` counts this account's clicks that carried
         the ad (its traffic source variable with parameter `ad_id`) in those
         hours, and `unallocated_spend` is the spend of the hours no click
-        carried it in. `reaches` is the end of the latest hour the ledger
+        carried it in. For `openai_ads` on an account with a source marked
+        `chatgpt_ads`, only the clicks of such sources count. `reaches` is the end of the latest hour the ledger
         holds (unix seconds). Money and counts are null with `masked` for a
         role without `access_to_campaign_data`.
       operationId: listSpendLedger
@@ -14390,8 +14391,12 @@ components:
           description: >-
             The ad platform the source is: chatgpt_ads for the ChatGPT Ads source
             (POST /ppc-networks/chatgpt-ads sets it up), else empty. Its links get
-            that platform's tracking template (GET /trackers/{id}/url). Writable so
-            sync and import carry it; defaults to empty.
+            that platform's tracking template (GET /trackers/{id}/url). It also
+            decides cost: on an account with a source marked chatgpt_ads (removed
+            ones included), openai_ads spend in the spend ledger goes only to
+            such sources' clicks, so setting or clearing it changes which clicks
+            share that spend. Writable so sync and import carry it; defaults to
+            empty.
         ppc_network_deleted:
           type: integer
           readOnly: true
@@ -14412,8 +14417,12 @@ components:
           description: >-
             The ad platform the source is: chatgpt_ads for the ChatGPT Ads source
             (POST /ppc-networks/chatgpt-ads sets it up), else empty. Its links get
-            that platform's tracking template (GET /trackers/{id}/url). Writable so
-            sync and import carry it; defaults to empty.
+            that platform's tracking template (GET /trackers/{id}/url). It also
+            decides cost: on an account with a source marked chatgpt_ads (removed
+            ones included), openai_ads spend in the spend ledger goes only to
+            such sources' clicks, so setting or clearing it changes which clicks
+            share that spend. Writable so sync and import carry it; defaults to
+            empty.
 
     PpcNetworkUpdate:
       type: object
@@ -14427,8 +14436,12 @@ components:
           description: >-
             The ad platform the source is: chatgpt_ads for the ChatGPT Ads source
             (POST /ppc-networks/chatgpt-ads sets it up), else empty. Its links get
-            that platform's tracking template (GET /trackers/{id}/url). Writable so
-            sync and import carry it; defaults to empty.
+            that platform's tracking template (GET /trackers/{id}/url). It also
+            decides cost: on an account with a source marked chatgpt_ads (removed
+            ones included), openai_ads spend in the spend ledger goes only to
+            such sources' clicks, so setting or clearing it changes which clicks
+            share that spend. Writable so sync and import carry it; defaults to
+            empty.
 
     PpcNetworkResponse:
       type: object
@@ -16451,6 +16464,13 @@ components:
           description: Ledger rows in a currency other than the account's, not counted (only when there are any).
         other_currency_note:
           type: string
+        tie_note:
+          type: string
+          description: >-
+            Present only when the window holds openai_ads spend and the account
+            has a source marked chatgpt_ads: that spend went only to those
+            sources' clicks, and a click of another source with the same ad id
+            kept its CPC.
 
     SpendRow:
       type: object

@@ -277,6 +277,71 @@ final class ChatGptAdsPagesIntegrationTest extends TestCase
         self::assertStringContainsString('>copy</button>', $item($ids[2]));
     }
 
+    private static function platformOf(int $source): string
+    {
+        return (string) self::$db->query('SELECT ppc_network_platform FROM 202_ppc_networks WHERE ppc_network_id = ' . $source)->fetch_row()[0];
+    }
+
+    /** @param array<string, string> $extra */
+    private static function rename(int $source, array $extra): string
+    {
+        return self::page('tracking202/setup/ppc_accounts.php', ['edit_ppc_network_id' => (string) $source, 'edit_ppc_network_name' => 'Newsletter'],
+            ['token' => 'SESSION', 'ppc_network_id' => (string) $source, 'ppc_network_name' => 'Newsletter'] + $extra);
+    }
+
+    /**
+     * A source set up by hand is marked (or cleared) on its own edit form,
+     * under Advanced: the mark is written only from the form that shows it,
+     * read strictly, and a rename from a form without it leaves it alone.
+     */
+    public function testASourceIsMarkedOrClearedOnItsEditForm(): void
+    {
+        $form = self::page('tracking202/setup/ppc_accounts.php', ['edit_ppc_network_id' => (string) self::PLAIN_SOURCE, 'edit_ppc_network_name' => 'Newsletter']);
+        self::assertMatchesRegularExpression('~<input type="hidden" name="ppc_network_platform_shown" value="1">~', $form);
+        self::assertMatchesRegularExpression('~id="ppc_network_chatgpt" name="ppc_network_chatgpt" value="1">~', $form, 'not checked');
+        self::assertMatchesRegularExpression('~<details class="p202-disclosure mb-3" data-p202-remember="setup-traffic-sources-chatgpt">~', $form, 'closed');
+
+        self::rename(self::PLAIN_SOURCE, ['ppc_network_platform_shown' => '1', 'ppc_network_chatgpt' => '1']);
+        self::assertSame('chatgpt_ads', self::platformOf(self::PLAIN_SOURCE));
+        $form = self::page('tracking202/setup/ppc_accounts.php', ['edit_ppc_network_id' => (string) self::PLAIN_SOURCE, 'edit_ppc_network_name' => 'Newsletter']);
+        self::assertStringContainsString('name="ppc_network_chatgpt" value="1" checked>', $form);
+
+        // A value the form does not offer is refused by name, and nothing changes.
+        $out = self::rename(self::PLAIN_SOURCE, ['ppc_network_platform_shown' => '1', 'ppc_network_chatgpt' => 'yes']);
+        self::assertStringContainsString('The ChatGPT Ads choice was not one the form offers. Nothing was saved.', $out);
+        self::assertSame('chatgpt_ads', self::platformOf(self::PLAIN_SOURCE));
+
+        // A rename from a form that does not show the mark keeps it.
+        self::rename(self::PLAIN_SOURCE, []);
+        self::assertSame('chatgpt_ads', self::platformOf(self::PLAIN_SOURCE));
+
+        // Cleared: the box left empty on the form that shows it.
+        self::rename(self::PLAIN_SOURCE, ['ppc_network_platform_shown' => '1']);
+        self::assertSame('', self::platformOf(self::PLAIN_SOURCE));
+    }
+
+    /**
+     * Once the button has marked a source, the page names the account's
+     * other sources with an ad_id variable, whose clicks stop sharing
+     * ChatGPT Ads spend, and says how to mark one.
+     */
+    public function testAfterTheButtonTheSourcesThatStopSharingTheSpendAreNamed(): void
+    {
+        self::row('202_ppc_network_variables', ['ppc_variable_id' => self::PLAIN_SOURCE, 'ppc_network_id' => self::PLAIN_SOURCE,
+            'name' => 'ad', 'parameter' => 'ad_id', 'placeholder' => '{ad}', 'deleted' => 0]);
+        self::row('202_ppc_networks', ['user_id' => self::USER, 'ppc_network_id' => self::PLAIN_SOURCE + 1, 'ppc_network_name' => 'Blog', 'ppc_network_time' => time()]);
+        self::page('tracking202/setup/ppc_accounts.php', [], ['token' => 'SESSION', 'add_chatgpt_ads' => '1']);
+
+        $out = self::page('tracking202/setup/ppc_accounts.php', ['chatgpt_added' => '1']);
+        self::assertStringContainsString('These traffic sources have an ad_id variable but are not marked as ChatGPT Ads, so their clicks do not share ChatGPT Ads spend: Newsletter. If one of them', $out);
+        $quiet = self::page('tracking202/setup/ppc_accounts.php');
+        self::assertStringNotContainsString('are not marked as ChatGPT Ads', $quiet, 'only after the button');
+
+        // Marked, it is no longer named.
+        self::rename(self::PLAIN_SOURCE, ['ppc_network_platform_shown' => '1', 'ppc_network_chatgpt' => '1']);
+        self::assertStringNotContainsString('are not marked as ChatGPT Ads', self::page('tracking202/setup/ppc_accounts.php', ['chatgpt_exists' => '1']));
+    }
+
     /** @param array{source: int, account: int} $on */
     private function link(string $promotion, array $on): array
     {
