@@ -41,15 +41,8 @@ final class SpendSyncDeadlineTest extends TestCase
 
     public function testALimitTooShortIsRaisedToCoverTheLastRequest(): void
     {
-        // Whether this PHP lets a script raise its own limit at all; the
-        // subprocess cases below hold the path where it cannot.
-        set_time_limit(30);
-        $raised = set_time_limit(60);
-        $after = (string) ini_get('max_execution_time');
-        if (!$raised || $after !== '60') {
-            self::markTestSkipped('set_time_limit(60) answered ' . var_export($raised, true) . ' and max_execution_time is '
-                . var_export($after, true) . ' under ' . PHP_SAPI . ' ' . PHP_VERSION . ': this PHP cannot raise its limit');
-        }
+        // set_time_limit()'s answer is not what the deadline goes by: Linux's
+        // PHP 8.3 CLI answers false and raises the limit all the same (CI).
         set_time_limit(30);
         $before = time();
         self::assertEqualsWithDelta($before + 30, self::deadline(), 1);

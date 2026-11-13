@@ -142,8 +142,17 @@ final class SpendSyncController
         if ($limit === 0) {
             return time() + self::RUN_SECONDS;
         }
-        if ($limit >= self::RUN_SECONDS + $after || (function_exists('set_time_limit') && set_time_limit(self::RUN_SECONDS + $after))) {
+        if ($limit >= self::RUN_SECONDS + $after) {
             return time() + self::RUN_SECONDS;
+        }
+        if (function_exists('set_time_limit')) {
+            // Its answer is no guide: Linux's PHP 8.3 CLI answers false and raises the limit all
+            // the same. What decides is the limit now in force.
+            set_time_limit(self::RUN_SECONDS + $after);
+            $raised = (int) ini_get('max_execution_time');
+            if ($raised === 0 || $raised >= self::RUN_SECONDS + $after) {
+                return time() + self::RUN_SECONDS;
+            }
         }
 
         return time() + max(1, $limit - $after);
