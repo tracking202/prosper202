@@ -343,6 +343,39 @@ final class AdConnectionsIntegrationTest extends TestCase
         self::assertSame(self::KEY, $this->store()->forCalling(1, $id)['credentials']['advertiser_api_key']);
     }
 
+    /** The repair forCalling() names works: stored credentials that no longer open are replaced by a new key. */
+    public function testANewKeyRepairsCredentialsThatNoLongerOpen(): void
+    {
+        $id = $this->connect();
+        $other = $this->connect(2);
+        $table = '`' . \Prosper202\Database\Schema\TableRegistry::AD_CONNECTIONS . '`';
+        // Another connection's ciphertext: sealed for that row and owner, so it does not open here.
+        self::$db->query("UPDATE $table AS mine JOIN $table AS theirs ON theirs.connection_id = $other"
+            . " SET mine.credentials = theirs.credentials WHERE mine.connection_id = $id");
+        try {
+            $this->store()->forCalling(1, $id);
+            self::fail('credentials sealed for another connection opened');
+        } catch (AdConnectionInputException $e) {
+            self::assertStringContainsString('p202 ad-connection update --api-key-file', $e->getMessage());
+        }
+        $replaced = $this->connections()->replaceKey(1, $id, 'sk-ads-live-replacement-1', 9);
+        self::assertSame('connected', $replaced['status'] ?? null);
+        $stored = $this->store()->forCalling(1, $id)['credentials']['advertiser_api_key'];
+        self::assertSame('sk-ads-live-replacement-1', $stored);
+
+        // The same with the install's credential key gone: a new one is minted with the new key's seal.
+        $secret = AdConnectionStore::SECRET_NAME;
+        self::$db->query("DELETE FROM 202_deployment_secrets WHERE secret_name = '$secret'");
+        $replaced = $this->connections()->replaceKey(1, $id, 'sk-ads-live-replacement-2', 10);
+        self::assertSame('connected', $replaced['status'] ?? null);
+        $stored = $this->store()->forCalling(1, $id)['credentials']['advertiser_api_key'];
+        self::assertSame('sk-ads-live-replacement-2', $stored);
+        // Any other credential still needs the stored ones to open: it is never written over what cannot be read.
+        self::$db->query("UPDATE $table SET credentials = 'v1.not-a-ciphertext' WHERE connection_id = $id");
+        $this->expectException(\RuntimeException::class);
+        $this->store()->putCredential(1, $id, 'conversions_api_key', 'capi-demo-1-Xq7', 11);
+    }
+
     public function testIdempotencyKeysNameTheInstallTheConnectionAndTheThing(): void
     {
         $id = $this->connect();

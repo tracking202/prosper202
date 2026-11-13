@@ -513,7 +513,7 @@ final class OpenAiAdsConnections
             }
         }
         $skip = $options['skip'] ?? [];
-        if (!is_array($skip) || !array_is_list($skip) || array_diff($skip, self::STEPS) !== [] || count(array_filter($skip, 'is_string')) !== count($skip)) {
+        if (!is_array($skip) || !array_is_list($skip) || count(array_filter($skip, 'is_string')) !== count($skip) || array_diff($skip, self::STEPS) !== []) {
             throw new AdConnectionInputException('skip', 'skip must be a list of steps, each one of: ' . implode(', ', self::STEPS) . '.');
         }
         $id = static function (string $name, string $pattern, string $what) use ($options): ?string {

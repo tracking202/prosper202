@@ -285,7 +285,8 @@ var mcpAnswerKeyRef = regexp.MustCompile(`\b([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*
 // mcpDeferredAnswerSources: the controller each deferred tool's answer comes
 // from as it is (the destination commands render the API's answer).
 var mcpDeferredAnswerSources = map[string]string{
-	"destination": "DestinationsController.php",
+	"destination":   "DestinationsController.php",
+	"ad-connection": "AdConnectionsController.php",
 }
 
 // A deferred tool's Note names only keys its answer carries: the answer is
@@ -344,13 +345,13 @@ func TestMCPToolsListsTheDeferredOnes(t *testing.T) {
 		mcpToolsDeferred, mcpReadOnly = false, false
 		return out
 	}
-	if got := strings.Join(names("mcp", "tools", "--deferred"), ","); got != "destination_list,destination_deliveries,destination_test" {
+	if got := strings.Join(names("mcp", "tools", "--deferred"), ","); got != "destination_list,destination_deliveries,destination_test,ad_connection_list,ad_connection_check" {
 		t.Errorf("--deferred lists %s", got)
 	}
-	if got := strings.Join(names("mcp", "tools", "--deferred", "--read-only"), ","); got != "destination_list,destination_deliveries" {
+	if got := strings.Join(names("mcp", "tools", "--deferred", "--read-only"), ","); got != "destination_list,destination_deliveries,ad_connection_list" {
 		t.Errorf("--deferred --read-only lists %s", got)
 	}
-	if got := strings.Join(names("--staged", "mcp", "tools", "--deferred"), ","); got != "destination_list,destination_deliveries" {
+	if got := strings.Join(names("--staged", "mcp", "tools", "--deferred"), ","); got != "destination_list,destination_deliveries,ad_connection_list" {
 		t.Errorf("--staged --deferred lists %s", got)
 	}
 	for _, name := range names("mcp", "tools") {
@@ -367,7 +368,8 @@ func TestMCPDeferredToolsSayWhenTheyReachOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tool := range tools {
-		if want := tool.Name == "destination_test"; tool.Annotations.OpenWorldHint != want {
+		// The test fire and the connection check make the install call OpenAI.
+		if want := tool.Name == "destination_test" || tool.Name == "ad_connection_check"; tool.Annotations.OpenWorldHint != want {
 			t.Errorf("%s openWorldHint %v, want %v", tool.Name, tool.Annotations.OpenWorldHint, want)
 		}
 	}

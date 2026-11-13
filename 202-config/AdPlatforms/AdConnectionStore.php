@@ -143,7 +143,11 @@ final class AdConnectionStore
                 return false;
             }
             self::refuseUnknownCredentials((string) $row['platform'], [$name => (string) $value]);
-            $credentials = $this->opened($row);
+            // A new Advertiser API key is the repair for stored credentials that no longer open (forCalling() says
+            // so): it starts from what can be read, or from nothing, and is sealed under a key minted if there is none.
+            $credentials = $name === 'advertiser_api_key' && $value !== null
+                ? ($this->openedOrNull($row) ?? [])
+                : $this->opened($row);
             if ($value === null) {
                 unset($credentials[$name]);
             } else {

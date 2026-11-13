@@ -738,12 +738,14 @@ final class DestinationsIntegrationTest extends TestCase
         self::assertSame('sent', self::deliveries($oppref)[1]['status']);
         $this->bodies = [];
 
-        // A visitor who may be in Europe is withheld even with privacy Disabled: OpenAI takes no consent signal.
+        // A visitor who may be in Europe is withheld even with privacy Disabled: OpenAI has no field for their
+        // consent to measurement.
         $this->click(101);
         $this->record(101, 'ORD-71');
         $eu = new DestinationQueue(new Connection(self::$db), $store, static fn (string $ip): bool => true);
         self::assertSame(2, $eu->sendDue(10, 5, time() + 2)['withheld']);
-        self::assertStringContainsString('takes no consent signal', (string) self::deliveries($all)[2]['last_error']);
+        $why = (string) self::deliveries($all)[2]['last_error'];
+        self::assertStringContainsString('has no field that states their consent to measurement', $why);
         self::assertSame([], $this->bodies);
 
         try {

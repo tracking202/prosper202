@@ -19621,8 +19621,9 @@ components:
       description: |
         What is sent and when. Every type takes `campaign_ids` and
         `send_user_data`; GA4 and Google Ads take `consent` (ChatGPT Ads
-        refuses it: OpenAI takes no consent signal, so a visitor who may be
-        in the EEA or UK is withheld from it). GA4 takes `measurement_id` to
+        refuses it: OpenAI has no field that states a visitor's consent to
+        measurement, its per-event opt_out being about personalisation only,
+        so a visitor who may be in the EEA or UK is withheld from it). GA4 takes `measurement_id` to
         `params`, Google Ads `customer_id` to `campaign_conversion_actions`,
         ChatGPT Ads `pixel_id` to `ppc_account_id`.
       properties:
