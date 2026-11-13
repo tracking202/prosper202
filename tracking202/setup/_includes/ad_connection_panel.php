@@ -17,8 +17,10 @@ use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsConnections;
  * @param array<int, string> $ppcAccounts traffic source accounts by id, for the link
  * @param array{id: int, steps: list<array<string, mixed>>}|null $lastSetup the setup just run, shown under its connection
  * @param array<string, string> $errors the refused connect form's, by field
+ * @param array{id: int, action: string, errors: array<string, mixed>}|null $refused an action on one connection
+ *        that was refused, said in that connection's block
  */
-function p202_ad_connections_panel(array $connections, array $ppcAccounts, ?array $lastSetup, array $errors, string $self, string $token): string
+function p202_ad_connections_panel(array $connections, array $ppcAccounts, ?array $lastSetup, array $errors, string $self, string $token, ?array $refused = null): string
 {
     $e = 'p202_setup_e';
     $out = '<section class="p202-panel mt-4" id="chatgpt-ads">'
@@ -35,7 +37,7 @@ function p202_ad_connections_panel(array $connections, array $ppcAccounts, ?arra
             . '<span class="p202-pill' . ($c['status'] === 'connected' ? ' p202-pill--accent' : '') . '">' . $e(str_replace('_', ' ', (string) $c['status'])) . '</span>'
             . '<span class="p202-list__actions">';
         foreach (['ad_check' => 'check key', 'ad_delete' => 'delete'] as $act => $label) {
-            $out .= '<form method="post" action="' . $e($self) . '" class="d-inline"' . ($act === 'ad_delete' ? ' data-p202-confirm="Delete this connection? Its keys are erased here; nothing is removed at OpenAI."' : '') . '>'
+            $out .= '<form method="post" action="' . $e($self) . ($act === 'ad_check' ? '#ac' . $id : '') . '" class="d-inline"' . ($act === 'ad_delete' ? ' data-p202-confirm="Delete this connection? Its keys are erased here; nothing is removed at OpenAI."' : '') . '>'
                 . p202_setup_token_field($token) . '<input type="hidden" name="action" value="' . $act . '"><input type="hidden" name="connection_id" value="' . $id . '">'
                 . '<button type="submit" class="p202-list__action' . ($act === 'ad_delete' ? ' p202-list__action--danger' : '') . '">' . $label . '</button></form>';
         }
@@ -45,9 +47,13 @@ function p202_ad_connections_panel(array $connections, array $ppcAccounts, ?arra
             . ' · Conversions API key ' . (($c['credentials_set']['conversions_api_key'] ?? false) ? 'stored' : 'not set up')
             . '</span></div>';
         if (($c['currency_matches_account'] ?? true) === false) {
-            $out .= p202_flash('info', 'This ad account bills in ' . (string) ($account['currency'] ?? '') . ', not your account\'s currency. Conversions are sent as they are; spend is not converted, so spend sync is refused for it.');
+            $out .= p202_flash('info', 'This ad account bills in ' . (string) ($account['currency'] ?? '') . ', not your account\'s currency. Conversions are sent as they are: nothing is converted.');
         }
-        if (is_string($c['last_error'] ?? null) && $c['last_error'] !== '') {
+        $mine = $refused !== null && $refused['id'] === $id ? $refused : null;
+        $keyErrors = $mine !== null && $mine['action'] === 'ad_replace_key' ? $mine['errors'] : [];
+        $out .= p202_ad_connection_refusal($mine);
+        // (a check refused just now is said by the loop above, once)
+        if (is_string($c['last_error'] ?? null) && $c['last_error'] !== '' && !isset($mine['errors']['check'])) {
             $out .= p202_flash('bad', 'Last check: ' . $c['last_error']);
         }
         if ($lastSetup !== null && $lastSetup['id'] === $id) {
@@ -75,7 +81,8 @@ function p202_ad_connections_panel(array $connections, array $ppcAccounts, ?arra
             $out .= '<option value="' . $type . '">' . $e(str_replace('_', ' ', $type)) . '</option>';
         }
         $out .= '</select><div class="form-text">None picked: the destination\'s event types, else order created.</div></div></details>'
-            . '<div class="p202-form-actions"><button type="submit" class="btn btn-outline-primary btn-sm">Run setup</button></div></form></div>';
+            . '<div class="p202-form-actions"><button type="submit" class="btn btn-outline-primary btn-sm">Run setup</button></div></form>'
+            . p202_ad_connection_replace_key($c, $mine, $keyErrors, $self, $token) . '</div>';
     }
     $out .= '<form method="post" action="' . $e($self) . '#chatgpt-ads" autocomplete="off">' . p202_setup_token_field($token)
         . '<input type="hidden" name="action" value="ad_connect">'
@@ -115,4 +122,62 @@ function p202_ad_connection_reaches(array $connections, array $destination): boo
     }
 
     return false;
+}
+
+/** What the page calls each action on one connection, for the sentence that says it was refused. */
+const P202_AD_CONNECTION_REFUSALS = [
+    'ad_check' => 'The check did not pass',
+    'ad_setup' => 'Setup did not run',
+    'ad_replace_key' => 'The key was not replaced',
+];
+
+/**
+ * A refused action's sentences, for its connection's block. A refused replacement key is said under its own field
+ * instead (p202_ad_connection_replace_key()).
+ *
+ * @param array{id: int, action: string, errors: array<string, mixed>}|null $mine
+ */
+function p202_ad_connection_refusal(?array $mine): string
+{
+    $out = '';
+    foreach ($mine['errors'] ?? [] as $field => $stored) {
+        $text = p202_setup_error_text($stored);
+        if ($text === '' || ($field === 'api_key' && $mine['action'] === 'ad_replace_key')) {
+            continue;
+        }
+        $what = P202_AD_CONNECTION_REFUSALS[$mine['action']] ?? 'That was not done';
+        $where = $field === 'api_key' ? ' On this page: Replace key, below.' : '';
+        $out .= p202_flash('bad', $what . ': ' . $text . $where);
+    }
+
+    return $out;
+}
+
+/**
+ * The form that takes a new Advertiser API key for one connection: closed while the stored key works, open when it
+ * is what failed (the connection's status, or the action just refused).
+ *
+ * @param array<string, mixed> $c the connection
+ * @param array{id: int, action: string, errors: array<string, mixed>}|null $mine the action just refused on it
+ * @param array<string, mixed> $keyErrors the refused replacement's, by field
+ */
+function p202_ad_connection_replace_key(array $c, ?array $mine, array $keyErrors, string $self, string $token): string
+{
+    $id = (int) $c['connection_id'];
+    $field = 'ac' . $id . '_api_key';
+    $open = $c['status'] !== 'connected' || p202_setup_error_text($mine['errors']['api_key'] ?? '') !== '';
+
+    return '<details class="p202-disclosure mt-3"' . ($open ? ' open' : '') . '><summary>Replace key'
+        . ' <span class="p202-disclosure__hint">a new Advertiser API key for this ad account</span></summary>'
+        . '<div class="p202-disclosure__body">'
+        . '<form method="post" action="' . p202_setup_e($self) . '#ac' . $id . '" autocomplete="off">'
+        . p202_setup_token_field($token) . '<input type="hidden" name="action" value="ad_replace_key">'
+        . '<input type="hidden" name="connection_id" value="' . $id . '">'
+        . '<div class="mb-3"><label class="form-label" for="' . $field . '">New Advertiser API key</label>'
+        . '<input type="password" class="form-control' . p202_setup_invalid($keyErrors, 'api_key') . '"'
+        . ' id="' . $field . '" name="api_key">' . p202_setup_feedback($keyErrors, 'api_key')
+        . '<div class="form-text">From ChatGPT Ads Manager › Settings, for the same ad account. OpenAI is asked about'
+        . ' it first; the pixel, destination and event settings stay as they are.</div></div>'
+        . '<div class="p202-form-actions"><button type="submit" class="btn btn-outline-primary btn-sm">Replace key'
+        . '</button></div></form></div></details>';
 }

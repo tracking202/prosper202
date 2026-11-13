@@ -325,7 +325,10 @@ with both, and makes an event setting for each event type (30-day click
 window) in your ad account. Each step says what it did, and any can be
 unticked. Where OpenAI has pixel or key creation switched off for your
 account, setup says so; make them in Ads Manager and give them under
-Advanced. The keys are stored encrypted and never shown again. The same
+Advanced. **Replace key**, under the connection, takes a new Advertiser API
+key for the same ad account (when OpenAI refuses the stored one, or you
+rotated it); a check or setup that fails says why under the connection.
+The keys are stored encrypted and never shown again. The same
 from a script: `p202 ad-connection` or `/api/v3/ad-connections`
 ([Ad connections API](../api/28-ad-connections.md)).
 

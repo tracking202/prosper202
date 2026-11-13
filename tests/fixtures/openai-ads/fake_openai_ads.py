@@ -28,6 +28,7 @@ Control (for whoever drives it):
   POST /control/disable                 {"pixels": true, "api_keys": true, "events": true}: those creates (and the
                                         pixel list) answer 404 "Not found", as for an account
                                         without the feature
+  POST /control/account                 {"id": "adacct_999"}: the key now reaches that ad account, until the reset
   GET  /control/requests                every request seen, in order (keys masked)
 
 Usage: fake_openai_ads.py --port 8242 --tls-dir DIR [--api-key KEY]
@@ -268,6 +269,12 @@ class Handler(BaseHTTPRequestHandler):
             body = self.body() or {}
             STATE.disabled = {name for name, on in body.items() if on}
             return self.answer(200, {'disabled': sorted(STATE.disabled)})
+        if path == '/control/account' and method == 'POST':
+            body = self.body() or {}
+            if not isinstance(body.get('id'), str) or body['id'] == '':
+                return self.answer(400, {'error': {'message': 'id is required'}})
+            STATE.data['account']['id'] = body['id']
+            return self.answer(200, {'id': body['id']})
         if path == '/control/requests' and method == 'GET':
             return self.answer(200, {'requests': STATE.requests})
         return self.answer(404, {'error': {'message': 'no such control'}})

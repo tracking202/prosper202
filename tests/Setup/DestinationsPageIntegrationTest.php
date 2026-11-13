@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Setup;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\AdPlatforms\AdConnectionStore;
+use Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi;
 use Prosper202\Database\Connection;
 use Prosper202\Destinations\DestinationStore;
 use Prosper202\Destinations\Ga4Destination;
@@ -14,8 +16,10 @@ use Prosper202\Destinations\GoogleAdsDestination;
  * tracking202/setup/destinations.php as the web server runs it, signed in
  * (fixtures/page-runner.php): a destination edited in place, its failures
  * counted, listed and sent again, earlier conversions queued, and the consent
- * wording following the account's privacy setting. Nothing here reaches an
- * ad platform.
+ * wording following the account's privacy setting, and a ChatGPT Ads
+ * connection's key checked and replaced. Nothing here reaches an ad platform:
+ * the connection tests point the page at
+ * tests/fixtures/openai-ads/fake_openai_ads.py.
  *
  * Needs a 202-config.php (connect.php exits without one) and P202_TEST_DB_*.
  *
@@ -34,7 +38,13 @@ final class DestinationsPageIntegrationTest extends TestCase
     private const SECRET = 'Sx9-secretAPIvalue';
     private const ADS = ['developer_token' => 'devTOKEN_abc123XYZ', 'oauth_client_id' => '1234-abcd.apps.googleusercontent.com', 'oauth_client_secret' => 'GOCSPX-clientSecret99'];
 
+    private const AD_KEY = 'sk-ads-live-page-seam-01';
+
     private static string $sessions = '';
+    /** @var resource|null the stand-in Advertiser API, started by the first test that needs it */
+    private static $openAi = null;
+    private static string $openAiOrigin = '';
+    private static string $openAiTls = '';
     /** @var list<int> the permission rows this class added */
     private static array $addedPermissions = [];
     /** The install's privacy setting as it was found (user 1's), put back at the end; null when it has no row. */
@@ -93,6 +103,19 @@ final class DestinationsPageIntegrationTest extends TestCase
 
     public static function tearDownAfterClass(): void
     {
+        if (self::$openAi !== null) {
+            proc_terminate(self::$openAi);
+            proc_close(self::$openAi);
+            self::$openAi = null;
+        }
+        if (self::$openAiTls !== '') {
+            foreach (['cert.pem', 'key.pem'] as $file) {
+                @unlink(self::$openAiTls . '/' . $file);
+            }
+            @rmdir(self::$openAiTls);
+        }
+        putenv(AdvertiserApi::ENV_ENDPOINT);
+        putenv(AdvertiserApi::ENV_CA_FILE);
         if (self::$db !== null) {
             self::cleanUp();
             if (self::$installPrivacy !== null) {
@@ -108,7 +131,7 @@ final class DestinationsPageIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         foreach ([self::USER, self::OTHER] as $user) {
-            foreach (['202_destination_deliveries', '202_destinations', '202_conversion_logs', '202_aff_campaigns', '202_aff_networks', '202_user_role', '202_users_pref', '202_users'] as $table) {
+            foreach (['202_ad_connections', '202_destination_deliveries', '202_destinations', '202_conversion_logs', '202_aff_campaigns', '202_aff_networks', '202_user_role', '202_users_pref', '202_users'] as $table) {
                 self::q("DELETE FROM $table WHERE user_id = $user");
             }
         }
@@ -124,6 +147,7 @@ final class DestinationsPageIntegrationTest extends TestCase
     {
         self::requireScratch();
         foreach ([self::USER, self::OTHER] as $user) {
+            self::q("DELETE FROM 202_ad_connections WHERE user_id = $user");
             self::q("DELETE FROM 202_destination_deliveries WHERE user_id = $user");
             self::q("DELETE FROM 202_destinations WHERE user_id = $user");
             self::q("DELETE FROM 202_conversion_logs WHERE user_id = $user");
@@ -318,6 +342,199 @@ final class DestinationsPageIntegrationTest extends TestCase
         } finally {
             self::q('DELETE FROM 202_ppc_accounts WHERE ppc_account_id IN (990091, 990092)');
         }
+    }
+
+    /** Start the stand-in Advertiser API once, point the page's process at it and put its account back. */
+    private function openAi(): void
+    {
+        if (self::$openAi === null) {
+            $unique = getmypid() . '-' . bin2hex(random_bytes(3));
+            self::$openAiTls = sys_get_temp_dir() . '/p202-fake-openai-page-' . $unique;
+            $command = ['python3', dirname(__DIR__) . '/fixtures/openai-ads/fake_openai_ads.py', '--port', '0',
+                '--tls-dir', self::$openAiTls, '--api-key', self::AD_KEY];
+            $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+            if (!is_resource($process) || preg_match('/^READY (\d+)/', (string) fgets($pipes[1]), $m) !== 1) {
+                self::markTestSkipped('The fake Advertiser API did not start (python3 and openssl are needed).');
+            }
+            self::$openAi = $process;
+            self::$openAiOrigin = 'https://127.0.0.1:' . $m[1];
+        }
+        // page() hands this process's environment to the page's.
+        putenv(AdvertiserApi::ENV_ENDPOINT . '=' . self::$openAiOrigin);
+        putenv(AdvertiserApi::ENV_CA_FILE . '=' . self::$openAiTls . '/cert.pem');
+        self::openAiControl('reset', []);
+    }
+
+    /** @param array<string, mixed> $body */
+    private static function openAiControl(string $what, array $body): void
+    {
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'POST',
+                'content' => (string) json_encode((object) $body),
+                'header' => 'Content-Type: application/json',
+            ],
+            'ssl' => ['cafile' => self::$openAiTls . '/cert.pem', 'verify_peer' => true],
+        ]);
+        $answer = file_get_contents(self::$openAiOrigin . '/control/' . $what, false, $context);
+        self::assertNotFalse($answer, 'the stand-in took /control/' . $what);
+    }
+
+    /** A connection made by the page's own Connect form; its id. */
+    private function connected(): int
+    {
+        $this->openAi();
+        self::page([], ['action' => 'ad_connect', 'api_key' => self::AD_KEY, 'ppc_account_id' => '']);
+        $found = self::$db->query('SELECT connection_id FROM 202_ad_connections WHERE user_id = ' . self::USER);
+        $rows = $found->fetch_all(MYSQLI_ASSOC);
+        self::assertCount(1, $rows, 'the Connect form made the connection');
+
+        return (int) $rows[0]['connection_id'];
+    }
+
+    /** The stored (sealed) credentials of a connection: what a write changes and a refusal leaves. */
+    private static function sealed(int $connection): string
+    {
+        $found = self::$db->query('SELECT credentials FROM 202_ad_connections WHERE connection_id = ' . $connection);
+
+        return (string) $found->fetch_row()[0];
+    }
+
+    /** One connection's block of the panel, as the page printed it. */
+    private static function connectionBlock(string $html, int $connection): string
+    {
+        $from = strpos($html, '<div class="mb-4" id="ac' . $connection . '">');
+        self::assertNotFalse($from, 'the connection has a block');
+        $to = strpos($html, 'value="ad_connect"', $from);
+        self::assertNotFalse($to);
+
+        return substr($html, $from, $to - $from);
+    }
+
+    /** The Replace key disclosure of a connection's block, from its opening tag. */
+    private static function replaceKeyForm(string $html, int $connection): string
+    {
+        $block = self::connectionBlock($html, $connection);
+        $at = strpos($block, '<summary>Replace key');
+        self::assertNotFalse($at, 'the block offers Replace key');
+        $from = (int) strrpos(substr($block, 0, $at), '<details');
+
+        return substr($block, $from);
+    }
+
+    /** @return array<string, string> the Replace key form's post */
+    private static function replaceKeyPost(int $connection, string $key = self::AD_KEY): array
+    {
+        return ['action' => 'ad_replace_key', 'connection_id' => (string) $connection, 'api_key' => $key];
+    }
+
+    public function testAnAdvertiserKeyIsReplacedOnThePage(): void
+    {
+        $id = $this->connected();
+        $closed = '<details class="p202-disclosure mt-3">';
+        $open = '<details class="p202-disclosure mt-3" open>';
+        $form = self::replaceKeyForm(self::page(), $id);
+        self::assertStringStartsWith($closed, $form, 'closed while the stored key works');
+        self::assertStringContainsString('name="token"', $form);
+        self::assertStringContainsString('<input type="hidden" name="action" value="ad_replace_key">', $form);
+        self::assertStringContainsString('<input type="hidden" name="connection_id" value="' . $id . '">', $form);
+        $input = '<input type="password" class="form-control" id="ac' . $id . '_api_key" name="api_key">';
+        self::assertStringContainsString($input, $form, 'typed into a password field with no value');
+
+        // Credentials that no longer open: the block says so, and the form that mends it is open.
+        self::q("UPDATE 202_ad_connections SET credentials = 'no-longer-opens' WHERE connection_id = $id");
+        $html = self::page();
+        self::assertStringContainsString('credentials unreadable', self::connectionBlock($html, $id));
+        self::assertStringStartsWith($open, self::replaceKeyForm($html, $id));
+
+        self::assertSame('', trim(self::page([], self::replaceKeyPost($id))), 'a replaced key redirects');
+        $stored = (new AdConnectionStore(new Connection(self::requireScratch())))->forCalling(self::USER, $id);
+        self::assertSame(self::AD_KEY, $stored['credentials']['advertiser_api_key'], 'the new key is the stored one');
+        $html = self::page(['done' => 'ad_key_replaced']);
+        self::assertStringContainsString('Advertiser API key replaced', $html);
+        self::assertStringContainsString('p202-pill--accent">connected<', self::connectionBlock($html, $id));
+        self::assertStringNotContainsString(self::AD_KEY, $html, 'the key is never shown');
+
+        // A working key replaced by itself is sealed again: the stored bytes change, which no refusal may do.
+        $before = self::sealed($id);
+        self::page([], self::replaceKeyPost($id));
+        self::assertNotSame($before, self::sealed($id));
+    }
+
+    public function testAKeyThatIsNotThisConnectionsIsRefusedInItsBlock(): void
+    {
+        $id = $this->connected();
+        $before = self::sealed($id);
+        $refused = '<div class="invalid-feedback d-block">';
+
+        self::openAiControl('account', ['id' => 'adacct_999']);
+        $html = self::page([], self::replaceKeyPost($id));
+        $form = self::replaceKeyForm($html, $id);
+        $open = '<details class="p202-disclosure mt-3" open>';
+        self::assertStringStartsWith($open, $form, 'the refused form is open, where the page lands');
+        $sentence = 'That key reaches ad account adacct_999, not adacct_123, which this connection is for';
+        self::assertStringContainsString($refused . $sentence, $form);
+        self::assertStringNotContainsString(self::AD_KEY, $html, 'the refused key is not printed back');
+        self::assertStringNotContainsString('needs attention', $html, 'no banner for a sentence somewhere else');
+        self::assertSame($before, self::sealed($id), 'nothing stored');
+        self::openAiControl('reset', []);
+
+        $html = self::page([], self::replaceKeyPost($id, 'sk-ads-live-not-the-key-9'));
+        self::assertStringContainsString($refused, self::replaceKeyForm($html, $id), 'a key OpenAI refuses');
+        $html = self::page([], self::replaceKeyPost($id, ''));
+        self::assertStringContainsString($refused . 'api_key is required', self::replaceKeyForm($html, $id));
+        self::assertSame($before, self::sealed($id));
+
+        // Without the session's token nothing is stored.
+        $html = self::page([], self::replaceKeyPost($id), false);
+        self::assertStringContainsString('security token did not match', $html);
+        self::assertSame($before, self::sealed($id), 'no token, no write');
+
+        // Another account's connection.
+        self::q('UPDATE 202_ad_connections SET user_id = ' . self::OTHER . " WHERE connection_id = $id");
+        $html = self::page([], self::replaceKeyPost($id));
+        self::assertStringContainsString('That connection is not one of yours', $html);
+        self::assertSame($before, self::sealed($id), 'another account\'s key is not replaced');
+    }
+
+    public function testAFailedCheckOrSetupSaysWhyInTheConnectionsBlock(): void
+    {
+        $id = $this->connected();
+        $open = '<details class="p202-disclosure mt-3" open>';
+        $check = ['action' => 'ad_check', 'connection_id' => (string) $id];
+        $setup = ['action' => 'ad_setup', 'connection_id' => (string) $id, 'steps' => ['pixel']];
+
+        // The stored key now reaches another ad account: the check says so on the page that posted it.
+        self::openAiControl('account', ['id' => 'adacct_999']);
+        $html = self::page([], $check);
+        $block = self::connectionBlock($html, $id);
+        $sentence = 'The stored key now reaches ad account adacct_999, not adacct_123';
+        self::assertStringContainsString('The check did not pass: ' . $sentence, $block);
+        self::assertSame(1, substr_count($block, 'The stored key now reaches'), 'said once');
+        self::assertStringContainsString('>key refused<', $block);
+        self::assertStringStartsWith($open, self::replaceKeyForm($html, $id));
+        self::assertStringNotContainsString('Nothing was saved', $html, 'a check saves nothing by design');
+        self::assertStringNotContainsString('accepted the stored key', $html);
+        $later = self::connectionBlock(self::page(), $id);
+        self::assertStringContainsString('Last check: ' . $sentence, $later, 'and it is kept on the connection');
+        self::openAiControl('reset', []);
+
+        // Credentials that do not open: check and setup each say the store's sentence and where to mend it.
+        self::q("UPDATE 202_ad_connections SET credentials = 'no-longer-opens' WHERE connection_id = $id");
+        $mend = '[^<]+p202 ad-connection update --api-key-file\)\. On this page: Replace key, below\.</div>~';
+        foreach (['The check did not pass: ' => $check, 'Setup did not run: ' => $setup] as $says => $post) {
+            $html = self::page([], $post);
+            $block = self::connectionBlock($html, $id);
+            self::assertMatchesRegularExpression('~<div class="p202-flash__body">' . $says . $mend, $block);
+            self::assertStringNotContainsString('needs attention', $html, $says . 'no banner for a sentence nowhere');
+            self::assertStringNotContainsString('Nothing was saved', $html, $says);
+            self::assertStringStartsWith($open, self::replaceKeyForm($html, $id), $says);
+        }
+
+        // A refused setup option has no field of its own to sit under: said in the block too.
+        self::page([], self::replaceKeyPost($id));
+        $block = self::connectionBlock(self::page([], ['source_id' => 'clidsrc_901'] + $setup), $id);
+        self::assertStringContainsString('Setup did not run: source_id goes with pixel_id', $block);
     }
 
     public function testFailuresAreCountedWithTheirReasonsAndSentAgain(): void
