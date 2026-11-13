@@ -84,13 +84,14 @@ final class InsightsClientTest extends TestCase
         yield 'rate limited' => [['status' => 429, 'body' => '{}'], 'answered 429', InsightsFailure::RATE_LIMITED];
         yield 'key refused' => [['status' => 401, 'body' => '{}'], 'refused the Advertiser API key', InsightsFailure::KEY_REFUSED];
         yield 'invalid request, in its words' => [['status' => 400, 'body' => (string) file_get_contents(dirname(__DIR__, 2) . '/fixtures/openai-ads/error-invalid-request.json')],
-            'answered 400: time_ranges must not be in the future', InsightsFailure::FAILED];
-        yield 'not a page' => [['body' => '{"object":"list"}'], 'not a page of insights', InsightsFailure::FAILED];
-        yield 'not JSON' => [['body' => '<html>'], 'not its JSON', InsightsFailure::FAILED];
+            'answered 400: time_ranges must not be in the future', InsightsFailure::UNREADABLE];
+        yield 'not a page' => [['body' => '{"object":"list"}'], 'not a page of insights', InsightsFailure::UNREADABLE];
+        yield 'not JSON' => [['body' => '<html>'], 'not its JSON', InsightsFailure::UNREADABLE];
+        yield 'an outage' => [['status' => 503, 'body' => '{}'], 'answered 503', InsightsFailure::UNAVAILABLE];
         yield 'too many conversion rows' => [['status' => 413, 'body' => '{}'], 'answered 413', InsightsFailure::TOO_LARGE];
-        yield 'more without a cursor' => [['body' => '{"object":"list","data":[],"count":0,"first_id":null,"last_id":null,"has_more":true}'], 'gave no cursor', InsightsFailure::FAILED];
-        yield 'no answer' => [['status' => 0, 'error' => 'timed out after ' . self::KEY], 'no answer from OpenAI: timed out after …', InsightsFailure::FAILED];
-        yield 'cut off' => [['body' => '{"object":"list","data":[],"has_more":false}', 'error' => 'the answer was longer than 2097152 bytes'], 'cut off', InsightsFailure::FAILED];
+        yield 'more without a cursor' => [['body' => '{"object":"list","data":[],"count":0,"first_id":null,"last_id":null,"has_more":true}'], 'gave no cursor', InsightsFailure::UNREADABLE];
+        yield 'no answer' => [['status' => 0, 'error' => 'timed out after ' . self::KEY], 'no answer from OpenAI: timed out after …', InsightsFailure::UNAVAILABLE];
+        yield 'cut off' => [['body' => '{"object":"list","data":[],"has_more":false}', 'error' => 'the answer was longer than 2097152 bytes'], 'cut off', InsightsFailure::UNREADABLE];
     }
 
     /**

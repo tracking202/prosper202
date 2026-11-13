@@ -1024,11 +1024,11 @@ currency than the Prosper202 account; spend is not converted. `--staged` is refu
 
 ```
 p202 spend list [--period P | --time-from T --time-to T] [--interval day|hour] [--platform openai_ads] [--limit N] [--json]
-p202 spend conversions [--period P] [--platform openai_ads] [--json]   # OpenAI's conversions per ad per day beside prosper202_conversions
-p202 spend sync list [--json]              # each ChatGPT Ads connection: enabled, backfilled_at, last run, last_error / last_note
+p202 spend conversions [--period P] [--platform openai_ads] [--limit N] [--json]   # OpenAI's conversions per ad per day beside prosper202_conversions
+p202 spend sync list [--json]              # each ChatGPT Ads connection: enabled, backfilled_at, last run, last_error / last_note, left_out
 p202 spend sync enable <connection-id>     # off until enabled; first run reads 30 days, later runs the trailing 72 hours
 p202 spend sync disable <connection-id>    # what the ledger holds stays
-p202 spend sync run <connection-id>        # the hourly pull now (sync must be on)
+p202 spend sync run <connection-id>        # the hourly pull now (sync must be on); exit 7 OpenAI's limit, 4 its outage or unusable answer, 1 a refused key
 ```
 
 `p202 spend list` answers what the platform billed per ad per day (account zone) or hour, with `matched_clicks`

@@ -135,8 +135,8 @@ final class SpendSyncIntegrationTest extends TestCase
                 self::q("DELETE FROM $table WHERE user_id = $u");
             }
             self::q('DELETE FROM 202_ppc_network_variables WHERE ppc_variable_id IN (64401, 64402)');
-            self::q('DELETE FROM 202_custom_variables WHERE custom_variable_id IN (644001, 644002)');
-            self::q('DELETE FROM 202_variable_sets2 WHERE variable_set_id IN (644001, 644002)');
+            self::q('DELETE FROM 202_custom_variables WHERE custom_variable_id IN (644001, 644002, 644003, 644004)');
+            self::q('DELETE FROM 202_variable_sets2 WHERE variable_set_id IN (644001, 644002, 644003, 644004)');
         }
     }
 
@@ -223,14 +223,14 @@ final class SpendSyncIntegrationTest extends TestCase
 
     public function testNothingIsPulledUntilTheSyncIsTurnedOn(): void
     {
-        self::assertSame(['synced' => 0, 'failed' => 0, 'rows' => 0], $this->sync()->runDue(self::NOW + 60));
+        self::assertSame(['synced' => 0, 'incomplete' => 0, 'failed' => 0, 'rows' => 0], $this->sync()->runDue(self::NOW + 60));
         self::assertSame([], $this->urls);
         self::assertFalse($this->sync()->status(self::USER)[0]['enabled']);
 
         // Turned on and off again: still nothing.
         $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
         $this->sync()->setEnabled(self::USER, self::CONNECTION, false);
-        self::assertSame(['synced' => 0, 'failed' => 0, 'rows' => 0], $this->sync()->runDue(self::NOW + 60));
+        self::assertSame(['synced' => 0, 'incomplete' => 0, 'failed' => 0, 'rows' => 0], $this->sync()->runDue(self::NOW + 60));
         self::assertSame([], $this->urls);
     }
 
@@ -243,25 +243,38 @@ final class SpendSyncIntegrationTest extends TestCase
 
         self::assertSame(1, $done['synced'], (string) json_encode($this->sync()->status(self::USER)));
         $pages = array_values(array_filter($this->urls, static fn (string $u): bool => str_contains($u, '/ad_account/insights')));
-        self::assertCount(2, $pages, 'both pages read');
-        $this->urls = $pages;
-        self::assertSame(['start' => self::NOW - self::NOW % 3600 - 30 * 86400, 'end' => self::NOW], self::window($this->urls[0]));
-        self::assertStringContainsString('after=' . rawurlencode("start=$hour:end=" . ($hour + 3600) . ':entity_id=ad_502'), $this->urls[1]);
+        // A day at a time, oldest first, from 30 days back to now; the first
+        // day's two pages (the fixtures) followed by its cursor.
+        $windows = array_map(self::window(...), $pages);
+        self::assertSame(self::NOW - self::NOW % 3600 - 30 * 86400, $windows[0]['start']);
+        self::assertSame($windows[0], $windows[1], 'the second page of the same day');
+        self::assertStringContainsString('after=' . rawurlencode("start=$hour:end=" . ($hour + 3600) . ':entity_id=ad_502'), $pages[1]);
+        $days = array_slice($windows, 1);
+        foreach ($days as $i => $w) {
+            self::assertLessThanOrEqual(86400, $w['end'] - $w['start']);
+            if ($i > 0) {
+                self::assertSame($days[$i - 1]['end'], $w['start'], 'contiguous');
+            }
+        }
+        self::assertSame(self::NOW, $days[array_key_last($days)]['end']);
 
         $ledger = self::ledger();
-        // ad_503's spend has seven decimals: left out, by name; the rest kept.
-        self::assertSame(["ad_501@$hour", "ad_502@$hour", 'ad_501@' . ($hour + 3600)], array_keys($ledger));
+        self::assertSame(["ad_501@$hour", "ad_502@$hour", 'ad_501@' . ($hour + 3600), 'ad_503@' . ($hour + 3600)], array_keys($ledger));
         self::assertSame(['11.250000', '700', '22', 'cmpn_101', 'adgrp_201', 'adacct_demo', 'USD'], [
             $ledger["ad_501@$hour"]['spend'], $ledger["ad_501@$hour"]['impressions'], $ledger["ad_501@$hour"]['platform_clicks'],
             $ledger["ad_501@$hour"]['campaign_ref'], $ledger["ad_501@$hour"]['ad_group_ref'], $ledger["ad_501@$hour"]['account_ref'],
             $ledger["ad_501@$hour"]['currency'],
         ]);
+        // ad_503's 0.1234567 has seven decimals: rounded half up, kept.
+        self::assertSame('0.123457', $ledger['ad_503@' . ($hour + 3600)]['spend']);
         $state = $this->sync()->status(self::USER)[0];
         self::assertSame(self::NOW, $state['backfilled_at']);
-        self::assertSame(3, $state['last_rows']);
+        self::assertSame(self::NOW, $state['last_success_at']);
+        self::assertSame(4, $state['last_rows']);
         self::assertNull($state['last_error']);
-        self::assertStringContainsString('1 row(s) OpenAI sent were left out: ad "ad_503"', (string) $state['last_note']);
-        self::assertStringContainsString('spend must have at most six decimals', (string) $state['last_note']);
+        self::assertNull($state['last_note']);
+        self::assertNull($state['left_out']);
+        self::assertNull($state['pending_from']);
 
         // The next hour: 72 hours back, and a settled hour replaces its row.
         $this->urls = [];
@@ -269,9 +282,9 @@ final class SpendSyncIntegrationTest extends TestCase
         $this->answers[] = ['body' => str_replace('"spend": 11.25', '"spend": 12.5', InsightsClientTest::fixture('insights-hourly-page-1.json', $hour))];
         $this->answers[] = ['body' => InsightsClientTest::fixture('insights-hourly-page-2.json', $hour)];
         $this->sync($later)->runDue($later + 60);
-        self::assertSame(['start' => $later - $later % 3600 - 72 * 3600, 'end' => $later], self::window($this->urls[0]));
+        self::assertSame(['start' => $later - $later % 3600 - 72 * 3600, 'end' => $later - $later % 3600 - 48 * 3600], self::window($this->urls[0]));
         $ledger = self::ledger();
-        self::assertCount(3, $ledger, 'replaced, not added');
+        self::assertCount(4, $ledger, 'replaced, not added');
         self::assertSame('12.500000', $ledger["ad_501@$hour"]['spend']);
     }
 
@@ -338,10 +351,10 @@ final class SpendSyncIntegrationTest extends TestCase
         $this->sync()->runDue(self::NOW + 60);
 
         // Asked daily, per ad, over whole UTC days; a 413 asks again for fewer ads.
-        self::assertCount(3, $this->bodies);
+        self::assertCount(4, $this->bodies);
         $first = json_decode($this->bodies[0], true);
         self::assertSame(['ad', 'daily', true], [$first['aggregation_level'], $first['time_granularity'], $first['group_by_entity']]);
-        self::assertSame(['ad_501', 'ad_502'], $first['entity_ids']);
+        self::assertSame(['ad_501', 'ad_502', 'ad_503'], $first['entity_ids']);
         $range = json_decode($first['time_ranges'][0], true);
         self::assertSame(0, $range['start'] % 86400);
         self::assertSame(['ad_501'], json_decode($this->bodies[1], true)['entity_ids'], 'halved after the 413');
@@ -369,6 +382,42 @@ final class SpendSyncIntegrationTest extends TestCase
         self::assertNull($byAd['ad_502']['sales']);
         self::assertSame([1, 0], [$byAd['ad_501']['prosper202_conversions'], $byAd['ad_502']['prosper202_conversions']]);
         self::assertStringContainsString("conversion row(s) OpenAI sent were left out: row 2: ad ad_501: date is not a day", (string) $this->sync()->status(self::USER)[0]['last_note']);
+    }
+
+    /**
+     * Prosper202's side of a platform row counts the clicks the ledger tie
+     * gives that ad (LedgerCost::sets(): case and trailing spaces do not
+     * count), whichever spelling the click carried; a click of an unmarked
+     * source in an account with a ChatGPT Ads source is not OpenAI's, in
+     * any spelling.
+     */
+    public function testProsper202sCountMatchesTheTieForACaseOrSpaceVariantAd(): void
+    {
+        $hour = self::NOW - self::NOW % 3600 - 7200;
+        $day = gmdate('Y-m-d', $hour);
+        foreach (['ad_301', 'ad_302', 'ad_303', 'AD_304'] as $ad) {
+            self::q('INSERT INTO 202_ad_platform_conversions SET user_id = ' . self::USER . ", platform = 'openai_ads', account_ref = 'adacct_demo',"
+                . " ad_ref = '$ad', day = '$day', timezone = 'UTC', conversions = 5, updated_at = 0");
+        }
+        // [source, its mark, set, click, the ad as the click carried it]
+        $clicks = [[64401, 'chatgpt_ads', 644001, 6440001, 'AD_301'], [64401, 'chatgpt_ads', 644002, 6440002, 'ad_302 '],
+            [64402, '', 644003, 6440003, 'AD_303'], [64401, 'chatgpt_ads', 644004, 6440004, 'ad_304']];
+        foreach ([64401 => 'chatgpt_ads', 64402 => ''] as $network => $mark) {
+            self::q("INSERT INTO 202_ppc_networks SET ppc_network_id = $network, user_id = " . self::USER . ", ppc_network_name = 'Source $network',"
+                . " ppc_network_platform = '$mark', ppc_network_time = 0");
+            self::q("INSERT INTO 202_ppc_network_variables SET ppc_variable_id = $network, ppc_network_id = $network, name = 'ad_id', parameter = 'ad_id', placeholder = '{ad_id}'");
+        }
+        foreach ($clicks as [$network, , $set, $click, $ad]) {
+            self::q("INSERT INTO 202_custom_variables SET custom_variable_id = $set, ppc_variable_id = $network, variable = '$ad'");
+            self::q("INSERT INTO 202_variable_sets2 SET variable_set_id = $set, variables = '$set'");
+            self::q('INSERT INTO 202_dataengine SET user_id = ' . self::USER . ", click_id = $click, click_time = " . ($hour + 60)
+                . ", ppc_network_id = $network, ppc_account_id = 1, aff_campaign_id = 1, landing_page_id = 0, keyword_id = 0,"
+                . " variable_set_id = '$set', clicks = 1, click_out = 1, leads = 1, click_lead = 1, click_filtered = 0,"
+                . ' click_bot = 0, payout = 10, income = 10, cost = 0.1');
+        }
+        $read = (new \Prosper202\Spend\PlatformConversions(new Connection(self::$db)))->read(self::USER, $day, $day, null, 50);
+        $ours = array_column($read['rows'], 'prosper202_conversions', 'ad_ref');
+        self::assertSame(['AD_304' => 1, 'ad_301' => 1, 'ad_302' => 1, 'ad_303' => 0], $ours);
     }
 
     public function testSalesWithMoreDecimalsThanTheColumnAreRoundedAndTheRowKept(): void
@@ -430,12 +479,12 @@ final class SpendSyncIntegrationTest extends TestCase
         $this->sync()->setEnabled(self::USER, self::CONNECTION + 1, true);
         $this->pages(self::NOW - self::NOW % 3600 - 7200);
 
-        self::assertSame(['synced' => 1, 'failed' => 1, 'rows' => 3], $this->sync()->runDue(self::NOW + 60));
+        self::assertSame(['synced' => 1, 'incomplete' => 0, 'failed' => 1, 'rows' => 4], $this->sync()->runDue(self::NOW + 60));
         $states = array_column($this->sync()->status(self::USER), null, 'connection_id');
         self::assertSame('the run stopped: RuntimeException: the transport broke', $states[self::CONNECTION]['last_error']);
         self::assertSame(self::NOW, $states[self::CONNECTION]['last_run_at']);
         self::assertNull($states[self::CONNECTION + 1]['last_error']);
-        self::assertCount(3, self::ledger());
+        self::assertCount(4, self::ledger());
     }
 
     public function testACursorOpenAiAlreadyGaveStopsThePull(): void
@@ -447,15 +496,15 @@ final class SpendSyncIntegrationTest extends TestCase
         self::assertCount(2, array_filter($this->urls, static fn (string $u): bool => str_contains($u, '/ad_account/insights')), 'stopped at the first repeat');
     }
 
-    /** @return iterable<string, array{int, string, bool}> */
+    /** @return iterable<string, array{int, string}> */
     public static function conversionFailuresThatFailTheRun(): iterable
     {
-        yield 'rate limited' => [429, 'OpenAI answered 429', true];
-        yield 'key refused' => [401, 'refused the Advertiser API key', false];
+        yield 'rate limited' => [429, 'OpenAI answered 429'];
+        yield 'key refused' => [401, 'refused the Advertiser API key'];
     }
 
     /** @dataProvider conversionFailuresThatFailTheRun */
-    public function testAConversions429OrRefusedKeyFailsTheRunAsTheSpendPullWould(int $status, string $said, bool $waits): void
+    public function testAConversions429OrRefusedKeyFailsTheRunAsTheSpendPullWould(int $status, string $said): void
     {
         $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
         $this->pages(self::NOW - self::NOW % 3600 - 7200);
@@ -464,7 +513,7 @@ final class SpendSyncIntegrationTest extends TestCase
         $state = $this->sync()->status(self::USER)[0];
         self::assertStringContainsString($said, (string) $state['last_error']);
         self::assertStringNotContainsString('conversions not read', (string) $state['last_note']);
-        self::assertSame($waits ? self::NOW + 3600 : null, $state['retry_after']);
+        self::assertSame(self::NOW + 3600, $state['retry_after'], 'both wait an hour');
     }
 
     public function testConversionsOpenAiRefusesAreANoteAndTheSpendStands(): void
@@ -476,8 +525,229 @@ final class SpendSyncIntegrationTest extends TestCase
         $state = $this->sync()->status(self::USER)[0];
         self::assertNull($state['last_error']);
         self::assertStringContainsString('conversions not read: OpenAI answered 400: time_ranges must not be in the future', (string) $state['last_note']);
-        self::assertCount(3, self::ledger());
+        self::assertCount(4, self::ledger());
     }
+    /**
+     * One page of $spends for ad_501.. at $hour, as OpenAI's JSON writes
+     * them (a value given as a string is written raw: a JSON number).
+     *
+     * @param list<string> $spends JSON texts
+     */
+    private static function pageOf(int $hour, array $spends): string
+    {
+        $rows = [];
+        foreach ($spends as $i => $spend) {
+            $ad = 'ad_' . (501 + $i);
+            $rows[] = '{"id":"start=' . $hour . ':' . $ad . '","start_time":' . $hour . ',"end_time":' . ($hour + 3600)
+                . ',"campaign_id":"cmpn_101","ad_group_id":"adgrp_201","ad_id":"' . $ad . '","impressions":10,"clicks":1,"spend":' . $spend . '}';
+        }
+
+        return '{"object":"list","data":[' . implode(',', $rows) . '],"has_more":false,"last_id":null}';
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function spendTheLedgerStillRefuses(): iterable
+    {
+        yield 'negative' => ['-1.5', 'spend must be an amount of at least 0'];
+        yield 'null' => ['null', 'spend'];
+        yield 'boolean' => ['true', 'spend must be an amount'];
+        yield 'over ten digits' => ['1e15', 'spend must be an amount'];
+        yield 'exponent text' => ['"1e2"', 'spend must be an amount'];
+    }
+
+    /**
+     * Spend with more than six decimals is rounded half up from its text;
+     * a row still refused keeps the run incomplete and the backfill unset,
+     * and is named in left_out until a run reads its hour again cleanly.
+     *
+     * @dataProvider spendTheLedgerStillRefuses
+     */
+    public function testARowLeftOutKeepsTheRunIncompleteUntilItsHourIsReadAgainCleanly(string $bad, string $why): void
+    {
+        $hour = self::NOW - self::NOW % 3600 - 7200;
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $this->answers[] = ['body' => self::pageOf($hour, ['5e-7', '1.23456789', '"1.0000005"', $bad])];
+
+        $done = $this->sync()->runDue(self::NOW + 60);
+        self::assertSame(['synced' => 0, 'incomplete' => 1, 'failed' => 0, 'rows' => 3], $done);
+        $spend = array_column(self::ledger(), 'spend', 'ad_ref');
+        self::assertSame(['ad_501' => '0.000001', 'ad_502' => '1.234568', 'ad_503' => '1.000001'], $spend, 'rounded half up from the text');
+        $state = $this->sync()->status(self::USER)[0];
+        self::assertNull($state['backfilled_at'], 'not complete: the backfill is read again');
+        self::assertNull($state['last_success_at']);
+        self::assertNull($state['last_error']);
+        self::assertSame($hour, $state['pending_from'], 'from the left-out row\'s hour');
+        self::assertStringContainsString('1 row(s) of hours from ' . gmdate('Y-m-d H:i', $hour) . ' UTC were left out', (string) $state['left_out']);
+        self::assertStringContainsString('ad "ad_504"', (string) $state['left_out']);
+        self::assertStringContainsString($why, (string) $state['left_out']);
+
+        // A run that does not reach the hour (it fails first) keeps the warning.
+        $this->answers[] = ['status' => 503, 'body' => '{}'];
+        $this->sync(self::NOW + 600)->run($this->live[self::CONNECTION]);
+        self::assertStringContainsString('ad "ad_504"', (string) $this->sync()->status(self::USER)[0]['left_out']);
+
+        // The next run starts at that hour, not 30 days back; OpenAI now sends it readably.
+        $this->urls = [];
+        $later = self::NOW + 3600;
+        $this->answers[] = ['body' => self::pageOf($hour, ['1', '2', '3', '4'])];
+        self::assertSame(1, $this->sync($later)->runDue($later + 60)['synced']);
+        self::assertSame($hour, self::window($this->urls[0])['start']);
+        $state = $this->sync()->status(self::USER)[0];
+        self::assertNull($state['left_out']);
+        self::assertNull($state['pending_from']);
+        self::assertSame($later, $state['backfilled_at']);
+        self::assertSame('4.000000', self::ledger()['ad_504@' . $hour]['spend']);
+    }
+
+    /** A later clean run that does not re-read the left-out hours does not erase the warning. */
+    public function testALeftOutHourOpenAiNoLongerKeepsStaysNamedUntilAPersonActs(): void
+    {
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $old = self::NOW - self::NOW % 3600 - 31 * 86400;
+        self::q('UPDATE 202_ad_spend_sync SET backfilled_at = 1, pending_from = ' . $old
+            . ", left_out = '1 row(s) of hours from then were left out' WHERE connection_id = " . self::CONNECTION);
+
+        foreach ([self::NOW, self::NOW + 3600] as $now) {
+            $this->sync($now)->runDue($now + 60);
+            $state = $this->sync()->status(self::USER)[0];
+            self::assertStringStartsWith('1 row(s) of hours from then were left out; those hours are older than the 30 days', (string) $state['left_out']);
+            self::assertSame(1, substr_count((string) $state['left_out'], 'older than the 30 days'), 'said once');
+            self::assertNull($state['pending_from'], 'not read again: OpenAI no longer has them');
+        }
+
+        // Turning it off and on is the person's word that it is dealt with.
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, false);
+        self::assertNotNull($this->sync()->status(self::USER)[0]['left_out'], 'off alone clears nothing');
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        self::assertNull($this->sync()->status(self::USER)[0]['left_out']);
+    }
+
+    /**
+     * A run reads a day at a time and stops at its page budget: what it read
+     * stands, the run is not complete, and each next run goes on from the
+     * first day it did not read until the window is whole.
+     */
+    public function testAPageBudgetStopsTheRunAndTheNextOneGoesOn(): void
+    {
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $from = self::NOW - self::NOW % 3600 - 30 * 86400;
+        $hour = self::NOW - self::NOW % 3600 - 7200;
+        $guard = new WebhookGuard(static fn (string $host): array => ['203.0.113.20'], '203.0.113.0/24');
+        $budgeted = new SpendSync(new Connection(self::$db), $this->connections($this->live), new InsightsClient(new AdvertiserApi(new WebhookSender($guard, function (array $options) use ($hour): array {
+            $this->urls[] = (string) $options[CURLOPT_URL];
+            if (str_contains((string) $options[CURLOPT_URL], '/conversions/insights')) {
+                return ['status' => 200, 'error' => null, 'primary_ip' => '203.0.113.20', 'location' => null, 'body' => '{"object":"list","data":[]}'];
+            }
+            $window = self::window((string) $options[CURLOPT_URL]);
+            // Spend only in the day that holds $hour.
+            $body = $window['start'] <= $hour && $hour < $window['end'] ? self::pageOf($hour, ['2.5']) : self::pageOf($hour, []);
+
+            return ['status' => 200, 'error' => null, 'primary_ip' => '203.0.113.20', 'location' => null, 'body' => $body];
+        }))), static fn (): int => self::NOW, 3);
+
+        $runs = 0;
+        $windows = [];
+        do {
+            $this->urls = [];
+            $result = $budgeted->run($this->live[self::CONNECTION]);
+            $runs++;
+            $windows = [...$windows, ...array_map(self::window(...), array_filter($this->urls, static fn (string $u): bool => str_contains($u, '/ad_account/insights')))];
+            $state = $budgeted->status(self::USER)[0];
+            if (!$result['complete']) {
+                self::assertLessThanOrEqual(3, count($this->urls) - count(array_filter($this->urls, static fn (string $u): bool => str_contains($u, '/conversions/'))));
+                self::assertNull($state['backfilled_at']);
+                self::assertSame($result['to'], $state['pending_from']);
+                self::assertStringContainsString('stopped after 3 page(s)', (string) $result['note']);
+                self::assertStringContainsString('the next run goes on from there', (string) $state['last_note']);
+                self::assertNull($state['last_error']);
+            }
+        } while (!$result['complete'] && $runs < 20);
+
+        self::assertSame(11, $runs, '31 days, 3 a run');
+        self::assertSame($from, $windows[0]['start']);
+        foreach ($windows as $i => $w) {
+            if ($i > 0) {
+                self::assertSame($windows[$i - 1]['end'], $w['start'], 'each day read once, in order');
+            }
+        }
+        self::assertSame(self::NOW, $windows[array_key_last($windows)]['end']);
+        $state = $budgeted->status(self::USER)[0];
+        self::assertSame(self::NOW, $state['backfilled_at']);
+        self::assertNull($state['pending_from']);
+        self::assertSame('2.500000', self::ledger()['ad_501@' . $hour]['spend']);
+    }
+
+    /** The cron's deadline is checked between pages, not only between connections. */
+    public function testTheDeadlineStopsARunBetweenPages(): void
+    {
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $tick = self::NOW;
+        $guard = new WebhookGuard(static fn (string $host): array => ['203.0.113.20'], '203.0.113.0/24');
+        $sync = new SpendSync(new Connection(self::$db), $this->connections($this->live), new InsightsClient(new AdvertiserApi(new WebhookSender($guard, function (array $options) use (&$tick): array {
+            $this->urls[] = (string) $options[CURLOPT_URL];
+            $tick += 100;
+
+            return ['status' => 200, 'error' => null, 'primary_ip' => '203.0.113.20', 'location' => null, 'body' => self::pageOf(self::NOW - 7200, [])];
+        }))), static function () use (&$tick): int {
+            return $tick;
+        });
+
+        $done = $sync->runDue(self::NOW + 250);
+        self::assertSame(['synced' => 0, 'incomplete' => 1, 'failed' => 0, 'rows' => 0], $done);
+        self::assertCount(3, $this->urls, 'three pages, then the deadline');
+        $state = $sync->status(self::USER)[0];
+        self::assertStringContainsString('stopped at the run\'s time limit', (string) $state['last_note']);
+        self::assertSame(self::NOW - self::NOW % 3600 - 30 * 86400 + 3 * 86400, $state['pending_from']);
+    }
+
+    public function testARefusedKeyIsLeftAloneForAnHourThenTwo(): void
+    {
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $this->answers[] = ['status' => 401, 'body' => '{}'];
+        $result = $this->sync()->run($this->live[self::CONNECTION]);
+        self::assertSame(SpendSync::KEY_REFUSED, $result['outcome']);
+        self::assertSame(self::NOW + 3600, $this->sync()->status(self::USER)[0]['retry_after']);
+
+        $this->urls = [];
+        $this->sync(self::NOW + 1800)->runDue(self::NOW + 1860);
+        self::assertSame([], $this->urls, 'not asked again within the hour');
+
+        $this->answers[] = ['status' => 403, 'body' => '{}'];
+        $this->sync(self::NOW + 3600)->runDue(self::NOW + 3660);
+        self::assertSame(self::NOW + 3600 + 7200, $this->sync()->status(self::USER)[0]['retry_after']);
+    }
+
+    /** @return iterable<string, array{array<string, mixed>, string}> */
+    public static function failuresByKind(): iterable
+    {
+        yield 'OpenAI 429' => [['status' => 429, 'body' => '{}'], SpendSync::RATE_LIMITED];
+        yield 'OpenAI 503' => [['status' => 503, 'body' => '{}'], SpendSync::UNAVAILABLE];
+        yield 'no answer' => [['status' => 0, 'error' => 'timed out'], SpendSync::UNAVAILABLE];
+        yield 'not JSON' => [['body' => '<html>'], SpendSync::UNREADABLE];
+        yield 'cut off' => [['body' => '{"object":"list"', 'error' => 'the answer was longer than allowed'], SpendSync::UNREADABLE];
+        yield 'OpenAI 400' => [['status' => 400, 'body' => '{}'], SpendSync::UNREADABLE];
+        yield 'not a page' => [['body' => '{"object":"list"}'], SpendSync::UNREADABLE];
+        yield 'key refused' => [['status' => 403, 'body' => '{}'], SpendSync::KEY_REFUSED];
+    }
+
+    /**
+     * Each failure is the kind its answer is, and keeps the days read before
+     * it: the next run starts at the day it failed in.
+     *
+     * @dataProvider failuresByKind
+     * @param array<string, mixed> $answer
+     */
+    public function testAFailureIsItsKindAndTheNextRunStartsWhereItFailed(array $answer, string $kind): void
+    {
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $this->answers[] = ['body' => self::pageOf(self::NOW - 7200, [])];
+        $this->answers[] = $answer;
+        $result = $this->sync()->run($this->live[self::CONNECTION]);
+        self::assertSame($kind, $result['outcome']);
+        self::assertFalse($result['complete']);
+        self::assertSame(self::NOW - self::NOW % 3600 - 29 * 86400, $this->sync()->status(self::USER)[0]['pending_from'], 'the first day stands');
+    }
+
     /**
      * The sync the cron runs (SpendSync's own client, its limits in the
      * install's state store) against the stand-in P202_OPENAI_ADS_ENDPOINT

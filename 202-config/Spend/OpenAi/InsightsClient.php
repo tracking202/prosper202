@@ -68,7 +68,7 @@ final class InsightsClient
      * the last).
      *
      * @return array{rows: list<array<string, mixed>>, next: ?string}
-     * @throws InsightsFailure naming what went wrong; rateLimited() on a 429
+     * @throws InsightsFailure naming what went wrong; its code says what kind
      */
     public function page(#[\SensitiveParameter] string $apiKey, int $start, int $end, ?string $after): array
     {
@@ -76,18 +76,18 @@ final class InsightsClient
         $isPage = isset($json['data']) && is_array($json['data']) && array_is_list($json['data'])
             && array_key_exists('has_more', $json) && is_bool($json['has_more']);
         if (!$isPage) {
-            throw new InsightsFailure('OpenAI answered with something that is not a page of insights');
+            throw new InsightsFailure('OpenAI answered with something that is not a page of insights', InsightsFailure::UNREADABLE);
         }
         $next = null;
         if ($json['has_more']) {
             $next = $json['last_id'] ?? null;
             if (!is_string($next) || $next === '') {
-                throw new InsightsFailure('OpenAI said more rows follow and gave no cursor (last_id)');
+                throw new InsightsFailure('OpenAI said more rows follow and gave no cursor (last_id)', InsightsFailure::UNREADABLE);
             }
         }
         foreach ($json['data'] as $i => $row) {
             if (!is_array($row) || array_is_list($row)) {
-                throw new InsightsFailure("OpenAI's row $i is not an object");
+                throw new InsightsFailure("OpenAI's row $i is not an object", InsightsFailure::UNREADABLE);
             }
         }
 
@@ -120,11 +120,11 @@ final class InsightsClient
         ];
         $json = $this->answer(fn (AdvertiserApi $api): AdvertiserAnswer => $api->post($apiKey, 'conversions/insights', $body));
         if (!isset($json['data']) || !is_array($json['data']) || !array_is_list($json['data'])) {
-            throw new InsightsFailure('OpenAI answered with something that is not a list of conversion rows');
+            throw new InsightsFailure('OpenAI answered with something that is not a list of conversion rows', InsightsFailure::UNREADABLE);
         }
         foreach ($json['data'] as $i => $row) {
             if (!is_array($row) || array_is_list($row)) {
-                throw new InsightsFailure("OpenAI's conversion row $i is not an object");
+                throw new InsightsFailure("OpenAI's conversion row $i is not an object", InsightsFailure::UNREADABLE);
             }
         }
 
@@ -147,7 +147,7 @@ final class InsightsClient
         try {
             $this->api ??= ($this->build ?? static fn (): AdvertiserApi => AdvertiserApi::fromEnvironment())();
         } catch (\InvalidArgumentException | \RuntimeException $e) {
-            throw new InsightsFailure('not sent: ' . $e->getMessage());
+            throw new InsightsFailure('not sent: ' . $e->getMessage(), InsightsFailure::UNAVAILABLE);
         }
         $answer = $send($this->api);
         if ($answer->isOk()) {
@@ -155,13 +155,17 @@ final class InsightsClient
         }
         $status = $answer->status;
         $error = (string) $answer->error;
+        // By the kind AdvertiserApi gave (the status, never the words): an
+        // answer that arrived with a 2xx and could not be read (cut off, not
+        // JSON) is unusable, not an outage.
         [$message, $code] = match (true) {
             $status === 429 => ['OpenAI answered 429: too many requests', InsightsFailure::RATE_LIMITED],
             $answer->kind === AdvertiserAnswer::RATE_LIMITED => [$error, InsightsFailure::RATE_LIMITED],
             $status === 413 => ['OpenAI answered 413: more than 2000 rows', InsightsFailure::TOO_LARGE],
-            $status === 401 || $status === 403 => ['OpenAI refused the Advertiser API key (' . $status . '); connect the ad account again with a key that can read insights', InsightsFailure::KEY_REFUSED],
+            $status === 401 || $status === 403 => ['OpenAI refused the Advertiser API key (' . $status . '); replace it with a key that can read insights', InsightsFailure::KEY_REFUSED],
             $answer->kind === AdvertiserAnswer::KEY_REFUSED => [$error, InsightsFailure::KEY_REFUSED],
-            default => [$error, InsightsFailure::FAILED],
+            $answer->kind === AdvertiserAnswer::UNAVAILABLE && ($status === 0 || $status >= 500) => [$error, InsightsFailure::UNAVAILABLE],
+            default => [$error, InsightsFailure::UNREADABLE],
         };
 
         throw new InsightsFailure($message, $code, $answer->retryAfter);

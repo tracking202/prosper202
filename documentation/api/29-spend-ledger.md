@@ -8,6 +8,10 @@ read it as cost.
 | ------ | ---- | ----- | --------------- |
 | `POST` | `/api/v3/spend-ledger` | `spend-ledger:write` | `access_to_update_section` |
 | `GET` | `/api/v3/spend-ledger` | `spend-ledger:read` | none; money and counts are `null` with `masked: true` without `access_to_campaign_data` |
+| `GET` | `/api/v3/spend-ledger/conversions` | `spend-ledger:read` | none; masked as above |
+| `GET` | `/api/v3/spend-ledger/sync` | `spend-ledger:read` | `access_to_setup_section` |
+| `PUT` | `/api/v3/spend-ledger/sync/{id}` | `spend-ledger:write` | `access_to_setup_section` |
+| `POST` | `/api/v3/spend-ledger/sync/{id}/run` | `spend-ledger:write` | `access_to_setup_section` |
 
 ## Writing
 
@@ -61,3 +65,67 @@ clicks carrying the ad in those hours: for `openai_ads` on an account with a
 marked ChatGPT Ads source, those sources' clicks only) and `unallocated_spend`
 (the spend of the hours no click carried it in). `reaches` is the end of the latest hour
 the ledger holds.
+
+## Platform conversions
+
+`GET /api/v3/spend-ledger/conversions` takes `period`, `time_from`,
+`time_to`, `platform` and `limit` (1 to 5000, default 500; `truncated` says
+more rows matched). Each row is one ad on one day in the ad account's time
+zone, as the platform reports it: `platform_conversions`, `click_through`,
+`view_through`, `sales` and `sales_currency`, beside
+`prosper202_conversions`, the conversions of this account's clicks that
+carried the ad that day, tied to the ad as its spend is (an ad id matches
+whatever its case and trailing spaces). The ChatGPT Ads spend sync fills it.
+
+## The ChatGPT Ads spend sync
+
+Each ChatGPT Ads connection ([ad connections](28-ad-connections.md)) can pull
+what OpenAI billed per ad per hour into this ledger every hour. It is off
+until turned on.
+
+- `GET /api/v3/spend-ledger/sync` lists each connection's sync: `enabled`,
+  `backfilled_at` (when the first 30 days were read whole; null until then),
+  `last_run_at`, `last_success_at` (the last complete run), `last_rows`,
+  `last_error` (a failed run), `last_note` (what the last run noted),
+  `left_out`, `pending_from` and `retry_after` (when the hourly run tries
+  again after a rate limit or a refused key).
+- `PUT /api/v3/spend-ledger/sync/{id}` with `{"enabled": true}` or `false`.
+  `id` is the ad connection's. Turning it on clears `left_out`.
+- `POST /api/v3/spend-ledger/sync/{id}/run` runs it now. It takes no body.
+
+The first run reads the last 30 days (what OpenAI keeps hourly); later runs
+re-read the trailing 72 hours, since spend settles after the clicks. A run
+reads a day at a time and stops between pages at its budget (500 pages, or
+two thirds of PHP's time limit, or 60 seconds without one, for a run asked
+for here; the hourly run's two
+minutes for all connections). What it read stands, and `pending_from` is the
+first hour it did not read whole: every later run starts there, so a long
+backfill, a stopped run or an outage loses nothing OpenAI still keeps.
+
+Spend with more than six decimals is rounded half up from its decimal text.
+**A row the ledger still refuses** (negative, null, not a number, too large)
+is left out and the rest of its page is written, but the run is **not
+complete**: `last_success_at` and `backfilled_at` are not set, the hours from
+the row's on are read again by every run, and `left_out` names the rows
+until a run reads those hours again without leaving one out. Setup › Traffic
+Sources shows it as a warning. Once those hours are older than the 30 days
+OpenAI keeps, `left_out` says so and stays until the sync is turned off and
+on; enter that spend with `POST /api/v3/spend-ledger`.
+
+A run's answers (the run is recorded either way):
+
+| Status | When | Body |
+|--------|------|------|
+| `200` | The run got through | `data.run`: `rows`, `from`, `to` (how far it read), `complete`, `note`; beside the sync's state |
+| `404` | No ChatGPT Ads connection by that id | |
+| `422` | The sync is off | `field_errors.enabled` |
+| `422` | The ad account bills in another currency than the account (nothing is converted), or the ledger refused a page | `field_errors.connection` |
+| `422` | OpenAI refused the connection's Advertiser API key (401, 403) | `field_errors.api_key`; the hourly run waits an hour, doubling to a day, until the key is replaced (`PATCH /ad-connections/{id}`) |
+| `422` | A body was sent | `field_errors` names its keys |
+| `429` with `Retry-After` | OpenAI answered 429, or this install is holding to its per-minute limits | `details.reason` `rate_limited`, `details.retry_after` (when the hourly run tries again: an hour, doubling to a day, or OpenAI's Retry-After when longer, up to a week); `Retry-After` is the seconds until then |
+| `503` with `Retry-After` | No answer from OpenAI, a 5xx of its own, or the request was not sent | `details.reason` `unreachable`; `Retry-After` is OpenAI's, else 60 |
+| `502` | OpenAI's answer cannot be used: not JSON, cut off, not a page of insights, a cursor it gave before, or another 4xx | `details.reason` `unreadable_answer` |
+
+`details` also carries `upstream` (`openai_ads`) and `connection_id`.
+`p202 spend sync run` exits 7 (rate limited) for the `429`, 4 (server) for
+the `503` and `502`, and 1 for each `422`, with a hint for what to change.

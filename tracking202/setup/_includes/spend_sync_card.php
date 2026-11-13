@@ -46,7 +46,7 @@ function p202_spend_sync_card(mysqli $db, int $userId, string $base, string $tok
         $on = $state['enabled'] === true;
         $detail = $on
             ? 'Last run ' . $at($state['last_run_at']) . ', ' . (int) $state['last_rows'] . ' hour rows'
-                . ($state['backfilled_at'] === null ? '; the first run reads the last 30 days' : '')
+                . ($state['backfilled_at'] === null ? '; the first 30 days are still being read' : '')
             : 'Off: reports cost these clicks at their CPC.';
         $rows .= '<li class="p202-list__item">'
             . '<span class="p202-list__name">' . p202_setup_e($state['account_ref']) . '</span>'
@@ -59,6 +59,8 @@ function p202_spend_sync_card(mysqli $db, int $userId, string $base, string $tok
             . '</form></span>'
             . '<div class="form-text w-100">' . p202_setup_e($detail) . '</div>'
             . ($state['last_error'] !== null ? '<div class="form-text text-danger w-100">' . p202_setup_e($state['last_error']) . '</div>' : '')
+            // Spend OpenAI sent that the ledger could not take: reports are short of it until this clears.
+            . ($state['left_out'] !== null ? '<div class="form-text text-warning w-100">Spend missing from reports: ' . p202_setup_e($state['left_out']) . '</div>' : '')
             . '</li>';
     }
 

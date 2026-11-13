@@ -517,8 +517,8 @@ function RecheckLandingPageCode(): void
 
 /**
  * The ChatGPT Ads spend sync (Prosper202\Spend\OpenAi\SpendSync) for the
- * connections whose sync is on, for up to two minutes. A connection's
- * failure is recorded on it; anything else is logged and the tier goes on.
+ * connections whose sync is on, for up to two minutes, checked between
+ * pages. A connection's failure is recorded on it; anything else is logged and the tier goes on.
  */
 function SyncAdSpend(): void
 {
@@ -528,9 +528,9 @@ function SyncAdSpend(): void
             $conn,
             new \Prosper202\Spend\OpenAi\AdConnectionSpendConnections(new \Prosper202\AdPlatforms\AdConnectionStore($conn))
         ))->runDue(time() + 120);
-        if ($done['synced'] + $done['failed'] > 0) {
-            echo 'ChatGPT Ads spend: ' . (int) $done['synced'] . ' connection(s) synced, ' . (int) $done['failed']
-                . ' failed, ' . (int) $done['rows'] . ' hour row(s) written<br>';
+        if ($done['synced'] + $done['incomplete'] + $done['failed'] > 0) {
+            echo 'ChatGPT Ads spend: ' . (int) $done['synced'] . ' connection(s) synced, ' . (int) $done['incomplete']
+                . ' not complete (they go on next hour), ' . (int) $done['failed'] . ' failed, ' . (int) $done['rows'] . ' hour row(s) written<br>';
         }
     } catch (\Throwable $error) {
         error_log('ChatGPT Ads spend sync failed: ' . $error->getMessage());

@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Exception\NotFoundException;
-use Api\V3\HttpException;
+use Api\V3\Exception\TooManyRequestsException;
+use Api\V3\Exception\UpstreamUnavailableException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\PayloadKeys;
 use Prosper202\AdPlatforms\AdConnectionStore;
+use Prosper202\AdPlatforms\AdPlatformUnavailable;
 use Prosper202\Database\Connection;
 use Prosper202\Spend\OpenAi\AdConnectionSpendConnections;
 use Prosper202\Spend\OpenAi\SpendSync;
@@ -54,9 +56,13 @@ final class SpendSyncController
         return ['data' => $this->one($connectionId)];
     }
 
-    /** @return array<string, mixed> */
-    public function run(int $connectionId): array
+    /**
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    public function run(int $connectionId, array $payload): array
     {
+        PayloadKeys::refuseUnknown($payload, [], 'a spend sync run (it takes no body)');
         $state = $this->one($connectionId);
         if ($state['enabled'] !== true) {
             throw new ValidationException('Spend sync is off', [
@@ -67,22 +73,49 @@ final class SpendSyncController
         if ($connection === null) {
             throw new NotFoundException('No ChatGPT Ads connection ' . $connectionId . ' (GET /ad-connections lists them)');
         }
-        $result = $this->sync->run($connection);
-        // A failed run is answered as one (CLAUDE.md #1): refused here (the
-        // currency) is a 422, the account's to change; OpenAI's refusal, its
-        // 429 or its silence is a 424 (failed dependency) with OpenAI's words,
-        // which a 5xx would hide. The run is recorded either way, and GET
-        // /spend-ledger/sync shows it (retry_after after a 429).
+        $result = $this->sync->run($connection, self::deadline());
+        // A failed run is answered as one (CLAUDE.md #1), as the ad
+        // connections answer OpenAI (AdConnectionsController::refusing()):
+        // refused here or a refused key is the account's to change (422);
+        // OpenAI's limit 429, OpenAI not reached 503, its answer unusable
+        // 502. The run is recorded either way (GET /spend-ledger/sync).
         if ($result['error'] !== null) {
-            if ($result['refused']) {
-                throw new ValidationException('Spend sync refused', ['connection' => $result['error']]);
-            }
-            throw new HttpException('Spend sync run failed: ' . $result['error']
-                . ($result['rate_limited'] ? ' (the next run waits; GET /spend-ledger/sync says until when)' : ''), 424);
-        }
-        unset($result['refused'], $result['rate_limited']);
+            $said = 'Spend sync run for connection ' . $connectionId . ' failed: ' . $result['error'];
+            $details = ['upstream' => SpendSync::PLATFORM, 'connection_id' => $connectionId];
+            switch ($result['outcome']) {
+                case SpendSync::REFUSED:
+                    throw new ValidationException('Spend sync refused', ['connection' => $result['error']]);
+                case SpendSync::KEY_REFUSED:
+                    throw new ValidationException('OpenAI refused connection ' . $connectionId . '\'s Advertiser API key', [
+                        'api_key' => 'OpenAI refused the Advertiser API key of connection ' . $connectionId . ' (' . $result['error']
+                            . '); replace it (PATCH /ad-connections/' . $connectionId . ' {"api_key": ...}); the hourly run waits until then or until retry_after',
+                    ]);
+                case SpendSync::RATE_LIMITED:
+                    throw new TooManyRequestsException($said . '; the hourly run waits until retry_after', max(1, $result['retry_after'] - time()),
+                        ['details' => $details + ['reason' => AdPlatformUnavailable::RATE_LIMITED, 'retry_after' => $result['retry_after']]]);
+                case SpendSync::UNAVAILABLE:
+                    $wait = $result['wait'] === null || $result['wait'] < 1 ? UpstreamUnavailableException::RETRY_AFTER : min($result['wait'], 3600);
 
-        return ['data' => ['run' => $result] + $this->one($connectionId)];
+                    throw new UpstreamUnavailableException($said, $wait, $details + ['reason' => AdPlatformUnavailable::UNREACHABLE]);
+                default:
+                    throw new UpstreamUnavailableException($said, null, $details + ['reason' => AdPlatformUnavailable::UNREADABLE]);
+            }
+        }
+        $run = ['rows' => $result['rows'], 'from' => $result['from'], 'to' => $result['to'], 'complete' => $result['complete'],
+            'error' => null, 'note' => $result['note']];
+
+        return ['data' => ['run' => $run] + $this->one($connectionId)];
+    }
+
+    /**
+     * When a run asked for here stops reading: well inside PHP's time limit,
+     * so what it read is recorded and the next run goes on from there.
+     */
+    private static function deadline(): int
+    {
+        $limit = (int) ini_get('max_execution_time');
+
+        return time() + ($limit > 0 ? max(5, intdiv($limit * 2, 3)) : 60);
     }
 
     /** @return array<string, mixed> */

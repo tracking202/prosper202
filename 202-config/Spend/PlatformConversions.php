@@ -126,23 +126,15 @@ final class PlatformConversions
      */
     public static function salesAmount(mixed $sales): ?string
     {
-        if (!is_string($sales) || preg_match('/^(0|[1-9][0-9]{0,9})(?:\.([0-9]{1,40}))?$/D', $sales, $m) !== 1) {
-            return null;
-        }
-        $fraction = str_pad($m[2] ?? '', 7, '0');
-        $micros = (int) ($m[1] . substr($fraction, 0, 6)) + ($fraction[6] >= '5' ? 1 : 0);
-        if ($micros > 9999999999999999) {
-            return null;
-        }
-
-        return sprintf('%d.%06d', intdiv($micros, 1000000), $micros % 1000000);
+        return is_string($sales) ? SixDecimals::fromText($sales) : null;
     }
 
     /**
      * The account's platform conversions per ad and day in [$fromDay,
      * $toDay] (dates, inclusive), newest first, each with Prosper202's
      * conversions of the clicks carrying the ad on that day in the row's
-     * zone (`prosper202_conversions`).
+     * zone (`prosper202_conversions`). Two platform ads that differ only in
+     * case or trailing spaces are one ad to the click tie and share its count.
      *
      * @return array{rows: list<array<string, mixed>>, truncated: bool}
      */
@@ -162,7 +154,7 @@ final class PlatformConversions
         $ours = $this->ours($userId, $rows);
         $out = [];
         foreach ($rows as $row) {
-            $key = (string) $row['platform'] . "\0" . (string) $row['ad_ref'] . "\0" . (string) $row['day'] . "\0" . (string) $row['timezone'];
+            $key = (string) $row['platform'] . "\0" . LedgerCost::tieKey((string) $row['ad_ref']) . "\0" . (string) $row['day'] . "\0" . (string) $row['timezone'];
             $out[] = [
                 'day' => (string) $row['day'],
                 'timezone' => (string) $row['timezone'],
@@ -229,8 +221,8 @@ final class PlatformConversions
                 if ($ref === null) {
                     continue;
                 }
-                // The ledger's ad ids never end in a space; a click's may (PAD SPACE, LedgerCost::adKey()).
-                $key = $platform . "\0" . rtrim($ref, ' ') . "\0" . (string) $hit['day'] . "\0" . $zone;
+                // As sets() matched the click's ad to the platform's (LedgerCost::tieKey()).
+                $key = $platform . "\0" . LedgerCost::tieKey($ref) . "\0" . (string) $hit['day'] . "\0" . $zone;
                 $out[$key] = ($out[$key] ?? 0) + (int) $hit['leads'];
             }
         }

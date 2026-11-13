@@ -707,7 +707,7 @@ try {
             $cls = \Api\V3\Controllers\SpendSyncController::class;
             $r->get('',                    fn() => $crud($cls)->list());
             $r->put('/{id}',               fn($ctx) => $crud($cls)->update(PathId::of($ctx), $payload));
-            $r->post('/{id}/run',          fn($ctx) => $crud($cls)->run(PathId::of($ctx)));
+            $r->post('/{id}/run',          fn($ctx) => $crud($cls)->run(PathId::of($ctx), $payload));
         }, [$setupSection]);
         $router->group('/conversions', function (Router $r) use ($crud, $payload, $queryParams, $auth, $db) {
             $cls = \Api\V3\Controllers\UpdateController::class;

@@ -3660,11 +3660,16 @@ paths:
       description: >-
         One entry per live ChatGPT Ads connection (`GET /ad-connections`):
         `enabled` (off until turned on), `backfilled_at` (when the first
-        30-day pull finished; null until then), the last run, `last_error`
-        (a run that failed: another currency than the account's, a refused
-        key, OpenAI's answer) or `last_note` (what a run that got through
-        left out), and `retry_after` while a 429 is waited out (an hour,
-        doubling up to a day). Role permission `access_to_setup_section`.
+        30 days were read whole; null until then), the last run,
+        `last_success_at` (the last complete run), `last_error` (a run that
+        failed: another currency than the account's, a refused key, OpenAI's
+        answer), `last_note` (what the last run noted), `left_out` (spend
+        rows OpenAI sent that the ledger refused, kept until a run reads
+        those hours again cleanly, or until the sync is turned off and on
+        once OpenAI no longer keeps them), `pending_from` (the first hour not
+        yet read whole; every run starts there) and `retry_after` while a 429
+        or a refused key is waited out (an hour, doubling up to a day; a new
+        key ends it). Role permission `access_to_setup_section`.
       operationId: listSpendSync
       responses:
         "200":
@@ -3690,7 +3695,8 @@ paths:
         (`GET /ad_account/insights`, hourly, at ad level) into the spend
         ledger every hour: the first run reads the 30 days OpenAI keeps
         hourly, later runs the trailing 72 hours. `{"enabled": false}` stops
-        it; what the ledger holds stays. `id` is the ad connection's id.
+        it; what the ledger holds stays. Turning it on clears `left_out`.
+        `id` is the ad connection's id.
       operationId: setSpendSync
       parameters:
         - name: id
@@ -3729,13 +3735,18 @@ paths:
       tags: [Spend Ledger]
       summary: Pull a ChatGPT Ads connection's spend now
       description: >-
-        The hourly run for one connection, now. A `422` when its sync is
-        off or the run is refused here (an ad account in another currency),
-        a `424` naming OpenAI's answer when OpenAI refused, rate-limited or
-        did not answer; either way the run is recorded (GET
-        /spend-ledger/sync). On success `data.run` is this run: `rows`
-        written, the window (`from`, `to`), and a `note` naming what was
-        left out.
+        The hourly run for one connection, now; it takes no body. It reads a
+        day at a time from `pending_from` (or its usual window) and stops
+        between pages at its budget (500 pages, or two thirds of PHP's time
+        limit); the next run goes on from there. The run is recorded either
+        way (GET /spend-ledger/sync). On success `data.run` is this run:
+        `rows` written, how far it read (`from`, `to`), `complete` (false
+        when it stopped early or left a row out, which `left_out` names) and
+        `note`. A failure is answered as the ad connections answer OpenAI:
+        its rate limit `429` and its outage `503`, both with `Retry-After`,
+        an answer that cannot be used `502` (`details.reason`
+        `rate_limited`, `unreachable`, `unreadable_answer`; `details.upstream`
+        `openai_ads`), and a refused key a `422` naming `api_key`.
       operationId: runSpendSync
       parameters:
         - name: id
@@ -3743,6 +3754,13 @@ paths:
           required: true
           schema:
             type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
       responses:
         "200":
           description: The run and the connection's spend sync after it
@@ -3765,6 +3783,8 @@ paths:
                                 type: integer
                               to:
                                 type: integer
+                              complete:
+                                type: boolean
                               error:
                                 type: string
                                 nullable: true
@@ -3774,9 +3794,34 @@ paths:
         "404":
           description: The account has no ChatGPT Ads connection by that id.
         "422":
-          $ref: "#/components/responses/ValidationError"
-        "424":
-          description: OpenAI refused the request, answered 429 or did not answer; the message names which.
+          description: >-
+            The sync is off (`enabled`), the run is refused here (`connection`:
+            an ad account in another currency, a page the ledger refused),
+            OpenAI refused the connection's key (`api_key`; the hourly run
+            waits until the key is replaced), or a body was sent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: >-
+            OpenAI answered 429, or this install is holding to its per-minute
+            limits. `Retry-After` and `retry_after_seconds` are the seconds
+            until the hourly run tries again (`details.retry_after`).
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+        "502":
+          description: OpenAI's answer cannot be used (`details.reason` `unreadable_answer`).
+        "503":
+          description: >-
+            OpenAI was not reached (`details.reason` `unreachable`);
+            `Retry-After` is OpenAI's, else 60.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
 
   /conversions/subids:
     post:
@@ -17136,6 +17181,12 @@ components:
           nullable: true
         last_note:
           type: string
+          nullable: true
+        left_out:
+          type: string
+          nullable: true
+        pending_from:
+          type: integer
           nullable: true
         retry_after:
           type: integer

@@ -1,7 +1,11 @@
 package cmd
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"p202/internal/api"
@@ -23,8 +27,11 @@ var adSpendSyncCmd = &cobra.Command{
 	Short: "The hourly ChatGPT Ads spend pull, per connection: list, enable, disable, run",
 	Long: "Each ChatGPT Ads connection (`p202 ad-connection list`) can pull what OpenAI billed per ad per\n" +
 		"hour into the spend ledger every hour. It is off until enabled. The first run reads the last 30\n" +
-		"days; later runs re-read the trailing 72 hours, since spend settles after the clicks. An ad\n" +
-		"account billed in another currency than your Prosper202 account is refused by name.\n" +
+		"days; later runs re-read the trailing 72 hours, since spend settles after the clicks. A run reads\n" +
+		"a day at a time and the next run goes on where one stopped; a row the ledger cannot take keeps\n" +
+		"the run not complete and is named in left_out. An ad account billed in another currency than\n" +
+		"your Prosper202 account is refused by name. OpenAI's rate limit answers exit 7, its outage or\n" +
+		"an answer that cannot be used exit 4, a key it refused exit 1 (replace the key).\n" +
 		"Needs a role with access_to_setup_section.",
 }
 
@@ -60,7 +67,7 @@ func adSpendSyncSet(enabled bool) func(cmd *cobra.Command, args []string) error 
 		}
 		data, err := c.Put("spend-ledger/sync/"+args[0], map[string]interface{}{"enabled": enabled})
 		if err != nil {
-			return withHint(err, "%s", adSpendSyncListHint)
+			return withStatusHint(err, statusHint{http.StatusNotFound, "", adSpendSyncListHint})
 		}
 		render(data)
 		return nil
@@ -101,12 +108,38 @@ var adSpendSyncRunCmd = &cobra.Command{
 		}
 		data, err := c.Post("spend-ledger/sync/"+args[0]+"/run", map[string]interface{}{})
 		if err != nil {
-			return withHint(err, "%s", "`p202 spend sync list` shows the connection's last error and retry_after; if the sync is off, `p202 spend sync enable "+args[0]+"` first.")
+			return adSpendSyncRunError(err, args[0])
 		}
 		render(data)
+		var resp struct {
+			Data struct {
+				Run struct {
+					Complete bool   `json:"complete"`
+					Note     string `json:"note"`
+				} `json:"run"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(data, &resp) == nil && !resp.Data.Run.Complete {
+			noteForPeople(cmd, "Not complete: "+resp.Data.Run.Note+". What was read is written; the next run (hourly, or `p202 spend sync run "+args[0]+"`) goes on.")
+		}
 		return nil
 	},
 }
+
+// adSpendSyncRunError gives each refusal of a run its own next step; OpenAI's
+// limit (429), outage (503) and unusable answer (502) keep the hint api.HintFor
+// has for their class: nothing in the request is wrong, run it again later.
+func adSpendSyncRunError(err error, id string) error {
+	return withStatusHint(err,
+		statusHint{http.StatusNotFound, "", adSpendSyncListHint},
+		statusHint{http.StatusUnprocessableEntity, "enabled", "The sync is off: `p202 spend sync enable " + id + "` turns it on (the first run reads 30 days)."},
+		statusHint{http.StatusUnprocessableEntity, "api_key", "Replace the key: `p202 ad-connection update " + id + " --api-key-file <file>`; that also ends the hourly run's wait. " + advertiserKeyWhere},
+		statusHint{http.StatusUnprocessableEntity, "connection", "Spend is not converted between currencies: the ad account's currency must be your account's (`p202 user prefs update <user-id> --user-account-currency <code>`), or record the spend with `p202 spend import`."},
+	)
+}
+
+// adSpendConversionsMaxLimit is PlatformConversionsController's limit bound.
+const adSpendConversionsMaxLimit = 5000
 
 var adSpendConversionsCmd = &cobra.Command{
 	Use:   "conversions",
@@ -126,15 +159,36 @@ var adSpendConversionsCmd = &cobra.Command{
 				params[param] = strings.TrimSpace(v)
 			}
 		}
+		if v, _ := cmd.Flags().GetString("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err != nil || n < 1 || n > adSpendConversionsMaxLimit || strconv.Itoa(n) != v {
+				return validationError("--limit must be a whole number from 1 to %d, got %q", adSpendConversionsMaxLimit, v).
+					WithHint("Omit --limit for the newest 500 rows, or narrow the window with --period or --time-from/--time-to.")
+			}
+			params["limit"] = v
+		}
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
 		}
 		data, err := c.Get("spend-ledger/conversions", params)
 		if err != nil {
-			return withHint(err, "%s", "`p202 spend sync list` shows whether ChatGPT Ads spend and conversions are pulled.")
+			window := "--time-from and --time-to take a day (YYYY-MM-DD, in your time zone) or a unix second, --time-to not before --time-from; or use --period."
+			return withStatusHint(err,
+				statusHint{http.StatusUnprocessableEntity, "time_from", window},
+				statusHint{http.StatusUnprocessableEntity, "time_to", window},
+				statusHint{http.StatusUnprocessableEntity, "period", "--period takes one of the values `p202 spend conversions --help` lists."},
+				statusHint{http.StatusUnprocessableEntity, "platform", "--platform takes a platform name such as openai_ads, or leave it out for every platform."},
+				statusHint{http.StatusUnprocessableEntity, "limit", fmt.Sprintf("--limit takes a whole number from 1 to %d.", adSpendConversionsMaxLimit)},
+			)
 		}
 		render(data)
+		var resp struct {
+			Truncated bool `json:"truncated"`
+			Limit     int  `json:"limit"`
+		}
+		if json.Unmarshal(data, &resp) == nil && resp.Truncated {
+			noteForPeople(cmd, fmt.Sprintf("More rows than --limit %d: narrow the window or raise --limit (up to %d).", resp.Limit, adSpendConversionsMaxLimit))
+		}
 		return nil
 	},
 }
@@ -145,6 +199,7 @@ func init() {
 	adSpendConversionsCmd.Flags().String("time-from", "", "First day (YYYY-MM-DD in your time zone) or second")
 	adSpendConversionsCmd.Flags().String("time-to", "", "Last day or second, inclusive")
 	adSpendConversionsCmd.Flags().String("platform", "", "Only this platform's rows (e.g. openai_ads)")
+	adSpendConversionsCmd.Flags().String("limit", "", "How many rows, 1 to 5000 (default 500)")
 	adSpendSyncCmd.AddCommand(adSpendSyncListCmd, adSpendSyncEnableCmd, adSpendSyncDisableCmd, adSpendSyncRunCmd)
 	spendCmd.AddCommand(adSpendSyncCmd, adSpendConversionsCmd)
 }
