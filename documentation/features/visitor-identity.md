@@ -75,17 +75,17 @@ One switch turns all of it off:
 Then no cookie is set or read, the landing-page id is deleted, and each click
 is a journey of one.
 
-A refusal holds for the whole visit: once the tracking link, a click through
-a rotator or the landing page's pageview refuses, no conversion of that visit
+A refusal holds for the click: once the tracking link, a click through a
+rotator or the landing page's pageview refuses, no conversion of that click
 is sent to a [destination](destinations.md) (GA4, Google Ads, ChatGPT Ads)
 or in an [offline conversion file](offline-conversions.md), whatever a later
-request of the same visit carries. A conversion pixel or
-postback that itself carries `p202_consent=0` keeps that conversion from every
-destination too. The next visit, when the visitor clicks through again in a
-later second, is read on its own, and a refusal is read on its own click
-only. Your reports still count those conversions; traffic source pixels and
-postbacks, the Meta Purchase pixel and the conversion webhooks to your own
-endpoints are not changed by this. [Destinations](destinations.md#privacy-and-personal-data)
+request or a later visit of the same click carries, a click-through that
+consents included. A conversion pixel or postback that itself carries
+`p202_consent=0` keeps that conversion from every destination too. A refusal
+is read on its own click only: a new ad click starts fresh. Your reports
+still count those conversions; traffic source pixels and postbacks, the Meta
+Purchase pixel and the conversion webhooks to your own endpoints are not
+changed by this. [Destinations](destinations.md#privacy-and-personal-data)
 lists which requests can carry a refusal and which cannot.
 
 The privacy setting ([`user_pref_privacy`](../api/14-users.md#privacy-user_pref_privacy))

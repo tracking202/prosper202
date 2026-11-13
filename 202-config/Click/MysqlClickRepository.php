@@ -64,7 +64,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                 ['click_lead' => 0, 'click_payout' => $click->clickPayout]
             );
             // A visitor's refusal is stored with the click's rows, or not at
-            // all: it holds for the whole visit (ConsentRefusal).
+            // all: it holds for every conversion of the click (ConsentRefusal).
             if ($click->identity?->refused === true) {
                 ConsentRefusal::record($this->conn, $click->clickId, $click->clickTime);
             }
@@ -175,8 +175,8 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             if (!($click->identity?->bringsBrowserSignal() ?? false)) {
                 IdentityGraph::withdrawBrowserSignals($this->conn, $click->clickId);
             }
-            // One the visitor refused holds for the whole visit, whatever a
-            // later request of the visit carries (ConsentRefusal).
+            // One the visitor refused holds for the click, whatever a later
+            // request or visit of it carries (ConsentRefusal).
             if ($click->identity?->refused === true) {
                 ConsentRefusal::recordForStoredClick($this->conn, $click->clickId, $click->clickTime);
             }

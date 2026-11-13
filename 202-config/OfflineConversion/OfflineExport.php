@@ -28,7 +28,7 @@ use Prosper202\Report\AccountZone;
  *    change of the account's currency does not alter; a conversion with no
  *    currency recorded is left out, never sent under the account's;
  *  - never a conversion whose visitor refused consent, on its own request
- *    or on the click's visit (ConsentWithheld::refusedSql(), the rule the
+ *    or on any visit of its click (ConsentWithheld::refusedSql(), the rule the
  *    destinations apply): counted and left out. A refusal that cannot be
  *    read (the 1.9.80 upgrade has not made its table or column) fails the
  *    export: no file is made that could hold a refused visitor;

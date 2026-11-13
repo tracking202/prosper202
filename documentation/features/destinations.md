@@ -136,15 +136,15 @@ once.
   platform, not what your install records.
 
   A refusal belongs to the click it came with, and counts when it arrives:
-  - on the click's visit: the tracking link, a click through a rotator, or
-    the landing page's pageview (`p202.consent(false)`). It holds for the
-    whole visit, so a later request of that visit that carries no
-    `p202_consent`, or `1`, does not give it back. A click-through in the
-    same second is the same visit. A later visit of the same click, a
-    click-through in a later second, is read on its own: its conversions
-    are sent unless it refuses too, and one that refuses keeps the earlier
-    visit's unsent conversions back as well. Another click of the same
-    person is another click: a refusal on one is not read on the other;
+  - on a visit of the click: the tracking link, a click through a rotator,
+    or the landing page's pageview (`p202.consent(false)`). It holds for the
+    click from then on: no conversion credited to that click is sent,
+    whichever visit it credits, so a later request that carries no
+    `p202_consent`, or `1`, and a later visit of the same click that
+    consents (a click-through in a later second) do not give it back.
+    Conversions not yet sent when the refusal arrives are held back too.
+    Only another click starts fresh: a new ad click of the same person is
+    another click, and a refusal on one is not read on the other;
   - on the conversion's own request: a conversion pixel (`px.php`,
     `gpx.php`, `upx.php`), a postback (`pb.php`, `gpb.php`) that passes on
     the visitor's `p202_consent=0`, or an `event=` on one of them that

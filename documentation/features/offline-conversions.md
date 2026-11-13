@@ -64,8 +64,9 @@ are not sent either.
 
 A conversion of a visitor who refused consent (`p202_consent`) is never
 sent, by the rule [destinations](destinations.md#privacy-and-personal-data)
-follow: one whose own pixel or postback refused, one on a click visit that
-refused, and one that replaced a refused conversion are left out and counted
+follow: one whose own pixel or postback refused, one credited to a click
+any visit of which refused, and one that replaced a refused conversion are
+left out and counted
 (`refused_consent`). Until the 1.9.80 upgrade has stored where refusals are
 kept, the file is not made at all rather than send a refused visitor.
 

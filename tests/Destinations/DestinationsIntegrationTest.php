@@ -515,9 +515,9 @@ final class DestinationsIntegrationTest extends TestCase
         self::assertNotNull($page('c1')->attach($conn, 1, 119, self::CLICK_TIME), 'the page\'s request was linked');
         self::assertSame(1, $marked(119, self::CLICK_TIME), 'and left its mark at the visit\'s time');
         self::assertSame([[(string) self::CLICK_TIME]], $refusals(119), 'a later request does not take a refusal away');
-        // 120 refused, and is clicked again later, consenting: another visit, read on its own.
+        // 120 refused, and is clicked again later, consenting: the same click, so the refusal stands.
         $reClick(120, [], self::CLICK_TIME + 100);
-        self::assertSame([[(string) self::CLICK_TIME]], $refusals(120), 'the refusal stays with its own visit');
+        self::assertSame([[(string) self::CLICK_TIME]], $refusals(120), 'a consenting visit takes nothing away');
         // 121's landing page withholds, and a later request of the page names no consent.
         $withheld->withdrawIfWithheld($conn, 121, self::CLICK_TIME);
         self::assertNotNull($page('c2')->attach($conn, 1, 121, self::CLICK_TIME));
@@ -619,8 +619,8 @@ final class DestinationsIntegrationTest extends TestCase
         }
         // A visitor who refused, on the visit or on a request of it, is sent nothing: the delivery is
         // withheld and says why. Reports still count the conversion.
-        $refusedVisits = [113, 114, 115, 116, 117, 118, 119, 121, 122, 123];
-        self::assertSame(['sent' => 13, 'withheld' => 10], ['sent' => $run['sent'], 'withheld' => $run['withheld']]);
+        $refusedVisits = [113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123];
+        self::assertSame(['sent' => 12, 'withheld' => 11], ['sent' => $run['sent'], 'withheld' => $run['withheld']]);
         $why = self::$db->query('SELECT c.click_id, d.status, d.last_error FROM 202_destination_deliveries d'
             . ' JOIN 202_conversion_logs c ON c.conv_id = d.conv_id WHERE d.destination_id = ' . $on
             . ' AND c.click_id IN (' . implode(',', $refusedVisits) . ') ORDER BY c.click_id')->fetch_all(MYSQLI_ASSOC);
@@ -643,7 +643,11 @@ final class DestinationsIntegrationTest extends TestCase
         self::assertNull($by[110]->ipAddress, 'a re-click that left no mark sends no address, whatever an earlier visit gave');
         self::assertSame('198.51.100.7', $by[111]->ipAddress, 'and a re-click that gave it sends the address');
         self::assertNull($by[112]->ipAddress, 'another account\'s latest visit is no visit of it, whatever its mark');
-        self::assertSame('198.51.100.7', $by[120]->ipAddress, 'a later visit that consents is read on its own');
+        $refusedClick = array_column($why, 'last_error', 'click_id')[120];
+        $what = 'a later visit of a refused click that consents is withheld all the same';
+        self::assertSame(DestinationQueue::REFUSED . ' on a visit of the click', $refusedClick, $what);
+        $what = 'the positive control: another click of the same visitor (its cookie) that did not refuse is sent';
+        self::assertSame('198.51.100.7', $by[111]->ipAddress, $what);
         self::assertNull($by[105]->ipAddress, 'nor one whose campaign has identity capture off');
         self::assertSame('198.51.100.7', $by[102]->ipAddress, 'and for the landing page id');
         self::assertSame('https://shop.example.com/spring', $by[100]->pageUrl, 'the landing page, without what its query and fragment carry');
@@ -727,8 +731,9 @@ final class DestinationsIntegrationTest extends TestCase
             [$stored($refused), $stored($given), $stored($absent)],
             'the refusal is on the row, with it'
         );
-        // 143's conversion refuses, and before it is sent the visitor clicks again, consenting: a later visit,
-        // whose own conversion is read on its own; the first keeps its refusal.
+        // 143's conversion refuses, and before it is sent the visitor clicks again, consenting. The refusal
+        // was the conversion's request's, not the click's (none is stored for 143), so the later visit's
+        // conversion is sent; the first keeps its refusal.
         $early = $record(143, 'ORD-W4', ['consent_withheld' => true]);
         self::fixture('INSERT INTO 202_clicks SET click_id=143, user_id=1, aff_campaign_id=30, ppc_account_id=70,'
             . ' click_payout=2.5, click_cpc=0, click_lead=0, click_time=' . (self::CLICK_TIME + 100));
@@ -796,11 +801,12 @@ final class DestinationsIntegrationTest extends TestCase
     }
 
     /**
-     * A refusal on the click's visit keeps its conversions from every
-     * destination, read against the visit the conversion credits: a conversion of a refused visit is withheld though
-     * a later visit consents before the send, and one of a consenting visit
-     * is withheld when a later visit refuses before the send. A campaign
-     * whose identity capture is off is no refusal: its conversion is sent.
+     * A refusal on a visit of the click keeps every conversion of that
+     * click from every destination, whichever visit it credits: one of a
+     * refused visit, one of a later visit that consents, and one of an
+     * earlier consenting visit when a later visit refuses before the send.
+     * Another click starts fresh, and a campaign whose identity capture is
+     * off is no refusal: their conversions are sent.
      */
     public function testARefusalOnTheClicksVisitIsSentToNoDestination(): void
     {
@@ -847,6 +853,9 @@ final class DestinationsIntegrationTest extends TestCase
         $refusedVisit = $this->record(155, 'ORD-V1');
         $visit(155, [], self::CLICK_TIME + 100, true);
         $laterVisit = $this->record(155, 'ORD-V2');
+        // 158 is a new click from the same address that does not refuse.
+        $visit(158, [], self::CLICK_TIME + 200, false);
+        $newClick = $this->record(158, 'ORD-V5');
         // 156 consents, converts, and clicks again refusing before the send.
         $visit(156, [], self::CLICK_TIME, false);
         $consentedVisit = $this->record(156, 'ORD-V3');
@@ -864,11 +873,14 @@ final class DestinationsIntegrationTest extends TestCase
         )->fetch_row()[0];
         $what = 'a refused visit\'s conversion is not sent after a later visit consents';
         self::assertNotContains($refusedVisit, $sent, $what);
-        self::assertSame(DestinationQueue::REFUSED . ' on the click\'s visit', $why($refusedVisit));
+        self::assertSame(DestinationQueue::REFUSED . ' on a visit of the click', $why($refusedVisit));
         self::assertNotContains($consentedVisit, $sent, 'a conversion is not sent once a later visit has refused');
-        self::assertSame(DestinationQueue::REFUSED . ' on the click\'s visit', $why($consentedVisit));
-        $what = 'the positive control: the later consenting visit\'s conversion is sent';
-        self::assertContains($laterVisit, $sent, $what);
+        self::assertSame(DestinationQueue::REFUSED . ' on a visit of the click', $why($consentedVisit));
+        $what = 'a later visit of a refused click that consents is not sent';
+        self::assertNotContains($laterVisit, $sent, $what);
+        self::assertSame(DestinationQueue::REFUSED . ' on a visit of the click', $why($laterVisit), $what);
+        $what = 'the positive control: a new click that does not refuse is sent';
+        self::assertContains($newClick, $sent, $what);
         self::assertContains($captureOff, $sent, 'a campaign with capture off is no refusal');
     }
 

@@ -439,7 +439,7 @@ $clickIdentity = p202ClickIdentity(
 // database failure, and the uncaught handler logs it as one.
 if ($rsParallelClick !== null) {
     // The page's identity signals go to the click it took; a page that
-    // withheld consent holds it back for the whole visit, and takes back
+    // withheld consent holds the click back for good, and takes back
     // the marks the template's hit left.
     $clickIdentity->withdrawIfWithheld($conn, $click_id, $rsParallelClick->clickTime);
     $clickIdentity->attach($conn, (int) $mysql['user_id'], $click_id, $rsParallelClick->clickTime);

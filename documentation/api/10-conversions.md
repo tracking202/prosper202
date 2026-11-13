@@ -289,7 +289,7 @@ under the first that does not:
    conversion on its click, payable (`not_counted`); a partial refund is
    netted from its value;
 2. its visitor did not refuse consent (`refused_consent`): no `p202_consent`
-   other than `1` on the conversion's request, on the click's visit, or on a
+   other than `1` on the conversion's request, on any visit of its click, or on a
    conversion it replaced, the rule [destinations](../features/destinations.md#privacy-and-personal-data)
    follow. A refusal the install cannot read yet (before the 1.9.80 upgrade)
    fails the export rather than send a refused visitor;

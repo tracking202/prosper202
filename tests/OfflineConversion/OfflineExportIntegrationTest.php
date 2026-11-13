@@ -210,14 +210,15 @@ final class OfflineExportIntegrationTest extends TestCase
      * A visitor who refused consent goes to no ad platform, the offline
      * file included, by the rule the destinations follow
      * (ConsentWithheld::refusedSql()): a conversion whose own request
-     * refused, one on a visit that refused, and one that replaced a refused
+     * refused, one on a visit that refused, one on a later visit of a
+     * refused click that did not refuse, and one that replaced a refused
      * conversion are left out and counted under refused_consent, in every
      * format and in the file a fetch URL serves; a consenting one is a line.
      */
     public function testAVisitorWhoRefusedConsentIsInNoFile(): void
     {
         $msclkid = static fn (int $n): string => str_pad(dechex($n), 32, '0', STR_PAD_LEFT);
-        foreach ([600, 601, 602] as $click) {
+        foreach ([600, 601, 602, 604] as $click) {
             $this->click($click, 8, ['gclid' => 'EAIaIQ_' . $click, 'msclkid' => $msclkid($click)]);
         }
         $this->click(603, 7, ['gclid' => 'EAIaIQ_603', 'msclkid' => $msclkid(603)]);
@@ -229,6 +230,16 @@ final class OfflineExportIntegrationTest extends TestCase
             'conv_time' => $at]);
         $clickTime = (int) self::$db->query('SELECT click_time FROM 202_clicks WHERE click_id = 601')->fetch_row()[0];
         self::fixture("INSERT INTO 202_click_consent_refusals SET click_id = 601, refused_at = $clickTime");
+        // 604 refused on its first visit; the conversion credits a later visit of the click that did not.
+        $refusedAt = (int) self::$db->query('SELECT click_time FROM 202_clicks WHERE click_id = 604')->fetch_row()[0];
+        self::fixture("INSERT INTO 202_click_consent_refusals SET click_id = 604, refused_at = $refusedAt");
+        self::fixture('INSERT INTO 202_clicks SET click_id=604, user_id=' . self::USER . ', aff_campaign_id=8,'
+            . ' click_payout=0, click_cpc=0, click_lead=0, click_time=' . ($refusedAt + 100));
+        $laterVisit = $this->record(604, MatchMethod::CLICK_ID, ['payout' => '10', 'transaction_id' => 'C-604',
+            'conv_time' => $at, 'click_time' => $refusedAt + 100]);
+        $credited = self::$db->query("SELECT click_time FROM 202_conversion_logs WHERE conv_id = $laterVisit")
+            ->fetch_row();
+        self::assertSame([(string) ($refusedAt + 100)], $credited, 'the conversion credits the later visit');
         $given = $this->record(602, MatchMethod::CLICK_ID, ['payout' => '10', 'transaction_id' => 'C-602',
             'conv_time' => $at]);
         $this->record(603, MatchMethod::CLICK_ID, ['payout' => '10', 'transaction_id' => 'C-603a', 'conv_time' => $at,
@@ -236,7 +247,7 @@ final class OfflineExportIntegrationTest extends TestCase
         $replacing = $this->record(603, MatchMethod::CLICK_ID, ['payout' => '10', 'transaction_id' => 'C-603b',
             'conv_time' => $at + 1]);
         // Each click by its ids: a line names its gclid, or its msclkid in a Microsoft file.
-        $refused = [600 => $request, 601 => $visit, 603 => $replacing];
+        $refused = [600 => $request, 601 => $visit, 603 => $replacing, 604 => $laterVisit];
         $named = static fn (string $text, int $click): bool
             => str_contains($text, 'EAIaIQ_' . $click) || str_contains(strtolower($text), $msclkid($click));
 
@@ -246,7 +257,7 @@ final class OfflineExportIntegrationTest extends TestCase
             foreach ($refused as $click => $convId) {
                 self::assertFalse($named($text, $click), "$what: conversion $convId is not in the file");
             }
-            self::assertSame(3, $summary->leftOut['refused_consent'], "$what: each is counted as refused");
+            self::assertSame(4, $summary->leftOut['refused_consent'], "$what: each is counted as refused");
             $counted = $summary->rows + array_sum($summary->leftOut);
             self::assertSame($summary->conversions, $counted, "$what: the counts add up");
         };

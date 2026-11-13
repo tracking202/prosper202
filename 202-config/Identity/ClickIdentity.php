@@ -127,7 +127,7 @@ final class ClickIdentity
      * for the click its tracking template made, whose visit is the one at
      * $visitTime) and that withheld consent takes back the browser marks the
      * click's earlier requests left (IdentityGraph::withdrawBrowserSignals()),
-     * and, when the visitor refused, holds that for the whole visit
+     * and, when the visitor refused, holds that for the click
      * (ConsentRefusal). The caller has shown the click is the account's.
      *
      * Unlike attach(), a failure is the caller's: a link that is not made

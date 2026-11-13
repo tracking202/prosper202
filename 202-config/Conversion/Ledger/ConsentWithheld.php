@@ -54,10 +54,9 @@ final class ConsentWithheld
      * - it replaced a refused conversion and goes by that one's event id
      *   (DestinationEventId::of()): a sale refused once is not sent later
      *   under the name it was refused under;
-     * - a request of the visit it credits (its click_time, read under the
-     *   click's lock when it was recorded), or of a later visit, refused
-     *   (ConsentRefusal). A later visit that consents, with no refusal at or
-     *   after it, credits its own conversions.
+     * - any request of its click refused (ConsentRefusal), on the visit it
+     *   credits or on any other: a later visit that consents does not give
+     *   the click back. Only another click starts fresh.
      * The alias is written out, not passed in, so the account-scope scan
      * reads each tie (AccountScopedJoinTest).
      */
@@ -87,7 +86,7 @@ final class ConsentWithheld
     /** The third of refusedSql()'s three, alone. */
     public static function visitRefusedSql(): string
     {
-        return ConsentRefusal::standsAtSql('cl.click_id', 'COALESCE(cl.click_time, 0)');
+        return ConsentRefusal::standsSql('cl.click_id');
     }
 
     /**

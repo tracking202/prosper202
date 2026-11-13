@@ -10,15 +10,17 @@ use Prosper202\Database\Schema\TableRegistry;
 
 /**
  * A request of a click whose visitor refused consent (ClickIdentity::$refused)
- * holds it back for the whole visit: 202_click_consent_refusals keeps, per
- * click, the time of the latest visit a request refused it from. No
- * destination is sent a conversion of a click whose latest visit is at or
- * before that time (standsAtSql(), DestinationQueue::deliver(),
- * OfflineExport::query()), whatever a
- * later request of the same visit carries: one that names no p202_consent
- * does not give back what an earlier one refused. A later visit (a re-click
- * in a later second) that consents is read on its own. A campaign's
- * identity capture switched off is no refusal and stores none.
+ * holds the click back for good: 202_click_consent_refusals keeps one row
+ * per refused click. No destination or offline file is sent any conversion
+ * of that click (standsSql(), DestinationQueue::deliver(),
+ * OfflineExport::query()), whatever a later request of it carries: one that
+ * names no p202_consent, or a later visit (a re-click) that consents, does
+ * not give back what an earlier one refused. Only another click starts
+ * fresh. A campaign's identity capture switched off is no refusal and
+ * stores none.
+ *
+ * refused_at, the latest visit a request refused from, is kept for the
+ * record; no reader decides by it.
  *
  * The row is written with the visit that withheld, in its transaction where
  * there is one, and only for such a visit: a consenting click costs no
@@ -58,7 +60,7 @@ final class ConsentRefusal
 
     /**
      * For a click already stored (a re-click, a landing page's request for
-     * the click its tracking template made): the refusal covers every visit
+     * the click its tracking template made). refused_at is the latest visit
      * recorded so far, since a web server's clock can stamp the visit that
      * withheld before one it follows (LatestVisit::refresh()).
      */
@@ -68,19 +70,18 @@ final class ConsentRefusal
     }
 
     /**
-     * The SQL that is 1 when a request of click $click refused at or after
-     * the visit at $visitTime (two SQL expressions), else 0: the one reading
-     * of the table, for every reader that hands a conversion to an ad
-     * platform (Ledger\ConsentWithheld::refusedSql()). A read that fails is
-     * the statement's failure, never "no refusal" (CLAUDE.md #11).
+     * The SQL that is 1 when any request of click $click (an SQL
+     * expression) refused, else 0: the one reading of the table, for every
+     * reader that hands a conversion to an ad platform
+     * (Ledger\ConsentWithheld::refusedSql()). A read that fails is the
+     * statement's failure, never "no refusal" (CLAUDE.md #11).
      */
-    public static function standsAtSql(string $click, string $visitTime): string
+    public static function standsSql(string $click): string
     {
         // The table by its name, so the account-scope scan reads it
         // (AccountScopedJoinTest): it has no user_id, a row is keyed by the
         // account's own click, and the caller names that click.
-        return "EXISTS (SELECT 1 FROM 202_click_consent_refusals AS cr WHERE cr.click_id = $click"
-            . " AND cr.refused_at >= $visitTime)";
+        return "EXISTS (SELECT 1 FROM 202_click_consent_refusals AS cr WHERE cr.click_id = $click)";
     }
 
     /** The click's latest visit as recorded, read by its key; 0 for a click with one visit. */

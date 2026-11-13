@@ -512,7 +512,7 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
     }
 
     /**
-     * A refusal holds for the whole visit, as the scripts are served. The
+     * A refusal holds for the click, as the scripts are served. The
      * template's hit refuses and the page's own request names no consent:
      * the refusal is stored with the click and stays, though the page's
      * request leaves its mark at the visit's time. And the other way round:
