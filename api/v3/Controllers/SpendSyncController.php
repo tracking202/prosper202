@@ -29,6 +29,9 @@ final class SpendSyncController
     /** Time left after the last page for its write and the run's record. */
     private const int WRITE_SECONDS = 15;
 
+    /** PHP's max_execution_time when nothing sets it: assumed when it cannot be read. */
+    private const int DEFAULT_LIMIT = 30;
+
     private readonly SpendSync $sync;
     private readonly AdConnectionSpendConnections $connections;
 
@@ -133,29 +136,36 @@ final class SpendSyncController
      * (WebhookSender::TIMEOUT) and its write: PHP's time limit is raised to
      * cover that where it is lower and may be raised, else the run's time is
      * what the limit leaves after it. The run also records how far it read
-     * after each day, so a limit that still ends it keeps that.
+     * after each day (each hour when its time is short), so a limit that
+     * still ends it keeps that.
      */
     private static function deadline(): int
     {
         $after = WebhookSender::TIMEOUT + self::WRITE_SECONDS;
-        $limit = (int) ini_get('max_execution_time');
-        if ($limit === 0) {
-            return time() + self::RUN_SECONDS;
-        }
-        if ($limit >= self::RUN_SECONDS + $after) {
+        $limit = self::timeLimit();
+        if ($limit === 0 || ($limit !== null && $limit >= self::RUN_SECONDS + $after)) {
             return time() + self::RUN_SECONDS;
         }
         if (function_exists('set_time_limit')) {
             // Its answer is no guide: Linux's PHP 8.3 CLI answers false and raises the limit all
             // the same. What decides is the limit now in force.
             set_time_limit(self::RUN_SECONDS + $after);
-            $raised = (int) ini_get('max_execution_time');
-            if ($raised === 0 || $raised >= self::RUN_SECONDS + $after) {
+            $raised = self::timeLimit();
+            if ($raised === 0 || ($raised !== null && $raised >= self::RUN_SECONDS + $after)) {
                 return time() + self::RUN_SECONDS;
             }
         }
 
-        return time() + max(1, $limit - $after);
+        // A limit that cannot be read is not "none" (CLAUDE.md #11): PHP's default is assumed.
+        return time() + max(1, ($limit ?? self::DEFAULT_LIMIT) - $after);
+    }
+
+    /** max_execution_time in seconds (0: none), or null when it cannot be read. */
+    private static function timeLimit(): ?int
+    {
+        $raw = function_exists('ini_get') ? ini_get('max_execution_time') : false;
+
+        return is_string($raw) && preg_match('/\A[0-9]+\z/D', $raw) === 1 ? (int) $raw : null;
     }
 
     /** @return array<string, mixed> */

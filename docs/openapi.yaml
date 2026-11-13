@@ -3668,7 +3668,9 @@ paths:
         those hours again cleanly, or until the sync is turned off and on
         once OpenAI no longer keeps them; those hours are read again by each
         run that reaches now), `pending_from` (the first hour not yet
-        reached; every run starts there) and `retry_after` while a 429 or a
+        reached; every run starts there; a run after a pause starts 72 hours
+        before where the last one read to, and hours a pause left unread past
+        the 30 days are named in `left_out`) and `retry_after` while a 429 or a
         refused key is waited out (an hour, doubling up to a day with each of
         the same kind in a row; a new key ends it). Role permission `access_to_setup_section`.
       operationId: listSpendSync
@@ -3744,7 +3746,7 @@ paths:
         run goes on from there. The run is recorded either
         way (GET /spend-ledger/sync). On success `data.run` is this run:
         `rows` written, how far it read (`from`, `to`), `complete` (false
-        when it stopped early or left a row out, which `left_out` names) and
+        when it stopped early, left a row out or `left_out` says anything) and
         `note`. A failure is answered as the ad connections answer OpenAI:
         its rate limit `429` and its outage `503`, both with `Retry-After`,
         an answer that cannot be used `502` (`details.reason`
@@ -17849,7 +17851,7 @@ components:
           type: boolean
         complete:
           type: boolean
-          description: Whether the last run read through to now and left nothing out
+          description: Whether the last run read through to now and left nothing out, and `left_out` is empty
         backfilled_at:
           type: integer
           nullable: true

@@ -118,13 +118,27 @@ var adSpendSyncRunCmd = &cobra.Command{
 					Complete bool   `json:"complete"`
 					Note     string `json:"note"`
 				} `json:"run"`
+				LeftOut string `json:"left_out"`
 			} `json:"data"`
 		}
 		if json.Unmarshal(data, &resp) == nil && !resp.Data.Run.Complete {
-			noteForPeople(cmd, "Not complete: "+resp.Data.Run.Note+". What was read is written; the next run (hourly, or `p202 spend sync run "+args[0]+"`) goes on.")
+			noteForPeople(cmd, "Not complete: "+adSpendRunWhy(resp.Data.Run.Note, resp.Data.LeftOut)+". What was read is written; the next run (hourly, or `p202 spend sync run "+args[0]+"`) goes on.")
 		}
 		return nil
 	},
+}
+
+// adSpendRunWhy is why a run is not complete: its note, else the sync's
+// left_out (hours earlier runs left out, still read again), never empty.
+func adSpendRunWhy(note, leftOut string) string {
+	switch {
+	case note != "":
+		return note
+	case leftOut != "":
+		return "left out: " + leftOut
+	default:
+		return "hours left out by earlier runs are still to be read again"
+	}
 }
 
 // adSpendSyncRunError gives each refusal of a run its own next step; OpenAI's

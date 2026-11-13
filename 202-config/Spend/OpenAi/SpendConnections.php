@@ -32,4 +32,10 @@ interface SpendConnections
      * key_refused, as a check of it would (its last_error $why).
      */
     public function keyRefused(int $userId, int $connectionId, string $why, int $now): void;
+
+    /**
+     * OpenAI answered a run with the connection's key: a connection marked
+     * key_refused is marked connected again, as a check of it would.
+     */
+    public function keyAccepted(int $userId, int $connectionId, int $now): void;
 }

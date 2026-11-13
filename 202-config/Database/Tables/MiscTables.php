@@ -359,7 +359,8 @@ final class MiscTables
      * ledger (left_out, kept until those hours are read cleanly) and the
      * hours they were in (left_out_hours, hour starts, comma-separated, each
      * read again until it reads cleanly), the first hour the forward read has
-     * not reached (pending_from), the first hour whose conversions are still
+     * not reached (pending_from) and the hour it has reached, kept once it
+     * reaches now so a run after a pause reads the gap (read_to), the first hour whose conversions are still
      * to read (conversions_from), and how long a rate-limited platform or a
      * refused key is left alone (rate_limited and key_refusals count each
      * kind's back-offs in a row).
@@ -382,6 +383,7 @@ final class MiscTables
                 `left_out` text DEFAULT NULL,
                 `left_out_hours` text DEFAULT NULL,
                 `pending_from` int(10) unsigned DEFAULT NULL,
+                `read_to` int(10) unsigned DEFAULT NULL,
                 `conversions_from` int(10) unsigned DEFAULT NULL,
                 `rate_limited` smallint(5) unsigned NOT NULL DEFAULT '0',
                 `key_refusals` smallint(5) unsigned NOT NULL DEFAULT '0',

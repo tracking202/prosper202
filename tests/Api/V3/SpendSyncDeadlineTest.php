@@ -76,4 +76,16 @@ final class SpendSyncDeadlineTest extends TestCase
         self::assertContains((int) $got, [$seconds, $seconds + 1], $out);
         self::assertSame((string) $limit, $kept);
     }
+
+    /** A limit that cannot be read is not "no limit" (CLAUDE.md #11): PHP's default 30 seconds is assumed. */
+    public function testALimitThatCannotBeReadIsNotTakenForNone(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $code = 'require ' . var_export($root . '/vendor/autoload.php', true) . ';'
+            . ' $t = time(); $d = (new ReflectionMethod(' . var_export(SpendSyncController::class, true) . ', "deadline"))->invoke(null);'
+            . ' echo "deadline ", ($d - $t);';
+        $out = (string) shell_exec(escapeshellarg(PHP_BINARY) . ' -d disable_functions=ini_get,set_time_limit -d max_execution_time=0'
+            . ' -r ' . escapeshellarg($code) . ' 2>&1');
+        self::assertMatchesRegularExpression('/^deadline [12]$/', trim($out), 'one page, not 30 seconds');
+    }
 }

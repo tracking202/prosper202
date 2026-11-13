@@ -48,6 +48,14 @@ final class AdConnectionSpendConnections implements SpendConnections
         $this->store->recordCheck($userId, $connectionId, null, AdConnectionStore::STATUS_KEY_REFUSED, $why, $now);
     }
 
+    public function keyAccepted(int $userId, int $connectionId, int $now): void
+    {
+        // Only a key_refused mark is the run's to undo: another status (an unreadable key) is not about this key.
+        if (($this->store->get($userId, $connectionId)['status'] ?? null) === AdConnectionStore::STATUS_KEY_REFUSED) {
+            $this->store->recordCheck($userId, $connectionId, null, AdConnectionStore::STATUS_CONNECTED, null, $now);
+        }
+    }
+
     public function ofAccount(int $userId): array
     {
         $out = [];

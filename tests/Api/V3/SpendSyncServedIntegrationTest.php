@@ -302,5 +302,16 @@ final class SpendSyncServedIntegrationTest extends TestCase
         $state = self::syncState($id);
         self::assertFalse($state['complete']);
         self::assertNotNull($state['last_error']);
+
+        // A refused key, then a run OpenAI answers with the same key: marked connected again, as a check would.
+        self::control('/control/reset', []);
+        self::control('/control/answer', ['status' => 401, 'body' => '{"error":{"message":"Invalid API key"}}']);
+        self::assertSame(422, self::request('POST', $run, [])[0]);
+        self::assertSame('key_refused', self::request('GET', 'ad-connections/' . $id)[1]['data']['status'] ?? null);
+        self::control('/control/reset', []);
+        [$status, $body] = self::request('POST', $run, []);
+        self::assertSame(200, $status, (string) json_encode($body));
+        $connection = self::request('GET', 'ad-connections/' . $id)[1]['data'] ?? [];
+        self::assertSame(['connected', true, null], [$connection['status'] ?? null, array_key_exists('last_error', $connection), $connection['last_error'] ?? null]);
     }
 }

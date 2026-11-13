@@ -17,16 +17,21 @@ use Prosper202\Spend\SpendLedger;
  * /api/v3/spend-ledger writes through. The first run after it is turned on
  * reads the 30 days OpenAI keeps hourly; every later run re-reads the
  * trailing 72 hours, since spend settles after the clicks, and the ledger
- * replaces each hour it is sent again.
+ * replaces each hour it is sent again. read_to is how far the forward read
+ * has got: a run after a pause (the sync off, the cron down) starts 72 hours
+ * before it, so no hour goes unread or unsettled; hours a pause left unread
+ * past OpenAI's 30 days are named in left_out.
  *
- * A run reads its window a day at a time, oldest first, and stops between
- * pages once its page budget or deadline is spent. The first hour it did not
- * reach (a day it stopped in or failed in) is kept in pending_from, recorded
- * after each day, and every later run starts there (within the 30 days
+ * A run reads its window a day at a time (an hour at a time when it has less
+ * than SHORT_RUN_SECONDS), oldest first, and stops between pages once its
+ * page budget or deadline is spent. The first hour it did not reach is kept
+ * in pending_from, and every later run starts there (within the 30 days
  * OpenAI keeps), so a long backfill or an outage loses nothing. An hour it
  * left a row out of does not hold that point back: it goes to
  * left_out_hours and is read again once the run has reached the present.
- * Conversions are owed from conversions_from until a run reads them.
+ * Conversions are owed from conversions_from until a run reads them. All of
+ * these are recorded together after each day or hour read, so a run killed
+ * part-way keeps them (CLAUDE.md #37).
  *
  * Refused by name, with nothing pulled: an ad account whose currency is
  * not the Prosper202 account's (nothing here converts currencies). A 429 or
@@ -38,7 +43,8 @@ use Prosper202\Spend\SpendLedger;
  * is left out, the rest of its page is written, and the run is not
  * complete: left_out says why until a run reads those hours again without
  * leaving a row out (a cron run has nobody to answer, CLAUDE.md #4). A
- * refused key also marks the connection key_refused, as its check does. One
+ * refused key also marks the connection key_refused, as its check does, and
+ * a later run OpenAI answers with the key marks it connected again. One
  * connection's run that throws anything else is recorded on its row, and
  * the next connection still runs.
  */
@@ -64,6 +70,9 @@ final class SpendSync
 
     /** A run asks for its window this much at a time. */
     public const int CHUNK_SECONDS = 86400;
+
+    /** A run with less time than this reads its forward window an hour at a time, so it records some progress. */
+    public const int SHORT_RUN_SECONDS = 15;
 
     /** A run reads at most this many pages; the next run goes on from where it stopped. */
     public const int PAGE_BUDGET = 500;
@@ -242,11 +251,25 @@ final class SpendSync
         $trail = $hour - self::TRAILING_SECONDS;
         $backfilled = $state !== null && $state['backfilled_at'] !== null;
         $pending = $state === null || $state['pending_from'] === null ? null : (int) $state['pending_from'];
-        $lost = $pending !== null && $pending < $reach;
-        $from = $pending !== null ? max($pending, $reach) : ($backfilled ? $trail : $reach);
+        $readTo = $state === null || $state['read_to'] === null ? null : (int) $state['read_to'];
+        if ($pending !== null) {
+            $start = $pending;
+        } elseif ($backfilled) {
+            // The last run re-read back to readTo - 72 h: start an hour after that, so a pause skips no hour's re-reads.
+            $start = $readTo === null ? $reach : min($trail, $readTo + 3600 - self::TRAILING_SECONDS);
+        } else {
+            $start = $reach;
+        }
+        $from = max($start, $reach);
+        // Hours from here on were never read; those OpenAI no longer keeps are said, not skipped silently.
+        $unread = $pending ?? ($backfilled ? $readTo : null);
+        $gap = $unread !== null && $unread < $reach
+            ? 'the hours from ' . gmdate('Y-m-d H:i', $unread) . ' to ' . gmdate('Y-m-d H:i', $reach) . ' UTC were never read (no run reached them in time)'
+            : null;
         $queue = self::hoursOf($state['left_out_hours'] ?? null);
         $kept = array_values(array_filter($queue, static fn (int $h): bool => $h >= $reach));
-        $lost = $lost || count($kept) < count($queue);
+        $lost = $gap !== null || count($kept) < count($queue);
+        $said = $state === null || $state['left_out'] === null ? null : (string) $state['left_out'];
         $owed = $state === null || $state['conversions_from'] === null ? null : (int) $state['conversions_from'];
         // The spend this run reads owes its conversions until they are read.
         $runFrom = min($from, $trail);
@@ -261,16 +284,37 @@ final class SpendSync
         $outcome = null;
         $wait = null;
         $notes = [];
-        $checkpoint = function (int $at) use ($connection, $owed, $runFrom): void {
-            // Recorded as it goes: a run PHP or the server ends early keeps how far it read.
-            $this->checkpoint($connection, $at - $at % 3600, min($owed ?? PHP_INT_MAX, $runFrom));
+        // The hours still to read again and left_out's text, as they stand now.
+        $standing = function () use (&$read, &$kept, &$rereading, $said, $gap, $lost): array {
+            $left = array_values(array_unique([...($rereading === null ? [] : [$rereading]), ...$kept, ...array_keys($read['skipped_hours'])]));
+            $text = $said;
+            if ($read['skipped'] > 0) {
+                $text = $read['skipped'] . ' row(s) of hours from ' . gmdate('Y-m-d H:i', min(array_keys($read['skipped_hours'])))
+                    . ' UTC were left out of the spend ledger, the first: ' . $read['first_skip'];
+            }
+            if ($gap !== null) {
+                $text = $gap . ($text === null ? '' : '; ' . $text);
+            }
+            $marked = $lost || ($said !== null && str_contains($said, self::OUT_OF_REACH_MARK));
+
+            return [$left, $text === null ? null : self::leftOutText($text, $left !== [], $marked)];
         };
+        $checkpoint = function (int $at) use ($connection, $owed, $runFrom, $standing): void {
+            // Recorded as it goes, in one write: a run PHP or the server ends early keeps how far
+            // it read and the hours it left out (CLAUDE.md #37).
+            [$left, $text] = $standing();
+            $this->checkpoint($connection, $at - $at % 3600, min($owed ?? PHP_INT_MAX, $runFrom), $left === [] ? null : implode(',', $left), $text);
+        };
+        $chunk = $deadline !== null && $deadline - $now < self::SHORT_RUN_SECONDS ? 3600 : self::CHUNK_SECONDS;
         try {
-            $this->pull($connection, $ledger, $from, $now, $deadline, $read, $through, $checkpoint);
+            $this->pull($connection, $ledger, $from, $now, $deadline, $read, $through, $checkpoint, $chunk);
             $caughtUp = $read['stopped'] === null;
             if ($caughtUp && $from > $trail) {
                 $settled = $trail;
-                $this->pull($connection, $ledger, $trail, $from, $deadline, $read, $settled);
+                $reached = $through;
+                $this->pull($connection, $ledger, $trail, $from, $deadline, $read, $settled, static function (int $at) use ($checkpoint, $reached): void {
+                    $checkpoint($reached);
+                });
             }
             $windows = 0;
             while ($read['stopped'] === null && $kept !== [] && $windows++ < self::REREAD_WINDOWS) {
@@ -307,20 +351,18 @@ final class SpendSync
             array_unshift($notes, $read['skipped'] . ' row(s) OpenAI sent were left out: ' . $read['first_skip']);
         }
         if ($read['stopped'] !== null) {
-            $notes[] = $read['stopped'] . ($caughtUp ? '' : ': read through ' . gmdate('Y-m-d H:i', $through) . ' UTC')
-                . '; the next run goes on from there';
+            $notes[] = $read['stopped'] . match (true) {
+                $caughtUp => '; the next run goes on from there',
+                $through > $from => ': read through ' . gmdate('Y-m-d H:i', $through) . ' UTC; the next run goes on from there',
+                default => ' before it read a whole hour from ' . gmdate('Y-m-d H:i', $from) . ' UTC; the next run starts there again'
+                    . ' (the hourly cron run, or a higher max_execution_time, has time to read further)',
+            };
         }
         // Not read again yet first, then this run's: one that stays bad goes to the back.
-        $left = array_values(array_unique([...($rereading === null ? [] : [$rereading]), ...$kept, ...array_keys($read['skipped_hours'])]));
+        [$left, $leftOut] = $standing();
         $stoppedEarly = $error !== null || $read['stopped'] !== null;
-        $complete = !$stoppedEarly && $left === [];
-        $leftOut = $state === null || $state['left_out'] === null ? null : (string) $state['left_out'];
-        $marked = $lost || ($leftOut !== null && str_contains($leftOut, self::OUT_OF_REACH_MARK));
-        if ($read['skipped'] > 0) {
-            $leftOut = $read['skipped'] . ' row(s) of hours from ' . gmdate('Y-m-d H:i', min(array_keys($read['skipped_hours'])))
-                . ' UTC were left out of the spend ledger, the first: ' . $read['first_skip'];
-        }
-        $leftOut = $leftOut === null ? null : self::leftOutText($leftOut, $left !== [], $marked);
+        // Hours left out or no longer readable keep it incomplete until they are read or a person acts.
+        $complete = !$stoppedEarly && $left === [] && $leftOut === null;
 
         $retryAfter = $this->recordRun($connection, [
             'now' => $now,
@@ -330,6 +372,7 @@ final class SpendSync
             'left_out' => $leftOut,
             'left_out_hours' => $left === [] ? null : implode(',', $left),
             'pending_from' => $caughtUp ? null : $through - $through % 3600,
+            'read_to' => $through - $through % 3600,
             'conversions_from' => $conversionsRead ? null : max($reach, min($owed ?? PHP_INT_MAX, $runFrom)),
             'back_off' => $outcome === self::RATE_LIMITED || $outcome === self::KEY_REFUSED ? $outcome : null,
             'wait' => $outcome === self::RATE_LIMITED ? $wait : null,
@@ -340,6 +383,9 @@ final class SpendSync
         ]);
         if ($outcome === self::KEY_REFUSED) {
             $this->connections->keyRefused($connection->userId, $connection->connectionId, (string) $error, $now);
+        } elseif ($read['pages'] > 0) {
+            // OpenAI answered with the key: a key_refused mark from before is stale.
+            $this->connections->keyAccepted($connection->userId, $connection->connectionId, $now);
         }
 
         return ['rows' => $read['rows'], 'from' => $caughtUp ? $runFrom : $from, 'to' => $caughtUp ? $now : $through, 'complete' => $complete,
@@ -358,7 +404,7 @@ final class SpendSync
      * @param array{rows: int, pages: int, stopped: ?string, skipped: int, first_skip: ?string, skipped_hours: array<int, true>} $read
      * @param (\Closure(int): void)|null $dayDone
      */
-    private function pull(SpendConnection $connection, SpendLedger $ledger, int $from, int $to, ?int $deadline, array &$read, int &$through, ?\Closure $dayDone = null): void
+    private function pull(SpendConnection $connection, SpendLedger $ledger, int $from, int $to, ?int $deadline, array &$read, int &$through, ?\Closure $dayDone = null, int $chunk = self::CHUNK_SECONDS): void
     {
         $currency = $ledger->accountCurrency($connection->userId);
         if (strtoupper($connection->currency) !== $currency) {
@@ -367,7 +413,7 @@ final class SpendSync
                 . '; spend is not converted between currencies, so it is not pulled');
         }
         for ($start = $from; $start < $to; $start = $end) {
-            $end = min($start + self::CHUNK_SECONDS, $to);
+            $end = min($start + $chunk, $to);
             $after = null;
             $seen = [];
             do {
@@ -625,7 +671,7 @@ final class SpendSync
      * count their own back-offs in a row. last_success_at is a complete run's.
      *
      * @param array{now: int, rows: int, error: ?string, note: ?string, left_out: ?string, left_out_hours: ?string,
-     *     pending_from: ?int, conversions_from: ?int, back_off: ?string, wait: ?int, complete: bool, backfilled: bool,
+     *     pending_from: ?int, read_to: int, conversions_from: ?int, back_off: ?string, wait: ?int, complete: bool, backfilled: bool,
      *     limited_before: int, refused_before: int} $run
      */
     private function recordRun(SpendConnection $connection, array $run): int
@@ -638,14 +684,14 @@ final class SpendSync
         $retryAfter = $times > 0 ? $now + max($wait, min($run['wait'] ?? 0, self::RETRY_AFTER_MAX_SECONDS)) : 0;
         $stmt = $this->conn->prepareWrite(
             'UPDATE 202_ad_spend_sync SET last_run_at = ?, last_rows = ?, last_error = ?, last_note = ?, left_out = ?,'
-            . ' left_out_hours = ?, pending_from = ?, conversions_from = ?, rate_limited = ?, key_refusals = ?, retry_after = ?,'
+            . ' left_out_hours = ?, pending_from = ?, read_to = ?, conversions_from = ?, rate_limited = ?, key_refusals = ?, retry_after = ?,'
             . ' last_complete = ?, last_success_at = IF(? = 1, ?, last_success_at), backfilled_at = IF(? = 1, ?, backfilled_at), updated_at = ?'
             . ' WHERE connection_id = ? AND user_id = ?'
         );
         $cut = static fn (?string $text): ?string => $text === null ? null : mb_substr($text, 0, 2000);
-        $this->conn->bind($stmt, 'iissssiiiiiiiiiiiii', [
+        $this->conn->bind($stmt, 'iissssiiiiiiiiiiiiii', [
             $now, $run['rows'], $cut($run['error']), $cut($run['note']), $cut($run['left_out']), $run['left_out_hours'],
-            $run['pending_from'], $run['conversions_from'], $limited, $refused, $retryAfter,
+            $run['pending_from'], $run['read_to'], $run['conversions_from'], $limited, $refused, $retryAfter,
             $run['complete'] ? 1 : 0, $run['complete'] ? 1 : 0, $now, $run['backfilled'] ? 1 : 0, $now, $now, $connection->connectionId, $connection->userId,
         ]);
         $this->conn->executeUpdate($stmt);
@@ -653,14 +699,15 @@ final class SpendSync
         return $retryAfter;
     }
 
-    /** How far the forward read got, and the conversions it owes, while the run goes on. */
-    private function checkpoint(SpendConnection $connection, int $pendingFrom, int $conversionsFrom): void
+    /** How far the forward read got, the conversions it owes and the hours left out, while the run goes on. */
+    private function checkpoint(SpendConnection $connection, int $pendingFrom, int $conversionsFrom, ?string $leftOutHours, ?string $leftOut): void
     {
         $stmt = $this->conn->prepareWrite(
-            'UPDATE 202_ad_spend_sync SET pending_from = ?, conversions_from = LEAST(COALESCE(conversions_from, ?), ?), updated_at = ?'
-            . ' WHERE connection_id = ? AND user_id = ?'
+            'UPDATE 202_ad_spend_sync SET pending_from = ?, read_to = ?, conversions_from = LEAST(COALESCE(conversions_from, ?), ?),'
+            . ' left_out_hours = ?, left_out = ?, updated_at = ? WHERE connection_id = ? AND user_id = ?'
         );
-        $this->conn->bind($stmt, 'iiiiii', [$pendingFrom, $conversionsFrom, $conversionsFrom, ($this->clock)(), $connection->connectionId, $connection->userId]);
+        $this->conn->bind($stmt, 'iiiissiii', [$pendingFrom, $pendingFrom, $conversionsFrom, $conversionsFrom, $leftOutHours,
+            $leftOut === null ? null : mb_substr($leftOut, 0, 2000), ($this->clock)(), $connection->connectionId, $connection->userId]);
         $this->conn->executeUpdate($stmt);
     }
 
@@ -673,7 +720,7 @@ final class SpendSync
     {
         $stmt = $this->conn->prepareWrite(
             'SELECT connection_id, enabled, backfilled_at, last_run_at, last_success_at, last_complete, last_rows, last_error, last_note,'
-            . ' left_out, left_out_hours, pending_from, conversions_from, rate_limited, key_refusals, retry_after'
+            . ' left_out, left_out_hours, pending_from, read_to, conversions_from, rate_limited, key_refusals, retry_after'
             . ' FROM 202_ad_spend_sync WHERE user_id = ?'
         );
         $this->conn->bind($stmt, 'i', [$userId]);

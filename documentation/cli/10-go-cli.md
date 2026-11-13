@@ -579,8 +579,10 @@ p202 spend conversions --period last7   # OpenAI's conversions beside yours
 `p202 spend sync run` exits 7 when OpenAI is limiting requests (wait the
 hint's seconds), 4 when OpenAI could not be reached or answered something
 unusable, and 1 for a refused key (replace it with `p202 ad-connection
-update`), a sync that is off, or another currency. A run that stops at its
-budget or leaves a row out says "Not complete"; the next run goes on.
+update`), a sync that is off, another currency, a request OpenAI refused
+(`request`: sending it again gets the same answer) or a page of spend the
+ledger refused (`spend`). A run that stops at its budget or leaves a row out
+says "Not complete"; the next run goes on.
 
 ## Config Defaults
 

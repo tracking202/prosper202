@@ -97,18 +97,23 @@ until turned on.
 
 The first run reads the last 30 days (what OpenAI keeps hourly); later runs
 re-read the trailing 72 hours, since spend settles after the clicks, and so
-does any run that reaches now. A run reads a day at a time and stops between
-pages at its budget (500 pages, and 30 seconds for a run asked for here, PHP's
-time limit raised to cover its last request where it may be; the hourly run's
-two minutes for all connections). What it read stands, recorded after each
-day, and `pending_from` is the first hour it did not reach: every later run
-starts there, so a long backfill, a stopped run or an outage loses nothing
-OpenAI still keeps. Conversions a run could not read are read by the next.
+does any run that reaches now. After a pause (the sync turned off, or no run
+for a while), the next run starts 72 hours before where the last one read to,
+so the gap is read; hours a pause left unread past OpenAI's 30 days are named
+in `left_out`. A run reads a day at a time (an hour at a time when it has
+less than 15 seconds) and stops between pages at its budget (500 pages, and
+30 seconds for a run asked for here, PHP's time limit raised to cover its last
+request where it may be; the hourly run's two minutes for all connections).
+What it read stands, recorded after each day or hour together with the hours
+it left out, and `pending_from` is the first hour it did not reach: every
+later run starts there, so a long backfill, a stopped or killed run or an
+outage loses nothing OpenAI still keeps. Conversions a run could not read are
+read by the next.
 
 Spend with more than six decimals is rounded half up from its decimal text.
 **A row the ledger still refuses** (negative, null, not a number, too large)
 is left out and the rest of its page is written, but the run is **not
-complete**: `last_success_at` is not set, and `left_out` names the rows until
+complete** (nor is any run while `left_out` says something): `last_success_at` is not set, and `left_out` names the rows until
 a run reads those hours again without leaving one out. Such an hour does not
 hold the run back: it goes on past it, and once a run has reached now it reads
 the left-out hours again, oldest first, at most three windows of a day a run
@@ -126,11 +131,11 @@ A run's answers (the run is recorded either way):
 | `422` | The ad account bills in another currency than the account (nothing is converted) | `field_errors.connection` |
 | `422` | The ledger refused a page OpenAI sent; the pages before it stand | `field_errors.spend` |
 | `422` | OpenAI refused the request itself (a 4xx other than 401, 403, 413 and 429): sending it again gets the same answer | `field_errors.request`, in OpenAI's words with its status |
-| `422` | OpenAI refused the connection's Advertiser API key (401, 403) | `field_errors.api_key`; the connection is marked `key_refused` as a check marks it, and the hourly run waits an hour, doubling to a day with each refusal in a row, until the key is replaced (`PATCH /ad-connections/{id}`) |
+| `422` | OpenAI refused the connection's Advertiser API key (401, 403) | `field_errors.api_key`; the connection is marked `key_refused` as a check marks it, and the hourly run waits an hour, doubling to a day with each refusal in a row, until the key is replaced (`PATCH /ad-connections/{id}`); a later run OpenAI answers with the key marks it `connected` again |
 | `422` | A body was sent | `field_errors` names its keys |
 | `429` with `Retry-After` | OpenAI answered 429, or this install is holding to its per-minute limits | `Retry-After` is OpenAI's own wait (60 when it named none): a run asked for here may go again after it. `details.reason` `rate_limited`, `details.retry_after` (when the hourly run tries again: an hour, doubling to a day with each 429 in a row, or OpenAI's Retry-After when longer, up to a week) |
 | `503` with `Retry-After` | No answer from OpenAI, a 5xx of its own, or the request was not sent | `details.reason` `unreachable`; `Retry-After` is OpenAI's, else 60 |
-| `502` | OpenAI's answer cannot be used: not JSON, cut off, not a page of insights, a cursor it gave before, or another 4xx | `details.reason` `unreadable_answer` |
+| `502` | OpenAI's answer cannot be used: not JSON, cut off, not a page of insights, or a cursor it gave before | `details.reason` `unreadable_answer` |
 
 `details` also carries `upstream` (`openai_ads`), `connection_id` and
 `rows_written`: a run that fails after writing rows keeps them, and its message

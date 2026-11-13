@@ -113,6 +113,25 @@ func TestSpendSyncRunSaysWhenTheRunIsNotComplete(t *testing.T) {
 	}
 }
 
+// A run not complete with no note of its own (hours earlier runs left out are
+// still read again) says why, never "Not complete: .".
+func TestSpendSyncRunNotCompleteWithoutANoteSaysWhy(t *testing.T) {
+	cases := []struct{ leftOut, want string }{
+		{`"1 row(s) of hours from 2026-11-01 00:00 UTC were left out"`, "Not complete: left out: 1 row(s) of hours from 2026-11-01 00:00 UTC were left out."},
+		{`null`, "Not complete: hours left out by earlier runs are still to be read again."},
+	}
+	for _, c := range cases {
+		spendServer(t, 200, `{"data":{"run":{"rows":3,"from":1,"to":2,"complete":false,"error":null,"note":null},"connection_id":3,"left_out":`+c.leftOut+`}}`)
+		_, stderr, err := executeCommand("spend", "sync", "run", "3")
+		if err != nil {
+			t.Fatalf("spend sync run: %v", err)
+		}
+		if !strings.Contains(stderr, c.want) || strings.Contains(stderr, "Not complete: .") {
+			t.Errorf("stderr = %q, want %q", stderr, c.want)
+		}
+	}
+}
+
 func TestSpendConversionsLimitAndHints(t *testing.T) {
 	seen := spendServer(t, 200, `{"data":[],"from_day":"2026-11-01","to_day":"2026-11-07","truncated":true,"limit":20}`)
 	_, stderr, err := executeCommand("spend", "conversions", "--limit", "20")
