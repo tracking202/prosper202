@@ -38,6 +38,12 @@ final class CampaignFigures
     public const array RECORD = ['click_cpc', 'click_payout', 'amount', 'ledger_value', 'stated_amount'];
 
     /**
+     * GET /spend-ledger's figures: what a platform billed, the impressions
+     * and clicks it counted, and the clicks here that carry its ads.
+     */
+    public const array SPEND = ['impressions', 'platform_clicks', 'spend', 'matched_clicks', 'unallocated_spend'];
+
+    /**
      * GET /conversions/match-methods' figures: how many conversions each
      * campaign has by match method, how many count, and what they earned —
      * the counts as a report's leads are, the money as its income.

@@ -674,12 +674,30 @@ func TestSummaryTotalFollowsTheServersSQL(t *testing.T) {
 	if start < 0 {
 		t.Fatal("ReportsController has no summary()")
 	}
+	whole := body
 	body = body[start:]
+	// summary() selects metricsSelect(), whose default sums are SUM(de.<column>)
+	// (the spend ledger, when it has a part, only replaces cost's).
 	sqlStart, sqlEnd := strings.Index(body, `$sql = "SELECT`), strings.Index(body, "FROM 202_dataengine de")
-	if sqlStart < 0 || sqlEnd < sqlStart {
-		t.Fatal("summary()'s SELECT is not where this test reads it")
+	if sqlStart < 0 || sqlEnd < sqlStart || !strings.Contains(body[sqlStart:sqlEnd], "self::metricsSelect(") {
+		t.Fatal("summary()'s SELECT is not metricsSelect() where this test reads it")
 	}
-	sql := strings.Join(strings.Fields(body[sqlStart+len(`$sql = "SELECT`):sqlEnd]), " ")
+	formula := whole[strings.Index(whole, "private static function metricsSelect("):]
+	retStart := strings.Index(formula, `return "`)
+	if retStart < 0 || !strings.Contains(formula[:retStart], `"SUM(de.$column)"`) {
+		t.Fatal("metricsSelect() is not where this test reads it")
+	}
+	formula = formula[retStart+len(`return "`):]
+	retEnd := strings.Index(formula, `";`)
+	if retEnd < 0 {
+		t.Fatal("metricsSelect()'s SELECT list does not end where this test reads it")
+	}
+	sql := formula[:retEnd]
+	columnOf := map[string]string{"clicks": "clicks", "out": "click_out", "leads": "leads", "income": "income", "cost": "cost"}
+	sql = regexp.MustCompile(`\$(clicks|out|leads|income|cost)\b`).ReplaceAllStringFunc(sql, func(v string) string {
+		return "SUM(de." + columnOf[v[1:]] + ")"
+	})
+	sql = strings.Join(strings.Fields(strings.ReplaceAll(sql, "{$prefix}", "")), " ")
 
 	column := map[string]string{
 		"total_clicks": "SUM(de.clicks)", "total_click_throughs": "SUM(de.click_out)", "total_leads": "SUM(de.leads)",

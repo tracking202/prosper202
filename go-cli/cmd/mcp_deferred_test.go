@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	osexec "os/exec"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,6 +15,44 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// The catalogue is read into the model's context on every connection. (Native
+// only: get_more_tools is the stdio server's, which js/wasm does not build.)
+func TestMCPCatalogStaysInBudget(t *testing.T) {
+	cat, err := buildMCPCatalog(rootCmd, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What the server lists on connecting: the catalogue, get_more_tools
+	// and the sentence that tells the model to call it.
+	more := mcpGetMoreToolsTool()
+	cat.Tools = append(cat.Tools, mcpTool{Name: more.Name, Title: more.Title, Description: more.Description, InputSchema: more.InputSchema.(mcpSchema),
+		Annotations: mcpToolAnnotations{Title: more.Annotations.Title, ReadOnlyHint: more.Annotations.ReadOnlyHint, IdempotentHint: more.Annotations.IdempotentHint}})
+	cat.Instructions += mcpMoreToolsInstructions
+	body, err := json.Marshal(cat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Characters, about 23k tokens. Most of it is the report tools' filters;
+	// a new tool or flag that crosses this should omit what few asks need.
+	// The traffic source and category updates and deletes are about 4,600,
+	// the text ad writes about 3,400 (Setup › Text Ads' own fields), the rotator
+	// writes about 5,000 (rotator_set_rules' rules are a schema of their own);
+	// with both the list was about 89,500; with every 1.9.79 addition (the scope
+	// refusals, the optimizer's and the reports' notes) it is about 93,600; the
+	// click filter's five tools (user_id and ids left out, no entry update) and
+	// settings_get add about 5,100; the publisher dimension and its filter
+	// (on report_summary, report_breakdown and click_list) about 800;
+	// landing_page_check about 700; ppc_network_add_chatgpt_ads about 330,
+	// paid for by a shorter help line on the link-token flags; get_more_tools
+	// and its sentence in the instructions about 700 (every later tool is
+	// listed on request, mcpDeferredToolSpecs), paid for by the click
+	// filter tools' user_id, which their Omit meant to leave out.
+	const budget = 100500
+	if len(body) > budget {
+		t.Fatalf("the tool list is %d characters, over its %d budget; trim notes or omit flags", len(body), budget)
+	}
+}
 
 // The deferred tools are read into the model's context only when
 // get_more_tools loads them, so they have a budget of their own; the
@@ -170,6 +209,7 @@ func TestMCPGetMoreToolsLoadsDeferredToolsOverStdio(t *testing.T) {
 	if err != nil || res.IsError {
 		t.Fatalf("get_more_tools: %v %s", err, mcpResultText(res))
 	}
+	getMore := res
 	var answer struct {
 		Tools []struct{ Name, Description string } `json:"tools"`
 	}
@@ -193,20 +233,142 @@ func TestMCPGetMoreToolsLoadsDeferredToolsOverStdio(t *testing.T) {
 		t.Fatalf("requests: %q", fake.requests())
 	}
 
-	// No task is refused in the CLI's error envelope, with what to send.
-	res, err = session.CallTool(ctx, &mcp.CallToolParams{Name: mcpGetMoreTools, Arguments: map[string]any{}})
-	if err != nil {
+	// A client that never reads the listing learns from the answer what each tool takes.
+	var schemas struct {
+		Tools []struct {
+			Name        string    `json:"name"`
+			InputSchema mcpSchema `json:"input_schema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal([]byte(mcpResultText(getMore)), &schemas); err != nil {
 		t.Fatal(err)
 	}
-	var refused struct {
-		Error struct{ Category, Message, Hint string } `json:"error"`
+	for _, found := range schemas.Tools {
+		if found.Name == "destination_deliveries" && (strings.Join(found.InputSchema.Required, ",") != "id" || found.InputSchema.Properties["offset"].Type != "integer") {
+			t.Errorf("get_more_tools names destination_deliveries' arguments as %+v", found.InputSchema)
+		}
 	}
-	if !res.IsError || json.Unmarshal([]byte(mcpResultText(res)), &refused) != nil || refused.Error.Category != "validation" || !strings.Contains(refused.Error.Hint, `"task"`) {
-		t.Fatalf("get_more_tools without a task answered %s", mcpResultText(res))
+
+	// No task, a blank one and an argument it does not take are each refused
+	// in the CLI's error envelope, naming what was wrong and what to send.
+	for _, tc := range []struct {
+		args map[string]any
+		want string
+	}{
+		{map[string]any{}, "needs task"},
+		{map[string]any{"task": "   "}, "needs task"},
+		{map[string]any{"task": "destinations", "extra": 1}, "extra is not an argument of get_more_tools"},
+	} {
+		res, err = session.CallTool(ctx, &mcp.CallToolParams{Name: mcpGetMoreTools, Arguments: tc.args})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var refused struct {
+			Error struct{ Category, Message, Hint string } `json:"error"`
+		}
+		if !res.IsError || json.Unmarshal([]byte(mcpResultText(res)), &refused) != nil || refused.Error.Category != "validation" ||
+			!strings.Contains(refused.Error.Message, tc.want) || !strings.Contains(refused.Error.Hint, `"task"`) {
+			t.Errorf("get_more_tools %v answered %s, want %q", tc.args, mcpResultText(res), tc.want)
+		}
 	}
 	// A task nothing matches names what can be added.
 	res, err = session.CallTool(ctx, &mcp.CallToolParams{Name: mcpGetMoreTools, Arguments: map[string]any{"task": "the weather in Lisbon"}})
 	if err != nil || res.IsError || !strings.Contains(mcpResultText(res), "destination_test") {
 		t.Fatalf("an unmatched task answered %v %s", err, mcpResultText(res))
+	}
+}
+
+// mcpAnswerKeyRef is a key a tool's Note names in its answer: a dotted path
+// (pagination.total) or a key with its value (truncated: true).
+var mcpAnswerKeyRef = regexp.MustCompile(`\b([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)\b|\b([a-z][a-z0-9_]*): (?:true|false)\b`)
+
+// mcpDeferredAnswerSources: the controller each deferred tool's answer comes
+// from as it is (the destination commands render the API's answer).
+var mcpDeferredAnswerSources = map[string]string{
+	"destination": "DestinationsController.php",
+}
+
+// A deferred tool's Note names only keys its answer carries: the answer is
+// the API's own, so each key a Note names is one the controller writes, with
+// a dotted path's parts nested in that order.
+func TestMCPDeferredNotesNameKeysTheAnswerCarries(t *testing.T) {
+	named := 0
+	for _, s := range mcpDeferredToolSpecs {
+		file, ok := mcpDeferredAnswerSources[s.Command[0]]
+		if !ok {
+			t.Errorf("%s: no controller listed for `p202 %s` in mcpDeferredAnswerSources", s.Name, s.Command[0])
+			continue
+		}
+		src, err := os.ReadFile(repoPath("api", "v3", "Controllers", file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range mcpAnswerKeyRef.FindAllStringSubmatch(s.Note, -1) {
+			path := m[1] + m[2]
+			parts := strings.Split(path, ".")
+			quoted := make([]string, len(parts))
+			for i, p := range parts {
+				quoted[i] = `'` + regexp.QuoteMeta(p) + `'\s*=>`
+			}
+			nested := regexp.MustCompile(strings.Join(quoted, `\s*\[[^;]*?`))
+			if !nested.Match(src) {
+				t.Errorf("%s's description names %s, which %s does not write", s.Name, path, file)
+			}
+			named++
+		}
+	}
+	if named < 2 {
+		t.Fatalf("read %d key names in the deferred Notes; destination_deliveries names two", named)
+	}
+}
+
+// `p202 mcp tools --deferred` lists the tools get_more_tools loads, under
+// the same policies as the server, and the plain listing leaves them out.
+func TestMCPToolsListsTheDeferredOnes(t *testing.T) {
+	t.Cleanup(func() { mcpToolsDeferred, mcpReadOnly = false, false })
+	names := func(args ...string) []string {
+		stdout, stderr, err := mcpExecute(t, args...)
+		if err != nil {
+			t.Fatalf("%q: %v %s", args, err, stderr)
+		}
+		var listed struct {
+			Tools []mcpTool `json:"tools"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &listed); err != nil {
+			t.Fatalf("%q: %v", args, err)
+		}
+		out := []string{}
+		for _, tool := range listed.Tools {
+			out = append(out, tool.Name)
+		}
+		mcpToolsDeferred, mcpReadOnly = false, false
+		return out
+	}
+	if got := strings.Join(names("mcp", "tools", "--deferred"), ","); got != "destination_list,destination_deliveries,destination_test" {
+		t.Errorf("--deferred lists %s", got)
+	}
+	if got := strings.Join(names("mcp", "tools", "--deferred", "--read-only"), ","); got != "destination_list,destination_deliveries" {
+		t.Errorf("--deferred --read-only lists %s", got)
+	}
+	if got := strings.Join(names("--staged", "mcp", "tools", "--deferred"), ","); got != "destination_list,destination_deliveries" {
+		t.Errorf("--staged --deferred lists %s", got)
+	}
+	for _, name := range names("mcp", "tools") {
+		if _, deferred := findMCPDeferredSpec(name); deferred {
+			t.Errorf("the plain listing has %s", name)
+		}
+	}
+}
+
+// A test fire makes the install call the ad platform: it says so.
+func TestMCPDeferredToolsSayWhenTheyReachOut(t *testing.T) {
+	tools, err := buildMCPDeferredTools(rootCmd, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools {
+		if want := tool.Name == "destination_test"; tool.Annotations.OpenWorldHint != want {
+			t.Errorf("%s openWorldHint %v, want %v", tool.Name, tool.Annotations.OpenWorldHint, want)
+		}
 	}
 }

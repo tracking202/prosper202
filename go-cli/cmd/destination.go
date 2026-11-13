@@ -898,7 +898,7 @@ func destinationSettingFlags(cmd *cobra.Command) {
 	cmd.Flags().String("pixel-id", "", "For openai_ads: the ChatGPT Ads web pixel id (Ads Manager › Conversions)")
 	cmd.Flags().String("conversions-api-key-file", "", "For openai_ads: file holding the Conversions API key; - reads piped stdin")
 	cmd.Flags().String("event-type", "", "For openai_ads: the event type conversions are sent as, one of {values} (default order_created)")
-	cmd.Flags().String("custom-event-name", "", "For openai_ads with --event-type custom: its name (lowercase letters, digits, - and _)")
+	cmd.Flags().String("custom-event-name", "", "For openai_ads with --event-type custom: its name (lowercase letters, digits, - and _, starting and ending with a letter or digit)")
 	cmd.Flags().StringArray("campaign-event-type", nil, "For openai_ads: campaign_id=event_type for one campaign (repeatable); on update it is merged with the stored ones, and campaign_id= removes one")
 	cmd.Flags().String("scope", "", "For openai_ads: which conversions are sent, one of {values}")
 	cmd.Flags().Int("ppc-account-id", 0, "For openai_ads with --scope source: the traffic source account whose conversions are sent")

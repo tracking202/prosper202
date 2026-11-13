@@ -371,6 +371,8 @@ final class TrafficSourceSplitIntegrationTest extends TestCase
         self::assertSame([TrafficSourceOwners::OWNER_HAS_ACCOUNTS], $entry['ambiguous']);
         self::assertSame(2, $entry['custom_variables'], 'the live ones a split copies');
         self::assertSame([self::OWNER], array_column($entry['named_by'], 'user_id'));
+        // The source is the ChatGPT Ads one: the copy is too (ChatGptAdsSource).
+        self::assertTrue(self::$db->query("UPDATE 202_ppc_networks SET ppc_network_platform = 'chatgpt_ads' WHERE ppc_network_id = " . self::MIXED));
         $before = self::sources();
         $ownersOwn = self::variablesOf(self::OWNERS_OWN);
 
@@ -403,6 +405,7 @@ final class TrafficSourceSplitIntegrationTest extends TestCase
             $made[0]['user_id'], $made[0]['ppc_network_name'], $made[0]['ppc_network_deleted'],
         ], 'the copy is in OWNER\'s account, with the source\'s name');
         self::assertGreaterThanOrEqual(self::$now, (int) $made[0]['ppc_network_time']);
+        self::assertSame('chatgpt_ads', (string) self::$db->query("SELECT ppc_network_platform FROM 202_ppc_networks WHERE ppc_network_id = $copy")->fetch_row()[0], 'the copy keeps the platform');
         self::assertSame(
             $before,
             array_values(array_filter($after, static fn (array $s): bool => (int) $s['ppc_network_id'] !== $copy)),

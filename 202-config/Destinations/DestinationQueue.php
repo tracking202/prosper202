@@ -594,8 +594,10 @@ final class DestinationQueue
      * only from a request that did not refuse consent, under a campaign that
      * allowed capture (ClickIdentity::fromRequest()), with the time of the
      * visit it came with. So the address, which is the latest visit's, goes
-     * only when a signal came with that visit (latestVisitSignalled()): a re-click that refused
-     * leaves the earlier visits' marks behind it. A link a conversion's
+     * only when a signal came with that visit (latestVisitSignalled()): a re-click that
+     * brought none takes the earlier visits' marks back
+     * (IdentityGraph::withdrawBrowserSignals()), so one in the second of
+     * the visit before it does too. A link a conversion's
      * customer id makes later (trustedCustomer(), customerOnly()) is no such
      * mark. The latest visit is the account's own (#27). A click with no
      * such signal, or whose campaign is not the account's or is gone, is

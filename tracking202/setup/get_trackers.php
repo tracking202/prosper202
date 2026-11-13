@@ -135,7 +135,7 @@ $pick = static fn (string $key): string => (string) ($row[$key] ?? '');
 $trackers_sql = "SELECT
 	tr.tracker_id, tr.tracker_id_public, tr.tracker_time, tr.rotator_id, tr.landing_page_id AS named_landing_page_id,
 	lp.landing_page_id, lp.landing_page_url, ac.aff_campaign_name, lp.landing_page_nickname, ro.id AS redirector_id, ro.name,
-	pn.ppc_network_id
+	pn.ppc_network_id, pn.ppc_network_platform
 	FROM 202_trackers AS tr
 	LEFT JOIN 202_landing_pages AS lp ON (tr.landing_page_id = lp.landing_page_id AND lp.user_id = tr.user_id)
 	LEFT JOIN 202_aff_campaigns AS ac ON (tr.aff_campaign_id = ac.aff_campaign_id AND ac.user_id = tr.user_id)
@@ -199,6 +199,23 @@ $trackerLink = static function (array $tracker) use ($linkBase, $linkVariables):
         return [(string) $tracker['name'], 'redirector', $link];
     }
     return [(string) $tracker['aff_campaign_name'], 'direct link', $link];
+};
+
+// A link on the ChatGPT Ads source: the destination URL and tracking
+// template Get Links gave it (ChatGptAdsSource::links()), or null.
+$chatGptLinks = static function (array $tracker, string $kind) use ($linkBase, $linkVariables): ?array {
+    if (!\Prosper202\Setup\ChatGptAdsSource::isSourceRow($tracker) || !in_array($kind, ['landing page', 'redirector', 'direct link'], true)) {
+        return null;
+    }
+
+    return \Prosper202\Setup\ChatGptAdsSource::links(
+        $linkBase,
+        (string) $tracker['tracker_id_public'],
+        '',
+        \Prosper202\Click\TrackingLinkVariables::query($linkVariables[(int) ($tracker['ppc_network_id'] ?? 0)] ?? [], []),
+        $kind === 'landing page' ? (string) $tracker['landing_page_url'] : '',
+        $kind === 'redirector'
+    );
 };
 
 // Which scheme those links use, and why, under the list.
@@ -432,13 +449,19 @@ $nothingToLink = $campaignOptions === [] && $advancedPageOptions === [] && $rota
 						<?php $anyOnLinkBase = false;
 						foreach ($trackers as $tracker) {
 							[$name, $kind, $link] = $trackerLink($tracker);
+							$chatGpt = $chatGptLinks($tracker, $kind);
 							$anyOnLinkBase = $anyOnLinkBase || in_array($kind, ['redirector', 'direct link'], true);
 							$tid = (int) $tracker['tracker_id']; ?>
 							<li class="p202-list__item" data-p202-filter-text="<?php echo p202_setup_e($name); ?>" data-tracker-id="<?php echo $tid; ?>">
 								<span class="p202-list__name"><?php echo p202_setup_e($name !== '' ? $name : 'Untitled'); ?></span>
 								<span class="p202-pill<?php echo $link === '' ? ' p202-pill--warn' : ''; ?>"><?php echo p202_setup_e($kind); ?></span>
+								<?php if ($chatGpt !== null) { ?><span class="p202-pill p202-pill--accent">ChatGPT Ads</span><?php } ?>
 								<span class="p202-list__actions">
-									<?php if ($link !== '') { ?>
+									<?php if ($chatGpt !== null) { ?>
+										<button type="button" class="p202-list__action p202-copy" data-p202-copy="<?php echo p202_setup_e($chatGpt['destination_url']); ?>" data-chatgpt-ads="destination_url" title="The destination URL for the ad in Ads Manager">copy destination URL</button>
+										<button type="button" class="p202-list__action p202-copy" data-p202-copy="<?php echo p202_setup_e($chatGpt['tracking_template']); ?>" data-chatgpt-ads="tracking_template" title="The tracking template for the ad's tracking settings in Ads Manager">copy tracking template</button>
+										<button type="button" class="p202-list__action p202-copy" data-p202-copy="<?php echo p202_setup_e($link); ?>" title="The link with every variable, for anywhere but Ads Manager">copy full link</button>
+									<?php } elseif ($link !== '') { ?>
 										<button type="button" class="p202-list__action p202-copy" data-p202-copy="<?php echo p202_setup_e($link); ?>">copy</button>
 									<?php } ?>
 									<a class="p202-list__action" href="<?php echo p202_setup_e($self . '?edit_tracker_id=' . $tracker['tracker_id_public']); ?>">edit</a>

@@ -79,6 +79,43 @@
         "p202 config remove-profile eval-narrow --force >/dev/null 2>&1; true"
       ],
       "notes": "A key keeps the scope it was made with. The 403 names the scope in required_scope and its message, and the CLI's hint names `p202 user apikey create <user_id> --scope campaigns:read,ppc-networks:read,ppc-networks:write`; for an AI app's connection (key_source ai_connection) it says to connect the app again instead (ScopeRefusalServedIntegrationTest, go-cli scope_refusal_test.go)."
+    },
+    {
+      "id": "setup-source-003-chatgpt-ads-is-one-step",
+      "priority": "medium",
+      "state": "setup removes any traffic source named ChatGPT Ads and any account named ChatGPT Ads account",
+      "setup": [
+        "for id in $(p202 ppc-account list --all --json | jq -r '.data[] | select(.ppc_account_name==\"ChatGPT Ads account\") | .ppc_account_id'); do p202 ppc-account delete \"$id\" --force --json >/dev/null; done; for id in $(p202 ppc-network list --all --json | jq -r '.data[] | select(.ppc_network_name==\"ChatGPT Ads\") | .ppc_network_id'); do p202 ppc-network delete \"$id\" --force --json >/dev/null; done; true"
+      ],
+      "ask": "We are starting to run ads in ChatGPT. Set ChatGPT up as a traffic source here so its campaign and ad ids come through on our clicks.",
+      "expected": {
+        "runs_one_of": [
+          "ppc-network add-chatgpt-ads"
+        ],
+        "never_runs": [
+          "ppc-network delete",
+          "ppc-account delete"
+        ],
+        "checks": [
+          {
+            "run": "p202 ppc-network list --all --json | jq -r '\"sources=\\([.data[] | select(.ppc_network_name==\"ChatGPT Ads\")] | length)\"'",
+            "includes": [
+              "sources=1"
+            ]
+          },
+          {
+            "run": "p202 ppc-network add-chatgpt-ads --json | jq -r '\"created=\\(.data.source_created) added=\\(.data.variables_added | length)\"'",
+            "includes": [
+              "created=false added=0"
+            ]
+          }
+        ],
+        "rubric": "PASS if one ChatGPT Ads traffic source exists with an account and its campaign_id and ad_id variables (the second check runs the setup again and finds nothing missing), and the reply says Get Links or `p202 tracker get-url` gives the destination URL and tracking template for Ads Manager. FAIL if the agent builds the source, account or variables by hand with other parameters, makes more than one ChatGPT Ads source, or claims it is done without making one."
+      },
+      "cleanup": [
+        "for id in $(p202 ppc-account list --all --json | jq -r '.data[] | select(.ppc_account_name==\"ChatGPT Ads account\") | .ppc_account_id'); do p202 ppc-account delete \"$id\" --force --json >/dev/null; done; for id in $(p202 ppc-network list --all --json | jq -r '.data[] | select(.ppc_network_name==\"ChatGPT Ads\") | .ppc_network_id'); do p202 ppc-network delete \"$id\" --force --json >/dev/null; done; true"
+      ],
+      "notes": "Setup > Traffic Sources' Add ChatGPT Ads (Prosper202\\Setup\\ChatGptAdsSource). The source is marked by ppc_network_platform, not its name; the name check here holds only because setup removed any other source of that name."
     }
   ]
 }

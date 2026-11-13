@@ -520,6 +520,14 @@ Sources does; its accounts are not deleted with it, so delete them first
 same for a category and its campaigns, and `ppc-account delete` for an account
 and the trackers that name it.
 
+`p202 ppc-network add-chatgpt-ads` is Setup › Traffic Sources' **Add ChatGPT
+Ads**: it makes the source ChatGPT Ads, an account on it and the variables
+`campaign_id={campaign_id}` and `ad_id={ad_id}`. Run again, it adds only what is
+missing; a source you named ChatGPT Ads yourself (the only one of that name)
+becomes the ChatGPT Ads source rather than gaining a twin. `tracker get-url`
+then answers `chatgpt_ads` for a tracker on its account: the destination URL
+and the tracking template to paste into Ads Manager.
+
 A traffic source's custom variables — the extra `parameter=placeholder` pairs
 its tracking links carry, edited in Setup › Traffic Sources › variables:
 
@@ -1139,6 +1147,24 @@ first 1,000; the summary counts every skipped line by reason).
 (`--force` skips). All need the `access_to_update_section` role permission
 (`delete-subids` also `delete_individual_subids`), refuse `--staged`, and are
 safe to run again.
+
+### Record and read ad platform spend
+
+```bash
+p202 spend import spend.json --dry-run
+p202 spend import spend.json
+p202 spend list --period yesterday --platform openai_ads --interval hour
+```
+
+The spend ledger: what each ad platform billed per ad per hour, which the
+reports read as cost. `spend import` sends a JSON list of rows (or
+`{"rows": [...]}`, up to 2000; `-` reads stdin) in one write; sending an hour
+again replaces it, so a retry is safe, and any refused row (`rows.3.spend`,
+counted from 0) writes nothing. `--dry-run` answers the counts and writes
+nothing. It needs `access_to_update_section` and `spend-ledger:write`, and
+refuses `--staged`. `spend list` sums the ledger per day (the account's time
+zone) or `--interval hour`, over `--period` or `--time-from`/`--time-to`, with
+the clicks each ad matched and the spend no click carried.
 
 ## Destinations
 

@@ -32,7 +32,7 @@ final class PublishersReport
     /**
      * @return array{publishers: list<array<string, mixed>>, uncredited: ?array<string, mixed>,
      *   totals: array<string, mixed>, unrecorded_links: bool, currency: string,
-     *   money: array{currency: string, others: string}}
+     *   money: array{currency: string, others: string}, spend_ledger: ?array<string, mixed>}
      */
     public static function read(\mysqli $db, int $accountId, int $from, int $to): array
     {
@@ -48,6 +48,7 @@ final class PublishersReport
         return self::shape($groups) + [
             'currency' => $reports->accountCurrency(),
             'money' => \Prosper202\Conversion\Ledger\RevenueCurrencies::forExport($db, $accountId, $from, $to),
+            'spend_ledger' => $groups['spend_ledger'] ?? null,
         ];
     }
 

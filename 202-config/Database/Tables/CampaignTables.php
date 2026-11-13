@@ -123,6 +123,7 @@ final class CampaignTables
                 `ppc_network_deleted` tinyint(1) NOT NULL DEFAULT '0',
                 `ppc_network_name` varchar(50) NOT NULL,
                 `ppc_network_time` int(10) unsigned NOT NULL,
+                `ppc_network_platform` varchar(32) NOT NULL DEFAULT '',
                 PRIMARY KEY (`ppc_network_id`),
                 KEY `user_id` (`user_id`),
                 KEY `ppc_network_deleted` (`ppc_network_deleted`),

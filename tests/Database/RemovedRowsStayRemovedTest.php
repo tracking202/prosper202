@@ -76,6 +76,10 @@ final class RemovedRowsStayRemovedTest extends TestCase
                 . ' belongs to: a removed variable\'s values are still its clicks\', so its name is read and shown'
                 . ' as removed',
         ],
+        '202-config/Spend/LedgerCost.php' => [
+            'read | 202_ppc_network_variables' => 'a click\'s ad id is the value it was recorded with: removing'
+                . ' the ad_id variable later does not change which ad a past click came from, or what it cost',
+        ],
     ];
 
     /** @var array<string, string>|null table => its soft-delete column */

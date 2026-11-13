@@ -56,6 +56,10 @@ var searchTasks = []searchTask{
 		Phrases: []string{"traffic source accounts", "ad accounts"}},
 	{Run: "p202 ppc-network update",
 		Phrases: []string{"rename traffic source", "rename ad network"}},
+	{Run: "p202 ppc-network add-chatgpt-ads",
+		Phrases: []string{"add chatgpt ads", "set up chatgpt ads", "openai ads traffic source", "chatgpt traffic source"}},
+	{Run: "p202 tracker get-url",
+		Phrases: []string{"chatgpt tracking template", "ads manager tracking template", "openai ads destination url"}},
 	{Run: "p202 ppc-account update",
 		Phrases: []string{"rename traffic source account", "rename ad account", "default account"}},
 	{Run: "p202 aff-network list", Pages: []string{"Setup › Categories"},
@@ -176,6 +180,12 @@ var searchTasks = []searchTask{
 	{Run: "p202 conversion delete-subids", Pages: []string{"Update › Delete Subids"}},
 	{Run: "p202 conversion upload-revenue", Pages: []string{"Update › Upload Revenue Reports"},
 		Phrases: []string{"commission report", "network revenue csv"}},
+	{Run: "p202 spend import",
+		Phrases: []string{"import ad spend", "import spend", "record ad spend", "record spend", "upload ad platform spend",
+			"load spend from the ad platform", "send hourly spend per ad", "write the spend ledger"}},
+	{Run: "p202 spend list",
+		Phrases: []string{"ad spend", "spend ledger", "what the ad platform billed", "what an ad cost", "cost per ad per hour", "spend per ad", "spend by day",
+			"what the ad platform charged", "unallocated spend", "spend no click matched", "how far spend data reaches"}},
 
 	// Account menu
 	{Run: "p202 user prefs update", Pages: []string{"Personal Settings"},
