@@ -27,13 +27,24 @@ func TestMCPCatalogBuilds(t *testing.T) {
 	if len(cat.Tools) != len(mcpToolSpecs) {
 		t.Fatalf("catalogue has %d tools, specs %d", len(cat.Tools), len(mcpToolSpecs))
 	}
-	// The deferred tools are listed the moment get_more_tools loads them.
+	// The deferred tools are listed the moment get_more_tools loads them: every
+	// spec in a native build, and in the hosted engine (js/wasm, mcpHostedRun)
+	// only those not marked NotHosted.
 	deferred, err := buildMCPDeferredTools(rootCmd, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(deferred) != len(mcpDeferredToolSpecs) {
-		t.Fatalf("deferred tools %d, specs %d", len(deferred), len(mcpDeferredToolSpecs))
+	want, got := []string{}, []string{}
+	for _, s := range mcpDeferredToolSpecs {
+		if !mcpHostedRun || !s.NotHosted {
+			want = append(want, s.Name)
+		}
+	}
+	for _, tool := range deferred {
+		got = append(got, tool.Name)
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("deferred tools (hosted %v): %v, want %v", mcpHostedRun, got, want)
 	}
 	valid := regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 	seen := map[string]bool{}
