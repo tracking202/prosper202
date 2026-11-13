@@ -486,7 +486,7 @@ final class DestinationQueue
                 return ['withheld', new SendResult(false, false, null, 'withheld: your privacy setting holds back visitors who may be in Europe, and this click\'s address is not placed outside it')];
             }
             if (!$destination['adapter']->takesConsent()) {
-                return ['withheld', new SendResult(false, false, null, 'withheld: the visitor may be in the EEA or UK, and this destination\'s platform takes no consent signal to state theirs with')];
+                return ['withheld', new SendResult(false, false, null, 'withheld: the visitor may be in the EEA or UK, and this destination\'s platform has no field that states their consent to measurement')];
             }
             if (!self::consentGranted($destination['settings'])) {
                 return ['withheld', new SendResult(false, false, null, 'withheld: the visitor may be in the EEA or UK, and this destination does not state consent granted (ad_user_data and ad_personalization)')];

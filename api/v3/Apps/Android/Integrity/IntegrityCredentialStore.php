@@ -6,6 +6,8 @@ namespace Api\V3\Apps\Android\Integrity;
 
 use Prosper202\Database\Connection;
 use Prosper202\Database\Schema\TableRegistry;
+use Prosper202\Security\MalformedSecretKey;
+use Prosper202\Security\SealedSecret;
 
 /**
  * The Play Integrity service accounts, one per Android registration, in
@@ -36,7 +38,6 @@ final class IntegrityCredentialStore
 {
     public const SECRET_NAME = 'play_integrity_credential';
     private const AAD = 'p202-integrity-credential-v1|';
-    private const CIPHER = 'aes-256-gcm';
 
     public function __construct(private readonly Connection $conn)
     {
@@ -135,41 +136,26 @@ final class IntegrityCredentialStore
 
     public static function seal(#[\SensitiveParameter] string $plaintext, #[\SensitiveParameter] string $key, int $registrationId, int $userId): string
     {
-        $nonce = random_bytes(12);
-        $tag = '';
-        $ciphertext = openssl_encrypt($plaintext, self::CIPHER, $key, OPENSSL_RAW_DATA, $nonce, $tag, self::AAD . $registrationId . '|' . $userId, 16);
-        if ($ciphertext === false || strlen($tag) !== 16) {
-            throw new \RuntimeException('Encrypting the Play Integrity credential failed');
-        }
-
-        return 'v1.' . base64_encode($nonce . $tag . $ciphertext);
+        return SealedSecret::seal($plaintext, $key, self::AAD . $registrationId . '|' . $userId, 'Encrypting the Play Integrity credential failed');
     }
 
     /** @throws \RuntimeException for a value that is not v1, or whose tag does not verify under this registration */
     public static function open(string $sealed, #[\SensitiveParameter] string $key, int $registrationId, int $userId): string
     {
-        $raw = str_starts_with($sealed, 'v1.') ? base64_decode(substr($sealed, 3), true) : false;
-        if ($raw === false || strlen($raw) < 29) {
-            throw new \RuntimeException('The stored Play Integrity credential is not a v1 ciphertext');
-        }
-        $plaintext = openssl_decrypt(substr($raw, 28), self::CIPHER, $key, OPENSSL_RAW_DATA, substr($raw, 0, 12), substr($raw, 12, 16), self::AAD . $registrationId . '|' . $userId);
-        if ($plaintext === false) {
-            throw new \RuntimeException('The stored Play Integrity credential does not decrypt for registration ' . $registrationId
-                . ' (wrong key, altered, or copied from another registration); set the credential again');
-        }
-
-        return $plaintext;
+        return SealedSecret::open(
+            $sealed,
+            $key,
+            self::AAD . $registrationId . '|' . $userId,
+            'The stored Play Integrity credential is not a v1 ciphertext',
+            'The stored Play Integrity credential does not decrypt for registration ' . $registrationId
+                . ' (wrong key, altered, or copied from another registration); set the credential again'
+        );
     }
 
     /** The key, minted first if absent. An existing key is never replaced. */
     private function ensureKey(): string
     {
-        $stmt = $this->conn->prepareWrite(
-            'INSERT INTO `' . TableRegistry::DEPLOYMENT_SECRETS . '` (secret_name, secret_value, created_at) VALUES (?, ?, ?)
-             ON DUPLICATE KEY UPDATE secret_name = secret_name'
-        );
-        $this->conn->bind($stmt, 'ssi', [self::SECRET_NAME, bin2hex(random_bytes(32)), time()]);
-        $this->conn->executeUpdate($stmt);
+        SealedSecret::mintKey($this->conn, self::SECRET_NAME);
         $key = $this->loadKey();
         if ($key === null) {
             throw new \RuntimeException('The Play Integrity credential key was minted but cannot be read back');
@@ -181,17 +167,10 @@ final class IntegrityCredentialStore
     /** @throws \RuntimeException for a stored key that is not 64 lower-case hex characters */
     private function loadKey(): ?string
     {
-        $stmt = $this->conn->prepareWrite('SELECT secret_value FROM `' . TableRegistry::DEPLOYMENT_SECRETS . '` WHERE secret_name = ? LIMIT 1');
-        $this->conn->bind($stmt, 's', [self::SECRET_NAME]);
-        $row = $this->conn->fetchOne($stmt);
-        if ($row === null) {
-            return null;
-        }
-        $hex = $row['secret_value'] ?? null;
-        if (!is_string($hex) || preg_match('/^[0-9a-f]{64}$/D', $hex) !== 1) {
+        try {
+            return SealedSecret::readKey($this->conn, self::SECRET_NAME);
+        } catch (MalformedSecretKey) {
             throw new \RuntimeException('The stored Play Integrity credential key is not 64 lower-case hex characters');
         }
-
-        return (string) hex2bin($hex);
     }
 }

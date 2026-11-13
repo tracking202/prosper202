@@ -1,0 +1,12 @@
+{
+  "id": "adacct_123",
+  "name": "Northwind Outfitters",
+  "url": "https://shop.example.com",
+  "preview_url": null,
+  "status": "active",
+  "timezone": "America/New_York",
+  "currency_code": "USD",
+  "review": {
+    "status": "approved"
+  }
+}

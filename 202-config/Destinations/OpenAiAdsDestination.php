@@ -216,7 +216,8 @@ final class OpenAiAdsDestination implements DestinationType
         }
         $json = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR);
         $url = 'https://' . self::HOST . '/v1/events?pid=' . rawurlencode((string) $settings['pixel_id']);
-        $this->sender ??= new WebhookSender();
+        // OpenAI's host, or the loopback stand-in P202_OPENAI_ADS_ENDPOINT names for tests and live passes.
+        $this->sender ??= \Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi::eventsSender();
         $sent = $this->sender->post($url, $json, ['Content-Type: application/json', 'Authorization: Bearer ' . $key, 'User-Agent: Prosper202-Destinations/1'], [443]);
         $redact = static fn (string $text): string => $key === '' ? $text : str_replace([$key, rawurlencode($key)], '…', $text);
 

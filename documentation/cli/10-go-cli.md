@@ -621,7 +621,11 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   `destination_list`, `destination_deliveries` and `destination_test` (Setup
   › Destinations: each destination's status, its delivery log with why a
   conversion failed or was withheld, and a test fire; the test fire cannot be
-  proposed, so it is not offered with `--staged`, nor with `--read-only`).
+  proposed, so it is not offered with `--staged`, nor with `--read-only`, and
+  it does not take `--real`, which sends an event the platform counts),
+  and `ad_connection_list` and `ad_connection_check` (Setup › Destinations ›
+  ChatGPT Ads: each connected ad account, and a fresh read of it from
+  OpenAI; the check is not offered with `--staged`).
 - With `--staged`, a write returns a change id and changes nothing; you apply
   it with `p202 change apply <id>`. The assistant is not offered the apply and
   discard tools.
@@ -720,6 +724,14 @@ that stopped after `--skip-errors` went past refused records names those
 records and their errors too, and a record whose create failed with a 5xx or
 on the connection may exist already: its hint says to check the entity's
 `list` first.
+
+A 502 or 503 whose `details.upstream` names an ad platform (`p202
+ad-connection create|update|check|setup`, `p202 destination test --real`)
+is `server`, exit 4: the install could not get a usable answer from OpenAI,
+and no key was judged. Its hint says to wait a minute and run the same
+command again; the command's own hints (where the key is, which command
+lists ids) are attached only to the answers they are true of, a 422 naming
+the field or a 404.
 
 Lists of valid values (supported entities, the metrics a response did
 contain) sit in the message itself, so they are visible even when the hint

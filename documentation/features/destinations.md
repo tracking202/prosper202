@@ -316,8 +316,25 @@ Google Ads) and batching.
 
 ## ChatGPT Ads
 
-You need the **pixel id** of your web pixel and a **Conversions API key**,
-both in ChatGPT Ads Manager › Conversions (Conversions API keys › Create).
+**The quick way: connect the ad account.** Under Setup › Destinations ›
+ChatGPT Ads, paste the **Advertiser API key** from ChatGPT Ads Manager ›
+Settings and press Connect. Prosper202 checks it with OpenAI and shows the
+account's name, currency and time zone. Then **Run setup**: it finds or
+makes your web pixel, makes a Conversions API key, adds this destination
+with both, and makes an event setting for each event type (30-day click
+window) in your ad account. Each step says what it did, and any can be
+unticked. Where OpenAI has pixel or key creation switched off for your
+account, setup says so; make them in Ads Manager and give them under
+Advanced. **Replace key**, under the connection, takes a new Advertiser API
+key for the same ad account (when OpenAI refuses the stored one, or you
+rotated it); a check or setup that fails says why under the connection.
+The keys are stored encrypted and never shown again. The same
+from a script: `p202 ad-connection` or `/api/v3/ad-connections`
+([Ad connections API](../api/28-ad-connections.md)).
+
+**By hand**, you need the **pixel id** of your web pixel and a **Conversions
+API key**, both in ChatGPT Ads Manager › Conversions (Conversions API keys ›
+Create).
 
 Each conversion is sent as one web event, `order_created` unless you pick
 another type (or `custom` with a name of your own), to
@@ -362,7 +379,13 @@ What OpenAI does not take, and what that means here:
   backoff.
 
 **Test it**: *send test* (or `p202 destination test <id>`) sends a made-up
-event with `validate_only`, which OpenAI checks and does not save. After a
+event with `validate_only`, which OpenAI checks and does not save. With a
+ChatGPT Ads connection to the pixel's ad account, *send a real test event*
+(or `p202 destination test <id> --real`) sends one real event instead, which
+OpenAI saves and counts as a conversion of the pixel, then reads the
+account's recent events and says whether it arrived from this server. Over the
+API that is `{"real": true, "confirm_counted": true}`: `real` alone is refused,
+because the event is counted. After a
 test, confirm the first real conversions in Ads Manager › Conversions.
 
 ## CLI
@@ -384,7 +407,12 @@ p202 destination connect 2          # open the authorisation_url it prints
 p202 destination update 2 --campaign-conversion-action 12=987655   # sets campaign 12's, keeps the others; 12= removes it
 p202 destination test 2
 
-# ChatGPT Ads: key.txt holds the Conversions API key
+# ChatGPT Ads, connected: ads-key.txt holds the Advertiser API key
+p202 ad-connection create --api-key-file ads-key.txt --ppc-account-id 4
+p202 ad-connection setup 1 --event-type order_created --event-type lead_created
+p202 ad-connection check 1
+
+# ChatGPT Ads by hand: key.txt holds the Conversions API key
 p202 destination create --type openai_ads --name "ChatGPT Ads" --pixel-id px_4821 \
     --conversions-api-key-file key.txt
 p202 destination update 3 --scope all          # every conversion, for view-through

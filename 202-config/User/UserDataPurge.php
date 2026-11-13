@@ -157,12 +157,13 @@ final class UserDataPurge
         'DELETE FROM 202_shopify_refund_transactions WHERE user_id = ?',
     ];
 
-    /** Queued traffic-source postbacks, where corrections to them would go, and the destinations and their deliveries: a deleted account's never go out. */
+    /** Queued traffic-source postbacks, where corrections to them would go, the destinations and their deliveries, and the ad platform connections: a deleted account's never go out. */
     private const NOTIFICATION_STATEMENTS = [
         'DELETE FROM 202_notification_pending WHERE user_id = ?',
         'DELETE FROM 202_notification_correction_urls WHERE user_id = ?',
         'DELETE FROM 202_destination_deliveries WHERE user_id = ?',
         'DELETE FROM 202_destinations WHERE user_id = ?',
+        'DELETE FROM 202_ad_connections WHERE user_id = ?',
     ];
 
     /** Taken first in the delete's transaction: see deleteUser(). */

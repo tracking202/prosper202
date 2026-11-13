@@ -1,0 +1,13 @@
+{
+  "id": "ces_123",
+  "name": "Prosper202 order created",
+  "event_type": "order_created",
+  "custom_event_name": null,
+  "attribution_window_days": 30,
+  "ad_account_id": "adacct_123",
+  "source_ids": ["clidsrc_123"],
+  "sources": [{"id": "clidsrc_123", "name": "Prosper202"}],
+  "campaigns": [],
+  "archived": false,
+  "version": 1
+}
