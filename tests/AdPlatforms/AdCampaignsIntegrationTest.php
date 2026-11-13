@@ -450,13 +450,14 @@ final class AdCampaignsIntegrationTest extends TestCase
 
                 return count($pages) > 1 ? array_shift($pages) : $pages[0];
             };
+            $refused = null;
             try {
                 $this->campaigns()->spend(1, $id, null, null, 1777172400);
-                self::fail($what . ' was counted');
             } catch (\RuntimeException $e) {
-                self::assertInstanceOf(AdPlatformUnavailable::class, $e, $what . ': ' . $e->getMessage());
-                self::assertSame(AdPlatformUnavailable::UNREADABLE, $e->reason, $what);
+                $refused = $e;
             }
+            self::assertInstanceOf(AdPlatformUnavailable::class, $refused, $what . ' was not refused as unreadable: ' . ($refused?->getMessage() ?? 'counted'));
+            self::assertSame(AdPlatformUnavailable::UNREADABLE, $refused->reason, $what);
         }
         $pages = [$page([$row], true, 'p1'), $page([['campaign_id' => 'cmpn_102', 'spend' => 3] + $row], false, 'p2')];
         $this->routes['GET ad_account/insights'] = function () use (&$pages): array {
