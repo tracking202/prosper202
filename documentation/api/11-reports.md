@@ -292,6 +292,15 @@ hour, so a window that starts mid-hour costs its clicks as the whole hour
 does. Every other click keeps its CPC: clicks after the latest hour the
 ledger holds, clicks with no `ad_id`, and ads the ledger has no row for.
 
+On an account with a traffic source marked as ChatGPT Ads
+(`ppc_network_platform` `chatgpt_ads`, set by Setup › Traffic Sources' **Add
+ChatGPT Ads**, which makes one or marks yours when it is the only source named
+ChatGPT Ads), ChatGPT Ads spend (platform `openai_ads`) goes only to that
+source's clicks, so a click of another source that happens to carry the same
+ad id keeps its CPC. An account with no marked source, such as one whose
+ChatGPT Ads source was set up by hand, is matched by the ad id on any of its
+traffic sources, as spend of every other platform is.
+
 A report whose cost read the ledger carries `spend_ledger`:
 
 ```json

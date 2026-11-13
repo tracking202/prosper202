@@ -13,7 +13,11 @@ use Prosper202\Database\Connection;
  * A click is matched to the ledger by the ad id its tracking link carried:
  * the value of its traffic source variable whose parameter is `ad_id` (the
  * ChatGPT Ads tracking template sets `ad_id={ad_id}`), and by the UTC hour
- * it arrived in. An hour's spend for an ad is shared equally by the
+ * it arrived in. A platform that has a traffic source mark (SOURCE_PLATFORMS)
+ * has its spend matched only to clicks of a source carrying that mark, on an
+ * account that has such a source, so a click of another source with the same
+ * ad id keeps its own CPC. On an account with no marked source (one set up by
+ * hand) the ad id alone matches, as for every other platform. An hour's spend for an ad is shared equally by the
  * account's clicks that carry that ad in that hour; the share replaces each
  * click's CPC. Spend in an hour no click carries the ad in is unallocated:
  * reported beside the figures, never spread onto other hours or clicks.
@@ -34,6 +38,16 @@ final class LedgerCost
 {
     /** The traffic source variable parameter that names the click's ad. */
     public const string AD_PARAMETER = 'ad_id';
+
+    /**
+     * Ledger platform => the 202_ppc_networks.ppc_network_platform its
+     * clicks come from. On an account with a traffic source of that mark
+     * (removed or not), a platform listed here is matched only to clicks of
+     * such a source. One not listed, or an account with no such source (a
+     * source set up by hand, never marked by Add ChatGPT Ads), is matched by
+     * the ad id alone.
+     */
+    public const array SOURCE_PLATFORMS = ['openai_ads' => \Prosper202\Setup\ChatGptAdsSource::PLATFORM];
 
     /** The derived tables' alias prefix in a report, outside ReportsController's join aliases. */
     public const string ALIAS = 'sl';
@@ -60,6 +74,7 @@ final class LedgerCost
         private readonly string $row = 'de',
         private readonly ?Connection $staging = null,
         private readonly int $staged = 0,
+        private readonly bool $tied = false,
     ) {
     }
 
@@ -149,7 +164,23 @@ final class LedgerCost
             throw $e;
         }
 
-        return new self($join, $statsBinds, $statsTypes, min($byPlatform), $byPlatform, (string) $left['spend'], $other, $row, $staged === null ? null : $conn, $staged ?? 0);
+        // The note says spend goes to one source only where the tie applied.
+        $marked = array_intersect_key(self::SOURCE_PLATFORMS, $byPlatform);
+        $tied = array_intersect_key(self::marks($conn, $userId), array_flip($marked)) !== [];
+
+        return new self(
+            $join,
+            $statsBinds,
+            $statsTypes,
+            min($byPlatform),
+            $byPlatform,
+            (string) $left['spend'],
+            $other,
+            $row,
+            $staged === null ? null : $conn,
+            $staged ?? 0,
+            $tied,
+        );
     }
 
     /**
@@ -302,6 +333,26 @@ final class LedgerCost
     }
 
     /**
+     * The SOURCE_PLATFORMS marks the account's traffic sources carry, removed
+     * ones included (their clicks still carry the mark), as mark => true.
+     *
+     * @return array<string, true>
+     */
+    private static function marks(Connection $conn, int $userId): array
+    {
+        $marks = array_values(self::SOURCE_PLATFORMS);
+        $stmt = $conn->prepareRead('SELECT DISTINCT ppc_network_platform FROM 202_ppc_networks WHERE user_id = ?'
+            . ' AND ppc_network_platform IN (' . implode(', ', array_fill(0, count($marks), '?')) . ')');
+        $conn->bind($stmt, 'i' . str_repeat('s', count($marks)), [$userId, ...$marks]);
+        $out = [];
+        foreach ($conn->fetchAll($stmt) as $row) {
+            $out[(string) $row['ppc_network_platform']] = true;
+        }
+
+        return $out;
+    }
+
+    /**
      * Rows after $insert (`INSERT INTO <one of stage()'s tables> (...) VALUES `),
      * a thousand a statement.
      *
@@ -382,7 +433,11 @@ final class LedgerCost
                 . '. Clicks after that are costed at their CPC.',
             'unallocated' => [
                 'total_cost' => (float) $this->unallocated,
-                'note' => 'Spend in this window that no click here carries the ad of, for the whole account; in no row or total.',
+                'note' => 'Spend in this window that no click here carries the ad of, for the whole account; in no row or total.'
+                    . ($this->tied
+                        ? ' ChatGPT Ads spend goes only to clicks of your ChatGPT Ads traffic source (the one Add ChatGPT Ads'
+                            . ' set up); another source\'s click with the same ad id keeps its CPC.'
+                        : ''),
             ],
         ];
         if ($this->otherCurrencyRows > 0) {
@@ -493,13 +548,25 @@ final class LedgerCost
      * within the account's own traffic sources (CLAUDE.md #27). A set that
      * carries two different values for it is ambiguous and matches nothing.
      * $adRefs, when given, names the ads instead of the ledger's ($currency,
-     * $lo and $hi are then not read).
+     * $lo and $hi are then not read), all of $platform's.
+     *
+     * An ad of a platform in SOURCE_PLATFORMS is carried only by the sets of
+     * a traffic source with that platform's mark, when the account has one
+     * (marks()); the ledger holds one platform per ad id
+     * (SpendLedger::ownerErrors()).
      *
      * @param list<string>|null $adRefs
      * @return list<array{set_no: int, network_id: int, ad_ref: string}>
      */
-    public static function sets(Connection $conn, int $userId, ?string $currency, int $lo, int $hi, ?array $adRefs = null): array
-    {
+    public static function sets(
+        Connection $conn,
+        int $userId,
+        ?string $currency,
+        int $lo,
+        int $hi,
+        ?array $adRefs = null,
+        ?string $platform = null
+    ): array {
         $param = "pv.parameter COLLATE utf8mb4_bin = '" . self::AD_PARAMETER . "'";
         if ($adRefs !== null) {
             // The ads named, not the ledger's: another record keyed by ad
@@ -519,7 +586,8 @@ final class LedgerCost
             // (utf8mb4_0900_ai_ci on MySQL 8.0), and = between the two is refused.
             . ' JOIN 202_variable_sets2 vc ON vc.variables = CONVERT(CAST(cc.custom_variable_id AS CHAR) USING utf8mb4) COLLATE utf8mb4_general_ci';
         $sql = 'SELECT vs.variable_set_id AS set_no, pv.ppc_network_id AS network_id,'
-            . ' MIN(CONVERT(cv.variable USING utf8mb4) COLLATE utf8mb4_bin) AS ad_ref'
+            . ' MIN(CONVERT(cv.variable USING utf8mb4) COLLATE utf8mb4_bin) AS ad_ref,'
+            . ' MIN(pn.ppc_network_platform) AS source_platform'
             . ' FROM 202_variable_sets2 vs'
             . ' JOIN 202_custom_variables cv ON cv.custom_variable_id = CAST(vs.variables AS UNSIGNED)'
             . ' JOIN 202_ppc_network_variables pv ON (cv.ppc_variable_id = pv.ppc_variable_id'
@@ -536,8 +604,35 @@ final class LedgerCost
         } else {
             $conn->bind($stmt, 'iisii', [$userId, $userId, $currency, $lo, $hi]);
         }
+        $rows = $conn->fetchAll($stmt);
+        if ($rows === []) {
+            return [];
+        }
+        // Which platform each ad is: the one named, or the ledger's own.
+        $platformOf = [];
+        if ($adRefs !== null) {
+            foreach ($adRefs as $ref) {
+                $platformOf[self::adKey($ref)] = $platform;
+            }
+        } else {
+            $stmt = $conn->prepareRead('SELECT DISTINCT ad_ref, platform FROM 202_spend_ledger WHERE user_id = ?'
+                . ($currency === null ? '' : ' AND currency = ?') . ' AND hour_start >= ? AND hour_start <= ?');
+            if ($currency === null) {
+                $conn->bind($stmt, 'iii', [$userId, $lo, $hi]);
+            } else {
+                $conn->bind($stmt, 'isii', [$userId, $currency, $lo, $hi]);
+            }
+            foreach ($conn->fetchAll($stmt) as $held) {
+                $platformOf[self::adKey((string) $held['ad_ref'])] = (string) $held['platform'];
+            }
+        }
+        $marks = self::marks($conn, $userId);
         $out = [];
-        foreach ($conn->fetchAll($stmt) as $row) {
+        foreach ($rows as $row) {
+            $mark = self::SOURCE_PLATFORMS[$platformOf[self::adKey((string) $row['ad_ref'])] ?? ''] ?? null;
+            if ($mark !== null && isset($marks[$mark]) && (string) ($row['source_platform'] ?? '') !== $mark) {
+                continue;
+            }
             $out[] = ['set_no' => (int) $row['set_no'], 'network_id' => (int) $row['network_id'], 'ad_ref' => (string) $row['ad_ref']];
         }
 

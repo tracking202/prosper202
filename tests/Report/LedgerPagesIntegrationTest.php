@@ -185,7 +185,7 @@ final class LedgerPagesIntegrationTest extends TestCase
             . ' aff_campaign_foreign_payout = 0, aff_campaign_time = 0, aff_network_id = 0');
         foreach ([self::USER => self::NETWORK, self::OTHER => self::NETWORK + 1] as $u => $network) {
             self::q("INSERT INTO 202_ppc_networks SET ppc_network_id = $network, user_id = $u,"
-                . " ppc_network_name = 'ChatGPT Ads', ppc_network_time = 0");
+                . " ppc_network_name = 'ChatGPT Ads', ppc_network_platform = 'chatgpt_ads', ppc_network_time = 0");
             self::q("INSERT INTO 202_ppc_network_variables SET ppc_variable_id = $network, ppc_network_id = $network,"
                 . " name = 'ad_id', parameter = 'ad_id', placeholder = '{ad_id}'");
             self::q("INSERT INTO 202_ppc_network_variables SET ppc_variable_id = " . ($network + 10)
