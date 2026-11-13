@@ -8,8 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
+
+	"p202/internal/api"
 )
 
 const adConnectionTestKey = "sk-ads-live-Z9q7Xc2Vb8Nm4Lk1"
@@ -142,5 +145,73 @@ func TestDestinationTestRealAsksForTheReadBack(t *testing.T) {
 	}
 	if !strings.Contains(out, `"arrived": true`) {
 		t.Errorf("the read-back is printed: %s", out)
+	}
+}
+
+// A command's own hint (where the key is, which command lists ids) is for a
+// refusal of what was sent. A dead server, a refused API key or a 500 keeps
+// the hint of its class.
+func TestAdConnectionHintsAreForRefusedInputOnly(t *testing.T) {
+	status := http.StatusOK
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		w.Write([]byte(`{"error":true,"message":"refused","status":` + strconv.Itoa(status) + `}`))
+	}))
+	defer srv.Close()
+	deadSrv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	dead := deadSrv.URL
+	deadSrv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	keyFile := filepath.Join(tmp, "key.txt")
+	if err := os.WriteFile(keyFile, []byte(adConnectionTestKey+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const realHint = "--real needs a ChatGPT Ads destination"
+	commands := map[string]struct {
+		args []string
+		own  string
+	}{
+		"create":                  {[]string{"ad-connection", "create", "--api-key-file", keyFile}, advertiserKeyWhere},
+		"get":                     {[]string{"ad-connection", "get", "3"}, adConnectionListHint},
+		"check":                   {[]string{"ad-connection", "check", "3"}, adConnectionListHint},
+		"setup":                   {[]string{"ad-connection", "setup", "3"}, adConnectionListHint},
+		"update":                  {[]string{"ad-connection", "update", "3", "--api-key-file", keyFile}, adConnectionListHint},
+		"destination test --real": {[]string{"destination", "test", "3", "--real"}, realHint},
+	}
+	for name, command := range commands {
+		for _, c := range []struct {
+			what   string
+			url    string
+			status int
+			exit   int
+			own    bool
+		}{
+			{"a refused field", srv.URL, http.StatusUnprocessableEntity, ExitValidation, true},
+			{"an unknown id", srv.URL, http.StatusNotFound, ExitValidation, true},
+			{"a refused API key", srv.URL, http.StatusUnauthorized, ExitAuth, false},
+			{"a server failure", srv.URL, http.StatusInternalServerError, ExitServer, false},
+			{"a dead server", dead, 0, ExitNetwork, false},
+		} {
+			status = c.status
+			writeTestConfig(t, tmp, c.url, "test-key")
+			_, _, err := executeCommand(append(command.args, "--json")...)
+			if err == nil {
+				t.Fatalf("%s, %s: no error", name, c.what)
+			}
+			if got := exitCodeForError(err); got != c.exit {
+				t.Errorf("%s, %s: exit %d, want %d (%v)", name, c.what, got, c.exit, err)
+			}
+			hint := hintFor(err)
+			if has := strings.Contains(hint, command.own); has != c.own {
+				t.Errorf("%s, %s: the command's own hint present = %v, want %v; hint = %q", name, c.what, has, c.own, hint)
+			}
+			if !c.own && (hint == "" || hint != api.HintFor(err)) {
+				t.Errorf("%s, %s: hint = %q, want the one api.HintFor has for the class", name, c.what, hint)
+			}
+			if c.what == "a dead server" && !strings.Contains(hint, "Check the server URL") {
+				t.Errorf("%s, %s: hint = %q, want the network hint", name, c.what, hint)
+			}
+		}
 	}
 }

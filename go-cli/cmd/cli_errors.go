@@ -90,6 +90,17 @@ func withHint(err error, format string, args ...interface{}) error {
 	return &hintedError{err: err, hint: canonicalFlags(fmt.Sprintf(format, args...))}
 }
 
+// withValidationHint attaches a command's own hint only to a refusal of what
+// was sent (category validation: a wrong id, a refused field). A failure of
+// another class (network, auth, server) keeps the hint api.HintFor has for
+// its class, which a command's hint would otherwise replace.
+func withValidationHint(err error, format string, args ...interface{}) error {
+	if err == nil || api.ErrorCategory(err) != "validation" {
+		return err
+	}
+	return withHint(err, format, args...)
+}
+
 // validationError creates a CLI validation error (bad input, missing flags, etc.).
 func validationError(format string, args ...interface{}) *CLIError {
 	return &CLIError{

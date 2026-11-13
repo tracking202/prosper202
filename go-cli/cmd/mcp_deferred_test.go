@@ -374,3 +374,43 @@ func TestMCPDeferredToolsSayWhenTheyReachOut(t *testing.T) {
 		}
 	}
 }
+
+// The connection check writes (so --read-only leaves it out, above) but only
+// what it read from OpenAI: it is not annotated destructive. The test fire
+// takes no `real`: that sends an event the platform saves and counts, which
+// the page asks about first and a tool call cannot.
+func TestMCPDeferredToolsDoNothingAPersonWasNotAsked(t *testing.T) {
+	tools, err := buildMCPDeferredTools(rootCmd, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, tool := range tools {
+		seen[tool.Name] = true
+		if tool.Annotations.DestructiveHint {
+			t.Errorf("%s is annotated destructive", tool.Name)
+		}
+		if tool.Name == "ad_connection_check" && tool.Annotations.ReadOnlyHint {
+			t.Errorf("%s writes the check: it is not read-only", tool.Name)
+		}
+		if strings.Count(tool.Description, "Reads the ad account from OpenAI again")+strings.Count(tool.Description, "Read the ad account from OpenAI again") > 1 {
+			t.Errorf("%s says one sentence twice: %s", tool.Name, tool.Description)
+		}
+		if tool.Name != "destination_test" {
+			continue
+		}
+		raw, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), `"real"`) {
+			t.Errorf("destination_test takes real: %s", raw)
+		}
+		if !strings.Contains(string(raw), `"id"`) {
+			t.Errorf("destination_test lost its id: %s", raw)
+		}
+	}
+	if !seen["destination_test"] || !seen["ad_connection_check"] {
+		t.Errorf("the listing lacks a tool this test reads: %v", seen)
+	}
+}

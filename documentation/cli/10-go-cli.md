@@ -620,7 +620,8 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   `destination_list`, `destination_deliveries` and `destination_test` (Setup
   › Destinations: each destination's status, its delivery log with why a
   conversion failed or was withheld, and a test fire; the test fire cannot be
-  proposed, so it is not offered with `--staged`, nor with `--read-only`),
+  proposed, so it is not offered with `--staged`, nor with `--read-only`, and
+  it does not take `--real`, which sends an event the platform counts),
   and `ad_connection_list` and `ad_connection_check` (Setup › Destinations ›
   ChatGPT Ads: each connected ad account, and a fresh read of it from
   OpenAI; the check is not offered with `--staged`).

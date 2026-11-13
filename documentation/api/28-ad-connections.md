@@ -67,7 +67,12 @@ Four steps run in order, each answered in `steps` with an `outcome` and a
 `skip` leaves steps out (`["destination"]`). What a step made is kept, so
 setup run again makes nothing it already recorded: the pixel and event
 settings are looked for in the ad account first, and the destination is made
-and recorded under one lock. Every create carries an `Idempotency-Key` built
+and recorded under one lock. An enabled `openai_ads` destination of the
+account that already sends to the pixel (one made by hand, or by a connection
+since deleted) is used instead of a second one: the step is `kept`, and its
+Conversions API key is replaced with this connection's. One that is switched
+off is left as it is and the step is `needs_input`: switch it on or delete
+it, then run setup again. Every create carries an `Idempotency-Key` built
 from this install, the connection, the ad account and what is made, but
 OpenAI documents that header for campaigns, ad groups and ads, not for
 pixels, Conversions API keys or event settings, so do not rely on it there.

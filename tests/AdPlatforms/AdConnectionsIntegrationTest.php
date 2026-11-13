@@ -310,9 +310,99 @@ final class AdConnectionsIntegrationTest extends TestCase
         $step = self::destinationStepOf($run);
         self::assertSame(['kept', $made], [$step['outcome'], $step['destination_id']]);
         self::assertStringContainsString('already sends to this pixel', (string) $step['detail']);
+        $overwrite = 'Its Conversions API key was replaced with this connection\'s';
+        self::assertStringContainsString($overwrite, (string) $step['detail'], 'the overwrite is said');
         self::assertSame(2, self::destinationsOf(1), 'no second destination for the pixel');
         self::assertSame($made, $run['connection']['setup']['destination_id']);
         self::assertSame($given, $destinations->forSending(1, $made)['credentials']['conversions_api_key'] ?? null);
+    }
+
+    /**
+     * A destination for the pixel that its owner switched off is not taken over (it is not sending, and its key is
+     * not this connection's to replace) and not doubled: the step says which one and what to do.
+     */
+    public function testADestinationSwitchedOffForThePixelIsLeftAsItIs(): void
+    {
+        $destinations = new DestinationStore(new Connection(self::$db));
+        $first = $this->connect();
+        $ran = $this->connections()->setup(1, $first, [], 1_800_000_100);
+        $made = (int) $ran['connection']['setup']['destination_id'];
+        self::assertTrue($this->store()->delete(1, $first, 1_800_000_150));
+        $destinations->update(1, $made, ['enabled' => false], 1_800_000_160);
+        $second = $this->connect();
+        $listed = ['object' => 'list', 'data' => [json_decode(self::answer('pixel_created.json'), true)],
+            'first_id' => 'clidsrc_123', 'last_id' => 'clidsrc_123', 'has_more' => false];
+        $this->routes['GET conversions/pixels'] = [['body' => (string) json_encode($listed)]];
+        $given = 'capi-after-reconnect-0123456789';
+        $run = $this->connections()->setup(1, $second, ['conversions_api_key' => $given], 1_800_000_200);
+
+        $step = self::destinationStepOf($run);
+        self::assertSame('needs_input', $step['outcome']);
+        self::assertArrayNotHasKey('destination_id', $step);
+        self::assertStringContainsString('Destination ' . $made . ' (', (string) $step['detail']);
+        $left = 'is switched off, so it was left as it is and no second one was made';
+        self::assertStringContainsString($left, (string) $step['detail']);
+        self::assertStringContainsString('p202 destination update ' . $made . ' --enable', (string) $step['detail']);
+        self::assertSame(1, self::destinationsOf(1), 'no second destination for the pixel');
+        self::assertArrayNotHasKey('destination_id', $run['connection']['setup'], 'nor recorded as this connection\'s');
+        self::assertFalse($destinations->get(1, $made)['enabled'], 'still off');
+        $sendsWith = static fn (): ?string
+            => $destinations->forSending(1, $made)['credentials']['conversions_api_key'] ?? null;
+        self::assertSame(self::CAPI_KEY, $sendsWith(), 'its key is untouched');
+
+        // Switched on, it is the one that sends to the pixel: the next run takes it over.
+        $destinations->update(1, $made, ['enabled' => true], 1_800_000_300);
+        $step = self::destinationStepOf($this->connections()->setup(1, $second, [], 1_800_000_400));
+        self::assertSame(['kept', $made], [$step['outcome'], $step['destination_id']]);
+        self::assertSame(1, self::destinationsOf(1));
+        self::assertSame($given, $sendsWith());
+    }
+
+    /**
+     * The destination step's read, create and record run under the connection's row lock: while another
+     * transaction holds that row the work does not start, and it runs once the row is free.
+     */
+    public function testTheSetupRecordIsReadOnlyUnderTheConnectionsRowLock(): void
+    {
+        $id = $this->connect();
+        $open = static fn (): \mysqli => new \mysqli(
+            (string) getenv('P202_TEST_DB_HOST'),
+            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+            (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+        );
+        $holder = $open();
+        $holder->query('START TRANSACTION');
+        $held = $holder->query("SELECT 1 FROM 202_ad_connections WHERE connection_id = $id FOR UPDATE");
+        self::assertSame(1, $held->num_rows, 'the connection\'s row is held');
+        $impatient = $open();
+        $impatient->query('SET SESSION innodb_lock_wait_timeout = 1');
+        $store = new AdConnectionStore(new Connection($impatient));
+        $ran = 0;
+        $work = static function (array $stored) use (&$ran): array {
+            $ran++;
+
+            return ['done', []];
+        };
+        $thrown = null;
+        $started = microtime(true);
+        try {
+            $store->withSetupLocked(1, $id, $work, 1_800_000_100);
+        } catch (\Throwable $e) {
+            $thrown = $e;
+        }
+        $waited = microtime(true) - $started;
+        $holder->query('ROLLBACK');
+        $holder->close();
+
+        self::assertSame(0, $ran, 'the work did not start while the row was held');
+        self::assertNotNull($thrown, 'a row that stays held is the caller\'s failure');
+        self::assertTrue(Connection::isRetryableLockError($thrown), 'the lock is thrown: ' . $thrown->getMessage());
+        self::assertGreaterThan(0.9, $waited, 'after waiting for it');
+        self::assertSame('done', $store->withSetupLocked(1, $id, $work, 1_800_000_100), 'free again, the work runs');
+        self::assertSame(1, $ran);
+        $impatient->close();
     }
 
     public function testEachStepCanBeSkipped(): void

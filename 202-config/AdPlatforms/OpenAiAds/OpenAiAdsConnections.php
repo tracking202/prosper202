@@ -318,20 +318,37 @@ final class OpenAiAdsConnections
 
                 return [self::step('destination', 'needs_input', $said), []];
             }
-            // A destination of this account that already sends to this pixel (one an earlier connection of the ad
-            // account made, since deleted) is taken over, with this connection's key: a second one would send
-            // every conversion twice.
+            // An enabled destination of this account that already sends to this pixel (one an earlier connection
+            // of the ad account made, since deleted) is taken over, with this connection's key: a second one would
+            // send every conversion twice. One switched off is its owner's decision: it is neither changed nor
+            // doubled.
+            $switchedOff = null;
             foreach ($this->destinations->list($userId) as $destination) {
                 $samePixel = ($destination['type'] ?? null) === self::DESTINATION_TYPE
                     && ($destination['settings']['pixel_id'] ?? null) === $pixelId;
-                if ($samePixel) {
-                    $foundId = (int) $destination['destination_id'];
-                    $sendsWith($foundId);
-                    $said = 'Destination ' . $foundId . ' (' . $destination['name'] . ') already sends to this pixel:'
-                        . ' it is used, now with this connection\'s Conversions API key, and no second one was made.';
-
-                    return [self::step('destination', 'kept', $said, ['destination_id' => $foundId]), ['destination_id' => $foundId]];
+                if (!$samePixel) {
+                    continue;
                 }
+                if (($destination['enabled'] ?? null) !== true) {
+                    $switchedOff ??= $destination;
+                    continue;
+                }
+                $foundId = (int) $destination['destination_id'];
+                $sendsWith($foundId);
+                $said = 'Destination ' . $foundId . ' (' . $destination['name'] . ') already sends to this pixel, so'
+                    . ' no second one was made. Its Conversions API key was replaced with this connection\'s.';
+
+                $record = ['destination_id' => $foundId];
+
+                return [self::step('destination', 'kept', $said, $record), $record];
+            }
+            if ($switchedOff !== null) {
+                $offId = (int) $switchedOff['destination_id'];
+                $said = 'Destination ' . $offId . ' (' . $switchedOff['name'] . ') is for this pixel and is switched'
+                    . ' off, so it was left as it is and no second one was made. Switch it on (Setup › Destinations,'
+                    . ' or p202 destination update ' . $offId . ' --enable), or delete it, then run setup again.';
+
+                return [self::step('destination', 'needs_input', $said), []];
             }
             try {
                 $settings = ['pixel_id' => $pixelId, 'event_type' => $eventType];

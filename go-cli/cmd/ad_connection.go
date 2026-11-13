@@ -127,7 +127,7 @@ var adConnectionGetCmd = &cobra.Command{
 		}
 		data, err := c.Get("ad-connections/"+args[0], nil)
 		if err != nil {
-			return withHint(err, "%s", adConnectionListHint)
+			return withValidationHint(err, "%s", adConnectionListHint)
 		}
 		render(data)
 		return nil
@@ -160,7 +160,7 @@ var adConnectionCreateCmd = &cobra.Command{
 		}
 		data, err := c.Post("ad-connections", body)
 		if err != nil {
-			return withHint(err, "%s", advertiserKeyWhere)
+			return withValidationHint(err, "%s", advertiserKeyWhere)
 		}
 		render(data)
 		return nil
@@ -198,7 +198,7 @@ var adConnectionUpdateCmd = &cobra.Command{
 		}
 		data, err := c.Patch("ad-connections/"+args[0], body)
 		if err != nil {
-			return withHint(err, "%s", adConnectionListHint)
+			return withValidationHint(err, "%s", adConnectionListHint)
 		}
 		render(data)
 		return nil
@@ -236,7 +236,7 @@ var adConnectionCheckCmd = &cobra.Command{
 		}
 		data, err := c.Post("ad-connections/"+args[0]+"/check", map[string]interface{}{})
 		if err != nil {
-			return withHint(err, "%s", adConnectionListHint)
+			return withValidationHint(err, "%s", adConnectionListHint)
 		}
 		render(data)
 		return nil
@@ -310,7 +310,7 @@ var adConnectionSetupCmd = &cobra.Command{
 		}
 		data, err := c.Post("ad-connections/"+args[0]+"/setup", body)
 		if err != nil {
-			return withHint(err, "%s", adConnectionListHint)
+			return withValidationHint(err, "%s", adConnectionListHint)
 		}
 		render(data)
 		return nil

@@ -5189,7 +5189,7 @@ paths:
         "409":
           description: The export is not failed.
 
-  # ─── Goals ───────────────────────────────────────────────────────────
+  # ─── Ad Connections ──────────────────────────────────────────────────
 
   /ad-connections:
     get:
@@ -5416,6 +5416,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+
+  # ─── Destinations ────────────────────────────────────────────────────
 
   /destinations:
     get:
@@ -5942,6 +5944,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+
+  # ─── Goals ───────────────────────────────────────────────────────────
 
   /goals:
     get:

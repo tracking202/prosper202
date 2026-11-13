@@ -107,6 +107,8 @@ var searchTasks = []searchTask{
 	{Run: "p202 ad-connection setup",
 		Phrases: []string{"set up the chatgpt ads pixel", "create an openai conversions api key", "chatgpt ads event settings",
 			"openai ads pixel and conversions"}},
+	{Run: "p202 ad-connection update --api-key-file key.txt",
+		Phrases: []string{"replace the advertiser api key", "rotate the chatgpt ads key", "openai refused the stored key"}},
 	{Run: "p202 ad-connection check",
 		Phrases: []string{"is my chatgpt ads key still working", "chatgpt ads account currency and time zone"}},
 	{Run: "p202 destination resend --status failed",

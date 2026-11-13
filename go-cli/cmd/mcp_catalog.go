@@ -149,6 +149,11 @@ type mcpToolSpec struct {
 	// OpenWorld: the call makes the install reach a host outside it (an ad
 	// platform's endpoint, a page's URL), annotated openWorldHint.
 	OpenWorld bool
+	// Refreshes: an update that only writes again what the install read from
+	// the platform (a connection's check), so it is not annotated
+	// destructiveHint. Its kind stays mcpUpdate: it writes, and --read-only
+	// leaves it out.
+	Refreshes bool
 	// NotHosted: the tool reads an area the keys made for the hosted MCP
 	// server do not cover (AiConnect::READ_AREAS in api/v3), so that server
 	// does not offer it (mcpCatalog.HostedExcludes).
@@ -687,7 +692,7 @@ func (s mcpToolSpec) tool(root *cobra.Command) (mcpTool, error) {
 		t.Annotations.IdempotentHint = true
 	case mcpCreate:
 	case mcpUpdate:
-		t.Annotations.DestructiveHint = true
+		t.Annotations.DestructiveHint = !s.Refreshes
 	case mcpDelete:
 		t.Annotations.DestructiveHint = true
 		t.Annotations.IdempotentHint = true
