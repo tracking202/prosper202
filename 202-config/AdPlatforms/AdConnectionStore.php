@@ -22,6 +22,12 @@ use Prosper202\Security\SealedSecret;
 final class AdConnectionStore
 {
     public const SECRET_NAME = 'ad_connection_credential';
+    /** What an operator does about a credential key that is there and is not a key; it then is minted anew. */
+    private const MALFORMED_KEY = 'The ad connections\' credential key (the row of 202_deployment_secrets whose secret_name'
+        . ' is ' . self::SECRET_NAME . ') is not 64 lower-case hex characters, so no key can be sealed or opened and'
+        . ' no Advertiser API key will mend it. Someone with database access deletes that one row (DELETE FROM'
+        . ' 202_deployment_secrets WHERE secret_name = \'' . self::SECRET_NAME . '\'); then replace each'
+        . ' connection\'s Advertiser API key, which makes a new credential key';
     public const MAX_PER_ACCOUNT = 10;
     public const STATUS_CONNECTED = 'connected';
     public const STATUS_KEY_REFUSED = 'key_refused';
@@ -143,7 +149,11 @@ final class AdConnectionStore
                 return false;
             }
             self::refuseUnknownCredentials((string) $row['platform'], [$name => (string) $value]);
-            $credentials = $this->opened($row);
+            // A new Advertiser API key is the repair for stored credentials that no longer open (forCalling() says
+            // so): it starts from what can be read, or from nothing, and is sealed under a key minted if there is none.
+            $credentials = $name === 'advertiser_api_key' && $value !== null
+                ? ($this->openedOrNull($row) ?? [])
+                : $this->opened($row);
             if ($value === null) {
                 unset($credentials[$name]);
             } else {
@@ -169,22 +179,58 @@ final class AdConnectionStore
             if ($row === null) {
                 return false;
             }
-            $setup = self::setupOf((string) $row['setup']) ?? [];
-            foreach ($patch as $key => $value) {
-                if ($key === 'event_settings' && is_array($value)) {
-                    $setup['event_settings'] = array_replace(is_array($setup['event_settings'] ?? null) ? $setup['event_settings'] : [], $value);
-                } elseif ($value === null) {
-                    unset($setup[$key]);
-                } else {
-                    $setup[$key] = $value;
-                }
-            }
-            $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::AD_CONNECTIONS . '` SET setup = ?, updated_at = ? WHERE connection_id = ? AND user_id = ? AND deleted_at IS NULL');
-            $this->conn->bind($stmt, 'siii', [self::json($setup), $now, $connectionId, $userId]);
-            $this->conn->execute($stmt);
+            $this->writeSetup($row, $patch, $now);
 
             return true;
         });
+    }
+
+    /**
+     * Run $work with the connection's row locked and its setup as stored now, and merge the patch it answers in
+     * the same transaction: what $work reads cannot be changed by another setup before what it made is recorded,
+     * and what it made is not kept without its record. $work answers [its result, the patch]; its own writes join
+     * this transaction. Null when the account has no such connection.
+     *
+     * @template T
+     * @param callable(array<string, mixed>): array{0: T, 1: array<string, mixed>} $work
+     * @return T|null
+     */
+    public function withSetupLocked(int $userId, int $connectionId, callable $work, int $now): mixed
+    {
+        return $this->conn->transaction(function () use ($userId, $connectionId, $work, $now): mixed {
+            $row = $this->locked($userId, $connectionId);
+            if ($row === null) {
+                return null;
+            }
+            [$result, $patch] = $work(self::setupOf((string) $row['setup']) ?? []);
+            if ($patch !== []) {
+                $this->writeSetup($row, $patch, $now);
+            }
+
+            return $result;
+        });
+    }
+
+    /**
+     * @param array<string, mixed> $row the locked row
+     * @param array<string, mixed> $patch
+     */
+    private function writeSetup(array $row, array $patch, int $now): void
+    {
+        $setup = self::setupOf((string) $row['setup']) ?? [];
+        foreach ($patch as $key => $value) {
+            if ($key === 'event_settings' && is_array($value)) {
+                $setup['event_settings'] = array_replace(is_array($setup['event_settings'] ?? null) ? $setup['event_settings'] : [], $value);
+            } elseif ($value === null) {
+                unset($setup[$key]);
+            } else {
+                $setup[$key] = $value;
+            }
+        }
+        $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::AD_CONNECTIONS . '` SET setup = ?, updated_at = ? WHERE connection_id = ? AND user_id = ? AND deleted_at IS NULL');
+        $ids = [(int) $row['connection_id'], (int) $row['user_id']];
+        $this->conn->bind($stmt, 'siii', [self::json($setup), $now, ...$ids]);
+        $this->conn->execute($stmt);
     }
 
     /**
@@ -222,7 +268,10 @@ final class AdConnectionStore
         try {
             $this->key(false);
         } catch (AdConnectionKeyMissing $e) {
-            throw new AdConnectionInputException('api_key', $e->getMessage() . '; replace the Advertiser API key (p202 ad-connection update --api-key-file).');
+            // A malformed key's sentence says what mends it; replacing the Advertiser API key would not.
+            $mend = $e->malformed ? '' : '; replace the Advertiser API key (p202 ad-connection update --api-key-file).';
+
+            throw new AdConnectionInputException('api_key', $e->getMessage() . $mend);
         }
         try {
             return $this->opened($row);
@@ -395,7 +444,14 @@ final class AdConnectionStore
     /** @param array<string, string> $credentials */
     private function writeCredentials(int $userId, int $connectionId, #[\SensitiveParameter] array $credentials): void
     {
-        $sealed = $credentials === [] ? '' : SealedSecret::seal(self::json($credentials), $this->key(true), self::AAD . $connectionId . '|' . $userId, 'Encrypting the connection\'s credentials failed');
+        try {
+            $key = $this->key(true);
+        } catch (AdConnectionKeyMissing $e) {
+            // Minting never writes over a row that is there: only its removal lets a key be sealed again.
+            throw $e->malformed ? new AdConnectionInputException('api_key', $e->getMessage()) : $e;
+        }
+        $aad = self::AAD . $connectionId . '|' . $userId;
+        $sealed = $credentials === [] ? '' : SealedSecret::seal(self::json($credentials), $key, $aad, 'Encrypting the connection\'s credentials failed');
         $update = $this->conn->prepareWrite('UPDATE `' . TableRegistry::AD_CONNECTIONS . '` SET credentials = ? WHERE connection_id = ? AND user_id = ? AND deleted_at IS NULL');
         $this->conn->bind($update, 'sii', [$sealed, $connectionId, $userId]);
         $this->conn->execute($update);
@@ -471,10 +527,10 @@ final class AdConnectionStore
         try {
             $key = SealedSecret::readKey($this->conn, self::SECRET_NAME);
         } catch (MalformedSecretKey) {
-            $key = null;
+            throw new AdConnectionKeyMissing(self::MALFORMED_KEY, true);
         }
         if ($key === null) {
-            throw new AdConnectionKeyMissing('The ad connections\' credential key is missing from 202_deployment_secrets or is not 64 lower-case hex characters; connect again');
+            throw new AdConnectionKeyMissing('The ad connections\' credential key is missing from 202_deployment_secrets; connect again');
         }
 
         // Only a plain read is kept: a key minted in a transaction may be rolled back with it (CLAUDE.md #11).

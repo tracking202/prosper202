@@ -409,11 +409,15 @@ final class TrafficSourceOwners
 
             $made = [];
             foreach ($copies as $user => $accountIds) {
+                // The platform too: a copy of the ChatGPT Ads source is one
+                // (ChatGptAdsSource), and its links carry the template.
                 $insert = $this->conn->prepareWrite('INSERT INTO 202_ppc_networks'
-                    . ' (user_id, ppc_network_name, ppc_network_deleted, ppc_network_time) VALUES (?, ?, ?, ?)');
-                $this->conn->bind($insert, 'isii', [
+                    . ' (user_id, ppc_network_name, ppc_network_platform, ppc_network_deleted, ppc_network_time)'
+                    . ' VALUES (?, ?, ?, ?, ?)');
+                $this->conn->bind($insert, 'issii', [
                     $user,
                     (string) $source['ppc_network_name'],
+                    (string) $source['ppc_network_platform'],
                     (int) $source['ppc_network_deleted'],
                     $at,
                 ]);
@@ -971,7 +975,7 @@ final class TrafficSourceOwners
     private function sources(array $ids, bool $lock = false): array
     {
         $stmt = $this->conn->prepareWrite(
-            'SELECT ppc_network_id, user_id, ppc_network_name, ppc_network_deleted, ppc_network_time'
+            'SELECT ppc_network_id, user_id, ppc_network_name, ppc_network_platform, ppc_network_deleted, ppc_network_time'
             . ' FROM 202_ppc_networks WHERE ppc_network_id IN (' . self::marks($ids) . ')'
             . ($lock ? ' FOR UPDATE' : '')
         );

@@ -44,6 +44,27 @@ final class IdentityGraph
     }
 
     /**
+     * A visit of the click that brought no browser signal (it refused
+     * consent, or capture is off) takes back the marks earlier visits left:
+     * their observed_at goes to 0, below any visit's time, so a destination
+     * does not read them as this visit's (DestinationQueue::latestVisitSignalled()),
+     * also when both visits fall in one second. A later visit that brings
+     * the signal raises it again (attachClick()). The rows stay: the
+     * click's place in the graph is not what the visit took back.
+     *
+     * The caller has shown the click is the account's, and runs this in the
+     * transaction that records the visit where there is one.
+     */
+    public static function withdrawBrowserSignals(Connection $conn, int $clickId): void
+    {
+        $stmt = $conn->prepareWrite(
+            'UPDATE 202_identity_observations SET observed_at = 0 WHERE click_id = ? AND signal_type IN (?, ?)'
+        );
+        $conn->bind($stmt, 'iss', [$clickId, SignalType::VISITOR_COOKIE->value, SignalType::LANDING_PAGE->value]);
+        $conn->executeUpdate($stmt);
+    }
+
+    /**
      * Link a click to the person its signals name.
      *
      * Safe to call again for the same click with more signals (a signed
@@ -69,11 +90,16 @@ final class IdentityGraph
         }
         ksort($hashed);
 
+        // observed_at is the latest visit the signal came with (the click's
+        // time, not the clock's): a destination reads a browser signal as the
+        // consent of the click's latest visit only when it came with that
+        // visit (DestinationQueue::visitorMayBeIdentified()).
         foreach ($hashed as $h) {
             $obs = $this->conn->prepareWrite(
-                'INSERT IGNORE INTO 202_identity_observations (click_id, signal_type, signal_hash, observed_at) VALUES (?, ?, ?, ?)'
+                'INSERT INTO 202_identity_observations (click_id, signal_type, signal_hash, observed_at) VALUES (?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE observed_at = GREATEST(observed_at, VALUES(observed_at))'
             );
-            $this->conn->bind($obs, 'issi', [$clickId, $h['type'], $h['hash'], $now]);
+            $this->conn->bind($obs, 'issi', [$clickId, $h['type'], $h['hash'], max(0, $clickTime)]);
             $this->conn->executeUpdate($obs);
         }
 

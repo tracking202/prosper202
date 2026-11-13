@@ -202,6 +202,20 @@ func DeletedConversionID(err error) int64 {
 	return int64(id)
 }
 
+// upstreamOf names the outside service an answer's details say could not be
+// asked (details.upstream), or "" when the answer names none.
+func upstreamOf(apiErr *APIError) string {
+	details, _ := apiErr.Raw["details"].(map[string]interface{})
+	name, _ := details["upstream"].(string)
+	switch name {
+	case "":
+		return ""
+	case "openai_ads":
+		return "OpenAI's Advertiser API"
+	}
+	return name
+}
+
 // Hinted is implemented by errors that carry their own recovery hint.
 type Hinted interface {
 	HintText() string
@@ -329,6 +343,10 @@ func HintFor(err error) string {
 		// names both versions); `system health` answers healthy meanwhile.
 		case apiErr.Status == 503 && strings.Contains(apiErr.Message, "the database needs an upgrade"):
 			return "Nothing on this request is wrong: the install's files are newer than its database. An admin opens 202-config/upgrade.php on the site (signed in) to run the upgrade; then retry."
+		// A service the install had to ask (an ad platform) was not reached,
+		// or answered what cannot be used: the install itself is fine.
+		case (apiErr.Status == 502 || apiErr.Status == 503) && upstreamOf(apiErr) != "":
+			return "Nothing in the request was refused, and no key was judged: the install could not get a usable answer from " + upstreamOf(apiErr) + ". Wait a minute and run the same command again; if it persists, check that service's status."
 		case apiErr.Status >= 500:
 			return "Server-side failure. Retry after a short wait; if it persists, run `p202 system health` and check the server logs."
 		}

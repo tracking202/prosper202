@@ -101,9 +101,10 @@ once.
   it cannot place counts as possibly European. Setup › Destinations says
   which setting is in force beside the consent fields, and warns under a
   destination that states both signals granted while the setting still
-  holds those visitors back. ChatGPT Ads takes no consent signal, so a
-  visitor who may be in the EEA or UK is never sent to it, whatever the
-  setting.
+  holds those visitors back. ChatGPT Ads has no field that states a
+  visitor's consent to measurement (its per-event `opt_out` is about
+  personalisation only), so a visitor who may be in the EEA or UK is never
+  sent to it, whatever the setting.
 - **Your privacy setting** (Personal settings, the same setting that masks
   addresses and drops cookies) applies on top: `all` sends no visitor; `eu`
   (the default for new accounts) sends only visitors placed outside Europe
@@ -324,7 +325,10 @@ with both, and makes an event setting for each event type (30-day click
 window) in your ad account. Each step says what it did, and any can be
 unticked. Where OpenAI has pixel or key creation switched off for your
 account, setup says so; make them in Ads Manager and give them under
-Advanced. The keys are stored encrypted and never shown again. The same
+Advanced. **Replace key**, under the connection, takes a new Advertiser API
+key for the same ad account (when OpenAI refuses the stored one, or you
+rotated it); a check or setup that fails says why under the connection.
+The keys are stored encrypted and never shown again. The same
 from a script: `p202 ad-connection` or `/api/v3/ad-connections`
 ([Ad connections API](../api/28-ad-connections.md)).
 
@@ -339,7 +343,13 @@ another type (or `custom` with a name of your own), to
 - `id`: the conversion's transaction id, else `P202-<conversion id>`; a
   conversion that replaced an earlier one goes under the first one's id.
   The same id is the event id of a Meta Purchase pixel for that conversion.
-- `oppref`: OpenAI's click id from the click, as it arrived.
+  OpenAI counts an event once per pixel id, event name and id, and keeps
+  the first it receives: if the ChatGPT Ads pixel on your page reports the
+  same sale, give it this id as `event_id` and the same event name, or the
+  sale is counted twice.
+- `oppref`: OpenAI's click id from the click, as it arrived. It is sent
+  whenever the click has one, also when the visit refused consent, as
+  Google's click id is: it names the ad click, not the person.
 - `source_url`: the click's landing page, or the tracking link the click
   came through, without its query string or fragment (they carry what the
   link put there). A click with neither stored is failed, not sent: OpenAI
@@ -369,7 +379,13 @@ What OpenAI does not take, and what that means here:
   backoff.
 
 **Test it**: *send test* (or `p202 destination test <id>`) sends a made-up
-event with `validate_only`, which OpenAI checks and does not save. After a
+event with `validate_only`, which OpenAI checks and does not save. With a
+ChatGPT Ads connection to the pixel's ad account, *send a real test event*
+(or `p202 destination test <id> --real`) sends one real event instead, which
+OpenAI saves and counts as a conversion of the pixel, then reads the
+account's recent events and says whether it arrived from this server. Over the
+API that is `{"real": true, "confirm_counted": true}`: `real` alone is refused,
+because the event is counted. After a
 test, confirm the first real conversions in Ads Manager › Conversions.
 
 ## CLI

@@ -116,6 +116,19 @@ final class InboundReplayQuestionTest extends TestCase
         self::assertSame('', InboundReplay::tooOldFor([['type' => 'ga4', 'name' => 'x', 'enabled' => false]], self::ARRIVED, self::ARRIVED + 99 * 3600));
     }
 
+    public function testAChatGptAdsDestinationIsNamedPastItsSevenDays(): void
+    {
+        $chat = [['type' => 'openai_ads', 'name' => 'ChatGPT', 'enabled' => true, 'settings' => []]];
+        $limit = \Prosper202\Destinations\OpenAiAdsDestination::MAX_AGE_SECONDS;
+        self::assertSame(
+            ' ChatGPT Ads takes conversions up to 7 days old, so ChatGPT does not receive this one.'
+                . ' Your reports still count it.',
+            InboundReplay::tooOldFor($chat, self::ARRIVED, self::ARRIVED + $limit + 1)
+        );
+        $atTheLimit = InboundReplay::tooOldFor($chat, self::ARRIVED, self::ARRIVED + $limit);
+        self::assertSame('', $atTheLimit, 'at the limit it goes');
+    }
+
     public function testAnAdsDestinationIsNamedWhenTheClickIsTooOldForIt(): void
     {
         $ads = [['type' => 'google_ads', 'name' => 'Search ads', 'enabled' => true, 'settings' => []]];

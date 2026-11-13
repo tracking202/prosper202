@@ -56,12 +56,13 @@ function p202_destination_openai_scope(string $scope): string
     ][$scope] ?? $scope;
 }
 
-/** What the privacy setting does to a destination that takes no consent signal (ChatGPT Ads). */
+/** What the privacy setting does to a destination with no field for consent to measurement (ChatGPT Ads). */
 function p202_destination_openai_privacy_sentence(string $setting): string
 {
     return $setting === 'all'
         ? 'Your privacy setting (' . p202_destination_privacy_name($setting) . ') holds back every visitor, so nothing is sent.'
-        : 'A visitor who may be in the EEA or UK is never sent: OpenAI takes no consent signal to state theirs with.';
+        : 'A visitor who may be in the EEA or UK is never sent: OpenAI has no field that states their consent'
+            . ' to measurement.';
 }
 
 /**
@@ -90,7 +91,8 @@ function p202_destination_privacy_note(string $setting, array $settings, string 
     if ($setting === 'all') {
         $text = 'Nothing is sent: your privacy setting (' . p202_destination_privacy_name($setting) . ') holds back every visitor.';
     } elseif (!$takesConsent) {
-        $text = 'Visitors who may be in the EEA or UK are withheld: this platform takes no consent signal to state theirs with.';
+        $text = 'Visitors who may be in the EEA or UK are withheld: this platform has no field that states their'
+            . ' consent to measurement.';
     } elseif ($setting !== 'disabled' && p202_destination_consent_granted($settings)) {
         $text = 'Both consent signals are Granted, but visitors who may be in the EEA or UK are still withheld: your privacy setting ('
             . p202_destination_privacy_name($setting) . ') holds them back. They are sent only with the setting Disabled.';

@@ -13,9 +13,9 @@ import (
 // user asked, call get_more_tools with the task"): it matches the task
 // against the deferred tools' names, titles, descriptions and Words, loads
 // the matches into the session (the client hears notifications/tools/
-// list_changed) and answers their names and one-line descriptions. A call to
-// a deferred tool that was never loaded is loaded and run, so a client that
-// ignores list_changed is not stuck.
+// list_changed) and answers their names, one-line descriptions and input
+// schemas. A call to a deferred tool that was never loaded is loaded and
+// run, so a client that ignores list_changed is not stuck.
 //
 // Deferred tools are local only (NotHosted): the hosted relay lists the
 // always-loaded catalogue and has its own get_more_tools. `p202 mcp call`
@@ -35,20 +35,36 @@ var mcpDeferredToolSpecs = []mcpToolSpec{
 		Words: []string{"destinations", "conversions api", "server-side conversions", "ga4", "google ads", "chatgpt ads", "openai"}},
 	{Name: "destination_deliveries", Command: []string{"destination", "deliveries"}, Title: "A destination's delivery log", Kind: mcpRead, NotHosted: true,
 		Args: []mcpArg{idArg("id", "Destination id (from destination_list).", true)}, Omit: []string{"conv-id"},
-		Note:  "Why each failed or was withheld. " + pageNote,
+		Note:  destinationDeliveriesNote,
 		Words: []string{"delivery log", "failed conversions", "withheld conversions", "why a conversion did not reach the ad platform", "destinations"}},
-	{Name: "destination_test", Command: []string{"destination", "test"}, Title: "Test a destination", Kind: mcpCreate, NotHosted: true, NotStaged: true,
-		Args:  []mcpArg{idArg("id", "Destination id (from destination_list).", true)},
+	{Name: "destination_test", Command: []string{"destination", "test"}, Title: "Test a destination", Kind: mcpCreate, NotHosted: true, NotStaged: true, OpenWorld: true,
+		Args: []mcpArg{idArg("id", "Destination id (from destination_list).", true)},
+		// --real sends an event the platform saves and counts; the page asks before it, a tool call cannot.
+		Omit:  []string{"real"},
 		Words: []string{"test destination", "test fire", "validate destination", "destinations"}},
+	// ChatGPT Ads connections (Setup › Destinations › ChatGPT Ads): an ad account reached with its Advertiser API key.
+	{Name: "ad_connection_list", Command: []string{"ad-connection", "list"}, Title: "ChatGPT Ads connections", Kind: mcpRead, NotHosted: true,
+		Note:  "Each ad account's id, name, currency, time zone, status and what setup made.",
+		Words: []string{"chatgpt ads connection", "openai ads account", "advertiser api key", "chatgpt ads"}},
+	{Name: "ad_connection_check", Command: []string{"ad-connection", "check"}, Title: "Check a ChatGPT Ads connection", Kind: mcpUpdate, NotHosted: true, NotStaged: true, OpenWorld: true, Refreshes: true,
+		Args:  []mcpArg{idArg("id", "Ad connection id (from ad_connection_list).", true)},
+		Note:  "The answer is recorded on the connection (status, last_error); nothing is changed at OpenAI.",
+		Words: []string{"is my chatgpt ads key working", "check chatgpt ads connection", "chatgpt ads"}},
 
 	// The spend ledger: what ad platforms billed (ChatGPT Ads' hourly pull).
-	{Name: "ad_spend", Command: []string{"ad-spend"}, Title: "What ad platforms billed, per ad", Kind: mcpRead, NotHosted: true, Keep: []string{"interval"},
+	{Name: "ad_spend", Command: []string{"spend", "list"}, Title: "What ad platforms billed, per ad", Kind: mcpRead, NotHosted: true, Keep: []string{"interval"},
 		Note: "Per day or hour and ad: impressions, clicks, spend, your clicks that carried the ad, and spend no click carried (unallocated); reaches says how far it goes. No rows: the ad account's hourly pull may be off.",
 		Words: []string{"ad spend", "what did chatgpt ads cost", "openai ads spend", "spend per ad", "cost per ad", "ad platform billed",
 			"unallocated spend", "spend ledger"}},
-	{Name: "ad_spend_sync_status", Command: []string{"ad-spend", "sync", "list"}, Title: "ChatGPT Ads spend sync status", Kind: mcpRead, NotHosted: true,
+	{Name: "ad_spend_sync_status", Command: []string{"spend", "sync", "list"}, Title: "ChatGPT Ads spend sync status", Kind: mcpRead, NotHosted: true,
 		Words: []string{"spend sync", "is my spend sync working", "spend sync status", "last spend pull", "spend sync error", "chatgpt ads sync", "openai ads sync"}},
 }
+
+// destinationDeliveriesNote names only keys the install's answer carries
+// (DestinationsController::deliveries; TestMCPDeferredNotesNameKeysTheAnswerCarries):
+// it has no truncated, unlike the report tools' pageNote.
+const destinationDeliveriesNote = "Why each failed or was withheld. meta.summary counts each status; " +
+	"pagination.total counts every row the filters match, so more remain while it is past offset plus the rows returned."
 
 // mcpAllToolSpecs is every tool `p202 mcp call` can run.
 func mcpAllToolSpecs() []mcpToolSpec {

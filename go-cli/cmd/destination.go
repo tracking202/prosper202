@@ -741,7 +741,10 @@ var destinationDeleteCmd = &cobra.Command{
 var destinationTestCmd = &cobra.Command{
 	Use:   "test <id>",
 	Short: "Send a made-up conversion to the platform's validation endpoint and show its verdict",
-	Args:  cobra.ExactArgs(1),
+	Long: "Without --real nothing is saved: GA4's /debug/mp/collect, Google Ads' validateOnly, ChatGPT Ads' validate_only.\n\n" +
+		"--real (ChatGPT Ads, with an ad connection to the pixel's account) sends a real event, which OpenAI saves and\n" +
+		"counts as a conversion, then reads the account's recent events and says whether it arrived (arrived: true).",
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := destinationArg(args[0]); err != nil {
 			return err
@@ -750,8 +753,18 @@ var destinationTestCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		data, err := c.Post("destinations/"+args[0]+"/test", map[string]interface{}{})
+		body := map[string]interface{}{}
+		if real, _ := cmd.Flags().GetBool("real"); real {
+			body["real"] = true
+			// The flag is the operator's word that a counted event is meant; the API refuses real without it.
+			body["confirm_counted"] = true
+		}
+		data, err := c.Post("destinations/"+args[0]+"/test", body)
 		if err != nil {
+			if _, real := body["real"]; real {
+				return withStatusHint(err, statusHint{http.StatusNotFound, "", destinationListHint},
+					statusHint{http.StatusUnprocessableEntity, "real", "--real needs a ChatGPT Ads destination and an ad connection to its pixel's account (`p202 ad-connection list`)."})
+			}
 			return withHint(err, "%s", destinationListHint)
 		}
 		render(data)
@@ -888,7 +901,7 @@ func destinationSettingFlags(cmd *cobra.Command) {
 	cmd.Flags().String("pixel-id", "", "For openai_ads: the ChatGPT Ads web pixel id (Ads Manager › Conversions)")
 	cmd.Flags().String("conversions-api-key-file", "", "For openai_ads: file holding the Conversions API key; - reads piped stdin")
 	cmd.Flags().String("event-type", "", "For openai_ads: the event type conversions are sent as, one of {values} (default order_created)")
-	cmd.Flags().String("custom-event-name", "", "For openai_ads with --event-type custom: its name (lowercase letters, digits, - and _)")
+	cmd.Flags().String("custom-event-name", "", "For openai_ads with --event-type custom: its name (lowercase letters, digits, - and _, starting and ending with a letter or digit)")
 	cmd.Flags().StringArray("campaign-event-type", nil, "For openai_ads: campaign_id=event_type for one campaign (repeatable); on update it is merged with the stored ones, and campaign_id= removes one")
 	cmd.Flags().String("scope", "", "For openai_ads: which conversions are sent, one of {values}")
 	cmd.Flags().Int("ppc-account-id", 0, "For openai_ads with --scope source: the traffic source account whose conversions are sent")
@@ -922,6 +935,7 @@ func init() {
 	destinationResendCmd.Flags().Int("delivery-id", 0, "The one delivery to send again (from `destination deliveries`)")
 	destinationResendCmd.Flags().String("status", "", "Send every delivery of this status again, one of {values}")
 	enumFlag(destinationResendCmd, "status", destinationResendStatuses)
+	destinationTestCmd.Flags().Bool("real", false, "ChatGPT Ads with an ad connection: send a real event, which OpenAI saves and counts as a conversion, and read it back")
 	destinationBackfillCmd.Flags().Int("days", 0, "How many days back (1-3 for GA4, 1-7 for ChatGPT Ads, 1-90 for Google Ads)")
 	destinationCmd.AddCommand(destinationListCmd, destinationGetCmd, destinationCreateCmd, destinationUpdateCmd,
 		destinationDeleteCmd, destinationTestCmd, destinationDeliveriesCmd, destinationConnectCmd,

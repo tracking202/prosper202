@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Spend\OpenAi;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi;
 use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookSender;
 use Prosper202\Database\Connection;
@@ -52,6 +53,12 @@ final class SpendSyncIntegrationTest extends TestCase
 
     /** @var array<int, SpendConnection> */
     private array $live = [];
+
+    /** @var array<string, mixed>|null the page answered once $answers run out, for a pull that never ends */
+    private ?array $repeat = null;
+
+    /** @var string|null a key whose every request throws, as a fault below the client would */
+    private ?string $throwFor = null;
 
     public static function setUpBeforeClass(): void
     {
@@ -110,6 +117,8 @@ final class SpendSyncIntegrationTest extends TestCase
         $this->answers = [];
         $this->bodies = [];
         $this->conversionAnswers = [];
+        $this->repeat = null;
+        $this->throwFor = null;
     }
 
     private static function q(string $sql): void
@@ -125,9 +134,9 @@ final class SpendSyncIntegrationTest extends TestCase
             foreach (['202_spend_ledger', '202_ad_spend_sync', '202_ad_platform_conversions', '202_dataengine', '202_ppc_networks', '202_users_pref', '202_users'] as $table) {
                 self::q("DELETE FROM $table WHERE user_id = $u");
             }
-            self::q('DELETE FROM 202_ppc_network_variables WHERE ppc_variable_id = 64401');
-            self::q('DELETE FROM 202_custom_variables WHERE custom_variable_id = 644001');
-            self::q('DELETE FROM 202_variable_sets2 WHERE variable_set_id = 644001');
+            self::q('DELETE FROM 202_ppc_network_variables WHERE ppc_variable_id IN (64401, 64402)');
+            self::q('DELETE FROM 202_custom_variables WHERE custom_variable_id IN (644001, 644002)');
+            self::q('DELETE FROM 202_variable_sets2 WHERE variable_set_id IN (644001, 644002)');
         }
     }
 
@@ -135,6 +144,9 @@ final class SpendSyncIntegrationTest extends TestCase
     {
         $guard = new WebhookGuard(static fn (string $host): array => ['203.0.113.20'], '203.0.113.0/24');
         $transport = function (array $options): array {
+            if ($this->throwFor !== null && in_array('Authorization: Bearer ' . $this->throwFor, $options[CURLOPT_HTTPHEADER], true)) {
+                throw new \RuntimeException('the transport broke');
+            }
             $this->urls[] = (string) $options[CURLOPT_URL];
             if (str_contains((string) $options[CURLOPT_URL], '/conversions/insights')) {
                 $this->bodies[] = (string) ($options[CURLOPT_POSTFIELDS] ?? '');
@@ -143,10 +155,18 @@ final class SpendSyncIntegrationTest extends TestCase
                     + ['status' => 200, 'error' => null, 'primary_ip' => '203.0.113.20', 'location' => null, 'body' => ''];
             }
 
-            return (array_shift($this->answers) ?? ['body' => '{"object":"list","data":[],"count":0,"first_id":null,"last_id":null,"has_more":false}'])
+            return (array_shift($this->answers) ?? $this->repeat ?? ['body' => '{"object":"list","data":[],"count":0,"first_id":null,"last_id":null,"has_more":false}'])
                 + ['status' => 200, 'error' => null, 'primary_ip' => '203.0.113.20', 'location' => null, 'body' => ''];
         };
-        $connections = new class ($this->live) implements SpendConnections {
+        $connections = $this->connections($this->live);
+
+        return new SpendSync(new Connection(self::$db), $connections, new InsightsClient(new AdvertiserApi(new WebhookSender($guard, $transport))), static fn (): int => $now);
+    }
+
+    /** @param array<int, SpendConnection> $live */
+    private function connections(array $live): SpendConnections
+    {
+        return new class ($live) implements SpendConnections {
             /** @param array<int, SpendConnection> $live */
             public function __construct(private array $live)
             {
@@ -171,8 +191,6 @@ final class SpendSyncIntegrationTest extends TestCase
                 return $out;
             }
         };
-
-        return new SpendSync(new Connection(self::$db), $connections, new InsightsClient(new WebhookSender($guard, $transport)), static fn (): int => $now);
     }
 
     /** @return array{start: int, end: int} */
@@ -328,15 +346,22 @@ final class SpendSyncIntegrationTest extends TestCase
         self::assertSame(0, $range['start'] % 86400);
         self::assertSame(['ad_501'], json_decode($this->bodies[1], true)['entity_ids'], 'halved after the 413');
 
-        // One of this account's clicks carried ad_501 that day, and converted.
-        self::q('INSERT INTO 202_ppc_networks SET ppc_network_id = 64401, user_id = ' . self::USER . ", ppc_network_name = 'ChatGPT Ads', ppc_network_time = 0");
-        self::q("INSERT INTO 202_ppc_network_variables SET ppc_variable_id = 64401, ppc_network_id = 64401, name = 'ad_id', parameter = 'ad_id', placeholder = '{ad_id}'");
-        self::q("INSERT INTO 202_custom_variables SET custom_variable_id = 644001, ppc_variable_id = 64401, variable = 'ad_501'");
-        self::q("INSERT INTO 202_variable_sets2 SET variable_set_id = 644001, variables = '644001'");
-        self::q('INSERT INTO 202_dataengine SET user_id = ' . self::USER . ', click_id = 6440001, click_time = ' . ($hour + 60)
-            . ", ppc_network_id = 64401, ppc_account_id = 1, aff_campaign_id = 1, landing_page_id = 0, keyword_id = 0,"
-            . " variable_set_id = '644001', clicks = 1, click_out = 1, leads = 1, click_lead = 1, click_filtered = 0,"
-            . ' click_bot = 0, payout = 10, income = 10, cost = 0.1');
+        self::assertSame(['openai_ads'], array_column(self::$db->query('SELECT DISTINCT platform FROM 202_spend_ledger WHERE user_id = ' . self::USER)->fetch_all(MYSQLI_ASSOC), 'platform'));
+
+        // A click of the ChatGPT Ads source and one of another source both
+        // carried ad_501 that day and converted: only the first is OpenAI's
+        // ad (LedgerCost::SOURCE_PLATFORMS), as for its spend.
+        foreach ([[64401, 'chatgpt_ads', 644001, 6440001], [64402, '', 644002, 6440002]] as [$network, $mark, $set, $click]) {
+            self::q("INSERT INTO 202_ppc_networks SET ppc_network_id = $network, user_id = " . self::USER . ", ppc_network_name = 'Source $network',"
+                . " ppc_network_platform = '$mark', ppc_network_time = 0");
+            self::q("INSERT INTO 202_ppc_network_variables SET ppc_variable_id = $network, ppc_network_id = $network, name = 'ad_id', parameter = 'ad_id', placeholder = '{ad_id}'");
+            self::q("INSERT INTO 202_custom_variables SET custom_variable_id = $set, ppc_variable_id = $network, variable = 'ad_501'");
+            self::q("INSERT INTO 202_variable_sets2 SET variable_set_id = $set, variables = '$set'");
+            self::q('INSERT INTO 202_dataengine SET user_id = ' . self::USER . ", click_id = $click, click_time = " . ($hour + 60)
+                . ", ppc_network_id = $network, ppc_account_id = 1, aff_campaign_id = 1, landing_page_id = 0, keyword_id = 0,"
+                . " variable_set_id = '$set', clicks = 1, click_out = 1, leads = 1, click_lead = 1, click_filtered = 0,"
+                . ' click_bot = 0, payout = 10, income = 10, cost = 0.1');
+        }
         $read = (new \Prosper202\Spend\PlatformConversions(new Connection(self::$db)))->read(self::USER, $day, $day, null, 50);
         $byAd = array_column($read['rows'], null, 'ad_ref');
         self::assertSame([3, 2, 1, 129.5, 'USD'], [$byAd['ad_501']['platform_conversions'], $byAd['ad_501']['click_through'],
@@ -344,6 +369,102 @@ final class SpendSyncIntegrationTest extends TestCase
         self::assertNull($byAd['ad_502']['sales']);
         self::assertSame([1, 0], [$byAd['ad_501']['prosper202_conversions'], $byAd['ad_502']['prosper202_conversions']]);
         self::assertStringContainsString("conversion row(s) OpenAI sent were left out: row 2: ad ad_501: date is not a day", (string) $this->sync()->status(self::USER)[0]['last_note']);
+    }
+
+    public function testSalesWithMoreDecimalsThanTheColumnAreRoundedAndTheRowKept(): void
+    {
+        $hour = self::NOW - self::NOW % 3600 - 7200;
+        $day = gmdate('Y-m-d', $hour);
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $this->pages($hour);
+        $this->conversionAnswers[] = ['body' => (string) json_encode(['object' => 'list', 'data' => [
+            ['entity_id' => 'ad_501', 'date' => $day, 'conversions' => 4, 'click_through_conversions' => 3, 'view_through_conversions' => 1,
+                'order_created_attributed_sales' => '12.3456789', 'order_created_attributed_sales_currency' => 'USD'],
+            ['entity_id' => 'ad_502', 'date' => $day, 'conversions' => 1, 'order_created_attributed_sales' => '0.0000005',
+                'order_created_attributed_sales_currency' => 'USD'],
+        ]])];
+        $this->sync()->runDue(self::NOW + 60);
+
+        $stored = self::$db->query('SELECT ad_ref, conversions, click_through, sales FROM 202_ad_platform_conversions WHERE user_id = ' . self::USER . ' ORDER BY ad_ref')->fetch_all(MYSQLI_ASSOC);
+        self::assertSame([['ad_ref' => 'ad_501', 'conversions' => '4', 'click_through' => '3', 'sales' => '12.345679'],
+            ['ad_ref' => 'ad_502', 'conversions' => '1', 'click_through' => null, 'sales' => '0.000001']], $stored);
+        self::assertStringNotContainsString('conversion row', (string) $this->sync()->status(self::USER)[0]['last_note']);
+    }
+
+    public function testTheConversionsWindowEndsAtTheLastMidnightNotInTheFuture(): void
+    {
+        $zone = 'America/New_York';
+        $this->live = [self::CONNECTION => new SpendConnection(self::CONNECTION, self::USER, 'adacct_demo', 'USD', self::KEY, $zone)];
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $this->pages(self::NOW - self::NOW % 3600 - 7200);
+        $this->sync()->runDue(self::NOW + 60);
+
+        $range = json_decode(json_decode($this->bodies[0], true)['time_ranges'][0], true);
+        $midnight = (new \DateTimeImmutable('@' . self::NOW))->setTimezone(new \DateTimeZone($zone))->setTime(0, 0)->getTimestamp();
+        self::assertSame($midnight, $range['end'], 'the last local midnight, a whole day and not after now');
+        self::assertLessThanOrEqual(self::NOW, $range['end']);
+        self::assertSame('00:00:00', (new \DateTimeImmutable('@' . $range['start']))->setTimezone(new \DateTimeZone($zone))->format('H:i:s'), 'whole days');
+    }
+
+    public function testRetryAfterLongerThanTheBackOffIsWaitedOut(): void
+    {
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $this->answers[] = ['status' => 429, 'body' => '{}', 'retry_after' => '10800'];
+        $this->sync()->runDue(self::NOW + 60);
+        self::assertSame(self::NOW + 10800, $this->sync()->status(self::USER)[0]['retry_after'], 'Retry-After, over the first hour');
+
+        $later = self::NOW + 10800;
+        $this->answers[] = ['status' => 429, 'body' => '{}', 'retry_after' => gmdate('D, d M Y H:i:s \\G\\M\\T', $later + 60)];
+        $this->sync($later)->runDue($later + 60);
+        self::assertSame($later + 7200, $this->sync()->status(self::USER)[0]['retry_after'], 'the back-off, over a shorter Retry-After');
+    }
+
+    public function testOneConnectionsFaultIsRecordedOnItAndTheNextStillRuns(): void
+    {
+        $this->live = [
+            self::CONNECTION => new SpendConnection(self::CONNECTION, self::USER, 'adacct_broken', 'USD', 'sk-adv-broken-key'),
+            self::CONNECTION + 1 => new SpendConnection(self::CONNECTION + 1, self::USER, 'adacct_demo', 'USD', self::KEY),
+        ];
+        $this->throwFor = 'sk-adv-broken-key';
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $this->sync()->setEnabled(self::USER, self::CONNECTION + 1, true);
+        $this->pages(self::NOW - self::NOW % 3600 - 7200);
+
+        self::assertSame(['synced' => 1, 'failed' => 1, 'rows' => 3], $this->sync()->runDue(self::NOW + 60));
+        $states = array_column($this->sync()->status(self::USER), null, 'connection_id');
+        self::assertSame('the run stopped: RuntimeException: the transport broke', $states[self::CONNECTION]['last_error']);
+        self::assertSame(self::NOW, $states[self::CONNECTION]['last_run_at']);
+        self::assertNull($states[self::CONNECTION + 1]['last_error']);
+        self::assertCount(3, self::ledger());
+    }
+
+    public function testACursorOpenAiAlreadyGaveStopsThePull(): void
+    {
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $this->repeat = ['body' => InsightsClientTest::fixture('insights-hourly-page-1.json', self::NOW - self::NOW % 3600 - 7200)];
+        self::assertSame(1, $this->sync()->runDue(self::NOW + 60)['failed']);
+        self::assertStringContainsString('handed back a cursor it had already given', (string) $this->sync()->status(self::USER)[0]['last_error']);
+        self::assertCount(2, array_filter($this->urls, static fn (string $u): bool => str_contains($u, '/ad_account/insights')), 'stopped at the first repeat');
+    }
+
+    /** @return iterable<string, array{int, string, bool}> */
+    public static function conversionFailuresThatFailTheRun(): iterable
+    {
+        yield 'rate limited' => [429, 'OpenAI answered 429', true];
+        yield 'key refused' => [401, 'refused the Advertiser API key', false];
+    }
+
+    /** @dataProvider conversionFailuresThatFailTheRun */
+    public function testAConversions429OrRefusedKeyFailsTheRunAsTheSpendPullWould(int $status, string $said, bool $waits): void
+    {
+        $this->sync()->setEnabled(self::USER, self::CONNECTION, true);
+        $this->pages(self::NOW - self::NOW % 3600 - 7200);
+        $this->conversionAnswers[] = ['status' => $status, 'body' => '{}'];
+        self::assertSame(1, $this->sync()->runDue(self::NOW + 60)['failed']);
+        $state = $this->sync()->status(self::USER)[0];
+        self::assertStringContainsString($said, (string) $state['last_error']);
+        self::assertStringNotContainsString('conversions not read', (string) $state['last_note']);
+        self::assertSame($waits ? self::NOW + 3600 : null, $state['retry_after']);
     }
 
     public function testConversionsOpenAiRefusesAreANoteAndTheSpendStands(): void
@@ -356,5 +477,56 @@ final class SpendSyncIntegrationTest extends TestCase
         self::assertNull($state['last_error']);
         self::assertStringContainsString('conversions not read: OpenAI answered 400: time_ranges must not be in the future', (string) $state['last_note']);
         self::assertCount(3, self::ledger());
+    }
+    /**
+     * The sync the cron runs (SpendSync's own client, its limits in the
+     * install's state store) against the stand-in P202_OPENAI_ADS_ENDPOINT
+     * names: both of its requests reach the stand-in, which refuses a bound
+     * in the future and a part day as OpenAI documents.
+     */
+    public function testTheCronsSyncReachesTheEndpointTheEnvironmentNames(): void
+    {
+        $tls = sys_get_temp_dir() . '/p202-fake-openai-sync-' . getmypid() . '-' . bin2hex(random_bytes(3));
+        $state = $tls . '-state';
+        $process = proc_open(['python3', dirname(__DIR__, 2) . '/fixtures/openai-ads/fake_openai_ads.py', '--port', '0', '--tls-dir', $tls, '--api-key', self::KEY],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        if (!is_resource($process) || preg_match('/^READY (\d+)/', (string) fgets($pipes[1]), $m) !== 1) {
+            self::markTestSkipped('The fake Advertiser API did not start (python3 and openssl are needed).');
+        }
+        $origin = 'https://127.0.0.1:' . $m[1];
+        $before = [AdvertiserApi::ENV_ENDPOINT => getenv(AdvertiserApi::ENV_ENDPOINT), AdvertiserApi::ENV_CA_FILE => getenv(AdvertiserApi::ENV_CA_FILE),
+            'P202_SERVER_STATE_DIR' => getenv('P202_SERVER_STATE_DIR')];
+        putenv(AdvertiserApi::ENV_ENDPOINT . '=' . $origin);
+        putenv(AdvertiserApi::ENV_CA_FILE . '=' . $tls . '/cert.pem');
+        putenv('P202_SERVER_STATE_DIR=' . $state);
+        try {
+            $this->live = [self::CONNECTION => new SpendConnection(self::CONNECTION, self::USER, 'adacct_123', 'USD', self::KEY, 'America/New_York')];
+            $sync = new SpendSync(new Connection(self::$db), $this->connections($this->live));
+            $sync->setEnabled(self::USER, self::CONNECTION, true);
+            $done = $sync->runDue(time() + 60);
+
+            $status = $sync->status(self::USER)[0];
+            self::assertSame(1, $done['synced'], (string) json_encode($status));
+            self::assertNull($status['last_note'], 'the conversions were read: no bound in the future, whole days');
+            self::assertSame(12, $done['rows'], 'six hours of two ads');
+            $seen = json_decode((string) file_get_contents($origin . '/control/requests', false, stream_context_create(['ssl' => ['cafile' => $tls . '/cert.pem']])), true);
+            self::assertSame(['GET /v1/ad_account/insights', 'POST /v1/conversions/insights'],
+                array_values(array_unique(array_map(static fn (array $r): string => $r['method'] . ' ' . $r['path'], $seen['requests']))));
+            $sales = self::$db->query('SELECT DISTINCT sales FROM 202_ad_platform_conversions WHERE user_id = ' . self::USER)->fetch_all(MYSQLI_ASSOC);
+            self::assertSame([['sales' => '12.345679']], $sales);
+
+            // An endpoint off this machine is refused by name and nothing is sent anywhere.
+            putenv(AdvertiserApi::ENV_ENDPOINT . '=https://api.ads.openai.com.example');
+            $other = new SpendSync(new Connection(self::$db), $this->connections($this->live));
+            self::assertSame(1, $other->run($this->live[self::CONNECTION])['error'] === null ? 0 : 1);
+            self::assertStringStartsWith('not sent: ' . AdvertiserApi::ENV_ENDPOINT . ' must be', (string) $other->status(self::USER)[0]['last_error']);
+        } finally {
+            foreach ($before as $name => $value) {
+                putenv($value === false ? $name : $name . '=' . $value);
+            }
+            proc_terminate($process);
+            proc_close($process);
+            exec('rm -rf ' . escapeshellarg($tls) . ' ' . escapeshellarg($state));
+        }
     }
 }

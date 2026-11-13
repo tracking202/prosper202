@@ -65,7 +65,7 @@ final class PlatformConversions
                     (int) $row['conversions'],
                     isset($row['click_through_conversions']) ? (int) $row['click_through_conversions'] : null,
                     isset($row['view_through_conversions']) ? (int) $row['view_through_conversions'] : null,
-                    $sales === null ? null : (string) $sales,
+                    $sales === null ? null : self::salesAmount($sales),
                     $sales === null ? null : (string) ($row['order_created_attributed_sales_currency'] ?? ''),
                     $now,
                 ]);
@@ -107,8 +107,8 @@ final class PlatformConversions
         }
         $sales = $row['order_created_attributed_sales'] ?? null;
         if ($sales !== null) {
-            if (!is_string($sales) || preg_match('/^(0|[1-9][0-9]{0,9})(\.[0-9]{1,6})?$/D', $sales) !== 1) {
-                return "ad $ad on $day: order_created_attributed_sales is not an amount with up to six decimals";
+            if (self::salesAmount($sales) === null) {
+                return "ad $ad on $day: order_created_attributed_sales is not an amount of at least 0 below 10000000000";
             }
             $currency = $row['order_created_attributed_sales_currency'] ?? null;
             if (!is_string($currency) || preg_match('/^[A-Z]{3}$/D', $currency) !== 1) {
@@ -117,6 +117,25 @@ final class PlatformConversions
         }
 
         return null;
+    }
+
+    /**
+     * OpenAI's sales, an unrounded decimal string, at the column's six
+     * decimals (DECIMAL(16,6)), rounded half up from the text; null when it
+     * is not an amount or does not fit.
+     */
+    public static function salesAmount(mixed $sales): ?string
+    {
+        if (!is_string($sales) || preg_match('/^(0|[1-9][0-9]{0,9})(?:\.([0-9]{1,40}))?$/D', $sales, $m) !== 1) {
+            return null;
+        }
+        $fraction = str_pad($m[2] ?? '', 7, '0');
+        $micros = (int) ($m[1] . substr($fraction, 0, 6)) + ($fraction[6] >= '5' ? 1 : 0);
+        if ($micros > 9999999999999999) {
+            return null;
+        }
+
+        return sprintf('%d.%06d', intdiv($micros, 1000000), $micros % 1000000);
     }
 
     /**
@@ -143,7 +162,7 @@ final class PlatformConversions
         $ours = $this->ours($userId, $rows);
         $out = [];
         foreach ($rows as $row) {
-            $key = (string) $row['ad_ref'] . "\0" . (string) $row['day'] . "\0" . (string) $row['timezone'];
+            $key = (string) $row['platform'] . "\0" . (string) $row['ad_ref'] . "\0" . (string) $row['day'] . "\0" . (string) $row['timezone'];
             $out[] = [
                 'day' => (string) $row['day'],
                 'timezone' => (string) $row['timezone'],
@@ -165,20 +184,22 @@ final class PlatformConversions
 
     /**
      * Prosper202's conversions of the clicks carrying each row's ad, per day
-     * in each row's zone: ad\0day\0zone => leads.
+     * in each row's zone, matched to clicks as the spend of the row's
+     * platform is (LedgerCost::sets()): platform\0ad\0day\0zone => leads.
      *
      * @param list<array<string, mixed>> $rows
      * @return array<string, int>
      */
     private function ours(int $userId, array $rows): array
     {
-        $byZone = [];
+        $groups = [];
         foreach ($rows as $row) {
-            $byZone[(string) $row['timezone']][] = $row;
+            $groups[(string) $row['platform'] . "\0" . (string) $row['timezone']][] = $row;
         }
         $out = [];
-        foreach ($byZone as $zone => $zoneRows) {
-            $sets = LedgerCost::sets($this->conn, $userId, null, 0, 0, array_map(static fn (array $r): string => (string) $r['ad_ref'], $zoneRows));
+        foreach ($groups as $group => $zoneRows) {
+            [$platform, $zone] = explode("\0", (string) $group, 2);
+            $sets = LedgerCost::sets($this->conn, $userId, null, 0, 0, array_map(static fn (array $r): string => (string) $r['ad_ref'], $zoneRows), $platform);
             if ($sets === []) {
                 continue;
             }
@@ -208,7 +229,8 @@ final class PlatformConversions
                 if ($ref === null) {
                     continue;
                 }
-                $key = $ref . "\0" . (string) $hit['day'] . "\0" . $zone;
+                // The ledger's ad ids never end in a space; a click's may (PAD SPACE, LedgerCost::adKey()).
+                $key = $platform . "\0" . rtrim($ref, ' ') . "\0" . (string) $hit['day'] . "\0" . $zone;
                 $out[$key] = ($out[$key] ?? 0) + (int) $hit['leads'];
             }
         }

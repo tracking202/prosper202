@@ -747,6 +747,12 @@ p202 <resource> delete  --ids N1,N2,... [--force] [--dry-run] [--json]
 the source alone, not its accounts (`ppc-account delete` them first if they
 are to go). The same holds for an `aff-network` and its campaigns.
 
+ChatGPT Ads (Setup > Traffic Sources > Add ChatGPT Ads; safe to run again, adds only what is missing; `tracker get-url` then answers `chatgpt_ads` with `destination_url` and `tracking_template`):
+
+```
+p202 ppc-network add-chatgpt-ads [--json]
+```
+
 Custom variables (Setup > Traffic Sources > variables):
 
 ```
@@ -971,6 +977,7 @@ p202 destination conversion-actions <id> [--customer-id N [--login-customer-id N
 p202 destination pick <id> [--account NAME|ID] [--action NAME|ID] [--json]   # sets both from Google's lists; several to choose from is a 422 listing them
 p202 destination update <id> [--enable|--disable] [--name S] [any create flag]   # only the flags given change
 p202 destination test <id> [--json]                     # made-up conversion to GA4's /debug/mp/collect: valid + messages
+p202 destination test <id> --real [--json]              # ChatGPT Ads with an ad connection: a real event (saved, counted), then arrived: true|false
 p202 destination deliveries <id> [--status pending|sent|failed|withheld|cancelled] [--kind conversion|test]
                        [--conv-id N] [--limit 50] [--offset 0] [--json]    # the log; meta.summary counts by status
 p202 destination resend <id> (--delivery-id N | --status failed|withheld) [--json]   # sent again with all their tries; `more` true: run again
@@ -1016,15 +1023,15 @@ currency than the Prosper202 account; spend is not converted. `--staged` is refu
 ### Ad spend (the spend ledger)
 
 ```
-p202 ad-spend [--period P | --time-from T --time-to T] [--interval day|hour] [--platform openai_ads] [--limit N] [--json]
-p202 ad-spend conversions [--period P] [--platform openai_ads] [--json]   # OpenAI's conversions per ad per day beside prosper202_conversions
-p202 ad-spend sync list [--json]              # each ChatGPT Ads connection: enabled, backfilled_at, last run, last_error / last_note
-p202 ad-spend sync enable <connection-id>     # off until enabled; first run reads 30 days, later runs the trailing 72 hours
-p202 ad-spend sync disable <connection-id>    # what the ledger holds stays
-p202 ad-spend sync run <connection-id>        # the hourly pull now (sync must be on)
+p202 spend list [--period P | --time-from T --time-to T] [--interval day|hour] [--platform openai_ads] [--limit N] [--json]
+p202 spend conversions [--period P] [--platform openai_ads] [--json]   # OpenAI's conversions per ad per day beside prosper202_conversions
+p202 spend sync list [--json]              # each ChatGPT Ads connection: enabled, backfilled_at, last run, last_error / last_note
+p202 spend sync enable <connection-id>     # off until enabled; first run reads 30 days, later runs the trailing 72 hours
+p202 spend sync disable <connection-id>    # what the ledger holds stays
+p202 spend sync run <connection-id>        # the hourly pull now (sync must be on)
 ```
 
-`p202 ad-spend` answers what the platform billed per ad per day (account zone) or hour, with `matched_clicks`
+`p202 spend list` answers what the platform billed per ad per day (account zone) or hour, with `matched_clicks`
 (clicks carrying the ad through their `ad_id` variable) and `unallocated_spend`. `p202 report …` costs those
 clicks at their share of each hour's spend and carries `spend_ledger.reaches`; say how far spend data reaches
 when you quote ROI from it. An ad account in another currency is refused by name (`last_error`).
@@ -1464,9 +1471,10 @@ p202 system integrations record-held <paykickstart|shopify|zaxaa> [--json]   # r
 
 An AI app that speaks MCP (Claude Desktop, Claude Code, Cursor, ...) needs no
 hand-written tool: `p202 mcp` is an MCP server on stdin/stdout whose tools are
-the CLI's commands, one tool per command, each with an input schema generated
-from the command's flags and MCP's read-only/destructive hints, so the app asks
-before a write.
+CLI commands, one tool per command, each with an input schema generated from
+the command's flags and MCP's read-only/destructive hints, so the app asks
+before a write. Not every tool is listed at the start (see `get_more_tools`
+below).
 
 ```
 claude mcp add prosper202 -- p202 mcp --read-only    # reads only
@@ -1483,12 +1491,23 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
   `dry_run: true` first.
 - With `--staged`, `change_apply` and `change_discard` are not offered: the
   person applies a proposal (`p202 change apply <id>`), not the assistant.
-- `p202 mcp tools` prints the tool list as JSON; `p202 mcp call <tool> --input
-  '<json>'` runs one tool as the app would.
-- Some tools are not in the list the app reads at the start (the
-  destination tools, `ad_spend` and `ad_spend_sync_status`): the server lists
-  `get_more_tools`, which takes the task in words and loads the tools that
-  match. `p202 mcp tools --deferred` lists them. They are local only.
+  Neither is `destination_test`, a test fire that cannot be proposed.
+- Past the list's size budget, tools load on request. The server lists
+  `get_more_tools`, which takes the task in words (`{"task": "why did a
+  conversion not reach Google Ads"}`), adds the matching tools to the list
+  (`notifications/tools/list_changed`) and answers each one's name, what it
+  does and its input schema. A deferred tool called by name before that is
+  loaded and run. Today they are `destination_list`, `destination_deliveries`
+  and `destination_test` (Setup › Destinations), `ad_connection_list` and
+  `ad_connection_check` (ChatGPT Ads connections), and `ad_spend` and
+  `ad_spend_sync_status` (what ad platforms billed per ad, and each ChatGPT
+  Ads connection's hourly spend pull); `--read-only` and `--staged` leave out
+  `destination_test`, and `--staged` leaves out `ad_connection_check`. They
+  are local only: the hosted server below refuses them.
+- `p202 mcp tools` prints the tool list as JSON (`--deferred`: the tools
+  `get_more_tools` loads); `p202 mcp call <tool> --input '<json>'` runs one
+  tool as the app would, deferred ones included, with the server's
+  `--read-only` and `--staged` refusals.
 - For claude.ai and other hosted apps there is Tracking202's hosted MCP server
   (`https://mcp.tracking202.com/mcp`): the person approves the connection on
   their own install, signed in as their own user, and chooses read only,

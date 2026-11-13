@@ -21,6 +21,7 @@ use Api\V3\RequestContext;
 use Api\V3\Router;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\TooManyRequestsException;
+use Api\V3\Exception\UpstreamUnavailableException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\PathId;
@@ -525,6 +526,20 @@ try {
             $auth->requireScope('conversions:write');
             $auth->requirePermission($db, 'access_to_api_integrations');
         }]);
+        // Setup › Traffic Sources' "Add ChatGPT Ads": the source, an account
+        // and its two variables, or what an existing ChatGPT Ads source lacks
+        // (Prosper202\Setup\ChatGptAdsSource). Idempotent by itself: 201 when
+        // the source was made, 200 when it was already there. The page asks
+        // for Setup alone, as adding a source does. It also makes a traffic
+        // source account, so a scoped key needs ppc-accounts:write as well as
+        // the ppc-networks:write its path asks for (CLAUDE.md #5).
+        $router->group('/ppc-networks', function (Router $r) use ($crud, $payload) {
+            $r->post('/chatgpt-ads', function () use ($crud, $payload): array {
+                $answer = $crud(\Api\V3\Controllers\PpcNetworksController::class)->addChatGptAds($payload);
+
+                return ['_status' => $answer['data']['source_created'] ? 201 : 200] + $answer;
+            });
+        }, [$setupSection, static function () use ($auth): void { $auth->requireScope('ppc-accounts:write'); }]);
         $router->group('/ppc-networks/{id}/variables', function (Router $r) use ($crud, $idempotent, $payload) {
             $vars = \Api\V3\Controllers\PpcNetworkVariablesController::class;
             $r->get('', fn($ctx) => $crud($vars)->list(PathId::of($ctx)));
@@ -857,7 +872,7 @@ try {
             $r->post('',            fn() => ['_status' => 201] + $crud($cls)->create($payload));
             $r->patch('/{id}',      fn($ctx) => $crud($cls)->update(PathId::of($ctx), $payload));
             $r->delete('/{id}',     fn($ctx) => tap($crud($cls), fn($c) => $c->delete(PathId::of($ctx))));
-            $r->post('/{id}/test',  fn($ctx) => $crud($cls)->test(PathId::of($ctx)));
+            $r->post('/{id}/test',  fn($ctx) => $crud($cls)->test(PathId::of($ctx), $payload));
             $r->post('/{id}/oauth/start', fn($ctx) => $crud($cls)->oauthStart(PathId::of($ctx), $_SERVER));
             $r->post('/{id}/google-ads/pick', fn($ctx) => $crud($cls)->googleAdsPick(PathId::of($ctx), $payload));
             $r->post('/{id}/deliveries/resend', fn($ctx) => $crud($cls)->resend(PathId::of($ctx), $payload));
@@ -2006,6 +2021,15 @@ try {
 } catch (TooManyRequestsException $e) {
     header('Retry-After: ' . $e->retryAfter);
     Bootstrap::errorResponse($e->getMessage(), 429, ['retry_after_seconds' => $e->retryAfter] + $e->getDetails());
+} catch (UpstreamUnavailableException $e) {
+    // Another service's failure, in its own words: nothing here is broken, so the upgrade is not named for it.
+    error_log(p202UncaughtLogLine('API v3 answered ' . $e->getHttpStatus() . ' for an ad platform', $e));
+    $extra = ['details' => $e->getDetails()];
+    if ($e->retryAfter !== null) {
+        header('Retry-After: ' . $e->retryAfter);
+        $extra = ['retry_after_seconds' => $e->retryAfter] + $extra;
+    }
+    Bootstrap::errorResponse($e->getMessage(), $e->getHttpStatus(), $extra);
 } catch (HttpException $e) {
     $code = $e->getHttpStatus();
     $message = $e->getMessage();

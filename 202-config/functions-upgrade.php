@@ -5523,6 +5523,10 @@ class UPGRADE
                 // What each ad platform billed per ad per hour, which the
                 // reports read as cost where present (Prosper202\Spend).
                 \Prosper202\Database\Tables\MiscTables::spendLedger(),
+                // 202_ppc_networks gains ppc_network_platform: 'chatgpt_ads' on
+                // the source Setup › Traffic Sources' "Add ChatGPT Ads" makes
+                // (Prosper202\Setup\ChatGptAdsSource), '' on every other.
+                \Prosper202\Database\Tables\CampaignTables::ppcNetworks(),
                 // Each ad connection's spend sync: on or off, and its last run.
                 \Prosper202\Database\Tables\MiscTables::adSpendSync(),
                 // The conversions an ad platform reports per ad per day.

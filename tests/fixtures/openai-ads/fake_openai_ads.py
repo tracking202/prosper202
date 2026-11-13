@@ -15,7 +15,14 @@ afterwards and a pause changes the campaign's status.
   GET  /v1/campaigns | ad_groups | ads   (?campaign_id, ?ad_group_id, ?limit, ?after)
   GET  /v1/<level>/<id>                 POST /v1/<level>/<id> (an update)
   POST /v1/<level>/<id>/pause | activate
-  GET  /v1/ad_account/insights          (aggregation_level=campaign, time_granularity=none)
+  GET  /v1/ad_account/insights          (aggregation_level=campaign, time_granularity=none; or
+                                        aggregation_level=ad, time_granularity=hourly: each seeded ad's
+                                        last 6 hours before now, paged by ?limit and ?after)
+  POST /v1/conversions/insights         (aggregation_level=ad, time_granularity=daily, group_by_entity): per ad per
+                                        local day; a bound in the future or off the account's local midnight is 400,
+                                        more than 2000 rows 413
+  GET  /v1/conversions/events?pid=      the events a pixel received (server events as server_to_server)
+  POST /v1/events?pid=                  the Conversions API host's events (Bearer a capi- key; validate_only saves nothing)
 
 A request without `Authorization: Bearer <--api-key>` is 401. A create with
 an Idempotency-Key it has seen answers what that key made.
@@ -23,13 +30,17 @@ an Idempotency-Key it has seen answers what that key made.
 Control (for whoever drives it):
 
   POST /control/reset                   back to the seeded account
-  POST /control/disable                 {"pixels": true, "api_keys": true}: those creates (and the
+  POST /control/disable                 {"pixels": true, "api_keys": true, "events": true}: those creates (and the
                                         pixel list) answer 404 "Not found", as for an account
                                         without the feature
+  POST /control/account                 {"id": "adacct_999"}: the key now reaches that ad account, until the reset
   GET  /control/requests                every request seen, in order (keys masked)
+  POST /control/answer                  {"status": 503, "body": "...", "retry_after": "120"}: every /v1 request answers
+                                        that status and raw body (an outage, a rate limit, a refusal, an answer it
+                                        does not document), with that Retry-After header when given, until the reset
 
 Usage: fake_openai_ads.py --port 8242 --tls-dir DIR [--api-key KEY]
-It writes DIR/cert.pem (self-signed for 127.0.0.1 and localhost: the CA the
+It writes DIR/cert.pem (self-signed for 127.0.0.1, localhost and bzr.openai.com: the CA the
 install is given) and DIR/key.pem if missing, then prints "READY <port>".
 """
 import argparse
@@ -41,6 +52,9 @@ import ssl
 import subprocess
 import sys
 import threading
+import time
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
@@ -87,7 +101,8 @@ class State:
     def reset(self):
         self.data = copy.deepcopy(SEED)
         self.pixels, self.event_settings, self.api_keys = [], [], []
-        self.idempotent, self.requests, self.disabled = {}, [], set()
+        self.idempotent, self.requests, self.disabled, self.events = {}, [], set(), []
+        self.forced = None
         self.counter = 900
 
 
@@ -105,6 +120,67 @@ def page(rows, query):
             'last_id': chunk[-1]['id'] if chunk else None, 'has_more': len(rows) > limit}
 
 
+def time_range(raw):
+    """A JSON-encoded unix_range, as (start, end), or an error answer."""
+    try:
+        r = json.loads(raw)
+        start, end = int(r['start']), int(r['end'])
+    except (ValueError, KeyError, TypeError):
+        return None, (400, {'error': {'message': 'time_ranges must hold one JSON unix_range'}})
+    if r.get('type') != 'unix_range' or start >= end:
+        return None, (400, {'error': {'message': 'time_ranges must hold one unix_range with start before end'}})
+    if start > time.time() or end > time.time():
+        return None, (400, {'error': {'message': 'time_ranges must not be in the future'}})
+    return (start, end), None
+
+
+def hourly_ads(d, query):
+    """GET /ad_account/insights per ad per hour: each seeded ad's last 6 whole hours before now within the range."""
+    got, failed = time_range((query.get('time_ranges[]') or [''])[0])
+    if failed:
+        return failed
+    start, end = got
+    now = int(time.time()) // 3600 * 3600
+    group_of = {g['id']: g for g in d['ad_groups']}
+    rows = []
+    for hour in range(max(start - start % 3600, now - 6 * 3600), min(end, now), 3600):
+        for n, ad in enumerate(d['ads']):
+            rows.append({'id': 'start=%d:end=%d:entity_id=%s' % (hour, hour + 3600, ad['id']),
+                         'start_time': hour, 'end_time': hour + 3600, 'readable_time': 'hour',
+                         'campaign_id': group_of[ad['ad_group_id']]['campaign_id'], 'ad_group_id': ad['ad_group_id'],
+                         'ad_id': ad['id'], 'impressions': 100 + n, 'clicks': 3 + n, 'spend': 1.25 + n})
+    return 200, page(rows, query) | {'count': len(rows)}
+
+
+def daily_conversions(d, body):
+    """POST /conversions/insights per ad per local day of the ad account: whole days only, no future bound."""
+    ranges = body.get('time_ranges')
+    if not isinstance(ranges, list) or len(ranges) != 1:
+        return 400, {'error': {'message': 'time_ranges must hold exactly one JSON-encoded time range'}}
+    got, failed = time_range(ranges[0])
+    if failed:
+        return failed
+    zone = ZoneInfo(d['account']['timezone'])
+    start, end = (datetime.fromtimestamp(t, zone) for t in got)
+    if any((t.hour, t.minute, t.second) != (0, 0, 0) for t in (start, end)):
+        return 400, {'error': {'message': 'conversion metrics need full days in the account timezone'}}
+    ids = body.get('entity_ids')
+    if body.get('aggregation_level') != 'ad' or body.get('time_granularity') != 'daily' or not isinstance(ids, list) or not ids:
+        return 400, {'error': {'message': 'aggregation_level ad, time_granularity daily and entity_ids are what this stand-in answers'}}
+    days = []
+    day = start
+    while day < end:
+        days.append(day.strftime('%Y-%m-%d'))
+        day = (day + timedelta(days=1, hours=2)).replace(hour=0)
+    if len(days) * len(ids) > 2000:
+        return 413, {'error': {'message': 'more than 2000 rows'}}
+    known = {a['id'] for a in d['ads']}
+    rows = [{'entity_id': ad, 'date': day, 'conversions': 2, 'click_through_conversions': 1, 'view_through_conversions': 1,
+             'order_created_attributed_sales': '12.3456789', 'order_created_attributed_sales_currency': d['account']['currency_code']}
+            for ad in ids if ad in known for day in days]
+    return 200, {'object': 'list', 'data': rows, 'count': len(rows), 'account_currency': d['account']['currency_code']}
+
+
 class Handler(BaseHTTPRequestHandler):
     api_key = 'sk-ads-live-demo-key-0001'
 
@@ -114,6 +190,16 @@ class Handler(BaseHTTPRequestHandler):
     def answer(self, status, payload):
         body = json.dumps(payload).encode()
         self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def raw(self, status, text, retry_after=None):
+        body = text.encode()
+        self.send_response(status)
+        if retry_after is not None:
+            self.send_header('Retry-After', retry_after)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
@@ -142,6 +228,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.control(method, path)
             body = self.body() if method == 'POST' else {}
             auth = self.headers.get('Authorization', '')
+            if STATE.forced is not None:
+                STATE.requests.append({'method': method, 'path': path, 'query': url.query, 'forced': STATE.forced['status']})
+                return self.raw(STATE.forced['status'], STATE.forced['body'], STATE.forced.get('retry_after'))
+            if path == '/v1/events' and method == 'POST':
+                return self.events(query, body, auth)
             STATE.requests.append({'method': method, 'path': path, 'query': url.query, 'body': body,
                                    'idempotency_key': self.headers.get('Idempotency-Key'),
                                    'authorized': auth == 'Bearer ' + self.api_key})
@@ -195,6 +286,16 @@ class Handler(BaseHTTPRequestHandler):
                        'sources': [{'id': sources[0], 'name': None}], 'campaigns': [], 'archived': False, 'version': 1}
             STATE.event_settings.append(setting)
             return 200, setting
+        if path == '/v1/conversions/events' and method == 'GET':
+            if 'events' in STATE.disabled:
+                return not_found
+            pid = (query.get('pid') or [''])[0]
+            rows = [e for e in STATE.events if e['pixel_id'] == pid][-50:]
+            return 200, {'object': 'list', 'data': [{k: v for k, v in e.items() if k != 'pixel_id'} for e in reversed(rows)]}
+        if path == '/v1/ad_account/insights' and method == 'GET' and query.get('aggregation_level') == ['ad']:
+            return hourly_ads(d, query)
+        if path == '/v1/conversions/insights' and method == 'POST':
+            return daily_conversions(d, body)
         if path == '/v1/ad_account/insights' and method == 'GET':
             rows = [{'id': 'entity_id=' + cid, 'start_time': 0, 'end_time': 0, 'campaign_id': cid,
                      'campaign_name': next(c['name'] for c in d['campaigns'] if c['id'] == cid),
@@ -230,6 +331,26 @@ class Handler(BaseHTTPRequestHandler):
                 row[field] = body[field]
         return 200, row
 
+    def events(self, query, body, auth):
+        """POST /v1/events?pid= on the Conversions API host: Bearer a Conversions API key this stand-in
+        issued (or one starting capi-, as a key from Ads Manager); validate_only saves nothing."""
+        key = auth[len('Bearer '):] if auth.startswith('Bearer ') else ''
+        STATE.requests.append({'method': 'POST', 'path': '/v1/events', 'query': urlsplit(self.path).query, 'body': body,
+                               'idempotency_key': None, 'authorized': key.startswith('capi-')})
+        if not key.startswith('capi-'):
+            return self.answer(401, {'error': {'message': 'Invalid Conversions API key'}})
+        pid = (query.get('pid') or [''])[0]
+        events = (body or {}).get('events')
+        if not pid or not isinstance(events, list) or not events:
+            return self.answer(400, {'error': {'message': 'pid and events are required'}})
+        if not body.get('validate_only'):
+            for event in events:
+                STATE.events.append({'pixel_id': pid, 'action_source': event.get('action_source'), 'api_channel': 'server_to_server',
+                                     'custom_event_name': event.get('custom_event_name'), 'data_source_id': 'cds_1',
+                                     'event_data_json': json.dumps(event.get('data', {})), 'event_timestamp_ms': event.get('timestamp_ms'),
+                                     'event_type': event.get('type'), 'received_at_ms': event.get('timestamp_ms')})
+        return self.answer(200, {'object': 'list', 'data': []})
+
     def control(self, method, path):
         if path == '/control/reset' and method == 'POST':
             STATE.reset()
@@ -238,6 +359,20 @@ class Handler(BaseHTTPRequestHandler):
             body = self.body() or {}
             STATE.disabled = {name for name, on in body.items() if on}
             return self.answer(200, {'disabled': sorted(STATE.disabled)})
+        if path == '/control/account' and method == 'POST':
+            body = self.body() or {}
+            if not isinstance(body.get('id'), str) or body['id'] == '':
+                return self.answer(400, {'error': {'message': 'id is required'}})
+            STATE.data['account']['id'] = body['id']
+            return self.answer(200, {'id': body['id']})
+        if path == '/control/answer' and method == 'POST':
+            body = self.body() or {}
+            if not isinstance(body.get('status'), int) or not isinstance(body.get('body'), str):
+                return self.answer(400, {'error': {'message': 'status (a number) and body (a string) are required'}})
+            if body.get('retry_after') is not None and not isinstance(body['retry_after'], str):
+                return self.answer(400, {'error': {'message': 'retry_after is a string (seconds or an HTTP-date)'}})
+            STATE.forced = {'status': body['status'], 'body': body['body'], 'retry_after': body.get('retry_after')}
+            return self.answer(200, STATE.forced)
         if path == '/control/requests' and method == 'GET':
             return self.answer(200, {'requests': STATE.requests})
         return self.answer(404, {'error': {'message': 'no such control'}})
@@ -249,7 +384,7 @@ def ensure_cert(tls_dir):
         os.makedirs(tls_dir, exist_ok=True)
         subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert,
                         '-days', '2', '-subj', '/CN=127.0.0.1',
-                        '-addext', 'subjectAltName=IP:127.0.0.1,DNS:localhost',
+                        '-addext', 'subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:bzr.openai.com',
                         '-addext', 'basicConstraints=critical,CA:TRUE'],
                        check=True, capture_output=True)
     return cert, key

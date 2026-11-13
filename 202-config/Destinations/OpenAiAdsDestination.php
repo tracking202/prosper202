@@ -38,15 +38,15 @@ final class OpenAiAdsDestination implements DestinationType
         'checkout_started' => 'contents',
         'items_added' => 'contents',
         'contents_viewed' => 'contents',
+        'page_viewed' => 'contents',
         'lead_created' => 'customer_action',
         'registration_completed' => 'customer_action',
         'appointment_scheduled' => 'customer_action',
-        'page_viewed' => 'customer_action',
         'subscription_created' => 'plan_enrollment',
         'trial_started' => 'plan_enrollment',
         'custom' => 'custom',
     ];
-    private const CUSTOM_NAME = '/\A[a-z0-9_-]{1,64}\z/D';
+    private const CUSTOM_NAME = '/\A[a-z0-9]([a-z0-9_-]{0,62}[a-z0-9])?\z/D';
 
     public function __construct(private ?WebhookSender $sender = null)
     {
@@ -145,7 +145,7 @@ final class OpenAiAdsDestination implements DestinationType
         $custom = trim(self::text($settings, 'custom_event_name', '', 'settings.'));
         if ($type === 'custom') {
             if (preg_match(self::CUSTOM_NAME, $custom) !== 1 || isset(self::EVENT_TYPES[$custom])) {
-                throw new DestinationInputException('settings.custom_event_name', 'custom_event_name must be 1-64 lowercase letters, digits, - or _, and not one of OpenAI\'s standard event types.');
+                throw new DestinationInputException('settings.custom_event_name', 'custom_event_name must be 1-64 lowercase letters, digits, - or _, starting and ending with a letter or digit, and not one of OpenAI\'s standard event types.');
             }
         } elseif ($custom !== '') {
             throw new DestinationInputException('settings.custom_event_name', 'custom_event_name is set only with event_type custom.');
@@ -216,7 +216,8 @@ final class OpenAiAdsDestination implements DestinationType
         }
         $json = json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR);
         $url = 'https://' . self::HOST . '/v1/events?pid=' . rawurlencode((string) $settings['pixel_id']);
-        $this->sender ??= new WebhookSender();
+        // OpenAI's host, or the loopback stand-in P202_OPENAI_ADS_ENDPOINT names for tests and live passes.
+        $this->sender ??= \Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi::eventsSender();
         $sent = $this->sender->post($url, $json, ['Content-Type: application/json', 'Authorization: Bearer ' . $key, 'User-Agent: Prosper202-Destinations/1'], [443]);
         $redact = static fn (string $text): string => $key === '' ? $text : str_replace([$key, rawurlencode($key)], '…', $text);
 

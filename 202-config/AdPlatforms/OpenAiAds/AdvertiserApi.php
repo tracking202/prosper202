@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\AdPlatforms\OpenAiAds;
 
+use Api\V3\Support\QuotaStore;
 use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookSender;
 use Prosper202\Destinations\GoogleAdsOAuth;
@@ -19,8 +20,11 @@ use Prosper202\Destinations\GoogleAdsOAuth;
  * is never retried here: the caller says "try again in a minute".
  *
  * Creates carry an Idempotency-Key the caller derives from what is being
- * created, so a retry after a lost answer returns the same resource instead
- * of a second one.
+ * created. OpenAI documents the header for campaign, ad group and ad
+ * creates; for pixels, Conversions API keys and event settings it is sent
+ * but nothing promises it is honoured, so those callers look for what
+ * exists before they create, and a key whose answer was lost may be made
+ * twice.
  *
  * The key is write-only everywhere: it is sent in the Authorization header
  * and taken out of every text this returns.
@@ -45,10 +49,28 @@ final class AdvertiserApi
     /** @var list<int> */
     private array $ports = [443];
 
-    /** @param (callable(): float)|null $clock seconds */
-    public function __construct(private ?WebhookSender $sender = null, ?callable $clock = null)
-    {
+    /**
+     * @param (callable(): float)|null $clock seconds, for the in-process count used without $quota
+     * @param QuotaStore|null $quota where every process counts the per-minute limits (ServerStateStore::forInstall());
+     *                               without one, this object counts its own requests only
+     */
+    public function __construct(
+        private ?WebhookSender $sender = null,
+        ?callable $clock = null,
+        private ?QuotaStore $quota = null,
+        private readonly int $perEndpointLimit = self::PER_ENDPOINT_PER_MINUTE,
+        private readonly int $overallLimit = self::OVERALL_PER_MINUTE,
+    ) {
         $this->clock = $clock ?? static fn (): float => microtime(true);
+    }
+
+    /** The same API, its limits counted in $quota, which every process of the install shares. */
+    public function countingIn(QuotaStore $quota): self
+    {
+        $api = clone $this;
+        $api->quota = $quota;
+
+        return $api;
     }
 
     /**
@@ -59,11 +81,11 @@ final class AdvertiserApi
      *
      * @throws \InvalidArgumentException for an endpoint that is not a loopback https origin
      */
-    public static function fromEnvironment(): self
+    public static function fromEnvironment(?QuotaStore $quota = null): self
     {
         $endpoint = getenv(self::ENV_ENDPOINT);
         if ($endpoint === false || $endpoint === '') {
-            return new self();
+            return new self(null, null, $quota);
         }
         $parts = parse_url($endpoint);
         $host = is_array($parts) ? strtolower((string) ($parts['host'] ?? '')) : '';
@@ -81,11 +103,38 @@ final class AdvertiserApi
 
             return WebhookSender::curlTransport($options, WebhookSender::MAX_READ_BYTES, WebhookSender::MAX_READ_BYTES);
         };
-        $api = new self(new WebhookSender(new WebhookGuard(null, '127.0.0.0/8,::1/128'), $transport));
+        $api = new self(new WebhookSender(new WebhookGuard(null, '127.0.0.0/8,::1/128'), $transport), null, $quota);
         $api->base = 'https://' . $host . (isset($parts['port']) ? ':' . (int) $parts['port'] : '') . '/v1/';
         $api->ports = [isset($parts['port']) ? (int) $parts['port'] : 443];
 
         return $api;
+    }
+
+    /**
+     * The sender for OpenAI's Conversions API host (bzr.openai.com): the plain WebhookSender, or, when
+     * P202_OPENAI_ADS_ENDPOINT names the loopback stand-in, one that checks and pins the host as usual (to
+     * the loopback address, which is allowed) and connects to the stand-in's port, TLS verified as
+     * bzr.openai.com against P202_OPENAI_ADS_CA_FILE. Never reaches OpenAI when the endpoint is set.
+     */
+    public static function eventsSender(): WebhookSender
+    {
+        $endpoint = getenv(self::ENV_ENDPOINT);
+        if ($endpoint === false || $endpoint === '') {
+            return new WebhookSender();
+        }
+        $port = self::fromEnvironment()->ports[0];
+        $ca = getenv(self::ENV_CA_FILE);
+        $transport = static function (array $options) use ($port, $ca): array {
+            // Every option the sender set stays; the connection goes to the stand-in's port, verified as bzr.openai.com.
+            $options[CURLOPT_CONNECT_TO] = [\Prosper202\Destinations\OpenAiAdsDestination::HOST . ':443:127.0.0.1:' . $port];
+            if (is_string($ca) && $ca !== '') {
+                $options[CURLOPT_CAINFO] = $ca;
+            }
+
+            return WebhookSender::curlTransport($options);
+        };
+
+        return new WebhookSender(new WebhookGuard(static fn (string $host): array => ['127.0.0.1'], '127.0.0.0/8'), $transport);
     }
 
     /** @param array<string, scalar|list<scalar>> $query a list is sent as name[]=a&name[]=b, as OpenAI reads it */
@@ -129,6 +178,25 @@ final class AdvertiserApi
     public static function endpoint(string $method, string $path): string
     {
         return $method . ' ' . (string) preg_replace('#/[a-z]+_(?=[A-Za-z0-9-]*[0-9])[A-Za-z0-9-]+(?=/|$)#', '/{id}', '/' . trim($path, '/'));
+    }
+
+    /**
+     * A Retry-After header (RFC 9110: delay-seconds or an HTTP-date) as
+     * seconds from $now, at least 0; null when there is none or it reads as
+     * neither.
+     */
+    public static function retryAfterSeconds(?string $header, float $now): ?int
+    {
+        $header = trim((string) $header);
+        if (preg_match('/^[0-9]{1,10}$/D', $header) === 1) {
+            return (int) $header;
+        }
+        $date = \DateTimeImmutable::createFromFormat('!D, d M Y H:i:s \G\M\T', $header, new \DateTimeZone('UTC'));
+        if ($date === false || $date->format('D, d M Y H:i:s \G\M\T') !== $header) {
+            return null;
+        }
+
+        return max(0, $date->getTimestamp() - (int) floor($now));
     }
 
     /** OpenAI's own words from an error body, cut short; '' when it has none. */
@@ -195,7 +263,12 @@ final class AdvertiserApi
                 default => AdvertiserAnswer::REFUSED,
             };
 
-            return $failed($kind, $status, $said . ($kind === AdvertiserAnswer::RATE_LIMITED || $kind === AdvertiserAnswer::UNAVAILABLE ? '. Try again in a minute' : ''));
+            return AdvertiserAnswer::failed(
+                $kind,
+                $status,
+                GoogleAdsOAuth::redact($said . ($kind === AdvertiserAnswer::RATE_LIMITED || $kind === AdvertiserAnswer::UNAVAILABLE ? '. Try again in a minute' : ''), [$key]),
+                self::retryAfterSeconds($sent['retry_after'], ($this->clock)()),
+            );
         }
         if ($sent['error'] !== null) {
             return $failed(AdvertiserAnswer::UNAVAILABLE, $status, 'OpenAI\'s answer was cut off (' . $sent['error'] . ')');
@@ -213,16 +286,40 @@ final class AdvertiserApi
         return AdvertiserAnswer::ok($status, $json);
     }
 
-    /** Why this request is held back, or null when it may go: OpenAI's two per-minute limits, counted here. */
+    /**
+     * Why this request is held back, or null when it may go: OpenAI's two per-minute limits, per key (one key is
+     * one ad account), counted in the install's shared store when there is one, so every process sees every
+     * request. A counter that cannot be read holds the request back (CLAUDE.md #11).
+     */
     private function hold(#[\SensitiveParameter] string $key, string $endpoint): ?string
     {
+        $account = substr(hash('sha256', $key), 0, 32);
+        $held = static fn (int $limit, string $what): string => 'not sent: OpenAI allows ' . $limit . ' requests a minute '
+            . ($what === '' ? 'in all' : 'to ' . $what) . ', and that many were made. Try again in a minute';
+        if ($this->quota !== null) {
+            try {
+                $overall = $this->quota->reserveQuotaWindow('openai-ads-' . $account . '-all', $this->overallLimit, 60);
+                if ($overall['retry_after'] !== null) {
+                    return $held($this->overallLimit, '');
+                }
+                $one = $this->quota->reserveQuotaWindow('openai-ads-' . $account . '-' . substr(hash('sha256', $endpoint), 0, 16), $this->perEndpointLimit, 60);
+                if ($one['retry_after'] !== null) {
+                    $this->quota->refundQuota('openai-ads-' . $account . '-all', 60, 1, $overall['window_start']);
+
+                    return $held($this->perEndpointLimit, $endpoint);
+                }
+            } catch (\RuntimeException $e) {
+                return 'not sent: the count of requests to OpenAI could not be read (' . $e->getMessage() . '). Try again in a minute';
+            }
+
+            return null;
+        }
         $now = ($this->clock)();
-        $account = hash('sha256', $key);
-        foreach (['' => self::OVERALL_PER_MINUTE, $endpoint => self::PER_ENDPOINT_PER_MINUTE] as $what => $limit) {
+        foreach (['' => $this->overallLimit, $endpoint => $this->perEndpointLimit] as $what => $limit) {
             $slot = $account . '|' . $what;
             $this->sent[$slot] = array_values(array_filter($this->sent[$slot] ?? [], static fn (float $t): bool => $t > $now - 60.0));
             if (count($this->sent[$slot]) >= $limit) {
-                return 'not sent: OpenAI allows ' . $limit . ' requests a minute ' . ($what === '' ? 'in all' : 'to ' . $endpoint) . ', and that many were made. Try again in a minute';
+                return $held($limit, (string) $what);
             }
         }
         foreach (['', $endpoint] as $what) {

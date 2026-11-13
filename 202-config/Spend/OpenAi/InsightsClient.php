@@ -4,18 +4,24 @@ declare(strict_types=1);
 
 namespace Prosper202\Spend\OpenAi;
 
-use Prosper202\Attribution\WebhookSender;
+use Api\V3\Support\ServerStateStore;
+use Prosper202\AdPlatforms\OpenAiAds\AdvertiserAnswer;
+use Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi;
 
 /**
  * GET /ad_account/insights of the OpenAI Advertiser API, one page at a time:
  * one row per ad per hour (aggregation_level=ad, time_granularity=hourly)
  * with its campaign, ad group and ad ids, impressions, clicks and spend.
- * Requests go through WebhookSender::read() (checked address, pinned
- * connection, https only, no redirects), like every other outbound call.
+ * Requests go through AdvertiserApi, as the ad connections' do: its
+ * endpoint (P202_OPENAI_ADS_ENDPOINT, loopback only), its per-minute
+ * limits in the install's store, and WebhookSender::read() under it.
  */
 final class InsightsClient
 {
-    public const string HOST = 'api.ads.openai.com';
+    public const string HOST = AdvertiserApi::HOST;
+
+    /** @var (\Closure(): AdvertiserApi)|null */
+    private ?\Closure $build;
 
     /** The most rows OpenAI answers in one page. */
     public const int PAGE_ROWS = 2000;
@@ -23,34 +29,38 @@ final class InsightsClient
     /** The fields each row carries. */
     public const array FIELDS = ['campaign.id', 'ad_group.id', 'ad.id', 'ad.impressions', 'ad.clicks', 'ad.spend'];
 
-    public function __construct(private ?WebhookSender $sender = null)
+    /** @param (\Closure(): AdvertiserApi)|null $build the API, made at the first request; AdvertiserApi::fromEnvironment() when null */
+    public function __construct(private ?AdvertiserApi $api = null, ?\Closure $build = null)
     {
+        $this->build = $build;
+    }
+
+    /** The install's client: its limits counted where every process of the install counts them. */
+    public static function forInstall(\mysqli $db): self
+    {
+        return new self(null, static fn (): AdvertiserApi => AdvertiserApi::fromEnvironment(ServerStateStore::forInstall($db)));
     }
 
     /**
-     * The URL of one page: [$start, $end) in unix seconds, after the cursor
-     * $after when one is given.
+     * The query of one page: [$start, $end) in unix seconds, after the
+     * cursor $after when one is given.
+     *
+     * @return array<string, string|list<string>>
      */
-    public static function url(int $start, int $end, ?string $after): string
+    public static function query(int $start, int $end, ?string $after): array
     {
         $query = [
             'aggregation_level' => 'ad',
             'time_granularity' => 'hourly',
             'limit' => (string) self::PAGE_ROWS,
-            'time_ranges[]' => (string) json_encode(['type' => 'unix_range', 'start' => $start, 'end' => $end]),
+            'time_ranges' => [(string) json_encode(['type' => 'unix_range', 'start' => $start, 'end' => $end])],
+            'fields' => self::FIELDS,
         ];
-        $parts = [];
-        foreach ($query as $name => $value) {
-            $parts[] = rawurlencode($name) . '=' . rawurlencode($value);
-        }
-        foreach (self::FIELDS as $field) {
-            $parts[] = rawurlencode('fields[]') . '=' . rawurlencode($field);
-        }
         if ($after !== null) {
-            $parts[] = 'after=' . rawurlencode($after);
+            $query['after'] = $after;
         }
 
-        return 'https://' . self::HOST . '/v1/ad_account/insights?' . implode('&', $parts);
+        return $query;
     }
 
     /**
@@ -62,7 +72,7 @@ final class InsightsClient
      */
     public function page(#[\SensitiveParameter] string $apiKey, int $start, int $end, ?string $after): array
     {
-        $json = $this->call(self::url($start, $end, $after), null, $apiKey);
+        $json = $this->answer(fn (AdvertiserApi $api): AdvertiserAnswer => $api->get($apiKey, 'ad_account/insights', self::query($start, $end, $after)));
         $isPage = isset($json['data']) && is_array($json['data']) && array_is_list($json['data'])
             && array_key_exists('has_more', $json) && is_bool($json['has_more']);
         if (!$isPage) {
@@ -100,15 +110,15 @@ final class InsightsClient
      */
     public function conversions(#[\SensitiveParameter] string $apiKey, int $start, int $end, array $adIds): array
     {
-        $body = (string) json_encode([
+        $body = [
             'aggregation_level' => 'ad',
             'time_granularity' => 'daily',
             'time_ranges' => [(string) json_encode(['type' => 'unix_range', 'start' => $start, 'end' => $end])],
             'entity_ids' => array_values($adIds),
             'group_by_entity' => true,
             'include_zero_rows' => false,
-        ]);
-        $json = $this->call('https://' . self::HOST . '/v1/conversions/insights', $body, $apiKey);
+        ];
+        $json = $this->answer(fn (AdvertiserApi $api): AdvertiserAnswer => $api->post($apiKey, 'conversions/insights', $body));
         if (!isset($json['data']) || !is_array($json['data']) || !array_is_list($json['data'])) {
             throw new InsightsFailure('OpenAI answered with something that is not a list of conversion rows');
         }
@@ -125,63 +135,35 @@ final class InsightsClient
     }
 
     /**
-     * One request, answered as JSON or refused by name.
+     * One request, answered as JSON or refused by name: AdvertiserApi's
+     * kinds as InsightsFailure's.
      *
+     * @param \Closure(AdvertiserApi): AdvertiserAnswer $send
      * @return array<string, mixed>
      * @throws InsightsFailure
      */
-    private function call(string $url, ?string $body, #[\SensitiveParameter] string $apiKey): array
+    private function answer(\Closure $send): array
     {
-        $this->sender ??= new WebhookSender();
-        $headers = ['Authorization: Bearer ' . $apiKey, 'Accept: application/json', 'User-Agent: Prosper202-SpendSync/1'];
-        if ($body !== null) {
-            $headers[] = 'Content-Type: application/json';
-        }
-        $sent = $this->sender->read($url, $body, $headers, [443]);
-        $redact = static fn (string $text): string => $apiKey === '' ? $text : str_replace($apiKey, '[key]', $text);
-        if ($sent['refused'] !== null) {
-            throw new InsightsFailure('not sent: ' . $redact($sent['refused']));
-        }
-        if ($sent['strayed'] !== null) {
-            throw new InsightsFailure('not sent: the connection went to ' . $sent['strayed'] . ' instead of the checked address ' . $sent['pinned']);
-        }
-        $status = $sent['status'];
-        if ($status === 0) {
-            throw new InsightsFailure('no answer from OpenAI: ' . $redact($sent['error'] ?? 'the request failed'));
-        }
-        if ($status === 429) {
-            throw new InsightsFailure('OpenAI answered 429: too many requests', InsightsFailure::RATE_LIMITED);
-        }
-        if ($status === 413) {
-            throw new InsightsFailure('OpenAI answered 413: more than 2000 rows', InsightsFailure::TOO_LARGE);
-        }
-        if ($status === 401 || $status === 403) {
-            throw new InsightsFailure('OpenAI refused the Advertiser API key (' . $status . '); connect the ad account again with a key that can read insights', InsightsFailure::KEY_REFUSED);
-        }
-        if ($status < 200 || $status >= 300) {
-            throw new InsightsFailure('OpenAI answered ' . $status . self::message($redact($sent['body'])));
-        }
-        if ($sent['error'] !== null) {
-            throw new InsightsFailure('OpenAI\'s answer was cut off (' . $sent['error'] . ')');
-        }
         try {
-            $json = json_decode($sent['body'], true, 32, JSON_THROW_ON_ERROR);
-        } catch (\JsonException) {
-            $json = null;
+            $this->api ??= ($this->build ?? static fn (): AdvertiserApi => AdvertiserApi::fromEnvironment())();
+        } catch (\InvalidArgumentException | \RuntimeException $e) {
+            throw new InsightsFailure('not sent: ' . $e->getMessage());
         }
-        if (!is_array($json) || ($json !== [] && array_is_list($json))) {
-            throw new InsightsFailure('OpenAI answered ' . $status . ' with something that is not its JSON');
+        $answer = $send($this->api);
+        if ($answer->isOk()) {
+            return $answer->json;
         }
+        $status = $answer->status;
+        $error = (string) $answer->error;
+        [$message, $code] = match (true) {
+            $status === 429 => ['OpenAI answered 429: too many requests', InsightsFailure::RATE_LIMITED],
+            $answer->kind === AdvertiserAnswer::RATE_LIMITED => [$error, InsightsFailure::RATE_LIMITED],
+            $status === 413 => ['OpenAI answered 413: more than 2000 rows', InsightsFailure::TOO_LARGE],
+            $status === 401 || $status === 403 => ['OpenAI refused the Advertiser API key (' . $status . '); connect the ad account again with a key that can read insights', InsightsFailure::KEY_REFUSED],
+            $answer->kind === AdvertiserAnswer::KEY_REFUSED => [$error, InsightsFailure::KEY_REFUSED],
+            default => [$error, InsightsFailure::FAILED],
+        };
 
-        return $json;
-    }
-
-    /** OpenAI's own words for a failure, when its body carries them. */
-    private static function message(string $body): string
-    {
-        $json = json_decode($body, true);
-        $message = is_array($json) && is_array($json['error'] ?? null) ? ($json['error']['message'] ?? null) : null;
-
-        return is_string($message) && $message !== '' ? ': ' . mb_substr($message, 0, 300) : '';
+        throw new InsightsFailure($message, $code, $answer->retryAfter);
     }
 }

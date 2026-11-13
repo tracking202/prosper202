@@ -11,4 +11,9 @@ namespace Prosper202\AdPlatforms;
  */
 final class AdConnectionKeyMissing extends \RuntimeException
 {
+    /** @param bool $malformed the row is there and is not a key: nothing here mints over it, an operator removes it */
+    public function __construct(string $message, public readonly bool $malformed = false)
+    {
+        parent::__construct($message);
+    }
 }

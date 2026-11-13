@@ -83,7 +83,7 @@ final class DestinationStore
         $adapter = $this->type($type);
         $name = self::name($name);
         [$settings, $credentials] = $this->settings($userId, $adapter, $settings, $credentials);
-        $id = $this->conn->transaction(function () use ($userId, $type, $name, $settings, $credentials, $now): int {
+        $id = $this->atomically(function () use ($userId, $type, $name, $settings, $credentials, $now): int {
             $count = $this->conn->prepareWrite('SELECT COUNT(*) AS n FROM `' . TableRegistry::DESTINATIONS . '` WHERE user_id = ? AND deleted_at IS NULL FOR UPDATE');
             $this->conn->bind($count, 'i', [$userId]);
             if ((int) ($this->conn->fetchOne($count)['n'] ?? 0) >= self::MAX_PER_ACCOUNT) {
@@ -102,6 +102,19 @@ final class DestinationStore
     }
 
     /**
+     * In a transaction of its own, or in the caller's when there is one (a setup that makes a destination and
+     * records it under one lock): beginning another would commit the caller's (CLAUDE.md #13).
+     *
+     * @template T
+     * @param callable(): T $work
+     * @return T
+     */
+    private function atomically(callable $work): mixed
+    {
+        return $this->conn->inTransaction() ? $this->conn->joinTransaction($work) : $this->conn->transaction($work);
+    }
+
+    /**
      * Change what $patch names: name, enabled, settings (replaced whole) and
      * credentials (replaced whole; with $keepUnnamedCredentials, a credential
      * the patch leaves out keeps its stored value, as a form whose blank
@@ -113,7 +126,7 @@ final class DestinationStore
     public function update(int $userId, int $destinationId, array $patch, int $now, bool $keepUnnamedCredentials = false): ?array
     {
         // Read and written under one row lock, so two concurrent changes cannot lose one (CLAUDE.md #36).
-        $updated = $this->conn->transaction(function () use ($userId, $destinationId, $patch, $now, $keepUnnamedCredentials): bool {
+        $updated = $this->atomically(function () use ($userId, $destinationId, $patch, $now, $keepUnnamedCredentials): bool {
             $lock = $this->conn->prepareWrite('SELECT ' . self::COLUMNS . ' FROM `' . TableRegistry::DESTINATIONS . '` WHERE destination_id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1 FOR UPDATE');
             $this->conn->bind($lock, 'ii', [$destinationId, $userId]);
             $row = $this->conn->fetchOne($lock);

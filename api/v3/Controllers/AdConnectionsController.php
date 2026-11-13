@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\UpstreamUnavailableException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\PayloadKeys;
 use Prosper202\AdPlatforms\AdConnectionInputException;
 use Prosper202\AdPlatforms\AdConnectionStore;
+use Prosper202\AdPlatforms\AdPlatformUnavailable;
 use Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi;
 use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsConnections;
 use Prosper202\Database\Connection;
@@ -122,7 +124,7 @@ final class AdConnectionsController
 
     private function connections(): OpenAiAdsConnections
     {
-        return new OpenAiAdsConnections($this->store, $this->api ?? AdvertiserApi::fromEnvironment(), new DestinationStore($this->conn), InstallId::of($this->db));
+        return new OpenAiAdsConnections($this->store, $this->api ?? AdvertiserApi::fromEnvironment(\Api\V3\Support\ServerStateStore::forInstall($this->db)), new DestinationStore($this->conn), InstallId::of($this->db));
     }
 
     /** @param array<string, mixed> $payload */
@@ -137,6 +139,9 @@ final class AdConnectionsController
     }
 
     /**
+     * A refusal of what was sent is a 422 naming the field. OpenAI not reached is a 503, its rate limit a 429 and
+     * an answer of its that cannot be used a 502: none of them says anything about the key (CLAUDE.md #11).
+     *
      * @template T
      * @param callable(): T $write
      * @return T
@@ -147,6 +152,8 @@ final class AdConnectionsController
             return $write();
         } catch (AdConnectionInputException $e) {
             throw new ValidationException($e->getMessage(), [$e->field => $e->getMessage()], $e);
+        } catch (AdPlatformUnavailable $e) {
+            throw UpstreamUnavailableException::forAdPlatform($e, OpenAiAdsConnections::PLATFORM);
         }
     }
 

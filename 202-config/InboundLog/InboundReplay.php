@@ -14,6 +14,7 @@ use Prosper202\Conversion\Ledger\ReversalException;
 use Prosper202\Database\Connection;
 use Prosper202\Destinations\Ga4Destination;
 use Prosper202\Destinations\GoogleAdsDestination;
+use Prosper202\Destinations\OpenAiAdsDestination;
 
 /**
  * "Record it now": the conversion or event of a postback or pixel the log
@@ -232,7 +233,8 @@ final class InboundReplay
      * The sentence naming the account's switched-on destinations that will
      * not take this conversion for its age ('' when none), each judged as it
      * judges a conversion: Google Analytics by the conversion's own time
-     * (Ga4Destination::MAX_AGE_SECONDS), Google Ads by its click's first
+     * (Ga4Destination::MAX_AGE_SECONDS), as ChatGPT Ads is
+     * (OpenAiAdsDestination::MAX_AGE_SECONDS), Google Ads by its click's first
      * visit, when the click carries an id Google matches it by
      * (GoogleAdsDestination::CLICK_MAX_AGE). A destination that sends only
      * some campaigns is named only for one of them.
@@ -244,6 +246,7 @@ final class InboundReplay
     {
         $analytics = [];
         $ads = [];
+        $chat = [];
         foreach ($destinations as $destination) {
             if (($destination['enabled'] ?? false) !== true) {
                 continue;
@@ -257,6 +260,10 @@ final class InboundReplay
             if (($destination['type'] ?? '') === Ga4Destination::TYPE && $now - $arrived > Ga4Destination::MAX_AGE_SECONDS) {
                 $analytics[] = $name;
             }
+            $type = (string) ($destination['type'] ?? '');
+            if ($type === OpenAiAdsDestination::TYPE && $now - $arrived > OpenAiAdsDestination::MAX_AGE_SECONDS) {
+                $chat[] = $name;
+            }
             if (($destination['type'] ?? '') === GoogleAdsDestination::TYPE && $click !== null && $click['google_click']
                 && $now - ($click['first_visit'] ?? $arrived) > GoogleAdsDestination::CLICK_MAX_AGE) {
                 $ads[] = $name;
@@ -266,6 +273,11 @@ final class InboundReplay
         if ($analytics !== []) {
             $said .= ' Google Analytics takes conversions up to ' . intdiv(Ga4Destination::MAX_AGE_SECONDS, 3600) . ' hours old, so '
                 . implode(', ', $analytics) . (count($analytics) === 1 ? ' does' : ' do') . ' not receive this one.';
+        }
+        if ($chat !== []) {
+            $said .= ' ChatGPT Ads takes conversions up to ' . intdiv(OpenAiAdsDestination::MAX_AGE_SECONDS, 86400)
+                . ' days old, so ' . implode(', ', $chat) . (count($chat) === 1 ? ' does' : ' do')
+                . ' not receive this one.';
         }
         if ($ads !== []) {
             $said .= ' Google Ads takes a conversion up to ' . intdiv(GoogleAdsDestination::CLICK_MAX_AGE, 86400) . ' days after its'

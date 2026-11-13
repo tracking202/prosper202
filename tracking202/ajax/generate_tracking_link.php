@@ -638,13 +638,64 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
         ];
     }
 
+    // A tracker on the ChatGPT Ads source (by the platform Add ChatGPT Ads
+    // stored, never its name): the two values Ads Manager takes, first. The
+    // account decides, as GET /trackers/{id}/url decides it.
+    // The link is saved by now: a failed read says so above the link rather
+    // than answering the request as failed (CLAUDE.md #13).
+    $chatGptLinks = null;
+    $onChatGpt = false;
+    if (isset($ownedRows['ppc_account_id'])) {
+        try {
+            $onChatGpt = (new \Prosper202\Setup\ChatGptAdsSource($ownedConn))
+                ->isAccountOnSource((int) $_SESSION['user_id'], (int) $ownedRows['ppc_account_id']['ppc_account_id']);
+        } catch (\Throwable $e) {
+            error_log('generate_tracking_link.php: traffic source platform read failed: ' . $e->getMessage());
+            echo p202_flash('warn', 'Your link is saved, but whether its traffic source is ChatGPT Ads could not be read just now,'
+                . ' so its ChatGPT Ads tracking template is not shown. Get the link again to see it.');
+        }
+    }
+    if ($onChatGpt) {
+        $onLandingPage = (($_POST['method_of_promotion'] ?? '') == 'landingpage') || (($_POST['tracker_type'] ?? '') == 1);
+        $chatGptLinks = \Prosper202\Setup\ChatGptAdsSource::links(
+            $linkBase,
+            (string) $tracker_id_public,
+            $publisherParam,
+            $tracking_variable_string,
+            $onLandingPage ? (string) ($landing_page_row['landing_page_url'] ?? '') : '',
+            ($_POST['tracker_type'] ?? '') == 2
+        );
+    }
+
     if (isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id']) {
         echo p202_flash('ok', 'Tracker updated. Your tracking link stays the same.');
     }
-    foreach ($trackingLinkParts as $trackingLink) {
-        echo p202_setup_code_box($trackingLink, ['label' => 'Destination URL']);
+    if ($chatGptLinks !== null) {
+        echo '<h3 class="h6">ChatGPT Ads</h3>';
+        echo '<p class="form-text">In Ads Manager, put the destination URL in the ad and the tracking template in its'
+            . ' tracking settings. ChatGPT fills in the campaign, the ad and its click id (oppref).'
+            . ($chatGptLinks['destination'] === 'landing_page'
+                ? ' The visitor goes straight to your page, whose landing page code records the click.'
+                : ' The visitor goes through your tracking link to the offer.')
+            . '</p>';
+        if (strlen($chatGptLinks['tracking_template']) > \Prosper202\Setup\ChatGptAdsSource::TEMPLATE_MAX_LENGTH) {
+            echo p202_flash('warn', 'This tracking template is longer than the ' . \Prosper202\Setup\ChatGptAdsSource::TEMPLATE_MAX_LENGTH
+                . ' characters Ads Manager takes. Remove some of this traffic source\'s custom variables.');
+        }
+        echo p202_setup_code_box($chatGptLinks['destination_url'], ['label' => 'Destination URL']);
+        echo p202_setup_code_box($chatGptLinks['tracking_template'], ['label' => 'Tracking template', 'long' => true]);
+        $onLinkBase = $onLinkBase || $chatGptLinks['destination'] === 'tracking_link';
+        echo '<details class="p202-disclosure" data-p202-remember="setup-get-links-chatgpt-full">';
+        echo '<summary>Advanced <span class="p202-disclosure__hint">the link with every variable, for anywhere but Ads Manager</span></summary>';
+        echo '<div class="p202-disclosure__body">';
     }
-    if (isset($googleAdsLinks)) {
+    foreach ($trackingLinkParts as $trackingLink) {
+        echo p202_setup_code_box($trackingLink, ['label' => $chatGptLinks !== null ? 'Tracking link' : 'Destination URL']);
+    }
+    if ($chatGptLinks !== null) {
+        echo '</div></details>';
+    }
+    if (isset($googleAdsLinks) && $chatGptLinks === null) {
         // Paid 1.9.56's clean destination URL and parallel tracking URL.
         echo '<h3 class="h6 mt-3">Google Ads (parallel tracking)</h3>';
         echo '<p class="form-text">Optional, instead of the destination URL above: put the final URL in the ad'
@@ -663,6 +714,9 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
             'This link uses'
         );
     }
+	if ($chatGptLinks !== null) {
+		exit;
+	}
 	?>
 <p class="form-text">Use this as the destination URL in your campaign at the traffic source. It carries everything set above, so when you change the cost, the account or the ad, get a new link. To track keywords, put your traffic source's keyword token right after <code>t202kw=</code>. Test the link yourself before you run traffic to it.</p>
 <details class="p202-disclosure" data-p202-remember="setup-get-links-keywords">

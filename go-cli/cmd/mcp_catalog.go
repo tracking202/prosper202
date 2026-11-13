@@ -140,14 +140,24 @@ type mcpToolSpec struct {
 	// match a deferred tool by (mcpDeferredToolSpecs); unused otherwise.
 	Words []string
 	// Keep lists flags of mcpOmittedFlags the tool takes all the same, where
-	// its command gives the name another meaning (ad-spend's --interval is
+	// its command gives the name another meaning (spend list's --interval is
 	// day or hour, not a poll).
 	Keep []string
-	// NotStaged: the tool acts on proposed changes themselves, so a server
-	// that only proposes (--staged) does not offer it. Applying a proposal
-	// is a person's decision; a model that could stage a write and then
-	// apply it would make --staged mean nothing (CLAUDE.md #14).
+	// NotStaged: the tool cannot be proposed, so a server that only
+	// proposes (--staged) does not offer it: it acts on proposed changes
+	// themselves (applying a proposal is a person's decision; a model that
+	// could stage a write and then apply it would make --staged mean
+	// nothing, CLAUDE.md #14), or it acts at once with nothing to stage
+	// (destination_test's test fire).
 	NotStaged bool
+	// OpenWorld: the call makes the install reach a host outside it (an ad
+	// platform's endpoint, a page's URL), annotated openWorldHint.
+	OpenWorld bool
+	// Refreshes: an update that only writes again what the install read from
+	// the platform (a connection's check), so it is not annotated
+	// destructiveHint. Its kind stays mcpUpdate: it writes, and --read-only
+	// leaves it out.
+	Refreshes bool
 	// NotHosted: the tool reads an area the keys made for the hosted MCP
 	// server do not cover (AiConnect::READ_AREAS in api/v3), so that server
 	// does not offer it (mcpCatalog.HostedExcludes).
@@ -211,8 +221,10 @@ const textAdNote = "To use it on a tracker, set the tracker's text_ad_id (tracke
 
 const reportFilterNote = "Filter with the *_id arguments (ids from the list tools) and choose the window with period, or time_from and time_to."
 
-// pageNote is on the tools that answer one page: truncated: true says rows
-// remain. (winners and losers say it too, past 5000 rows, which few reach.)
+// pageNote is on the report tools that answer one page: truncated: true
+// says rows remain. (winners and losers say it too, past 5000 rows, which
+// few reach.) The report commands add truncated; an answer passed on from
+// the API as it is (destination_deliveries) has none.
 const pageNote = "truncated: true: more rows at offset + limit."
 
 var mcpToolSpecs = []mcpToolSpec{
@@ -245,7 +257,7 @@ var mcpToolSpecs = []mcpToolSpec{
 	// Trackers
 	{Name: "tracker_list", Command: []string{"tracker", "list"}, Title: "List trackers", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "tracker_get", Command: []string{"tracker", "get"}, Title: "Get a tracker", Kind: mcpRead, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list).", true)}},
-	{Name: "tracker_get_url", Command: []string{"tracker", "get-url"}, Title: "Get a tracking link", Kind: mcpRead, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list).", true)}},
+	{Name: "tracker_get_url", Command: []string{"tracker", "get-url"}, Title: "Get a tracking link", Kind: mcpRead, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list).", true)}, Note: "chatgpt_ads: what to paste into ChatGPT Ads Manager."},
 	{Name: "tracker_create_with_url", Command: []string{"tracker", "create-with-url"}, Title: "Create a tracking link", Kind: mcpCreate},
 	{Name: "tracker_update", Command: []string{"tracker", "update"}, Title: "Update a tracker", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list).", true)}},
 	{Name: "tracker_delete", Command: []string{"tracker", "delete"}, Title: "Delete a tracker", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list); or give ids for several.", false)}, Note: "Its tracking links stop working, including any running in ads. " + deleteNote},
@@ -254,7 +266,7 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "landing_page_list", Command: []string{"landing-page", "list"}, Title: "List landing pages", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "landing_page_get", Command: []string{"landing-page", "get"}, Title: "Get a landing page", Kind: mcpRead, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list).", true)}},
 	{Name: "landing_page_code", Command: []string{"landing-page", "code"}, Title: "Get landing page tracking code", Kind: mcpRead, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list).", true)}},
-	{Name: "landing_page_check", Command: []string{"landing-page", "check"}, Title: "Check a page carries its tracking code", Kind: mcpRead, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list).", true)}, Note: "Fetches the page's saved URL and looks for landing_page_code's code. A repeat within 30 s answers the last check; 10 fetches a minute per key."},
+	{Name: "landing_page_check", Command: []string{"landing-page", "check"}, Title: "Check a page carries its tracking code", Kind: mcpRead, OpenWorld: true, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list).", true)}, Note: "Fetches the page's saved URL and looks for landing_page_code's code. A repeat within 30 s answers the last check; 10 fetches a minute per key."},
 	{Name: "landing_page_create", Command: []string{"landing-page", "create"}, Title: "Create a landing page", Kind: mcpCreate},
 	{Name: "landing_page_update", Command: []string{"landing-page", "update"}, Title: "Update a landing page", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list).", true)}},
 	{Name: "landing_page_delete", Command: []string{"landing-page", "delete"}, Title: "Delete a landing page", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Landing page id (from landing_page_list); or give ids for several.", false)}, Note: deleteNote},
@@ -262,6 +274,7 @@ var mcpToolSpecs = []mcpToolSpec{
 	// Traffic sources and categories
 	{Name: "ppc_network_list", Command: []string{"ppc-network", "list"}, Title: "List traffic sources", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "ppc_network_create", Command: []string{"ppc-network", "create"}, Title: "Create a traffic source", Kind: mcpCreate},
+	{Name: "ppc_network_add_chatgpt_ads", Command: []string{"ppc-network", "add-chatgpt-ads"}, Title: "Add ChatGPT Ads", Kind: mcpCreate, Note: "Safe to repeat."},
 	{Name: "ppc_network_update", Command: []string{"ppc-network", "update"}, Title: "Update a traffic source", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Traffic source id (from ppc_network_list).", true)}},
 	{Name: "ppc_network_delete", Command: []string{"ppc-network", "delete"}, Title: "Delete a traffic source", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Traffic source id (from ppc_network_list); or give ids for several.", false)}, Note: setupParentDeleteNote("traffic source", "accounts", "ppc_account_delete")},
 	{Name: "ppc_account_list", Command: []string{"ppc-account", "list"}, Title: "List traffic source accounts", Kind: mcpRead, HostedOmit: mcpEveryPage},
@@ -518,9 +531,15 @@ func (s mcpToolSpec) params(c *cobra.Command) ([]mcpParam, map[string]*pflag.Fla
 		params = append(params, mcpParam{property: a.Name, position: i, kind: "string", required: a.Required, positional: true})
 		seen[a.Name] = true
 	}
+	// By the flag's own name: a command may register user_id, which the
+	// flag set's kebab-case normalization lists as user-id.
 	omit := map[string]bool{}
 	for _, f := range s.Omit {
-		omit[f] = true
+		fl := c.LocalFlags().Lookup(f)
+		if fl == nil {
+			return nil, nil, fmt.Errorf("tool %s: Omit names --%s, which `p202 %s` does not take", s.Name, f, strings.Join(s.Command, " "))
+		}
+		omit[fl.Name] = true
 	}
 	required := map[string]bool{}
 	for _, f := range s.Required {
@@ -596,7 +615,7 @@ var (
 func mcpText(s string) string {
 	s = mcpCommandRef.ReplaceAllStringFunc(s, func(m string) string {
 		path := strings.Join(strings.Fields(mcpCommandRef.FindStringSubmatch(m)[1]), " ")
-		for _, spec := range mcpToolSpecs {
+		for _, spec := range mcpAllToolSpecs() {
 			if strings.Join(spec.Command, " ") == path {
 				return spec.Name
 			}
@@ -677,7 +696,7 @@ func (s mcpToolSpec) tool(root *cobra.Command) (mcpTool, error) {
 		Title:       s.Title,
 		Description: mcpText(desc) + " (CLI: p202 " + strings.Join(s.Command, " ") + ")",
 		InputSchema: schema,
-		Annotations: mcpToolAnnotations{Title: s.Title},
+		Annotations: mcpToolAnnotations{Title: s.Title, OpenWorldHint: s.OpenWorld},
 	}
 	switch s.Kind {
 	case mcpRead:
@@ -685,7 +704,7 @@ func (s mcpToolSpec) tool(root *cobra.Command) (mcpTool, error) {
 		t.Annotations.IdempotentHint = true
 	case mcpCreate:
 	case mcpUpdate:
-		t.Annotations.DestructiveHint = true
+		t.Annotations.DestructiveHint = !s.Refreshes
 	case mcpDelete:
 		t.Annotations.DestructiveHint = true
 		t.Annotations.IdempotentHint = true
