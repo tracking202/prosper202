@@ -5,16 +5,17 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Exception\NotFoundException;
-use Api\V3\Exception\UpstreamException;
+use Api\V3\Exception\UpstreamUnavailableException;
 use Api\V3\Exception\ValidationException;
-use Api\V3\HttpException;
 use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\QueryInt;
 use Prosper202\AdPlatforms\AdConnectionInputException;
 use Prosper202\AdPlatforms\AdConnectionStore;
+use Prosper202\AdPlatforms\AdPlatformUnavailable;
 use Prosper202\AdPlatforms\OpenAiAds\AdvertiserAnswer;
 use Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi;
 use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsCampaigns;
+use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsConnections;
 use Prosper202\Database\Connection;
 
 /**
@@ -22,8 +23,10 @@ use Prosper202\Database\Connection;
  * connection's campaigns, ad groups and ads read from OpenAI, paused and
  * activated, their tracking template set, event settings attached to a
  * campaign, and spend by campaign. Every write previews with ?dry_run=1.
- * OpenAI's own failures answer 404 (no such object), 429 (its rate limit)
- * or 502 (no answer), with its words.
+ * An object the ad account does not have is a 404; OpenAI not reached, its
+ * rate limit and an answer that cannot be used are the ad connections'
+ * upstream failures (503 or 429 with Retry-After, 502), never a 422; a
+ * refused key is a 422 naming api_key.
  */
 final class AdCampaignsController
 {
@@ -131,13 +134,12 @@ final class AdCampaignsController
     {
         try {
             return $call();
+        } catch (AdPlatformUnavailable $e) {
+            throw UpstreamUnavailableException::forAdPlatform($e, OpenAiAdsConnections::PLATFORM);
         } catch (AdConnectionInputException $e) {
-            throw match ($e->platform) {
-                AdvertiserAnswer::NOT_FOUND => new NotFoundException($e->getMessage(), $e),
-                AdvertiserAnswer::RATE_LIMITED => new HttpException($e->getMessage(), 429, $e),
-                AdvertiserAnswer::UNAVAILABLE => new UpstreamException($e->getMessage(), $e),
-                default => new ValidationException($e->getMessage(), [$e->field => $e->getMessage()], $e),
-            };
+            throw $e->platform === AdvertiserAnswer::NOT_FOUND
+                ? new NotFoundException($e->getMessage(), $e)
+                : new ValidationException($e->getMessage(), [$e->field => $e->getMessage()], $e);
         }
     }
 

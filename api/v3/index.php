@@ -2074,8 +2074,6 @@ try {
     Bootstrap::errorResponse($e->getMessage(), 422, $e->getFieldErrors() ? ['field_errors' => $e->getFieldErrors()] : []);
 } catch (ConflictException $e) {
     Bootstrap::errorResponse($e->getMessage(), 409, $e->getDetails() ? ['details' => $e->getDetails()] : []);
-} catch (\Api\V3\Exception\UpstreamException $e) {
-    Bootstrap::errorResponse($e->getMessage(), 502);
 } catch (WriteCommittedException $e) {
     error_log(p202UncaughtLogLine('API v3 write committed, then failed', $e));
     Bootstrap::errorResponse($e->getMessage(), $e->getHttpStatus());

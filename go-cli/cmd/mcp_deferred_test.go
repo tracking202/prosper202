@@ -347,6 +347,36 @@ func TestMCPDeferredListingCarriesWhatTheRelayMatches(t *testing.T) {
 	}
 }
 
+// A hosted run lists only the deferred tools the relay may load: a NotHosted
+// one is named in hosted_excludes and is not among the tools.
+func TestMCPDeferredListingOffersNoLocalToolToAHostedRun(t *testing.T) {
+	withHostedRun(t, true)
+	listed, err := mcpDeferredListing(rootCmd, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools, ok := listed["tools"].([]mcpTool)
+	if !ok {
+		t.Fatalf("tools is %T", listed["tools"])
+	}
+	offered := map[string]bool{}
+	for _, tool := range tools {
+		offered[tool.Name] = true
+	}
+	hosted := 0
+	for _, s := range mcpDeferredToolSpecs {
+		if offered[s.Name] == s.NotHosted {
+			t.Errorf("%s: offered %v to a hosted run, NotHosted %v", s.Name, offered[s.Name], s.NotHosted)
+		}
+		if !s.NotHosted {
+			hosted++
+		}
+	}
+	if hosted == 0 || len(tools) != hosted {
+		t.Errorf("a hosted run lists %d tools, want the %d that are not NotHosted", len(tools), hosted)
+	}
+}
+
 // mcpAnswerKeyRef is a key a tool's Note names in its answer: a dotted path
 // (pagination.total) or a key with its value (truncated: true).
 var mcpAnswerKeyRef = regexp.MustCompile(`\b([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)\b|\b([a-z][a-z0-9_]*): (?:true|false)\b`)

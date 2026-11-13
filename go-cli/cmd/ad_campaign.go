@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -22,6 +23,16 @@ var (
 )
 
 const adCampaignListHint = "`p202 ad-campaign list <connection-id>` lists the campaigns (--level ad-groups or ads for the rest); `p202 ad-connection list` the connections."
+
+// adCampaignFailure scopes a hint to the answer it is true of: notFound for a
+// 404, replacing the key for a 422 naming api_key. OpenAI not reached (503),
+// its rate limit (429) and an answer that cannot be used (502) keep
+// api.HintFor's "wait and run it again".
+func adCampaignFailure(err error, connectionID, notFound string) error {
+	replace := "OpenAI refused the stored key: replace it with `p202 ad-connection update " + connectionID + " --api-key-file <file>`. " + advertiserKeyWhere
+	return withStatusHint(err, statusHint{http.StatusNotFound, "", notFound},
+		statusHint{http.StatusUnprocessableEntity, "api_key", replace})
+}
 
 var adCampaignCmd = &cobra.Command{
 	Use:   "ad-campaign",
@@ -65,7 +76,7 @@ func adCampaignWrite(cmd *cobra.Command, name, path string, body map[string]inte
 	}
 	data, err := c.PostUpdate(path, params, body)
 	if err != nil {
-		return withHint(err, "%s", adCampaignListHint)
+		return adCampaignFailure(err, strings.SplitN(strings.TrimPrefix(path, "ad-connections/"), "/", 2)[0], adCampaignListHint)
 	}
 	render(data)
 	return nil
@@ -108,7 +119,7 @@ var adCampaignListCmd = &cobra.Command{
 		}
 		data, err := c.Get("ad-connections/"+args[0]+"/"+level, params)
 		if err != nil {
-			return withHint(err, "%s", adConnectionListHint)
+			return adCampaignFailure(err, args[0], adCampaignListHint)
 		}
 		render(data)
 		return nil
@@ -129,7 +140,7 @@ var adCampaignGetCmd = &cobra.Command{
 		}
 		data, err := c.Get("ad-connections/"+args[0]+"/"+adCampaignLevel(cmd)+"/"+args[1], nil)
 		if err != nil {
-			return withHint(err, "%s", adCampaignListHint)
+			return adCampaignFailure(err, args[0], adCampaignListHint)
 		}
 		render(data)
 		return nil
@@ -232,7 +243,7 @@ var adCampaignSpendCmd = &cobra.Command{
 		}
 		data, err := c.Get("ad-connections/"+args[0]+"/spend", params)
 		if err != nil {
-			return withHint(err, "%s", adConnectionListHint)
+			return adCampaignFailure(err, args[0], adConnectionListHint)
 		}
 		render(data)
 		return nil

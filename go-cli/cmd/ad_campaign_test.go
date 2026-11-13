@@ -6,7 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
+
+	"p202/internal/api"
 )
 
 func adCampaignServer(t *testing.T) (*[]string, *[]map[string]interface{}) {
@@ -81,5 +85,68 @@ func TestAdCampaignRefusesBadInputBeforeTheServer(t *testing.T) {
 	}
 	if len(*calls) != 0 {
 		t.Errorf("bad input reached the server: %v", *calls)
+	}
+}
+
+// OpenAI not reached, its rate limit and an answer that cannot be used keep the
+// class's "wait and run it again"; a list hint is for a 404 and the key hint
+// for a 422 naming api_key.
+func TestAdCampaignHintsAreScopedToTheAnswer(t *testing.T) {
+	status, body := 0, ""
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	upstream := func(code int, reason string) string {
+		return `{"error":true,"status":` + strconv.Itoa(code) + `,"message":"Could not pause cmpn_101: no answer from OpenAI.",` +
+			`"retry_after_seconds":60,"details":{"upstream":"openai_ads","reason":"` + reason + `"}}`
+	}
+	commands := [][]string{
+		{"ad-campaign", "list", "3"},
+		{"ad-campaign", "get", "3", "cmpn_101"},
+		{"ad-campaign", "pause", "3", "cmpn_101"},
+		{"ad-campaign", "attach-events", "3", "cmpn_101"},
+		{"ad-campaign", "spend", "3"},
+	}
+	for _, args := range commands {
+		for _, c := range []struct {
+			status int
+			body   string
+			exit   int
+		}{
+			{http.StatusServiceUnavailable, upstream(503, "unreachable"), ExitServer},
+			{http.StatusBadGateway, upstream(502, "unreadable_answer"), ExitServer},
+			{http.StatusTooManyRequests, upstream(429, "rate_limited"), ExitRateLimited},
+		} {
+			status, body = c.status, c.body
+			_, _, err := executeCommand(append(args, "--json")...)
+			if err == nil || exitCodeForError(err) != c.exit {
+				t.Errorf("%v, %d: err %v, exit %d, want %d", args, c.status, err, exitCodeForError(err), c.exit)
+				continue
+			}
+			hint := hintFor(err)
+			if hint == "" || hint != api.HintFor(err) {
+				t.Errorf("%v, %d: hint %q, want the class's %q", args, c.status, hint, api.HintFor(err))
+			}
+			if strings.Contains(hint, adCampaignListHint) || strings.Contains(hint, adConnectionListHint) || strings.Contains(hint, advertiserKeyWhere) {
+				t.Errorf("%v, %d: a command's own hint on OpenAI's failure: %q", args, c.status, hint)
+			}
+		}
+		status = http.StatusNotFound
+		body = `{"error":true,"status":404,"message":"Could not read cmpn_101: OpenAI answered 404."}`
+		if _, _, err := executeCommand(append(args, "--json")...); err == nil || !strings.Contains(hintFor(err), "p202 ad-c") {
+			t.Errorf("%v, 404: err %v, hint %q", args, err, hintFor(err))
+		}
+		status = http.StatusUnprocessableEntity
+		body = `{"error":true,"status":422,"message":"OpenAI refused the stored key","field_errors":{"api_key":"OpenAI refused the stored key"}}`
+		_, _, err := executeCommand(append(args, "--json")...)
+		if err == nil || exitCodeForError(err) != ExitValidation || !strings.Contains(hintFor(err), "p202 ad-connection update 3 --api-key-file") {
+			t.Errorf("%v, refused key: err %v, exit %d, hint %q", args, err, exitCodeForError(err), hintFor(err))
+		}
 	}
 }

@@ -484,7 +484,7 @@ if ($adCampaignsConnection !== null) {
     $live = static function (callable $read): array {
         try {
             return [$read(), null];
-        } catch (AdConnectionInputException $e) {
+        } catch (AdConnectionInputException | AdPlatformUnavailable $e) {
             return [null, $e->getMessage()];
         }
     };

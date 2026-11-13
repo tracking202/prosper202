@@ -167,18 +167,22 @@ campaign, adds the ids and writes the list back; `unchanged: true` means
 there was nothing to add and nothing was sent. An id that is not shaped like
 OpenAI's is refused before it reaches a request.
 
-OpenAI's own failures are answered with its words: `404` (the ad account has
-no such object), `429` (its rate limit: try again in a minute), `502` (it did
-not answer or failed). A refused key is a `422` naming the connection.
+An object the ad account does not have is a `404`, with OpenAI's words, and
+a key OpenAI refuses is a `422` naming `api_key` (replace it with `PATCH`).
+OpenAI not reached, its rate limit and an answer that cannot be used are
+answered as under *When OpenAI cannot be asked* above: `503` or `429` with
+`Retry-After`, or `502`, never a `422`; a write answered that way was not
+made, and a read shows nothing rather than an empty account.
 
 The same from the command line: `p202 ad-campaign list|get|pause|activate|set-template|attach-events|spend`,
 and, for an AI assistant on this computer (`p202 mcp`), the tools
 `ad_campaign_list`, `ad_campaign_pause`, `ad_campaign_activate` and
 `ad_campaign_spend`, with `ad_connection_list`, `ad_connection_check` and
 `destination_list`: they load on request through `get_more_tools`. The
-ad connection and campaign tools are also offered to an AI app connected
-through Tracking202's MCP server (its key reaches the `ad-connections` area);
-a proposal-only connection proposes a pause for you to apply.
+four campaign tools are also offered to an AI app connected through
+Tracking202's MCP server (its key reaches the `ad-connections` area); the
+connection and destination tools are local only. A proposal-only
+connection proposes a pause for you to apply.
 
 A money-loss alert for spend without conversions names the ChatGPT Ads
 campaigns its clicks came from (the `campaign_id` the tracking template puts

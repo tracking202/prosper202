@@ -6,6 +6,7 @@ namespace Prosper202\AdPlatforms\OpenAiAds;
 
 use Prosper202\AdPlatforms\AdConnectionInputException;
 use Prosper202\AdPlatforms\AdConnectionStore;
+use Prosper202\AdPlatforms\AdPlatformUnavailable;
 
 /**
  * A ChatGPT Ads connection's campaigns, ad groups and ads, read from and
@@ -19,6 +20,11 @@ use Prosper202\AdPlatforms\AdConnectionStore;
  * read, a merge and a write, because OpenAI's conversion_event_setting_ids
  * replaces the list: a setting someone else attached between the read and
  * the write is lost, which the answer cannot know.
+ *
+ * OpenAI not reached, its rate limit and an answer that is not what its API
+ * documents throw AdPlatformUnavailable: nothing the caller sent is wrong. A
+ * refused key is an AdConnectionInputException naming api_key; an object the
+ * ad account does not have, one naming id with $platform NOT_FOUND.
  *
  * Not here (spec 7 G): creating campaigns, ads or creatives, budgets and
  * bids, audiences, feeds, bulk jobs.
@@ -61,7 +67,7 @@ final class OpenAiAdsCampaigns
         $answer = $this->called($this->api->get($key, $path, $query), 'list the ' . str_replace('-', ' ', $level));
         $rows = $answer['data'] ?? null;
         if (!is_array($rows) || !array_is_list($rows)) {
-            throw new AdConnectionInputException('connection', 'OpenAI\'s answer has no list of ' . str_replace('-', ' ', $level) . '; try again.');
+            throw new AdPlatformUnavailable(AdPlatformUnavailable::UNREADABLE, 'OpenAI\'s answer has no list of ' . str_replace('-', ' ', $level) . '.');
         }
         $last = $answer['last_id'] ?? null;
         $more = ($answer['has_more'] ?? false) === true;
@@ -210,7 +216,11 @@ final class OpenAiAdsCampaigns
                 'time_ranges' => [$range],
                 'limit' => self::SPEND_PAGE,
             ] + ($after === null ? [] : ['after' => $after])), 'read spend');
-            foreach ((array) ($answer['data'] ?? []) as $row) {
+            $rows = $answer['data'] ?? null;
+            if (!is_array($rows) || !array_is_list($rows)) {
+                throw new AdPlatformUnavailable(AdPlatformUnavailable::UNREADABLE, 'OpenAI\'s spend answer has no list of campaigns.');
+            }
+            foreach ($rows as $row) {
                 if (!is_array($row) || !is_string($row['campaign_id'] ?? null)) {
                     continue;
                 }
@@ -390,6 +400,7 @@ final class OpenAiAdsCampaigns
     /**
      * An answer's JSON, or the refusal that says why there is none.
      *
+     * @throws AdPlatformUnavailable when OpenAI was not reached or is limiting requests: nothing about the request
      * @return array<string, mixed>
      */
     private function called(AdvertiserAnswer $answer, string $what): array
@@ -397,14 +408,19 @@ final class OpenAiAdsCampaigns
         if ($answer->isOk()) {
             return $answer->json;
         }
-        $field = $answer->kind === AdvertiserAnswer::NOT_FOUND ? 'id' : 'connection';
-        $why = match ($answer->kind) {
-            AdvertiserAnswer::KEY_REFUSED => ' The Advertiser API key was refused: p202 ad-connection check, then update --api-key-file.',
-            AdvertiserAnswer::NOT_FOUND => ' This ad account has no such object; list them first.',
-            default => '',
+        $said = 'Could not ' . $what . ': ' . $answer->error . '.';
+        if ($answer->kind === AdvertiserAnswer::RATE_LIMITED || $answer->kind === AdvertiserAnswer::UNAVAILABLE) {
+            $reason = $answer->kind === AdvertiserAnswer::RATE_LIMITED ? AdPlatformUnavailable::RATE_LIMITED : AdPlatformUnavailable::UNREACHABLE;
+
+            throw new AdPlatformUnavailable($reason, $said);
+        }
+        [$field, $why] = match ($answer->kind) {
+            AdvertiserAnswer::KEY_REFUSED => ['api_key', ' OpenAI refused the stored Advertiser API key: replace it with p202 ad-connection update --api-key-file.'],
+            AdvertiserAnswer::NOT_FOUND => ['id', ' This ad account has no such object; list them first.'],
+            default => ['connection', ''],
         };
 
-        throw new AdConnectionInputException($field, 'Could not ' . $what . ': ' . $answer->error . '.' . $why, $answer->kind);
+        throw new AdConnectionInputException($field, $said . $why, $answer->kind);
     }
 
     private static function cursor(string $after): string

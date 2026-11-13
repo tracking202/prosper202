@@ -119,11 +119,12 @@ func findMCPDeferredSpec(name string) (mcpToolSpec, bool) {
 }
 
 // buildMCPDeferredTools builds the deferred tools a server with these
-// policies offers, as buildMCPCatalog builds the always-loaded ones.
+// policies offers, as buildMCPCatalog builds the always-loaded ones. A
+// hosted run (the relay's engine) never offers a NotHosted one.
 func buildMCPDeferredTools(root *cobra.Command, readOnly, staged bool) ([]mcpTool, error) {
 	tools := []mcpTool{}
 	for _, s := range mcpDeferredToolSpecs {
-		if !s.offered(readOnly, staged) {
+		if !s.offered(readOnly, staged) || (mcpHostedRun && s.NotHosted) {
 			continue
 		}
 		t, err := s.tool(root)

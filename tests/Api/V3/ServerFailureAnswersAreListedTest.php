@@ -61,8 +61,6 @@ final class ServerFailureAnswersAreListedTest extends TestCase
             => [1, 'the answer could not be encoded; no statement failed'],
         'api/v3/Bootstrap.php | jsonresponse | $body | $status' => [1, 'errorResponse() itself'],
         "api/v3/index.php | errorresponse | 'Service unavailable' | 503" => [1, self::NO_DATABASE],
-        'api/v3/index.php | errorresponse | $e->getMessage() | 502' => [1,
-            'UpstreamException: an ad platform this server called did not answer or failed; its own words (the key taken out), not this server\'s failure, so not the upgrade'],
         "api/v3/index.php | errorresponse | \$pending ?? 'The install could not be recorded; retry later'"
             . ' | $pending !== null ? 503 : 500' => [1, 'the Android intake\'s catch: ' . self::UPGRADE],
         "api/v3/index.php | jsonresponse | \$androidResult['body'] | \$androidResult['status']" => [1, self::CARRIES

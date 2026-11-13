@@ -573,6 +573,28 @@ final class DestinationsPageIntegrationTest extends TestCase
         }
     }
 
+    public function testTheCampaignsViewSaysOpenAiWasNotAskedRatherThanFailing(): void
+    {
+        $id = $this->connected();
+        $html = self::page(['ad_campaigns' => (string) $id]);
+        self::assertStringContainsString('Spring sale', $html, 'the campaigns read from the stand-in');
+
+        self::openAiControl('answer', ['status' => 503, 'body' => '{"error":{"message":"overloaded"}}']);
+        try {
+            $html = self::page(['ad_campaigns' => (string) $id, 'preview_pause' => 'cmpn_101']);
+            self::assertStringContainsString('The campaigns were not read: Could not list the campaigns: OpenAI answered 503', $html);
+            self::assertStringContainsString('Spend was not read: ', $html);
+            self::assertStringContainsString('The campaign to pause was not read: ', $html);
+            self::assertStringNotContainsString('Spring sale', $html, 'nothing shown as if it were the account');
+
+            $html = self::page(['ad_campaigns' => (string) $id], ['action' => 'ad_campaign_pause', 'connection_id' => (string) $id, 'level' => 'campaigns', 'object_id' => 'cmpn_101']);
+            self::assertStringContainsString('Could not pause cmpn_101: OpenAI answered 503', $html);
+            self::assertStringNotContainsString('That could not be done', $html, 'OpenAI\'s failure, not the page\'s');
+        } finally {
+            $this->openAi();
+        }
+    }
+
     public function testFailuresAreCountedWithTheirReasonsAndSentAgain(): void
     {
         $failed = $this->delivery($this->ga4, 'failed', 'HTTP 400: the API secret is not valid', 501);

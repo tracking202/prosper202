@@ -4,10 +4,14 @@ declare(strict_types=1);
 
 namespace Tests\AdPlatforms;
 
+use Api\V3\Controllers\AdCampaignsController;
+use Api\V3\Exception\TooManyRequestsException;
+use Api\V3\Exception\UpstreamUnavailableException;
+use Api\V3\Exception\ValidationException;
+use Api\V3\HttpException;
 use PHPUnit\Framework\TestCase;
 use Prosper202\AdPlatforms\AdConnectionInputException;
 use Prosper202\AdPlatforms\AdConnectionStore;
-use Prosper202\AdPlatforms\OpenAiAds\AdvertiserAnswer;
 use Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi;
 use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsCampaigns;
 use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsConnections;
@@ -23,7 +27,7 @@ use Tests\Apps\Android\AndroidDatabase;
  * Advertiser API stubbed at the transport (tests/fixtures/openai-ads): what
  * a read shows, that every write sends what it says and a dry run sends
  * nothing, the event settings merge, spend by the account's own days, and
- * OpenAI's failures sorted for the API.
+ * OpenAI's failures answered as the ad connections answer them.
  *
  * @group integration
  */
@@ -197,17 +201,55 @@ final class AdCampaignsIntegrationTest extends TestCase
         self::assertSame([], $this->requests);
     }
 
-    public function testOpenAisFailuresAreSortedForTheApi(): void
+    /**
+     * What the API answers for each of OpenAI's failures, read and write alike: an object the account does not have
+     * is a 404 and a refused key a 422 naming api_key; OpenAI not reached is a 503 and its limit a 429, both with
+     * Retry-After, and an answer that is not OpenAI's documented shape a 502, as the connection's own calls answer.
+     */
+    public function testOpenAisFailuresAnswerAsTheConnectionsDo(): void
     {
         $id = $this->connect();
-        foreach ([[404, AdvertiserAnswer::NOT_FOUND], [429, AdvertiserAnswer::RATE_LIMITED], [503, AdvertiserAnswer::UNAVAILABLE], [401, AdvertiserAnswer::KEY_REFUSED]] as [$status, $kind]) {
-            $this->routes['GET campaigns/cmpn_101'] = ['status' => $status, 'body' => '{"error":{"message":"said ' . self::KEY . '"}}'];
+        $controller = new AdCampaignsController(self::$db, 1, $this->api());
+        $calls = [
+            'get' => fn () => $controller->get($id, 'campaigns', 'cmpn_101'),
+            'pause preview' => fn () => $controller->setStatus($id, 'campaigns', 'cmpn_101', 'pause', [], true),
+            'events' => fn () => $controller->attachEventSettings($id, 'cmpn_101', ['event_setting_ids' => ['ces_200']], false),
+        ];
+        foreach ([[404, 404, null], [401, 422, null], [429, 429, 60], [503, 503, 60], [500, 503, 60]] as [$openai, $want, $retry]) {
+            $this->routes['GET campaigns/cmpn_101'] = ['status' => $openai, 'body' => '{"error":{"message":"said ' . self::KEY . '"}}'];
+            foreach ($calls as $what => $call) {
+                try {
+                    $call();
+                    self::fail($what . ': OpenAI\'s ' . $openai . ' was answered as a success');
+                } catch (HttpException $e) {
+                    self::assertSame($want, $e->getHttpStatus(), $what . ' after OpenAI\'s ' . $openai);
+                    self::assertStringNotContainsString(self::KEY, $e->getMessage());
+                    $after = $e instanceof TooManyRequestsException || $e instanceof UpstreamUnavailableException ? $e->retryAfter : null;
+                    self::assertSame($retry, $after, $what . ' after OpenAI\'s ' . $openai . ': Retry-After');
+                    if ($want === 422) {
+                        self::assertInstanceOf(ValidationException::class, $e);
+                        self::assertSame(['api_key'], array_keys($e->getFieldErrors()), $what);
+                    }
+                }
+            }
+        }
+        self::assertSame([], $this->writes(), 'nothing was written after a failed read');
+
+        $this->routes['GET campaigns/cmpn_101'] = ['body' => self::answer('campaign.json')];
+        $this->routes['POST campaigns/cmpn_101/pause'] = ['status' => 503, 'body' => '{"error":{"message":"overloaded"}}'];
+        try {
+            $controller->setStatus($id, 'campaigns', 'cmpn_101', 'pause', [], false);
+            self::fail('a pause OpenAI did not take was answered as done');
+        } catch (UpstreamUnavailableException $e) {
+            self::assertSame([503, 60], [$e->getHttpStatus(), $e->retryAfter]);
+        }
+        foreach (['GET campaigns' => fn () => $controller->list($id, 'campaigns', []), 'GET ad_account/insights' => fn () => $controller->spend($id, [])] as $route => $call) {
+            $this->routes[$route] = ['body' => '{"object":"list"}'];
             try {
-                $this->campaigns()->get(1, $id, 'campaigns', 'cmpn_101');
-                self::fail('a ' . $status . ' was read as an object');
-            } catch (AdConnectionInputException $e) {
-                self::assertSame($kind, $e->platform);
-                self::assertStringNotContainsString(self::KEY, $e->getMessage());
+                $call();
+                self::fail($route . ': an answer with no data was read as an empty account');
+            } catch (UpstreamUnavailableException $e) {
+                self::assertSame([502, null], [$e->getHttpStatus(), $e->retryAfter], $route);
             }
         }
     }

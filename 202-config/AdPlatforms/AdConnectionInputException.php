@@ -7,7 +7,7 @@ namespace Prosper202\AdPlatforms;
 /**
  * A connection request refused for one field, named, with what would be
  * accepted. $platform is the AdvertiserAnswer kind when the platform's answer
- * is the reason (so the API can say 404, 429 or 502), '' when the request is.
+ * is the reason (NOT_FOUND is a 404), '' when the request is.
  */
 final class AdConnectionInputException extends \RuntimeException
 {

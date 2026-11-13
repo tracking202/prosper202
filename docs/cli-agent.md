@@ -1033,8 +1033,10 @@ p202 ad-campaign spend <conn> [--since YYYY-MM-DD --until YYYY-MM-DD]   # by cam
 
 Every write changes the campaign at OpenAI at once: run it with `--dry-run` first, which answers `change` (from, to)
 and sends nothing. With `--staged` a write is proposed for a person to apply. `attach-events` reads, merges and writes the campaign's list (OpenAI
-replaces it whole); `unchanged: true` means nothing was sent. A 404 is an id this ad account does not have, a 429
-OpenAI's rate limit and a 502 OpenAI not answering; the message is OpenAI's. Spend is as OpenAI reports it now:
+replaces it whole); `unchanged: true` means nothing was sent. A 404 is an id this ad account does not have; a 422
+naming `api_key` a key OpenAI refused (`ad-connection update --api-key-file`); OpenAI not reached is a
+503 and its rate limit a 429 (exit 4 or 7: wait `retry_after_seconds` and run it again; nothing was changed),
+and a 502 an answer that cannot be used. Spend is as OpenAI reports it now:
 the last days can still change.
 
 ### Reports

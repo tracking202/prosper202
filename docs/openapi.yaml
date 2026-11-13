@@ -5492,8 +5492,12 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/UpstreamRateLimited"
         "502":
-          description: OpenAI did not answer or failed; the message is its own
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/campaigns/{objectId}:
     parameters:
@@ -5520,9 +5524,11 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
         "429":
-          description: OpenAI's rate limit; try again in a minute
+          $ref: "#/components/responses/UpstreamRateLimited"
         "502":
-          description: OpenAI did not answer or failed; the message is its own
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/campaigns/{objectId}/pause:
     parameters:
@@ -5552,9 +5558,11 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
         "429":
-          description: OpenAI's rate limit; try again in a minute
+          $ref: "#/components/responses/UpstreamRateLimited"
         "502":
-          description: OpenAI did not answer or failed; the message is its own
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/campaigns/{objectId}/activate:
     parameters:
@@ -5584,9 +5592,11 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
         "429":
-          description: OpenAI's rate limit; try again in a minute
+          $ref: "#/components/responses/UpstreamRateLimited"
         "502":
-          description: OpenAI did not answer or failed; the message is its own
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/campaigns/{objectId}/template:
     parameters:
@@ -5627,9 +5637,11 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
         "429":
-          description: OpenAI's rate limit; try again in a minute
+          $ref: "#/components/responses/UpstreamRateLimited"
         "502":
-          description: OpenAI did not answer or failed; the message is its own
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/ad-groups:
     parameters:
@@ -5668,8 +5680,12 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/UpstreamRateLimited"
         "502":
-          description: OpenAI did not answer or failed; the message is its own
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/ad-groups/{objectId}:
     parameters:
@@ -5696,9 +5712,11 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
         "429":
-          description: OpenAI's rate limit; try again in a minute
+          $ref: "#/components/responses/UpstreamRateLimited"
         "502":
-          description: OpenAI did not answer or failed; the message is its own
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/ad-groups/{objectId}/pause:
     parameters:
@@ -5728,9 +5746,11 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
         "429":
-          description: OpenAI's rate limit; try again in a minute
+          $ref: "#/components/responses/UpstreamRateLimited"
         "502":
-          description: OpenAI did not answer or failed; the message is its own
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/ad-groups/{objectId}/activate:
     parameters:
@@ -5760,9 +5780,11 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
         "429":
-          description: OpenAI's rate limit; try again in a minute
+          $ref: "#/components/responses/UpstreamRateLimited"
         "502":
-          description: OpenAI did not answer or failed; the message is its own
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/ad-groups/{objectId}/template:
     parameters:
@@ -5803,9 +5825,11 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
         "429":
-          description: OpenAI's rate limit; try again in a minute
+          $ref: "#/components/responses/UpstreamRateLimited"
         "502":
-          description: OpenAI did not answer or failed; the message is its own
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/ads:
     parameters:
@@ -5844,8 +5868,12 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/UpstreamRateLimited"
         "502":
-          description: OpenAI did not answer or failed; the message is its own
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/ads/{objectId}:
     parameters:
@@ -5872,9 +5900,11 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
         "429":
-          description: OpenAI's rate limit; try again in a minute
+          $ref: "#/components/responses/UpstreamRateLimited"
         "502":
-          description: OpenAI did not answer or failed; the message is its own
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/ads/{objectId}/pause:
     parameters:
@@ -5904,9 +5934,11 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
         "429":
-          description: OpenAI's rate limit; try again in a minute
+          $ref: "#/components/responses/UpstreamRateLimited"
         "502":
-          description: OpenAI did not answer or failed; the message is its own
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/ads/{objectId}/activate:
     parameters:
@@ -5936,9 +5968,11 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
         "429":
-          description: OpenAI's rate limit; try again in a minute
+          $ref: "#/components/responses/UpstreamRateLimited"
         "502":
-          description: OpenAI did not answer or failed; the message is its own
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/ads/{objectId}/template:
     parameters:
@@ -5979,9 +6013,11 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
         "429":
-          description: OpenAI's rate limit; try again in a minute
+          $ref: "#/components/responses/UpstreamRateLimited"
         "502":
-          description: OpenAI did not answer or failed; the message is its own
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/campaigns/{objectId}/event-settings:
     parameters:
@@ -6026,9 +6062,11 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
         "429":
-          description: OpenAI's rate limit; try again in a minute
+          $ref: "#/components/responses/UpstreamRateLimited"
         "502":
-          description: OpenAI did not answer or failed; the message is its own
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   /ad-connections/{id}/spend:
     parameters:
@@ -6063,9 +6101,11 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
         "429":
-          description: OpenAI's rate limit; try again in a minute
+          $ref: "#/components/responses/UpstreamRateLimited"
         "502":
-          description: OpenAI did not answer or failed; the message is its own
+          $ref: "#/components/responses/UpstreamUnreadable"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
 
   # ─── Destinations ────────────────────────────────────────────────────
 
