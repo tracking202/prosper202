@@ -408,10 +408,11 @@ final class InboundReplay
             }
             $request[$name] = $value;
         }
-        // The request's consent, which the log keeps redacted: carried as
-        // stored, so a refusal reads as one (RequestSignals::consentGiven()
-        // takes only 1) and is never dropped into "consent given" by its
-        // absence (CLAUDE.md #11, #12).
+        // The request's consent as the log kept it: '1' given, '0' refused
+        // (Redactor). A row logged before the log kept it holds '[redacted]',
+        // which is not 1, so it reads as a refusal: an answer that cannot be
+        // read is never consent (CLAUDE.md #11). Carried even then, never
+        // dropped, since an absent p202_consent reads as consent given (#12).
         if (array_key_exists('p202_consent', $fields)) {
             $consent = $fields['p202_consent'];
             $request['p202_consent'] = is_string($consent) ? $consent : Redactor::REDACTED;

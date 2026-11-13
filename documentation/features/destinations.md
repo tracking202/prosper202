@@ -159,7 +159,9 @@ once.
     and its click from then on, also when it records nothing more (a click
     that converted already, and a request with no transaction id); a repeat
     that consents does not undo a refusal. A request recorded later from the
-    inbound log keeps the refusal it arrived with;
+    inbound log keeps the answer it arrived with (the log keeps
+    `p202_consent` as given or not; a row logged before 1.9.80, which did
+    not keep it, is recorded as a refusal);
   - on a conversion a replacing one goes by: on a campaign that pays the
     latest conversion, a sale that replaces a refused one is withheld too,
     and a goal conversion written again (a re-evaluation, a replay) keeps

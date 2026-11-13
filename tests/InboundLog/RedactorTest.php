@@ -32,6 +32,25 @@ final class RedactorTest extends TestCase
         self::assertSame(['subid' => Redactor::REDACTED], Redactor::fields(['subid' => '9001'], 'an-endpoint-not-listed'));
     }
 
+    /**
+     * p202_consent is kept as the click path reads it, given ('1') or not
+     * ('0'), on the endpoints that read it; a blank stays blank. Elsewhere it
+     * is redacted like any field the endpoint is not known to send.
+     */
+    public function testAConversionRequestsConsentIsKeptAsGivenOrNot(): void
+    {
+        $sent = ['1' => '1', ' 1' => '1', '0' => '0', '00' => '0', 'yes' => '0', '' => ''];
+        foreach (['pb', 'gpb', 'px', 'gpx', 'upx'] as $endpoint) {
+            foreach ($sent as $value => $kept) {
+                $value = (string) $value;
+                $what = "$endpoint '$value'";
+                self::assertSame($kept, Redactor::fields(['p202_consent' => $value], $endpoint)['p202_consent'], $what);
+            }
+            self::assertSame('0', Redactor::fields(['p202_consent' => ['1']], $endpoint)['p202_consent'], 'a list');
+        }
+        self::assertSame(Redactor::REDACTED, Redactor::fields(['p202_consent' => '1'], 'jvzoo')['p202_consent']);
+    }
+
     /** The PayKickstart IPN as PayKickstartIpnIntegrationTest posts it, licence keys included. */
     public function testAPayKickstartNotificationKeepsTheSaleAndNotTheBuyerOrTheirLicences(): void
     {

@@ -27,6 +27,14 @@ final class Redactor
         'external_product_id', 'product_name', 'qty', 'quantity', 'unit_price', 'currency',
     ];
 
+    /**
+     * The endpoints whose p202_consent is kept, as the click path reads it
+     * (RequestSignals::consentGiven()): '1' for consent given, '0' for
+     * anything else sent. A yes or no names no one, and a request recorded
+     * later from the log is decided by it (InboundReplay).
+     */
+    private const CONSENT = ['pb', 'gpb', 'px', 'gpx', 'upx'];
+
     /** An event's properties (event_props) longer than this are not kept. */
     public const MAX_EVENT_PROPS = 1000;
 
@@ -142,6 +150,8 @@ final class Redactor
                 $value === '' => '',
                 $pairs !== null => self::passThrough($value, $pairs),
                 $name === 'event_props' && in_array('event', $keep, true) => self::eventProps($value),
+                $name === \Prosper202\Identity\RequestSignals::CONSENT_PARAM && in_array($endpoint, self::CONSENT, true)
+                    => \Prosper202\Identity\RequestSignals::consentGiven([$name => $value]) ? '1' : '0',
                 in_array($name, $keep, true) => self::value($value, 0),
                 default => self::REDACTED,
             };

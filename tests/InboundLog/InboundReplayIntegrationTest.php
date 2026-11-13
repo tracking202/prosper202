@@ -231,25 +231,47 @@ final class InboundReplayIntegrationTest extends TestCase
     }
 
     /**
-     * The log keeps a request's p202_consent redacted; given back, a row
-     * that carried one is read as refusing, never as consent by its absence:
-     * the conversion is recorded refused, and its click with it.
+     * The log keeps a request's p202_consent as given ('1') or not ('0'):
+     * given back, a consenting row is recorded consenting and a refusing
+     * one refused, its click with it. A row logged before the log kept it
+     * holds '[redacted]', which cannot say yes, so it reads as a refusal.
+     *
+     * @return array<string, array{0: string, 1: string|null, 2: string, 3: int}>
      */
-    public function testARefusingRowGivenBackIsRecordedRefused(): void
+    public static function consentRows(): array
     {
-        $id = self::refused('gpb', ['subid' => (string) self::CLICK, 'txid' => 'NW-C1', 'p202_consent' => '0']);
-        $logged = self::logRow($id)['fields']['p202_consent'];
-        self::assertSame(\Prosper202\InboundLog\Redactor::REDACTED, $logged, 'the log keeps it redacted');
+        return [
+            'consenting' => ['1', null, '0', 0],
+            'refusing' => ['0', null, '1', 1],
+            'logged before the log kept it' => ['0', \Prosper202\InboundLog\Redactor::REDACTED, '1', 1],
+        ];
+    }
+
+    /** @dataProvider consentRows */
+    public function testARowGivenBackIsRecordedWithTheConsentItCarried(
+        string $sent,
+        ?string $logAs,
+        string $withheld,
+        int $refusals
+    ): void {
+        $id = self::refused('gpb', ['subid' => (string) self::CLICK, 'txid' => 'NW-C1', 'p202_consent' => $sent]);
+        self::assertSame($sent, self::logRow($id)['fields']['p202_consent'], 'the log keeps given or not');
+        if ($logAs !== null) {
+            self::q('UPDATE 202_inbound_log SET fields = ' . self::str(json_encode(
+                ['subid' => (string) self::CLICK, 'txid' => 'NW-C1', 'p202_consent' => $logAs],
+                JSON_THROW_ON_ERROR
+            )) . " WHERE inbound_id = $id");
+        }
 
         $answer = (new InboundReplay(self::requireScratch()))->replay(self::ACCOUNT, $id);
 
         self::assertSame('recorded', $answer['status'], $answer['message']);
         $stored = self::$db->query('SELECT consent_withheld FROM 202_conversion_logs WHERE click_id = ' . self::CLICK)
             ->fetch_all(MYSQLI_NUM);
-        self::assertSame([['1']], $stored, 'recorded as its request refused');
-        $refusals = self::$db->query('SELECT COUNT(*) FROM 202_click_consent_refusals WHERE click_id = ' . self::CLICK)
+        self::assertSame([[$withheld]], $stored, 'recorded with the consent it carried');
+        $count = self::$db->query('SELECT COUNT(*) FROM 202_click_consent_refusals WHERE click_id = ' . self::CLICK)
             ->fetch_row()[0];
-        self::assertSame('1', (string) $refusals, 'and its click refused');
+        self::assertSame($refusals, (int) $count, 'its click refused only when it refused');
     }
 
     /**

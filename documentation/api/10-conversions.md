@@ -263,7 +263,11 @@ are never kept, so a conversion recorded this way links no customer.
 endpoint is known to send (subid, amount, transaction id and the like) and
 only when the value holds no email or IP address. Every other value,
 including signatures, keys, licence keys and the buyer's details, is
-`[redacted]`; a ClickBank notification's encrypted body is never kept.
+`[redacted]`; a ClickBank notification's encrypted body is never kept. A
+postback's or pixel's `p202_consent` is kept as `1` when it gave consent
+and `0` when it carried anything else, so recording the request later
+from the log keeps its answer; a row logged before 1.9.80 holds
+`[redacted]` there, which is recorded as a refusal.
 
 ## Offline conversion files
 
