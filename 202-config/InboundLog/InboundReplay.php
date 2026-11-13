@@ -579,6 +579,8 @@ final class InboundReplay
             'event_name' => $event['event_name'] ?? null,
             'reversal' => $plan['reversal'],
             'reversal_ref' => $plan['reversal_ref'],
+            // As the endpoint read it; a value the log redacted is no 1, so it withholds.
+            'consent_withheld' => !\Prosper202\Identity\RequestSignals::consentGiven($request),
         ] + $scope);
 
         if ($outcome['conv_id'] <= 0) {

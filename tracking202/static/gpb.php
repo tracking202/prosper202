@@ -239,6 +239,8 @@ try {
             // The traffic source's server postbacks are queued with the row,
             // in its transaction, and sent below; see after the record.
             'notify_traffic_source' => true,
+            // The visitor's refusal, relayed: its destinations get no user data.
+            'consent_withheld' => !\Prosper202\Identity\RequestSignals::consentGiven($request),
 		],
 		$matchedBy,
 		(string) ($cvar_sql_row['click_cpa'] ?? ''),

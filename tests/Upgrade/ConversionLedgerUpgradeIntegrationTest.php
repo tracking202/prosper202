@@ -261,7 +261,8 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
         $reconciler = new SchemaReconciler(static fn (string $sql) => _upgrade_query($sql));
         $this->assertTrue($reconciler->reconcile(ConversionTables::conversionLogs()));
         // Every column and key the installer declares but what the 1.9.80
-        // step adds: each row's currency with what was stated, and two keys.
+        // step adds: each row's currency with what was stated, whether its
+        // request withheld consent, and two keys.
         // The reconciler declares the columns as the step adds them itself
         // (_upgrade_ledger_currency_backfill()), so either leaves the same table.
         $this->assertSame(
@@ -270,6 +271,8 @@ final class ConversionLedgerUpgradeIntegrationTest extends TestCase
                 'ALTER TABLE `202_conversion_logs` ADD COLUMN `stated_amount` decimal(11,5) DEFAULT NULL AFTER `currency`',
                 'ALTER TABLE `202_conversion_logs` ADD COLUMN `stated_currency` char(3) DEFAULT NULL AFTER `stated_amount`',
                 "ALTER TABLE `202_conversion_logs` ADD COLUMN `currency_basis` tinyint(1) unsigned NOT NULL DEFAULT '0' AFTER `stated_currency`",
+                "ALTER TABLE `202_conversion_logs` ADD COLUMN `consent_withheld` tinyint(1) unsigned NOT NULL DEFAULT '0'"
+                    . ' AFTER `currency_basis`',
                 'ALTER TABLE `202_conversion_logs` ADD KEY `user_conv_time` (`user_id`,`conv_time`)',
                 'ALTER TABLE `202_conversion_logs` ADD KEY `user_currency_click_time` (`user_id`,`currency`,`click_time`)',
             ],

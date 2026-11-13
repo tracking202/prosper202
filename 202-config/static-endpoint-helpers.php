@@ -521,7 +521,9 @@ if (!function_exists('p202RecordConversion')) {
      *        and time_difference are the credited visit's, read under the
      *        writer's lock. Optional: source (a ConversionSource value; defaults
      *        from pixel_type), reversal and reversal_ref (see
-     *        p202ExtractReversal). click_payout is read only when
+     *        p202ExtractReversal), consent_withheld (bool: the request
+     *        withheld consent, !RequestSignals::consentGiven(); absent is
+     *        given). click_payout is read only when
      *        $usePixelPayout: without an explicit amount the writer applies
      *        the campaign's default.
      *        once_per_click has no default on purpose: without an id a
@@ -636,6 +638,11 @@ if (!function_exists('p202RecordConversion')) {
             // The `event=` of a hit on a campaign without goals: kept on the
             // row for the breakdown, and nothing else (p202RecordWebEvent).
             $data['event_name'] = (string) $log['event_name'];
+        }
+        if (array_key_exists('consent_withheld', $log)) {
+            // The request's own refusal (RequestSignals::consentGiven()),
+            // stored with the row: its destinations are sent no user data.
+            $data['consent_withheld'] = $log['consent_withheld'];
         }
         if ($log['once_per_click']) {
             // The one-conversion-per-click rule for id-less hits, enforced by
@@ -1263,7 +1270,8 @@ if (!function_exists('p202RecordLegacyConversion')) {
      *     event_name?: string|null,
      *     conv_time?: int,
      *     notify_traffic_source?: bool,
-     *     items?: list<array<string, mixed>>
+     *     items?: list<array<string, mixed>>,
+     *     consent_withheld?: bool
      * } $opts source is the ledger source the row is recorded under
      *     (legacy_pixel for px and pb, clickbank for cb202); event_name is
      *     a campaign-without-goals hit's `event=`, kept on the row; conv_time
@@ -1273,6 +1281,8 @@ if (!function_exists('p202RecordLegacyConversion')) {
      *     notifications ask for it; px.php, a browser pixel like gpx.php,
      *     does not). A reversal never announces anything. items are the
      *     product lines of a request that carried them (p202ExtractItems()).
+     *     consent_withheld: the request withheld consent
+     *     (!RequestSignals::consentGiven()); its destinations get no user data.
      *     $matchedBy is how the endpoint found the click (match_method).
      * @return array{recorded: bool, duplicate: bool, conv_id: int, reason: string}
      *         reason is '' when recorded; otherwise one of unknown_click,
@@ -1364,6 +1374,8 @@ if (!function_exists('p202RecordLegacyConversion')) {
                 'event_name'      => (string) ($opts['event_name'] ?? ''),
                 'notify_traffic_source' => !empty($opts['notify_traffic_source']),
                 'currency'        => (string) ($opts['currency'] ?? ''),
+                // Absent: a request that cannot carry p202_consent (a payment notification).
+                'consent_withheld' => $opts['consent_withheld'] ?? false,
             ],
             $matchedBy,
             (string) ($click['click_cpa'] ?? ''),

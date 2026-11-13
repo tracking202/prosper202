@@ -5482,7 +5482,9 @@ class UPGRADE
                 // an account's last week of conversions, and the currency each
                 // row's amount is in with what a postback stated (RowCurrency);
                 // the rows already there take the currency that can be known
-                // (_upgrade_ledger_currency_backfill(), run by the reconcile).
+                // (_upgrade_ledger_currency_backfill(), run by the reconcile),
+                // and consent_withheld, 1 on a row whose request withheld
+                // consent (Ledger\ConsentWithheld); every row already there is 0.
                 \Prosper202\Database\Tables\ConversionTables::conversionLogs(),
                 // PurLinks: click-out ordering, deferred pixels fired, per-offer goal subjects.
                 \Prosper202\Database\Tables\ClickTables::purLinkExitOrder(),

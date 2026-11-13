@@ -6,6 +6,7 @@ namespace Prosper202\Conversion;
 
 use Prosper202\Bridge\EventBridge;
 use Prosper202\Conversion\Ledger\Amount;
+use Prosper202\Conversion\Ledger\ConsentWithheld;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\Ledger\ExchangeRateCache;
@@ -172,6 +173,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *        time_difference, ip, pixel_type, user_agent; legacy_time_difference
      *        (true = store time_difference as the pixels' text, from the
      *        credited visit's time: legacyTimeDifference()).
+     *        consent_withheld (true = the conversion's own request withheld
+     *        consent, RequestSignals::consentGiven(): its destinations are
+     *        sent no user data; ConsentWithheld).
      *        LTV keys (all optional): customer_id, customer_ref +
      *        customer_ref_type, customer_crm, items; ltv_requires_customer
      *        (true = refuse items or customer_crm when no customer resolves,
@@ -339,6 +343,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             'source' => $source,
             'payable' => $payable,
             'wantsReversal' => $wantsReversal,
+            'consentWithheld' => ConsentWithheld::from($data),
             'matchedBy' => $matchedBy,
         ];
     }
@@ -366,6 +371,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         $source = $prepared['source'];
         $payable = (bool) $prepared['payable'];
         $wantsReversal = (bool) $prepared['wantsReversal'];
+        $consentWithheld = (bool) $prepared['consentWithheld'];
         /** @var MatchMethod $matchedBy */
         $matchedBy = $prepared['matchedBy'];
         $ledger = new MysqlConversionLedger($this->conn);
@@ -664,6 +670,15 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $types .= 'sssi';
             array_push($values, $rowCurrency, $statedUnits !== null ? Amount::fromUnits($statedUnits) : null, $statedCurrency, $rowBasis);
         }
+        // A refusal is written by the row's own INSERT, so it cannot be lost
+        // between the request and the send. Without the column (the 1.9.80
+        // upgrade has not run) the row is not queued for a destination.
+        $refusalStored = $consentWithheld && ConsentWithheld::columnPresent($this->conn);
+        if ($refusalStored) {
+            $columns[] = ConsentWithheld::COLUMN;
+            $types .= 'i';
+            $values[] = 1;
+        }
         // Last: prepareInsert() drops it while the 1.9.79 upgrade has not added it.
         $columns[] = 'match_method';
         $types .= 's';
@@ -749,7 +764,11 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
         // The account's destinations (ad platforms), queued in this transaction; only a
         // paid sale. A failure to queue is logged and loses the send, never the conversion.
-        if ($reverses === null && $amountUnits >= 0 && $payable) {
+        if ($reverses === null && $amountUnits >= 0 && $payable && $consentWithheld && !$refusalStored) {
+            error_log('Conversion ' . $convId . ' of user ' . $userId . ' was recorded but not queued for its'
+                . ' destinations: its request withheld consent, and the 1.9.80 upgrade has not added'
+                . ' the column that keeps that.');
+        } elseif ($reverses === null && $amountUnits >= 0 && $payable) {
             try {
                 $this->conn->withSavepoint(fn (): int => (new DestinationQueue($this->conn))->queueConversion($userId, $convId, $campaignId, time()));
             } catch (Throwable $e) {

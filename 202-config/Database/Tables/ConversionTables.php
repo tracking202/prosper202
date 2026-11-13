@@ -123,6 +123,7 @@ final class ConversionTables
                 `stated_amount` decimal(11,5) DEFAULT NULL,
                 `stated_currency` char(3) DEFAULT NULL,
                 `currency_basis` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `consent_withheld` tinyint(1) unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`conv_id`),
                 UNIQUE KEY `uniq_click_dedupe` (`click_id`,`dedupe_key`),
                 KEY `click_transaction` (`click_id`,`transaction_id`),

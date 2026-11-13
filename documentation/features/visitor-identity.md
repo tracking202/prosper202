@@ -79,7 +79,10 @@ A refusal holds for the whole visit: once the tracking link, a click through
 a rotator or the landing page's pageview refuses, a
 [destination](destinations.md) is not sent that visitor's IP address,
 whatever a later request of the same visit carries. The next visit, when the
-visitor clicks through again, is read on its own.
+visitor clicks through again, is read on its own. A conversion pixel or
+postback that carries `p202_consent=0` itself withholds the visitor's address,
+hashed email and phone and customer id from destinations for that conversion;
+the conversion is still recorded and sent.
 
 The privacy setting ([`user_pref_privacy`](../api/14-users.md#privacy-user_pref_privacy))
 withholds the `p202vid` cookie too: a visitor it holds back is neither given

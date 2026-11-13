@@ -605,7 +605,9 @@ final class GoalEngine
 
         $specs = $this->specsFor($userId, $subject);
         if ($count === 0 || $replay) {
-            $all = $count === 0 ? $new : $this->loadEvents($subject);
+            // The stored events, with this request's own as it sent them: a
+            // request's consent is not stored with its event (GoalEvent).
+            $all = $count === 0 ? $new : self::withTheseRequests($this->loadEvents($subject), $new);
             $evaluation = GoalEvaluator::evaluateAll($specs, $subject, $all);
             $plan = $this->plan($userId, $subject, $evaluation->outcomes, null, false);
             $counts = $this->execute($userId, $subject, $plan, $all, SupersededReason::REPLAY, $now, $post);
@@ -1473,6 +1475,10 @@ final class GoalEngine
         if ($event?->transactionId !== null) {
             $data['transaction_id'] = $event->transactionId;
         }
+        if ($event?->consentWithheld === true) {
+            // The request that reached it withheld consent: no user data goes with it.
+            $data['consent_withheld'] = true;
+        }
         $recorded = $this->conversions->recordInTransaction($userId, $data, $matchedBy);
         if (!$recorded['clickFound']) {
             throw new GoalEngineException('click ' . $subject->clickId . ' is gone; its outcome cannot be recorded', GoalEngineException::INTEGRITY);
@@ -2081,6 +2087,21 @@ final class GoalEngine
         }
         $this->conn->bind($stmt, $named ? 'siissssisiiss' : 'siissssisiis', $row);
         $this->conn->executeUpdate($stmt);
+    }
+
+    /**
+     * @param list<GoalEvent> $stored
+     * @param list<GoalEvent> $new this request's events, already among $stored
+     * @return list<GoalEvent>
+     */
+    private static function withTheseRequests(array $stored, array $new): array
+    {
+        $byId = [];
+        foreach ($new as $event) {
+            $byId[$event->eventId] = $event;
+        }
+
+        return array_map(static fn (GoalEvent $event): GoalEvent => $byId[$event->eventId] ?? $event, $stored);
     }
 
     /** @return list<GoalEvent> */

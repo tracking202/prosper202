@@ -124,8 +124,13 @@ once.
   rotator or the landing page's pageview carries `p202_consent=0`, no later
   request of that visit gives consent back, also one that carries no
   `p202_consent` at all. A later visit, when the visitor clicks through
-  again, is read on its own. The raw values are never written to the queue,
-  the log or an error.
+  again, is read on its own. A conversion whose own request carries
+  `p202_consent=0` (a conversion pixel on the thank-you page, or a postback
+  that relays the visitor's refusal) is still recorded and sent, with its
+  value and click id, but with none of the visitor's data: no address, no
+  hashed email or phone, no customer id. That holds for that conversion
+  only, whatever the click's visit gave. The raw values are never written
+  to the queue, the log or an error.
 - **Consent signals** (`ad_user_data`, `ad_personalization`) are what you
   state, per destination, from your consent banner: Prosper202 does not
   record a visitor's consent. Hashed data (and `user_id`) go only when

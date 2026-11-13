@@ -446,7 +446,7 @@ final class DestinationQueue
         $userId = $destination['user_id'];
         // The primary, not a replica: a row a lagging replica lacks is not a deleted one.
         // 202_clicks_advance and 202_clicks_site are one row per click, written by its latest visit.
-        $stmt = $this->conn->prepareWrite('SELECT cl.click_id, cl.campaign_id, cl.conv_time, cl.click_payout, cl.transaction_id, cl.deleted, cl.superseded_by, cl.customer_id, cl.match_method, cl.currency, '
+        $stmt = $this->conn->prepareWrite('SELECT cl.click_id, cl.campaign_id, cl.conv_time, cl.click_payout, cl.transaction_id, cl.deleted, cl.superseded_by, cl.customer_id, cl.match_method, cl.currency, cl.consent_withheld, '
             . IpAddressSql::address('ip', 'ip6') . ' AS ip_address, landing.site_url_address AS landing_url, outbound.site_url_address AS outbound_url,
                    ac.aff_campaign_id AS campaign_found, ac.identity_signals
             FROM 202_conversion_logs cl LEFT JOIN 202_clicks_advance ca ON ca.click_id = cl.click_id LEFT JOIN 202_ips ip ON ip.ip_id = ca.ip_id'
@@ -509,7 +509,18 @@ final class DestinationQueue
         $visit = $this->conn->prepareWrite('SELECT c.click_time FROM ' . FirstVisit::of('?') . ' AS c WHERE c.user_id = ?');
         $this->conn->bind($visit, 'ii', [$clickId, $userId]);
         $clickTime = $this->conn->fetchOne($visit)['click_time'] ?? null;
-        [$customerId, $emails, $phones] = $this->customer($destination['adapter'], $destination['settings'], (int) ($conv['customer_id'] ?? 0), $userId);
+        // The conversion's own request withheld consent (ConsentWithheld):
+        // it is sent, with none of the user data. Anything but a stored 0 is
+        // read as a refusal (CLAUDE.md #11).
+        $userData = (string) ($conv['consent_withheld'] ?? '') === '0' && self::sendsUserData($destination['settings']);
+        [$customerId, $emails, $phones] = $userData
+            ? $this->customer(
+                $destination['adapter'],
+                $destination['settings'],
+                (int) ($conv['customer_id'] ?? 0),
+                $userId
+            )
+            : [null, [], []];
         $ownTransactionId = isset($conv['transaction_id']) ? (string) $conv['transaction_id'] : null;
         $eventId = DestinationEventId::of($this->conn, $userId, $clickId, $convId, $ownTransactionId);
         $facts = new ConversionFacts(
@@ -526,7 +537,7 @@ final class DestinationQueue
             $phones,
             $this->zone($userId),
             $clickTime === null ? null : (int) $clickTime,
-            self::sendsUserData($destination['settings']) && self::visitorMayBeIdentified($conv) && $this->latestVisitSignalled($clickId, $userId)
+            $userData && self::visitorMayBeIdentified($conv) && $this->latestVisitSignalled($clickId, $userId)
                 ? self::visitorAddress($ip) : null,
             // Not stored for a click yet: nothing is guessed in its place.
             null,
