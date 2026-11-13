@@ -7,7 +7,7 @@
  *
  * Needs the instance pointed at the stand-in Advertiser API
  * (tests/fixtures/openai-ads/fake_openai_ads.py, started with
- * --api-key sk-ads-live-demo-key-0001 and reset before the run;
+ * --api-key sk-ads-eval-key-0001 and reset before the run;
  * P202_OPENAI_ADS_ENDPOINT and P202_OPENAI_ADS_CA_FILE on the server).
  * Every claim that something was stored is read back from the database, and
  * the key is looked for in every page this spec sees.
@@ -16,7 +16,7 @@
 const checks = require('../lib/checks');
 
 const PAGE = '/tracking202/setup/destinations.php';
-const KEY = 'sk-ads-live-demo-key-0001';
+const KEY = 'sk-ads-eval-key-0001';
 
 async function keyIsNowhere(ctx, what) {
   const html = await ctx.ui.html();

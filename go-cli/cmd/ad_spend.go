@@ -38,7 +38,7 @@ var adSpendSyncCmd = &cobra.Command{
 
 var adSpendSyncListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "Each ChatGPT Ads connection's spend sync: on or off, its last run and error",
+	Short: "Each connection's spend sync: on or off, last run, error",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
@@ -77,7 +77,7 @@ func adSpendSyncSet(enabled bool) func(cmd *cobra.Command, args []string) error 
 
 var adSpendSyncEnableCmd = &cobra.Command{
 	Use:     "enable <connection-id>",
-	Short:   "Pull this ChatGPT Ads connection's spend every hour (the first run reads 30 days)",
+	Short:   "Pull a ChatGPT Ads connection's spend hourly (first run: 30 days)",
 	Example: "  p202 spend sync enable 1",
 	Args:    cobra.ExactArgs(1),
 	RunE:    adSpendSyncSet(true),
@@ -85,7 +85,7 @@ var adSpendSyncEnableCmd = &cobra.Command{
 
 var adSpendSyncDisableCmd = &cobra.Command{
 	Use:     "disable <connection-id>",
-	Short:   "Stop pulling this connection's spend; what the ledger holds stays",
+	Short:   "Stop a connection's hourly spend pull (the ledger keeps its rows)",
 	Example: "  p202 spend sync disable 1",
 	Args:    cobra.ExactArgs(1),
 	RunE:    adSpendSyncSet(false),
@@ -93,7 +93,7 @@ var adSpendSyncDisableCmd = &cobra.Command{
 
 var adSpendSyncRunCmd = &cobra.Command{
 	Use:     "run <connection-id>",
-	Short:   "Pull this connection's spend now, without waiting for the hourly run",
+	Short:   "Pull a connection's spend now",
 	Example: "  p202 spend sync run 1",
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -159,7 +159,7 @@ const adSpendConversionsMaxLimit = 5000
 
 var adSpendConversionsCmd = &cobra.Command{
 	Use:   "conversions",
-	Short: "ChatGPT Ads' reported conversions per ad per day, beside Prosper202's for the same ads",
+	Short: "OpenAI's conversions per ad per day beside Prosper202's",
 	Long: "Per day (in the ad account's time zone, as OpenAI reports it) and ad: OpenAI's goal conversions,\n" +
 		"click-through and view-through, and the purchase value it attributed, beside prosper202_conversions,\n" +
 		"the conversions of your clicks that carried the ad that day. Filled by `p202 spend sync`.",

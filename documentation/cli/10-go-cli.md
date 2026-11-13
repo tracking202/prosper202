@@ -639,21 +639,29 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   app that ignores the notification still works; the answer also gives each
   tool's input schema. `p202 mcp tools --deferred` lists them; `p202 mcp
   call` runs them as any other tool, with the same `--read-only` and
-  `--staged` refusals. They are local only. Today they are
-  `destination_list`, `destination_deliveries` and `destination_test` (Setup
-  › Destinations: each destination's status, its delivery log with why a
-  conversion failed or was withheld, and a test fire; the test fire cannot be
-  proposed, so it is not offered with `--staged`, nor with `--read-only`, and
-  it does not take `--real`, which sends an event the platform counts),
-  and `ad_connection_list` and `ad_connection_check` (Setup › Destinations ›
+  `--staged` refusals. Today they are `destination_list`,
+  `destination_deliveries` and `destination_test` (Setup › Destinations:
+  each destination's status, its delivery log with why a conversion failed
+  or was withheld, and a test fire; the test fire cannot be proposed, so it
+  is not offered with `--staged`, nor with `--read-only`, and it does not
+  take `--real`, which sends an event the platform counts),
+  `ad_connection_list` and `ad_connection_check` (Setup › Destinations ›
   ChatGPT Ads: each connected ad account, and a fresh read of it from
-  OpenAI; the check is not offered with `--staged`), `ad_spend` (`p202
-  spend list`: what ad platforms billed per ad per day or hour, your clicks
-  that carried each ad, the spend no click carried, and `reaches`) and
-  `ad_spend_sync_status` (`p202 spend sync list`: each ChatGPT Ads
-  connection's spend sync, on or off, its last run and error). Asked "what
-  did ChatGPT Ads cost" or "is my spend sync working", get_more_tools loads
-  them.
+  OpenAI; the check is not offered with `--staged`), `ad_campaign_list`,
+  `ad_campaign_pause`, `ad_campaign_activate` and `ad_campaign_spend` (its
+  campaigns live at OpenAI; pause and activate change them at once, so call
+  them with `dry_run: true` first; with `--staged` they propose), and
+  `ad_spend` (`p202 spend list`: what ad platforms billed per ad per day or
+  hour, your clicks that carried each ad, the spend no click carried, and
+  `reaches`) and `ad_spend_sync_status` (`p202 spend sync list`: each
+  ChatGPT Ads connection's spend sync, on or off, its last run and error).
+  The destination tools, `ad_connection_check` and the two spend tools are
+  local only; the four campaign tools and `ad_connection_list` are offered
+  by the hosted server too. `p202 mcp tools --deferred`
+  answers `tools`, `hosted_excludes` (the local-only ones),
+  `staged_excludes` (the ones `--staged` does not offer), `hosted_omits`
+  (arguments the hosted server leaves out) and `words` (the words each tool
+  is found by).
 - With `--staged`, a write returns a change id and changes nothing; you apply
   it with `p202 change apply <id>`. The assistant is not offered the apply and
   discard tools.

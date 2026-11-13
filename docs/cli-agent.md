@@ -1036,6 +1036,27 @@ p202 spend sync run <connection-id>        # the hourly pull now (sync must be o
 clicks at their share of each hour's spend and carries `spend_ledger.reaches`; say how far spend data reaches
 when you quote ROI from it. An ad account in another currency is refused by name (`last_error`).
 
+### ChatGPT Ads campaigns (live at OpenAI, through an ad connection)
+
+```
+p202 ad-campaign list <conn> [--level campaigns|ad-groups|ads] [--campaign-id cmpn_…] [--ad-group-id adgrp_…] [--limit N] [--after CURSOR]
+p202 ad-campaign get <conn> <id> [--level …]            # status, serving_issues, query_string_template; budget (campaigns); review_status (ads)
+p202 ad-campaign pause|activate <conn> <id> [--level …] [--dry-run]
+p202 ad-campaign set-template <conn> <id> [--level …] [--template QS] [--dry-run]   # default: the Get Links ChatGPT template
+p202 ad-campaign attach-events <conn> <cmpn_…> [--event-setting-id ces_…]... [--dry-run]   # default: the ones setup made
+p202 ad-campaign spend <conn> [--since YYYY-MM-DD --until YYYY-MM-DD]   # by campaign; default yesterday in the ad account's zone
+```
+
+Every write changes the campaign at OpenAI at once: run it with `--dry-run` first, which answers `change` (from, to)
+and sends nothing. With `--staged` a write is proposed for a person to apply. `attach-events` reads, merges and writes the campaign's list (OpenAI
+replaces it whole); `unchanged: true` means nothing was sent, `previous` what a write replaced. A 404 is an id
+this ad account does not have; a 422 naming `api_key` a key OpenAI refused (`ad-connection update --api-key-file`),
+naming `id` an archived object (or activating an ended campaign); a 409 OpenAI refusing it (do not send it again
+unchanged); a 429 its rate limit (exit 7: wait `retry_after_seconds`, nothing was changed). A 503 (no answer) or a
+502 with `details.reason` `unconfirmed` on a write may have been applied: run `p202 ad-campaign get` before sending
+it again. Spend is in major units of the ad account's currency; an answer it cannot read is a 502, never a 0. Spend is as OpenAI reports it now:
+the last days can still change.
+
 ### Reports
 
 ```
@@ -1499,11 +1520,13 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
   does and its input schema. A deferred tool called by name before that is
   loaded and run. Today they are `destination_list`, `destination_deliveries`
   and `destination_test` (Setup › Destinations), `ad_connection_list` and
-  `ad_connection_check` (ChatGPT Ads connections), and `ad_spend` and
+  `ad_connection_check`, `ad_campaign_list`, `ad_campaign_pause`,
+  `ad_campaign_activate` and `ad_campaign_spend`, and `ad_spend` and
   `ad_spend_sync_status` (what ad platforms billed per ad, and each ChatGPT
   Ads connection's hourly spend pull); `--read-only` and `--staged` leave out
-  `destination_test`, and `--staged` leaves out `ad_connection_check`. They
-  are local only: the hosted server below refuses them.
+  `destination_test` and `ad_connection_check`. The destination tools, the
+  check and the two spend tools are local only: the hosted server below
+  refuses them.
 - `p202 mcp tools` prints the tool list as JSON (`--deferred`: the tools
   `get_more_tools` loads); `p202 mcp call <tool> --input '<json>'` runs one
   tool as the app would, deferred ones included, with the server's

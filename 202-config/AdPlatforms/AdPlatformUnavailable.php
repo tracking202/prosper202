@@ -17,6 +17,8 @@ final class AdPlatformUnavailable extends \RuntimeException
     public const RATE_LIMITED = 'rate_limited';
     /** An answer that arrived and is not what the platform's API documents. */
     public const UNREADABLE = 'unreadable_answer';
+    /** A write whose answer does not show it done, and whose object, read again, does not either: it may have landed. */
+    public const UNCONFIRMED = 'unconfirmed';
 
     /**
      * @param array<string, mixed> $context what stands after the failure (a check's connection, a setup's steps)

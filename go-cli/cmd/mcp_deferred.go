@@ -17,12 +17,44 @@ import (
 // schemas. A call to a deferred tool that was never loaded is loaded and
 // run, so a client that ignores list_changed is not stuck.
 //
-// Deferred tools are local only (NotHosted): the hosted relay lists the
-// always-loaded catalogue and has its own get_more_tools. `p202 mcp call`
-// runs them like any other tool, and `p202 mcp tools --deferred` lists them.
+// A deferred tool marked NotHosted is local only. The others the hosted
+// relay may load through its own get_more_tools, from `p202 mcp tools
+// --deferred` (whose hosted_excludes names the local ones, and whose words
+// are each tool's Words), within the areas an AI connection's key reaches
+// (TestHostedMCPToolsStayInsideTheAIKeyAreas runs them). `p202 mcp call`
+// runs them like any other tool.
 //
 // To add one: append its spec here, with Words a person would use for the
 // task (TestMCPDeferredToolsAreFoundByTheirTask asks each tool's first Word).
+
+// mcpDeferredListing is `p202 mcp tools --deferred`: the deferred tools in
+// the catalogue's tool shape; hosted_excludes, staged_excludes and
+// hosted_omits, as the catalogue's: the ones the hosted relay's own
+// get_more_tools never loads, the ones a connection that only proposes is not
+// given, and the arguments the relay leaves out; and words, each
+// tool's Words, so the relay matches a task by the words mcpMatchDeferred does.
+func mcpDeferredListing(root *cobra.Command, readOnly, staged bool) (map[string]interface{}, error) {
+	deferred, err := buildMCPDeferredTools(root, readOnly, staged)
+	if err != nil {
+		return nil, err
+	}
+	excludes, stagedExcludes := []string{}, []string{}
+	words, omits := map[string][]string{}, map[string][]string{}
+	for _, s := range mcpDeferredToolSpecs {
+		for _, f := range s.HostedOmit {
+			omits[s.Name] = append(omits[s.Name], strings.ReplaceAll(f, "-", "_"))
+		}
+		if s.NotHosted {
+			excludes = append(excludes, s.Name)
+		}
+		if s.NotStaged {
+			stagedExcludes = append(stagedExcludes, s.Name)
+		}
+		words[s.Name] = s.Words
+	}
+	return map[string]interface{}{"schema": mcpCatalogSchema, "tools": deferred, "hosted_excludes": excludes,
+		"staged_excludes": stagedExcludes, "hosted_omits": omits, "words": words}, nil
+}
 
 // mcpGetMoreTools is the always-loaded tool that loads deferred ones.
 const mcpGetMoreTools = "get_more_tools"
@@ -43,13 +75,29 @@ var mcpDeferredToolSpecs = []mcpToolSpec{
 		Omit:  []string{"real"},
 		Words: []string{"test destination", "test fire", "validate destination", "destinations"}},
 	// ChatGPT Ads connections (Setup › Destinations › ChatGPT Ads): an ad account reached with its Advertiser API key.
-	{Name: "ad_connection_list", Command: []string{"ad-connection", "list"}, Title: "ChatGPT Ads connections", Kind: mcpRead, NotHosted: true,
+	// Hosted too (the owner, 2026-11-12): the campaign tools need its connection_id. It never shows a key.
+	{Name: "ad_connection_list", Command: []string{"ad-connection", "list"}, Title: "ChatGPT Ads connections", Kind: mcpRead,
 		Note:  "Each ad account's id, name, currency, time zone, status and what setup made.",
 		Words: []string{"chatgpt ads connection", "openai ads account", "advertiser api key", "chatgpt ads"}},
 	{Name: "ad_connection_check", Command: []string{"ad-connection", "check"}, Title: "Check a ChatGPT Ads connection", Kind: mcpUpdate, NotHosted: true, NotStaged: true, OpenWorld: true, Refreshes: true,
 		Args:  []mcpArg{idArg("id", "Ad connection id (from ad_connection_list).", true)},
 		Note:  "The answer is recorded on the connection (status, last_error); nothing is changed at OpenAI.",
 		Words: []string{"is my chatgpt ads key working", "check chatgpt ads connection", "chatgpt ads"}},
+	// ChatGPT Ads campaigns, live at OpenAI through an ad connection.
+	{Name: "ad_campaign_list", Command: []string{"ad-campaign", "list"}, Title: "ChatGPT Ads campaigns", Kind: mcpRead, OpenWorld: true,
+		Args:  []mcpArg{idArg("connection_id", "Ad connection id (from ad_connection_list).", true)},
+		Note:  "Status, budget, serving issues and tracking template; level ad-groups or ads for the rest.",
+		Words: []string{"chatgpt ads campaigns", "openai ads campaign status", "why is my chatgpt ad not serving", "chatgpt ads"}},
+	{Name: "ad_campaign_pause", Command: []string{"ad-campaign", "pause"}, Title: "Pause a ChatGPT Ads campaign", Kind: mcpUpdate, OpenWorld: true,
+		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true), adObjectArg()}, Note: adWriteNote,
+		Words: []string{"pause chatgpt ads campaign", "stop a losing chatgpt campaign", "chatgpt ads"}},
+	{Name: "ad_campaign_activate", Command: []string{"ad-campaign", "activate"}, Title: "Activate a ChatGPT Ads campaign", Kind: mcpUpdate, OpenWorld: true,
+		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true), adObjectArg()}, Note: adWriteNote,
+		Words: []string{"activate chatgpt ads campaign", "resume a chatgpt campaign", "chatgpt ads"}},
+	{Name: "ad_campaign_spend", Command: []string{"ad-campaign", "spend"}, Title: "ChatGPT Ads spend by campaign", Kind: mcpRead, OpenWorld: true,
+		Args: []mcpArg{idArg("connection_id", "Ad connection id.", true)},
+		// Live per-campaign figures; "what did ChatGPT Ads cost" is ad_spend, the ledger reports cost from.
+		Words: []string{"chatgpt ads spend by campaign", "campaign spend at openai", "live campaign spend", "chatgpt ads"}},
 
 	// The spend ledger: what ad platforms billed (ChatGPT Ads' hourly pull).
 	{Name: "ad_spend", Command: []string{"spend", "list"}, Title: "What ad platforms billed, per ad", Kind: mcpRead, NotHosted: true, Keep: []string{"interval"},
@@ -81,11 +129,12 @@ func findMCPDeferredSpec(name string) (mcpToolSpec, bool) {
 }
 
 // buildMCPDeferredTools builds the deferred tools a server with these
-// policies offers, as buildMCPCatalog builds the always-loaded ones.
+// policies offers, as buildMCPCatalog builds the always-loaded ones. A
+// hosted run (the relay's engine) never offers a NotHosted one.
 func buildMCPDeferredTools(root *cobra.Command, readOnly, staged bool) ([]mcpTool, error) {
 	tools := []mcpTool{}
 	for _, s := range mcpDeferredToolSpecs {
-		if !s.offered(readOnly, staged) {
+		if !s.offered(readOnly, staged) || (mcpHostedRun && s.NotHosted) {
 			continue
 		}
 		t, err := s.tool(root)
