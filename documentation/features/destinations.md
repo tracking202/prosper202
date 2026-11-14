@@ -386,6 +386,10 @@ Google Ads) and batching.
 
 ## ChatGPT Ads
 
+[ChatGPT Ads: from your first ad to conversions and real cost](chatgpt-ads.md)
+walks through the whole setup, from the traffic source to the spend pull.
+This section is the destination's reference.
+
 **The quick way: connect the ad account.** Under Setup › Destinations ›
 ChatGPT Ads, paste the **Advertiser API key** from ChatGPT Ads Manager ›
 Settings and press Connect. Prosper202 checks it with OpenAI and shows the

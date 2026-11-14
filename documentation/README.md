@@ -104,6 +104,7 @@ A legacy PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 lis
 - [Currencies](features/conversion-currency.md) — each conversion keeps the currency it was recorded in; postback amounts on a campaign paid in another currency are converted at a kept daily rate; what changing the account's currency does
 - [Offline conversions for Google Ads and Microsoft Advertising](features/offline-conversions.md) — the import files, which conversions they send, and fetch URLs the platforms read on a schedule
 - [Destinations: conversions to your ad platforms, from your server](features/destinations.md) — GA4 Measurement Protocol and Google Ads click conversions (developer token and OAuth client setup), the delivery log, privacy and hashed data, test fires
+- [ChatGPT Ads: from your first ad to conversions and real cost](features/chatgpt-ads.md) — the ChatGPT Ads traffic source and tracking template, connecting the ad account, sending conversions to OpenAI, pulling what OpenAI billed into your reports, and pausing campaigns
 - [Measurement rewrite plan](features/measurement-rewrite-plan.md) — app measurement (iOS and Android), goals, the conversion ledger and multi-touch attribution: the design, what was built, and the release gate
 
 ### Partnering With Us
