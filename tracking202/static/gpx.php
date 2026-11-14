@@ -139,7 +139,12 @@ if (is_numeric($mysql['click_id'])) {
         // the same click (LTV), while a replayed txid is safely de-duplicated
         // by p202RecordConversion. Without a txid a retry cannot be told apart
         // from a repeat, so the legacy one-conversion-per-click gate stands.
-        if (!$cpa_row['click_lead'] || p202ExtractTransactionId($_GET) !== '') {
+        // A pixel that refuses consent goes on to the writer too: it stores the
+        // click's refusal under its lock, then applies the same gate.
+        if (
+            !$cpa_row['click_lead'] || p202ExtractTransactionId($_GET) !== ''
+            || !\Prosper202\Identity\RequestSignals::consentGiven($_GET)
+        ) {
 
                 $mysql['campaign_id'] = $db->real_escape_string((string) ($cpa_row['aff_campaign_id'] ?? ''));
                 $mysql['click_user_id'] = $db->real_escape_string((string) ($cpa_row['user_id'] ?? ''));
@@ -182,6 +187,11 @@ if (is_numeric($mysql['click_id'])) {
 				// it under the click lock so two concurrent id-less pixels
 				// record one conversion, not two.
 				'once_per_click'  => p202ExtractTransactionId($_GET) === '',
+                // A refusing pixel passed the click_lead fast path above; the writer applies it under the lock.
+                'once_per_click_strict' => p202ExtractTransactionId($_GET) === ''
+                    && !\Prosper202\Identity\RequestSignals::consentGiven($_GET),
+                // A refusal on this request: no destination is sent it.
+                'consent_withheld' => !\Prosper202\Identity\RequestSignals::consentGiven($_GET),
 			],
 			$matchedBy,
 			(string) ($cpa_row['click_cpa'] ?? ''),

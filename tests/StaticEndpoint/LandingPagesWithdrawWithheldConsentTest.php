@@ -8,16 +8,18 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * record_simple.php and record_adv.php, for a click the tracking template's
- * hit already made, take back that click's browser marks when the page
- * withheld consent (ClickIdentity::withdrawIfWithheld()), before they attach
- * the page's own signals: the address a destination sends is then not that
- * of a visitor whose page refused.
+ * hit already made, store the page's withheld consent with that click's
+ * visit and take back the click's browser marks
+ * (ClickIdentity::withdrawIfWithheld()), before they attach the page's own
+ * signals: the address a destination sends is then not that of a visitor
+ * whose page refused.
  *
  * Held by reading each script's tokens: the withdrawal is called once; it is
  * the first statement of the block `if ($<x>ParallelClick !== null) {`, and
- * is `$clickIdentity->withdrawIfWithheld($conn, $click_id);` and nothing
- * more; and the statement directly after it is the script's first
- * `$clickIdentity->attach(` (CLAUDE.md #21, #22).
+ * is `$clickIdentity->withdrawIfWithheld($conn, $click_id,
+ * $<x>ParallelClick->clickTime);` and nothing more; and the statement
+ * directly after it is the script's first `$clickIdentity->attach(`
+ * (CLAUDE.md #21, #22).
  *
  * Not read here: that $click_id is the click the template made.
  */
@@ -39,7 +41,7 @@ final class LandingPagesWithdrawWithheldConsentTest extends TestCase
     public function testTheScanRefusesEachWayTheCallCanGo(): void
     {
         $if = 'if ($pc !== null) {';
-        $withdraw = ' $clickIdentity->withdrawIfWithheld($conn, $click_id);';
+        $withdraw = ' $clickIdentity->withdrawIfWithheld($conn, $click_id, $pc->clickTime);';
         $attach = ' $clickIdentity->attach($conn, 1, $click_id, $pc->clickTime);';
         $control = '<?php ' . $if . $withdraw . $attach . ' }';
         self::assertSame([], self::problems($control, '$pc'), 'the positive control');
@@ -53,6 +55,8 @@ final class LandingPagesWithdrawWithheldConsentTest extends TestCase
             'the block of another test' => ['if ($pc === null) {' . $withdraw . $attach . ' }', 'first statement'],
             'under a braceless if' => [$if . ' if ($x)' . $withdraw . $attach . ' }', 'first statement'],
             'another click' => [$if . $swap('$click_id', '$other') . $attach . ' }', 'and nothing more'],
+            'another visit' => [$if . $swap('$pc->clickTime', '$o->clickTime') . $attach . ' }', 'and nothing more'],
+            'no visit' => [$if . $swap(', $pc->clickTime', '') . $attach . ' }', 'and nothing more'],
             'another identity' => [$if . $swap('$clickIdentity', '$other') . $attach . ' }', 'called once'],
             'its answer overridden' => [$if . $swap(');', ') ?? x();') . $attach . ' }', 'and nothing more'],
             'a statement between' => [$if . $withdraw . ' $click_id = 7;' . $attach . ' }', 'directly after'],
@@ -104,10 +108,11 @@ final class LandingPagesWithdrawWithheldConsentTest extends TestCase
         if ($run($call - 7, 7) !== 'if(' . $found . '!==null){') {
             return ['the withdrawal is not the first statement of the block if (' . $found . ' !== null) {'];
         }
-        if ($run($call, 9) !== '$clickIdentity->withdrawIfWithheld($conn,$click_id);') {
-            return ['the statement is not $clickIdentity->withdrawIfWithheld($conn, $click_id); and nothing more'];
+        if ($run($call, 13) !== '$clickIdentity->withdrawIfWithheld($conn,$click_id,' . $found . '->clickTime);') {
+            return ['the statement is not $clickIdentity->withdrawIfWithheld($conn, $click_id, ' . $found
+                . '->clickTime); and nothing more'];
         }
-        if ($attaches === [] || $attaches[0] !== $call + 9) {
+        if ($attaches === [] || $attaches[0] !== $call + 13) {
             return ['the script\'s first $clickIdentity->attach() is not the statement directly after the withdrawal'];
         }
 

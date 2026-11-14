@@ -33,6 +33,11 @@ use Prosper202\Conversion\Ledger\MatchMethod;
  *                    (MatchMethod), stamped by GoalEngine::ingest() and
  *                    carried by the ledger row of an outcome it reaches.
  *                    Not what the event says, so not in its fingerprint.
+ *   consent_withheld the request that reported it withheld consent
+ *                    (p202_consent, RequestSignals::consentGiven()): the
+ *                    ledger rows its outcomes write send a destination no
+ *                    user data. The request's, not the event's: not stored
+ *                    with it and not in its fingerprint.
  *
  * The evaluation time is `min(occurred_at, received_at)`: a reporter's clock
  * can move an event earlier, never later than it arrived, so it cannot be
@@ -63,6 +68,7 @@ final class GoalEvent
         public readonly bool $isInstall = false,
         public readonly bool $clockedByServer = false,
         public readonly MatchMethod $matchMethod = MatchMethod::UNKNOWN,
+        public readonly bool $consentWithheld = false,
     ) {
     }
 
@@ -72,6 +78,7 @@ final class GoalEvent
         return new self(
             $this->eventId, $this->name, $occurredAt, $this->receivedAt, $this->properties, $this->revenue,
             $this->revenueTrusted, $this->transactionId, $this->isInstall, $this->clockedByServer, $this->matchMethod,
+            $this->consentWithheld,
         );
     }
 
@@ -81,6 +88,7 @@ final class GoalEvent
         return new self(
             $this->eventId, $this->name, $this->occurredAt, $this->receivedAt, $this->properties, $this->revenue,
             $this->revenueTrusted, $this->transactionId, $this->isInstall, true, $this->matchMethod,
+            $this->consentWithheld,
         );
     }
 
@@ -90,6 +98,7 @@ final class GoalEvent
         return new self(
             $this->eventId, $this->name, $this->occurredAt, $this->receivedAt, $this->properties, $this->revenue,
             $this->revenueTrusted, $this->transactionId, $this->isInstall, $this->clockedByServer, $method,
+            $this->consentWithheld,
         );
     }
 

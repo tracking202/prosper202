@@ -173,6 +173,7 @@ final class WebEvents
             // A pixel says nothing about when the event happened: the time
             // is the server's, so a retry later is the same event.
             true,
+            consentWithheld: !\Prosper202\Identity\RequestSignals::consentGiven($get),
         );
     }
 

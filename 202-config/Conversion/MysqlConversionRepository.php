@@ -6,6 +6,7 @@ namespace Prosper202\Conversion;
 
 use Prosper202\Bridge\EventBridge;
 use Prosper202\Conversion\Ledger\Amount;
+use Prosper202\Conversion\Ledger\ConsentWithheld;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\Ledger\ExchangeRateCache;
@@ -21,6 +22,7 @@ use Prosper202\Database\Connection;
 use Prosper202\DataEngine\ClickRollupSql;
 use Prosper202\Ltv\MysqlCustomerRepository;
 use Prosper202\Destinations\DestinationQueue;
+use Prosper202\Identity\ConsentRefusal;
 use Prosper202\Notifications\NotificationOutbox;
 use RuntimeException;
 use Throwable;
@@ -172,6 +174,10 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *        time_difference, ip, pixel_type, user_agent; legacy_time_difference
      *        (true = store time_difference as the pixels' text, from the
      *        credited visit's time: legacyTimeDifference()).
+     *        consent_withheld (true = the conversion's own request withheld
+     *        consent, RequestSignals::consentGiven(): no destination is sent
+     *        it; a duplicate that refuses sets it on the row it repeats;
+     *        ConsentWithheld).
      *        LTV keys (all optional): customer_id, customer_ref +
      *        customer_ref_type, customer_crm, items; ltv_requires_customer
      *        (true = refuse items or customer_crm when no customer resolves,
@@ -194,26 +200,37 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      */
     public function record(int $userId, array $data, MatchMethod $matchedBy, ?callable $clickSideUpdate = null): array
     {
-        $prepared = $this->prepareRecord($data, $matchedBy);
-        $ledger = new MysqlConversionLedger($this->conn);
-        // The click's lock opens the transaction, so what is read after it
-        // is current without locking it (clickTransaction()).
-        $work = fn (): array => $ledger->clickTransaction(
-            (int) $prepared['clickId'],
-            $userId,
-            fn (?array $click): array => $this->recordLocked($userId, $prepared, $clickSideUpdate, $click)
-        );
-
-        // Unique-key upserts on 202_customer_aliases under concurrency make a
-        // deadlock reachable, not theoretical. The transaction callback is a
-        // pure function of its arguments, so one full retry is safe.
         try {
-            $result = $work();
-        } catch (Throwable $e) {
-            if (!self::isRetryableLockError($e)) {
-                throw $e;
+            $prepared = $this->prepareRecord($data, $matchedBy);
+            $ledger = new MysqlConversionLedger($this->conn);
+            // The click's lock opens the transaction, so what is read after it
+            // is current without locking it (clickTransaction()).
+            $work = fn (): array => $ledger->clickTransaction(
+                (int) $prepared['clickId'],
+                $userId,
+                fn (?array $click): array => $this->recordLocked($userId, $prepared, $clickSideUpdate, $click)
+            );
+
+            // Unique-key upserts on 202_customer_aliases under concurrency make a
+            // deadlock reachable, not theoretical. The transaction callback is a
+            // pure function of its arguments, so one full retry is safe.
+            try {
+                $result = $work();
+            } catch (Throwable $e) {
+                if (!self::isRetryableLockError($e)) {
+                    throw $e;
+                }
+                $result = $work();
             }
-            $result = $work();
+        } catch (Throwable $failure) {
+            // A request that refused consent and then failed rolled its
+            // refusal back with it: the refusal is stored on its own.
+            $clickId = (int) ($data['click_id'] ?? 0);
+            if (($data[ConsentWithheld::COLUMN] ?? false) === true && $clickId > 0) {
+                $at = (int) ($data['conv_time'] ?? time());
+                ConsentRefusal::recordAfterFailure($this->conn, $clickId, $userId, $at);
+            }
+            throw $failure;
         }
 
         $this->afterRecordCommit($userId, $prepared, $result);
@@ -339,6 +356,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             'source' => $source,
             'payable' => $payable,
             'wantsReversal' => $wantsReversal,
+            'consentWithheld' => ConsentWithheld::from($data),
             'matchedBy' => $matchedBy,
         ];
     }
@@ -366,6 +384,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         $source = $prepared['source'];
         $payable = (bool) $prepared['payable'];
         $wantsReversal = (bool) $prepared['wantsReversal'];
+        $consentWithheld = (bool) $prepared['consentWithheld'];
         /** @var MatchMethod $matchedBy */
         $matchedBy = $prepared['matchedBy'];
         $ledger = new MysqlConversionLedger($this->conn);
@@ -380,6 +399,12 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // moved the click since the endpoint resolved its SubID.
         if (isset($data['expected_campaign_id']) && (int) $data['expected_campaign_id'] !== $clickCampaignId) {
             throw new PurLinkCampaignChanged('The click no longer belongs to the PurLink campaign');
+        }
+        // A conversion whose own request refused refuses its click, under the
+        // click's lock and in this transaction, a repeat of one included: no
+        // conversion credited to the click is sent from then on (ConsentRefusal).
+        if ($consentWithheld) {
+            ConsentRefusal::record($this->conn, $clickId, $convTime);
         }
         $terms = $ledger->campaignTerms($clickCampaignId, $userId);
         // The currency the row's amount is in is stamped on it (RowCurrency);
@@ -459,6 +484,18 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         $this->conn->bind($dupStmt, 'is', [$clickId, $dedupeKey]);
         $dup = $this->conn->fetchOne($dupStmt);
         if ($dup !== null) {
+            // A repeat that refuses tightens the row it repeats, under the
+            // click's lock; nothing loosens it (ConsentWithheld). A delivery
+            // already sent stays sent.
+            if ($consentWithheld && ConsentWithheld::columnPresent($this->conn)) {
+                $tighten = $this->conn->prepareWrite(
+                    'UPDATE 202_conversion_logs SET consent_withheld = 1'
+                        . ' WHERE conv_id = ? AND user_id = ? AND consent_withheld = 0'
+                );
+                $this->conn->bind($tighten, 'ii', [(int) $dup['conv_id'], $userId]);
+                $this->conn->executeUpdate($tighten);
+            }
+
             return [
                 'convId' => (int) $dup['conv_id'],
                 'duplicate' => true,
@@ -664,6 +701,15 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $types .= 'sssi';
             array_push($values, $rowCurrency, $statedUnits !== null ? Amount::fromUnits($statedUnits) : null, $statedCurrency, $rowBasis);
         }
+        // A refusal is written by the row's own INSERT, so it cannot be lost
+        // between the request and the send. Without the column (the 1.9.80
+        // upgrade has not run) the row is not queued for a destination.
+        $refusalStored = $consentWithheld && ConsentWithheld::columnPresent($this->conn);
+        if ($refusalStored) {
+            $columns[] = ConsentWithheld::COLUMN;
+            $types .= 'i';
+            $values[] = 1;
+        }
         // Last: prepareInsert() drops it while the 1.9.79 upgrade has not added it.
         $columns[] = 'match_method';
         $types .= 's';
@@ -749,7 +795,11 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
         // The account's destinations (ad platforms), queued in this transaction; only a
         // paid sale. A failure to queue is logged and loses the send, never the conversion.
-        if ($reverses === null && $amountUnits >= 0 && $payable) {
+        if ($reverses === null && $amountUnits >= 0 && $payable && $consentWithheld && !$refusalStored) {
+            error_log('Conversion ' . $convId . ' of user ' . $userId . ' was recorded but not queued for its'
+                . ' destinations: its request withheld consent, and the 1.9.80 upgrade has not added'
+                . ' the column that keeps that.');
+        } elseif ($reverses === null && $amountUnits >= 0 && $payable) {
             try {
                 $this->conn->withSavepoint(fn (): int => (new DestinationQueue($this->conn))->queueConversion($userId, $convId, $campaignId, time()));
             } catch (Throwable $e) {
@@ -1080,6 +1130,33 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $row = $this->assertGoalRow($convId, $userId);
 
             return $this->softDeleteLocked($convId, $userId, (int) $row['click_id'], $reason);
+        });
+    }
+
+    /**
+     * The goal engine's ledger rows $convIds of the account, whose reaching
+     * event a later request refused consent for (GoalEngine), refused from
+     * now on: consent_withheld = 1, never set back (ConsentWithheld). Inside
+     * the caller's transaction. Before the 1.9.80 upgrade adds the column
+     * there is no destination to keep them from.
+     *
+     * @param list<int> $convIds
+     */
+    public function withholdGoalRowsInTransaction(int $userId, array $convIds): void
+    {
+        if ($convIds === []) {
+            return;
+        }
+        $this->conn->joinTransaction(function () use ($userId, $convIds): void {
+            if (!ConsentWithheld::columnPresent($this->conn)) {
+                return;
+            }
+            $stmt = $this->conn->prepareWrite('UPDATE 202_conversion_logs SET consent_withheld = 1'
+                . ' WHERE conv_id = ? AND user_id = ? AND consent_withheld = 0');
+            foreach ($convIds as $convId) {
+                $this->conn->bind($stmt, 'ii', [$convId, $userId]);
+                $this->conn->executeUpdate($stmt);
+            }
         });
     }
 

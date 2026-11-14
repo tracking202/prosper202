@@ -52,6 +52,9 @@ final class MatchMethodUpgradeIntegrationTest extends TestCase
             if (!in_array('match_method', array_column(self::columns($table), 'COLUMN_NAME'), true)) {
                 self::q("ALTER TABLE $table ADD COLUMN `match_method` varchar(16) NOT NULL DEFAULT 'unknown'");
             }
+            if (!in_array('consent_withheld', array_column(self::columns($table), 'COLUMN_NAME'), true)) {
+                self::q("ALTER TABLE $table ADD COLUMN `consent_withheld` tinyint(1) unsigned NOT NULL DEFAULT '0'");
+            }
         }
         self::q('DELETE FROM 202_version');
         foreach (self::$versions ?? [] as $version) {
@@ -68,6 +71,10 @@ final class MatchMethodUpgradeIntegrationTest extends TestCase
             self::q("TRUNCATE TABLE $table");
             if (in_array('match_method', array_column(self::columns($table), 'COLUMN_NAME'), true)) {
                 self::q("ALTER TABLE $table DROP COLUMN match_method");
+            }
+            // Nor the request's consent, which 1.9.80 adds after it.
+            if (in_array('consent_withheld', array_column(self::columns($table), 'COLUMN_NAME'), true)) {
+                self::q("ALTER TABLE $table DROP COLUMN consent_withheld");
             }
         }
         // A 1.9.78 ledger has no row currency either (1.9.80 adds it after match_method).

@@ -10,6 +10,7 @@ use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\Ledger\RowCurrency;
 use Prosper202\Conversion\TrafficSourcePixels;
 use Prosper202\DataEngine\IpAddressSql;
+use Prosper202\Conversion\Ledger\ConsentWithheld;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\Database\Schema\TableRegistry;
@@ -60,6 +61,8 @@ final class DestinationQueue
 
     /** Why a conversion with no currency recorded is held back; releaseHeldForCurrency() finds its rows by it. */
     public const NO_CURRENCY = 'withheld: nothing recorded which currency this conversion\'s amount is in';
+    /** What a conversion of a visitor who refused consent says, on every try, a send again included. */
+    public const REFUSED = 'withheld: the visitor refused consent (p202_consent)';
     /** The minutely cron's budget. */
     public const RUN_SECONDS = 15;
     /** The longest page address a destination is given; a longer one is none, never cut into another page. */
@@ -446,6 +449,9 @@ final class DestinationQueue
         // The primary, not a replica: a row a lagging replica lacks is not a deleted one.
         // 202_clicks_advance and 202_clicks_site are one row per click, written by its latest visit.
         $stmt = $this->conn->prepareWrite('SELECT cl.click_id, cl.campaign_id, cl.conv_time, cl.click_payout, cl.transaction_id, cl.deleted, cl.superseded_by, cl.customer_id, cl.match_method, cl.currency, '
+            . ConsentWithheld::requestRefusedSql() . ' AS refused_request, '
+            . ConsentWithheld::replacedRefusedSql() . ' AS refused_replaced, '
+            . ConsentWithheld::visitRefusedSql() . ' AS refused_visit, '
             . IpAddressSql::address('ip', 'ip6') . ' AS ip_address, landing.site_url_address AS landing_url, outbound.site_url_address AS outbound_url,
                    ac.aff_campaign_id AS campaign_found, ac.identity_signals
             FROM 202_conversion_logs cl LEFT JOIN 202_clicks_advance ca ON ca.click_id = cl.click_id LEFT JOIN 202_ips ip ON ip.ip_id = ca.ip_id'
@@ -470,6 +476,12 @@ final class DestinationQueue
         }
         if ($campaigns !== [] && !in_array((int) $conv['campaign_id'], $campaigns, true)) {
             return ['cancelled', new SendResult(false, false, null, 'the conversion\'s campaign is not one this destination sends')];
+        }
+        // A visitor who refused consent is sent nothing: not the event, not
+        // the click's ids, not the user data. Reports still count the sale.
+        $refused = self::refusedConsent($conv);
+        if ($refused !== null) {
+            return ['withheld', new SendResult(false, false, null, self::REFUSED . ' ' . $refused)];
         }
         $ip = (string) ($conv['ip_address'] ?? '');
         // Only a click the conversion named: a guess would teach the platform the wrong clicks.
@@ -508,7 +520,15 @@ final class DestinationQueue
         $visit = $this->conn->prepareWrite('SELECT c.click_time FROM ' . FirstVisit::of('?') . ' AS c WHERE c.user_id = ?');
         $this->conn->bind($visit, 'ii', [$clickId, $userId]);
         $clickTime = $this->conn->fetchOne($visit)['click_time'] ?? null;
-        [$customerId, $emails, $phones] = $this->customer($destination['adapter'], $destination['settings'], (int) ($conv['customer_id'] ?? 0), $userId);
+        $userData = self::sendsUserData($destination['settings']);
+        [$customerId, $emails, $phones] = $userData
+            ? $this->customer(
+                $destination['adapter'],
+                $destination['settings'],
+                (int) ($conv['customer_id'] ?? 0),
+                $userId
+            )
+            : [null, [], []];
         $ownTransactionId = isset($conv['transaction_id']) ? (string) $conv['transaction_id'] : null;
         $eventId = DestinationEventId::of($this->conn, $userId, $clickId, $convId, $ownTransactionId);
         $facts = new ConversionFacts(
@@ -525,7 +545,7 @@ final class DestinationQueue
             $phones,
             $this->zone($userId),
             $clickTime === null ? null : (int) $clickTime,
-            self::sendsUserData($destination['settings']) && self::visitorMayBeIdentified($conv) && $this->latestVisitSignalled($clickId, $userId)
+            $userData && self::visitorMayBeIdentified($conv) && $this->latestVisitSignalled($clickId, $userId)
                 ? self::visitorAddress($ip) : null,
             // Not stored for a click yet: nothing is guessed in its place.
             null,
@@ -588,23 +608,19 @@ final class DestinationQueue
      * Whether the click's visitor may be identified to a platform, as a Meta
      * Purchase pixel asks it (FacebookPixelAssistantScript::mayTrack()): the
      * campaign's identity capture is on (RequestSignals::campaignAllows()),
-     * and the click's latest visit did not refuse consent (p202_consent). A
-     * refusal is not stored, but its mark is: a browser signal (the visitor
+     * and a browser signal came with the click's latest visit. A visitor who
+     * refused consent is not reached here at all (refusedConsent()). A browser signal (the visitor
      * cookie, the landing page id; 202_identity_observations) is recorded
      * only from a request that did not refuse consent, under a campaign that
      * allowed capture (ClickIdentity::fromRequest()), with the time of the
      * visit it came with. So the address, which is the latest visit's, goes
-     * only when a signal came with that visit (latestVisitSignalled()): a re-click that
-     * brought none takes the earlier visits' marks back
-     * (IdentityGraph::withdrawBrowserSignals()), so one in the second of
-     * the visit before it does too. A link a conversion's
+     * only when a signal came with that visit (latestVisitSignalled()): a
+     * re-click that brought none takes the earlier visits' marks back
+     * (IdentityGraph::withdrawBrowserSignals()). A link a conversion's
      * customer id makes later (trustedCustomer(), customerOnly()) is no such
      * mark. The latest visit is the account's own (#27). A click with no
      * such signal, or whose campaign is not the account's or is gone, is
-     * not; nor is one whose campaign has turned capture off since. Like the
-     * Meta Purchase pixel's, the rule is per request: a later request of the
-     * click that did not refuse (a landing page's, absent meaning given)
-     * marks the visit it records.
+     * not; nor is one whose campaign has turned capture off since.
      *
      * @param array<string, mixed> $conv
      */
@@ -612,6 +628,27 @@ final class DestinationQueue
     {
         return ($conv['campaign_found'] ?? null) !== null
             && RequestSignals::campaignAllows($conv['identity_signals'] ?? null);
+    }
+
+    /**
+     * Why the conversion's visitor refused consent, or null when nothing
+     * says they did: the three parts of ConsentWithheld::refusedSql(), read
+     * with the conversion (deliver()), the rule the offline export applies
+     * too. Anything but a 0 reads as a refusal (CLAUDE.md #11), and a read
+     * that fails fails the delivery, which is tried again.
+     *
+     * @param array<string, mixed> $conv
+     */
+    private static function refusedConsent(array $conv): ?string
+    {
+        $refused = static fn (string $key): bool => (string) ($conv[$key] ?? '1') !== '0';
+
+        return match (true) {
+            $refused('refused_request') => 'on the conversion\'s request',
+            $refused('refused_replaced') => 'on a conversion this one replaced',
+            $refused('refused_visit') => 'on a visit, a conversion or a goal event of its click',
+            default => null,
+        };
     }
 
     /**

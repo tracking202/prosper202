@@ -5485,12 +5485,20 @@ class UPGRADE
                 // an account's last week of conversions, and the currency each
                 // row's amount is in with what a postback stated (RowCurrency);
                 // the rows already there take the currency that can be known
-                // (_upgrade_ledger_currency_backfill(), run by the reconcile).
+                // (_upgrade_ledger_currency_backfill(), run by the reconcile),
+                // and consent_withheld, 1 on a row whose request withheld
+                // consent (Ledger\ConsentWithheld); every row already there is 0,
+                // with a key on superseded_by, which the refusal's reading asks
+                // of every row an export reads.
                 \Prosper202\Database\Tables\ConversionTables::conversionLogs(),
                 // PurLinks: click-out ordering, deferred pixels fired, per-offer goal subjects.
                 \Prosper202\Database\Tables\ClickTables::purLinkExitOrder(),
                 \Prosper202\Database\Tables\ClickTables::purLinkPixelFires(),
                 \Prosper202\Database\Tables\GoalTables::purLinkGoalSubjects(),
+                // 202_goal_events gains consent_withheld, its request's refusal,
+                // which every ledger row its outcomes write carries
+                // (Ledger\ConsentWithheld); every event already there is 0.
+                \Prosper202\Database\Tables\GoalTables::goalEvents(),
                 // The Bot202 Facebook Pixel Assistant's lookup rows, as a fresh
                 // install seeds them (DataSeeder); a paid install's are kept.
                 \Prosper202\Database\Tables\MiscTables::bot202FacebookPixelContentType(),
@@ -5512,6 +5520,9 @@ class UPGRADE
                 // filled for the clicks of the last 30 days
                 // (_upgrade_fill_click_ad_ids()).
                 \Prosper202\Database\Tables\ClickTables::clicksAdIds(),
+                // The clicks a request withheld consent for
+                // (Prosper202\Identity\ConsentRefusal).
+                \Prosper202\Database\Tables\ClickTables::clickConsentRefusals(),
                 // 202_google gains oppref, OpenAI's click id (ClickRecord), filled
                 // into the lookup above with the other ids.
                 \Prosper202\Database\Tables\TrackingTables::google(),

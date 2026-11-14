@@ -38,6 +38,7 @@ final class ReasonForTest extends TestCase
             'msclkid' => '0123456789abcdef0123456789abcdef',
             'conversion_name' => 'Lead',
             'owned' => 1,
+            'refused' => 0,
         ];
     }
 
@@ -59,6 +60,12 @@ final class ReasonForTest extends TestCase
     public function testEachReasonInItsOrder(): void
     {
         self::assertSame(LeftOut::NOT_COUNTED, self::reason(['counted_amount' => null, 'match_method' => 'same_ip', 'gclid' => '']));
+        self::assertSame(LeftOut::NOT_COUNTED, self::reason(['counted_amount' => null, 'refused' => 1]));
+        $refusedAndGuessed = ['refused' => 1, 'match_method' => 'same_ip', 'gclid' => ''];
+        self::assertSame(LeftOut::REFUSED_CONSENT, self::reason($refusedAndGuessed));
+        $what = 'a refusal not read is a refusal';
+        self::assertSame(LeftOut::REFUSED_CONSENT, self::reason(['refused' => null]), $what);
+        self::assertSame(LeftOut::REFUSED_CONSENT, self::reason(['refused' => '2']), 'anything but 0 is one');
         self::assertSame(LeftOut::MATCHED_BY_VISITOR_ID, self::reason(['match_method' => 'visitor_id', 'gclid' => '']));
         self::assertSame(LeftOut::MATCHED_BY_SAME_IP, self::reason(['match_method' => 'same_ip']));
         self::assertSame(LeftOut::MATCH_UNKNOWN, self::reason(['match_method' => 'unknown']));
@@ -102,7 +109,8 @@ final class ReasonForTest extends TestCase
     {
         $reached = [];
         $cases = [
-            [['counted_amount' => null]], [['match_method' => 'visitor_id']], [['match_method' => 'same_ip']],
+            [['counted_amount' => null]], [['refused' => 1]], [['match_method' => 'visitor_id']],
+            [['match_method' => 'same_ip']],
             [['match_method' => 'unknown']], [['gclid' => '']], [['gclid' => '', 'gbraid' => 'b'], Format::GOOGLE_UPLOADS],
             [['gclid' => 'a b']], [['click_time' => 1, 'conv_time' => self::NOW]], [['conv_time' => 1]],
             [['owned' => 0]], [['click_time' => self::NOW, 'conv_time' => self::NOW]],

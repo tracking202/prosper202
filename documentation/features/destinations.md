@@ -119,8 +119,78 @@ once.
   without the `+`, as OpenAI hashes them, and the visitor's IP address is
   sent too, only when the campaign captures identity, the visitor did not
   refuse consent (`p202_consent`), and the click stored the address
-  unmasked (a masked address names a network, not the visitor). The raw values are never written to the queue,
-  the log or an error.
+  unmasked (a masked address names a network, not the visitor). The raw
+  values are never written to the queue, the log or an error.
+- **A visitor who refused consent is sent to no ad platform.** When a
+  visitor refuses (`p202_consent` with any value but `1`), none of their
+  conversions goes to GA4, Google Ads or ChatGPT Ads, as a destination or in
+  an [offline conversion file](offline-conversions.md) (the download, the
+  API, `p202 conversion offline-export` and the fetch URL a platform pulls):
+  not the event, not the click's ids (`gclid`, `msclkid`, `oppref` and the
+  rest), not user data. A destination's delivery is still listed, as
+  *withheld*, with the reason "the visitor refused consent", and sending it
+  again checks again and withholds it again; a file counts it as left out
+  (`refused_consent`). Your own reports still count the conversion, and the
+  conversion log and its CSV keep what they always kept, the request's IP
+  address and user agent included: the rule is about what is sent to an ad
+  platform, not what your install records.
+
+  A refusal belongs to the click it came with, and counts when it arrives.
+  It holds for the click from then on: no conversion credited to that click
+  is sent, whichever visit it credits and whichever request recorded it, so
+  a later request that carries no `p202_consent`, or `1`, a later visit of
+  the same click that consents (a click-through in a later second) and a
+  later conversion that consents do not give it back. Conversions not yet
+  sent when the refusal arrives are held back too; a conversion already
+  sent before it arrived stays sent. Only another click starts fresh: a new
+  ad click of the same person is another click, and a refusal on one is not
+  read on the other. A refusal arrives:
+  - on a visit of the click: the tracking link, a click through a rotator,
+    or the landing page's pageview when the page calls
+    `p202.consent(false)` before it (called after the pageview, the refusal
+    reaches the server with the page's next pageview, or with a pixel that
+    carries it);
+  - on a conversion's own request: a conversion pixel (`px.php`,
+    `gpx.php`, `upx.php`), a postback (`pb.php`, `gpb.php`) that passes on
+    the visitor's `p202_consent=0`, or an `event=` on one of them, whether
+    or not the event reaches a goal. It refuses the click, so the
+    click's other conversions are withheld too. A repeat of the same
+    conversion or event that refuses (a reloaded thank-you page) refuses it
+    and its click from then on, also when it records nothing more (a click
+    that converted already, and a request with no transaction id); a repeat
+    that consents does not undo a refusal. A request recorded later from the
+    inbound log keeps the answer it arrived with (the log keeps
+    `p202_consent` as given or not; a row logged by an earlier version,
+    a 1.9.80 build before this was added included, did not keep it and
+    is recorded as a refusal);
+  - on a conversion a replacing one goes by: on a campaign that pays the
+    latest conversion, a sale that replaces a refused one is withheld too,
+    and a goal conversion written again (a re-evaluation, a replay) keeps
+    its event's refusal.
+
+  A refusing request whose conversion or event is refused (an amount no
+  conversion can hold, a reversal with no sale to reverse, an event id
+  reused with other content, a click past its event cap) records nothing,
+  and its click is refused all the same: the visitor's answer stands
+  whatever the sender got wrong. A pixel answers its image either way. A
+  request that names no click of your account (one not found, another
+  account's, or a postback naming a campaign the click never visited)
+  refuses nothing, since it names no click of yours to refuse.
+
+  What cannot carry a refusal, and so reads as consent given: a conversion
+  sent with the API (`POST /conversions`) and goal events sent with the API
+  or by an app (there is no field for it), a CSV or SubID import, a payment
+  provider's notification or webhook, and an Android app install.
+  Conversions and clicks recorded before the 1.9.80 upgrade, and in the
+  time between deploying 1.9.80 and running its upgrade, carry no stored
+  refusal either. A campaign whose identity capture is off is not a refusal:
+  its conversions are sent, without the visitor's address.
+
+  What it does not cover: your traffic sources' pixels and postbacks and
+  the Meta Purchase pixel follow their own rules and are not changed by it,
+  and the conversion webhooks (Event Bridge `conversion.recorded`, the LTV
+  webhooks) that go to endpoints you set still carry a refused visitor's
+  conversion, with its click id and the request's IP address.
 - **Consent signals** (`ad_user_data`, `ad_personalization`) are what you
   state, per destination, from your consent banner: Prosper202 does not
   record a visitor's consent. Hashed data (and `user_id`) go only when
@@ -347,9 +417,9 @@ another type (or `custom` with a name of your own), to
   the first it receives: if the ChatGPT Ads pixel on your page reports the
   same sale, give it this id as `event_id` and the same event name, or the
   sale is counted twice.
-- `oppref`: OpenAI's click id from the click, as it arrived. It is sent
-  whenever the click has one, also when the visit refused consent, as
-  Google's click id is: it names the ad click, not the person.
+- `oppref`: OpenAI's click id from the click, as it arrived, sent whenever
+  the click has one. A conversion of a visitor who refused consent is not
+  sent at all (see Privacy and personal data), so neither is its `oppref`.
 - `source_url`: the click's landing page, or the tracking link the click
   came through, without its query string or fragment (they carry what the
   link put there). A click with neither stored is failed, not sent: OpenAI

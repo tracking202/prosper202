@@ -124,6 +124,7 @@ final class ConversionTables
                 `stated_amount` decimal(11,5) DEFAULT NULL,
                 `stated_currency` char(3) DEFAULT NULL,
                 `currency_basis` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                `consent_withheld` tinyint(1) unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`conv_id`),
                 UNIQUE KEY `uniq_click_dedupe` (`click_id`,`dedupe_key`),
                 KEY `click_transaction` (`click_id`,`transaction_id`),
@@ -132,7 +133,8 @@ final class ConversionTables
                 KEY `customer_id` (`customer_id`),
                 KEY `reverses_conv_id` (`reverses_conv_id`),
                 KEY `user_conv_time` (`user_id`,`conv_time`),
-                KEY `user_currency_click_time` (`user_id`,`currency`,`click_time`)
+                KEY `user_currency_click_time` (`user_id`,`currency`,`click_time`),
+                KEY `superseded_by` (`superseded_by`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

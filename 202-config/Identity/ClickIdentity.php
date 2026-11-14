@@ -42,6 +42,12 @@ final class ClickIdentity
         public readonly ?string $cookieValue,
         /** The request refused consent (p202_consent=0) or its campaign's capture is off. */
         public readonly bool $withheld = false,
+        /**
+         * The visitor refused (p202_consent other than 1), whatever the
+         * campaign says: what ConsentRefusal stores. A campaign's capture
+         * switched off withholds the visitor's data, not the conversion.
+         */
+        public readonly bool $refused = false,
     ) {
     }
 
@@ -63,7 +69,7 @@ final class ClickIdentity
     public static function fromRequest(array $get, array $cookies, bool $campaignAllows, bool $mayMint = true): self
     {
         if (!RequestSignals::consentGiven($get, $campaignAllows)) {
-            return new self([], [], null, true);
+            return new self([], [], null, true, !RequestSignals::consentGiven($get));
         }
         $vid = RequestSignals::visitorCookie($cookies) ?? ($mayMint ? RequestSignals::mintVisitorId() : null);
         $signals = $vid !== null ? [new IdentitySignal(SignalType::VISITOR_COOKIE, $vid)] : [];
@@ -118,24 +124,38 @@ final class ClickIdentity
 
     /**
      * A later request of a click that is already stored (a landing page's,
-     * for the click its tracking template made) and that withheld consent
-     * takes back the browser marks the click's earlier requests left
-     * (IdentityGraph::withdrawBrowserSignals()). The caller has shown the
-     * click is the account's.
+     * for the click its tracking template made, whose visit is the one at
+     * $visitTime) and that withheld consent takes back the browser marks the
+     * click's earlier requests left (IdentityGraph::withdrawBrowserSignals()),
+     * and, when the visitor refused, holds that for the click
+     * (ConsentRefusal). The caller has shown the click is the account's.
      *
      * Unlike attach(), a failure is the caller's: a link that is not made
-     * identifies no one, but a mark left standing would send the address of
-     * a visitor who refused (CLAUDE.md #11). The one statement is tried
-     * again on a lock error, then thrown.
+     * identifies no one, but a refusal not stored would send the address of
+     * a visitor who refused (CLAUDE.md #11). The refusal is stored first
+     * and on its own, so it stands when the marks, held by another request,
+     * cannot be taken back. Each is tried again on a lock error, then
+     * thrown.
      */
-    public function withdrawIfWithheld(Connection $conn, int $clickId): void
+    public function withdrawIfWithheld(Connection $conn, int $clickId, int $visitTime): void
     {
         if (!$this->withheld || $clickId <= 0) {
             return;
         }
+        if ($this->refused) {
+            self::onALockErrorAgain(
+                static fn () => ConsentRefusal::record($conn, $clickId, $visitTime)
+            );
+        }
+        self::onALockErrorAgain(static fn () => IdentityGraph::withdrawBrowserSignals($conn, $clickId));
+    }
+
+    /** @param \Closure(): void $write one statement that may be run again */
+    private static function onALockErrorAgain(\Closure $write): void
+    {
         for ($attempt = 1; true; $attempt++) {
             try {
-                IdentityGraph::withdrawBrowserSignals($conn, $clickId);
+                $write();
 
                 return;
             } catch (\Throwable $e) {

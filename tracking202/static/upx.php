@@ -220,6 +220,8 @@ if (is_numeric($mysql['click_id'])) {
 			'once_per_click'  => p202ExtractTransactionId($_GET) === '',
             // Server postbacks queued with the row, sent below (as gpb.php).
             'notify_traffic_source' => true,
+            // A refusal on this request: no destination is sent it.
+            'consent_withheld' => !\Prosper202\Identity\RequestSignals::consentGiven($_GET),
 		],
 		$matchedBy,
 		(string) ($cvar_sql_row['click_cpa'] ?? ''),

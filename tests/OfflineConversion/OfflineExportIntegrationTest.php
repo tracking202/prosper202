@@ -88,7 +88,7 @@ final class OfflineExportIntegrationTest extends TestCase
         }
         $tables = ['202_conversion_logs', '202_clicks', '202_clicks_spy', '202_click_latest_visits', '202_aff_campaigns',
             '202_attribution_pending', '202_dataengine', '202_google', '202_offline_conversion_names',
-            '202_offline_conversion_feeds', '202_notification_pending'];
+            '202_offline_conversion_feeds', '202_notification_pending', '202_click_consent_refusals'];
         foreach ($tables as $t) {
             self::assertTrue(self::$db->query('TRUNCATE TABLE ' . $t), $t . ': ' . self::$db->error);
         }
@@ -206,6 +206,113 @@ final class OfflineExportIntegrationTest extends TestCase
         self::assertSame('GBP', $summary->currency, 'the summary states the account\'s currency now');
     }
 
+    /**
+     * A visitor who refused consent goes to no ad platform, the offline
+     * file included, by the rule the destinations follow
+     * (ConsentWithheld::refusedSql()): a conversion whose own request
+     * refused, one on a visit that refused, one on a later visit of a
+     * refused click that did not refuse, and one that replaced a refused
+     * conversion are left out and counted under refused_consent, in every
+     * format and in the file a fetch URL serves; a consenting one is a line.
+     */
+    public function testAVisitorWhoRefusedConsentIsInNoFile(): void
+    {
+        $msclkid = static fn (int $n): string => str_pad(dechex($n), 32, '0', STR_PAD_LEFT);
+        foreach ([600, 601, 602, 604, 605] as $click) {
+            $this->click($click, 8, ['gclid' => 'EAIaIQ_' . $click, 'msclkid' => $msclkid($click)]);
+        }
+        $this->click(603, 7, ['gclid' => 'EAIaIQ_603', 'msclkid' => $msclkid(603)]);
+        $this->names();
+        $at = $this->now - 86400;
+        $request = $this->record(600, MatchMethod::CLICK_ID, ['payout' => '10', 'transaction_id' => 'C-600',
+            'conv_time' => $at, 'consent_withheld' => true]);
+        $visit = $this->record(601, MatchMethod::CLICK_ID, ['payout' => '10', 'transaction_id' => 'C-601',
+            'conv_time' => $at]);
+        $clickTime = (int) self::$db->query('SELECT click_time FROM 202_clicks WHERE click_id = 601')->fetch_row()[0];
+        self::fixture("INSERT INTO 202_click_consent_refusals SET click_id = 601, refused_at = $clickTime");
+        // 604 refused on its first visit; the conversion credits a later visit of the click that did not.
+        $refusedAt = (int) self::$db->query('SELECT click_time FROM 202_clicks WHERE click_id = 604')->fetch_row()[0];
+        self::fixture("INSERT INTO 202_click_consent_refusals SET click_id = 604, refused_at = $refusedAt");
+        self::fixture('INSERT INTO 202_clicks SET click_id=604, user_id=' . self::USER . ', aff_campaign_id=8,'
+            . ' click_payout=0, click_cpc=0, click_lead=0, click_time=' . ($refusedAt + 100));
+        $laterVisit = $this->record(604, MatchMethod::CLICK_ID, ['payout' => '10', 'transaction_id' => 'C-604',
+            'conv_time' => $at, 'click_time' => $refusedAt + 100]);
+        $credited = self::$db->query("SELECT click_time FROM 202_conversion_logs WHERE conv_id = $laterVisit")
+            ->fetch_row();
+        self::assertSame([(string) ($refusedAt + 100)], $credited, 'the conversion credits the later visit');
+        $given = $this->record(602, MatchMethod::CLICK_ID, ['payout' => '10', 'transaction_id' => 'C-602',
+            'conv_time' => $at]);
+        $this->record(603, MatchMethod::CLICK_ID, ['payout' => '10', 'transaction_id' => 'C-603a', 'conv_time' => $at,
+            'consent_withheld' => true]);
+        $replacing = $this->record(603, MatchMethod::CLICK_ID, ['payout' => '10', 'transaction_id' => 'C-603b',
+            'conv_time' => $at + 1]);
+        // 605: a consenting sale, then one whose own request refuses, then a later one naming no
+        // p202_consent. The refusing request refuses the click: none of the three is in a file.
+        $byClick = [];
+        foreach (['C-605a' => [], 'C-605b' => ['consent_withheld' => true], 'C-605c' => []] as $tx => $more) {
+            $byClick[] = $this->record(605, MatchMethod::CLICK_ID, ['payout' => '10', 'transaction_id' => $tx,
+                'conv_time' => $at + count($byClick)] + $more);
+        }
+        $stored = self::$db->query('SELECT COUNT(*) FROM 202_click_consent_refusals WHERE click_id = 605')->fetch_row();
+        self::assertSame(['1'], $stored, 'the refusing request refused its click');
+        // Each click by its ids: a line names its gclid, or its msclkid in a Microsoft file.
+        $refused = [600 => $request, 601 => $visit, 603 => $replacing, 604 => $laterVisit, 605 => $byClick[0]];
+        $named = static fn (string $text, int $click): bool
+            => str_contains($text, 'EAIaIQ_' . $click) || str_contains(strtolower($text), $msclkid($click));
+
+        $check = static function (array $lines, $summary, string $what) use ($refused, $named): void {
+            $text = implode("\n", $lines);
+            self::assertTrue($named($text, 602), "$what: the positive control, a consenting conversion, is a line");
+            foreach ($refused as $click => $convId) {
+                self::assertFalse($named($text, $click), "$what: conversion $convId is not in the file");
+            }
+            $refusedCount = $summary->leftOut['refused_consent'];
+            self::assertSame(7, $refusedCount, "$what: each is counted as refused, 605's three too");
+            $counted = $summary->rows + array_sum($summary->leftOut);
+            self::assertSame($summary->conversions, $counted, "$what: the counts add up");
+        };
+        foreach (Format::cases() as $format) {
+            // Microsoft names campaign 8 only: 603's replacement is refused before it is unnamed.
+            [$lines, $summary] = $this->file(new ExportOptions($format, 30, $this->now));
+            $check($lines, $summary, $format->value);
+        }
+        $store = new FeedStore(new Connection(self::$db));
+        [$settings] = FeedStore::settings(['format' => 'google', 'days' => '30', 'conversion_name' => '',
+            'ad_user_data' => '', 'ad_personalization' => '']);
+        self::assertNotNull($settings);
+        [, $key] = $store->create(self::USER, $settings, $this->now);
+        $feed = $store->findByKey($key);
+        self::assertNotNull($feed);
+        [$lines, $summary] = $this->file($feed->options($this->now));
+        $check($lines, $summary, 'a fetch URL\'s file');
+        self::assertNotSame(0, $given);
+    }
+
+    /**
+     * A refusal that cannot be read (its table missing, as before the 1.9.80
+     * upgrade) makes no file at all, rather than one that could hold a
+     * visitor who refused (CLAUDE.md #11).
+     */
+    public function testAnExportThatCannotReadTheRefusalsMakesNoFile(): void
+    {
+        $this->click(610, 8, ['gclid' => 'EAIaIQ_610']);
+        $this->names();
+        $this->record(610, MatchMethod::CLICK_ID, ['payout' => '10', 'conv_time' => $this->now - 86400]);
+        self::fixture('RENAME TABLE 202_click_consent_refusals TO 202_click_consent_refusals_away');
+        $thrown = null;
+        try {
+            $options = new ExportOptions(Format::GOOGLE, 30, $this->now);
+            (new OfflineExport(new Connection(self::$db)))->write(self::USER, $options, null);
+        } catch (\Throwable $e) {
+            $thrown = $e;
+        } finally {
+            self::fixture('RENAME TABLE 202_click_consent_refusals_away TO 202_click_consent_refusals');
+        }
+        self::assertNotNull($thrown, 'the export fails');
+        $what = 'naming what it could not read';
+        self::assertStringContainsString('202_click_consent_refusals', $thrown->getMessage(), $what);
+    }
+
     /** Every shape a conversion takes, and each line the files send or the reason they leave it out. */
     public function testEachFileSendsTheConversionsThatNamedAnAdClickAndCountsTheRest(): void
     {
@@ -263,7 +370,8 @@ final class OfflineExportIntegrationTest extends TestCase
         self::assertSame(15, $summary->conversions, 'every conversion but the two reversals');
         self::assertSame(5, $summary->rows);
         self::assertSame([
-            'not_counted' => 3, 'visitor_id' => 1, 'same_ip' => 1, 'match_unknown' => 0, 'no_click_id' => 1,
+            'not_counted' => 3, 'refused_consent' => 0,
+            'visitor_id' => 1, 'same_ip' => 1, 'match_unknown' => 0, 'no_click_id' => 1,
             'gbraid_wbraid_only' => 0, 'malformed_click_id' => 1, 'click_too_old' => 1, 'before_click' => 0,
             'not_accounts_click' => 1, 'click_too_recent' => 1, 'negative_value' => 0, 'no_currency' => 0,
             'no_conversion_name' => 0, 'over_row_limit' => 0,

@@ -8,6 +8,7 @@ use LogicException;
 use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Schema\TableRegistry;
+use Prosper202\Identity\ConsentRefusal;
 use Prosper202\Identity\IdentityGraph;
 use Prosper202\Report\RollupDirty;
 
@@ -62,6 +63,11 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                 self::arrivalOf($click),
                 ['click_lead' => 0, 'click_payout' => $click->clickPayout]
             );
+            // A visitor's refusal is stored with the click's rows, or not at
+            // all: it holds for every conversion of the click (ConsentRefusal).
+            if ($click->identity?->refused === true) {
+                ConsentRefusal::record($this->conn, $click->clickId, $click->clickTime);
+            }
             $this->write(
                 'INSERT INTO 202_clicks_advance (click_id, text_ad_id, keyword_id, ip_id, country_id, region_id,'
                     . ' isp_id, city_id, platform_id, browser_id, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -168,6 +174,11 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             // the one before it is not read as having brought them.
             if (!($click->identity?->bringsBrowserSignal() ?? false)) {
                 IdentityGraph::withdrawBrowserSignals($this->conn, $click->clickId);
+            }
+            // One the visitor refused holds for the click, whatever a later
+            // request or visit of it carries (ConsentRefusal).
+            if ($click->identity?->refused === true) {
+                ConsentRefusal::record($this->conn, $click->clickId, $click->clickTime);
             }
             // The redirector records no text ad: the click's is kept unless
             // the re-click brings one. The keyword is the click's.

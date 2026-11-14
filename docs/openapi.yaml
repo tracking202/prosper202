@@ -16682,6 +16682,7 @@ components:
           description: Every reason, with how many conversions it left out.
           properties:
             not_counted: {type: integer}
+            refused_consent: {type: integer}
             visitor_id: {type: integer}
             same_ip: {type: integer}
             match_unknown: {type: integer}

@@ -263,7 +263,13 @@ are never kept, so a conversion recorded this way links no customer.
 endpoint is known to send (subid, amount, transaction id and the like) and
 only when the value holds no email or IP address. Every other value,
 including signatures, keys, licence keys and the buyer's details, is
-`[redacted]`; a ClickBank notification's encrypted body is never kept.
+`[redacted]`; a ClickBank notification's encrypted body is never kept. A
+postback's or pixel's `p202_consent` is kept as `1` when it gave consent
+and `0` when it carried any other value; sent empty it is kept empty, and
+a request without it has none. Recording the request later from the log
+keeps its answer (empty is a refusal, none is consent, as at the endpoint);
+a row logged by an earlier version holds `[redacted]` there, which is
+recorded as a refusal.
 
 ## Offline conversion files
 
@@ -288,25 +294,30 @@ under the first that does not:
 1. it counts now: not deleted, not refunded in full, not replaced by a later
    conversion on its click, payable (`not_counted`); a partial refund is
    netted from its value;
-2. its click was named: `match_method` `click_id`, `ad_click_id` or `cookie`. A click found
+2. its visitor did not refuse consent (`refused_consent`): no `p202_consent`
+   other than `1` on the conversion's request, on any visit, conversion or goal
+   event of its click, or on a conversion it replaced, the rule [destinations](../features/destinations.md#privacy-and-personal-data)
+   follow. A refusal the install cannot read yet (before the 1.9.80 upgrade)
+   fails the export rather than send a refused visitor;
+3. its click was named: `match_method` `click_id`, `ad_click_id` or `cookie`. A click found
    by the landing page's visitor id (`visitor_id`), guessed from the visitor's
    address (`same_ip`) or recorded before 1.9.79 (`match_unknown`) would teach
    the platform's bidding clicks the conversion may not have come from;
-3. the click came with an id the platform issues (`no_click_id`; for
+4. the click came with an id the platform issues (`no_click_id`; for
    `google_uploads`, a click with only a gbraid or wbraid is
    `gbraid_wbraid_only`), in the form the platform issues
    (`malformed_click_id`: an msclkid is 32 hexadecimal digits, as Microsoft
    documents it; Google documents no form for its ids, which are held to
    base64url characters);
-4. the click is at most 90 days old (`click_too_old`), before the conversion
+5. the click is at most 90 days old (`click_too_old`), before the conversion
    (`before_click`), this account's (`not_accounts_click`) and at least 6
    hours old (`click_too_recent`: a later fetch whose window still covers it
    sends it);
-5. its value is not negative (`negative_value`), its currency was recorded
+6. its value is not negative (`negative_value`), its currency was recorded
    (`no_currency`; see [Currencies](../features/conversion-currency.md)), and it has a conversion name:
    its campaign's or the account's, set on the Setup page, or `conversion_name`
    (`no_conversion_name`);
-6. a Microsoft file stops at Microsoft's 100,000 rows an upload, newest first
+7. a Microsoft file stops at Microsoft's 100,000 rows an upload, newest first
    (`over_row_limit`).
 
 Each line's `Conversion Time` is the conversion's in the account's time zone

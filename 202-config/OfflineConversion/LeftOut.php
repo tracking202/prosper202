@@ -15,6 +15,7 @@ use Prosper202\Conversion\Ledger\MatchMethod;
 enum LeftOut: string
 {
     case NOT_COUNTED = 'not_counted';
+    case REFUSED_CONSENT = 'refused_consent';
     case MATCHED_BY_VISITOR_ID = 'visitor_id';
     case MATCHED_BY_SAME_IP = 'same_ip';
     case MATCH_UNKNOWN = 'match_unknown';
@@ -53,6 +54,8 @@ enum LeftOut: string
         return match ($this) {
             self::NOT_COUNTED => 'Does not count: deleted, refunded in full, replaced by a later conversion on its'
                 . ' click, or not payable.',
+            self::REFUSED_CONSENT => 'The visitor refused consent (p202_consent), on the conversion\'s request or'
+                . ' on a visit, a conversion or a goal event of its click. No ad platform is sent such a conversion.',
             self::MATCHED_BY_VISITOR_ID => 'Its click was the one the landing page\'s visitor id was last seen on,'
                 . ' not one the conversion named.',
             self::MATCHED_BY_SAME_IP => 'Nothing named its click; it was guessed from the visitor\'s IP address.'

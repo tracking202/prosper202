@@ -62,6 +62,16 @@ teach its bidding clicks the conversion may not have come from. Conversions
 recorded before 1.9.79, which kept no record of how their click was found,
 are not sent either.
 
+A conversion of a visitor who refused consent (`p202_consent`) is never
+sent, by the rule [destinations](destinations.md#privacy-and-personal-data)
+follow: one credited to a click that was refused, on a visit of it or on
+the request of any of its conversions or goal events, and one that replaced
+a refused conversion are left out and counted (`refused_consent`). A file
+is made when it is asked for, so one made after a refusal leaves out a
+conversion of that click that a destination, or an earlier file the
+platform fetched, already sent. Until the 1.9.80 upgrade has stored where refusals are
+kept, the file is not made at all rather than send a refused visitor.
+
 A conversion is also left out when it no longer counts (deleted, refunded in
 full, replaced by a later conversion on its click), when its click came with
 no id from the platform or one not in the platform's form (Microsoft documents

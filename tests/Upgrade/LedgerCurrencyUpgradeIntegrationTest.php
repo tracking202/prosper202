@@ -79,11 +79,13 @@ final class LedgerCurrencyUpgradeIntegrationTest extends TestCase
         }
     }
 
-    /** A 1.9.79 table: no currency columns, no key over them, no rates table. */
+    /** A 1.9.79 table: no currency or consent columns, no key over them, no rates table. */
     private static function as1979(): void
     {
-        self::q('ALTER TABLE 202_conversion_logs DROP INDEX user_currency_click_time, DROP COLUMN currency,'
-            . ' DROP COLUMN stated_amount, DROP COLUMN stated_currency, DROP COLUMN currency_basis');
+        self::q('ALTER TABLE 202_conversion_logs DROP INDEX user_currency_click_time, DROP INDEX superseded_by,'
+            . ' DROP COLUMN currency,'
+            . ' DROP COLUMN stated_amount, DROP COLUMN stated_currency, DROP COLUMN currency_basis,'
+            . ' DROP COLUMN consent_withheld');
         self::q('DROP TABLE 202_exchange_rates');
         self::q('DROP TABLE 202_currency_changes');
         self::q('ALTER TABLE 202_aff_campaigns DROP COLUMN aff_campaign_currency_notice');

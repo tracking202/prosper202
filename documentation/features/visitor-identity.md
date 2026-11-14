@@ -75,6 +75,19 @@ One switch turns all of it off:
 Then no cookie is set or read, the landing-page id is deleted, and each click
 is a journey of one.
 
+A refusal holds for the click: once the tracking link, a click through a
+rotator, the landing page's pageview, or a conversion pixel, postback or
+goal event of the click refuses, no conversion of that click is sent to a
+[destination](destinations.md) (GA4, Google Ads, ChatGPT Ads) or in an
+[offline conversion file](offline-conversions.md), whatever a later request
+or a later visit of the same click carries, a click-through or a conversion
+that consents included; one already sent stays sent. A refusal is read on
+its own click only: a new ad click starts fresh. Your reports
+still count those conversions; traffic source pixels and postbacks, the Meta
+Purchase pixel and the conversion webhooks to your own endpoints are not
+changed by this. [Destinations](destinations.md#privacy-and-personal-data)
+lists which requests can carry a refusal and which cannot.
+
 The privacy setting ([`user_pref_privacy`](../api/14-users.md#privacy-user_pref_privacy))
 withholds the `p202vid` cookie too: a visitor it holds back is neither given
 one nor read for one, as they are given no click cookie. A new account starts

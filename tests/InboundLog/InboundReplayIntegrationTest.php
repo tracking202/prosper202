@@ -110,7 +110,8 @@ final class InboundReplayIntegrationTest extends TestCase
         $clicks = self::CLICK . ', ' . self::OTHER_CLICK;
         foreach (
             ['202_clicks', '202_clicks_spy', '202_clicks_advance', '202_clicks_tracking', '202_clicks_record',
-            '202_clicks_site', '202_click_latest_visits', '202_attribution_rollup_dirty_clicks', '202_dataengine'] as $table
+            '202_clicks_site', '202_click_latest_visits', '202_attribution_rollup_dirty_clicks', '202_dataengine',
+            '202_click_consent_refusals'] as $table
         ) {
             self::q("DELETE FROM $table WHERE click_id IN ($clicks)");
         }
@@ -227,6 +228,104 @@ final class InboundReplayIntegrationTest extends TestCase
         self::assertStringContainsString('converted already', $refused['message']);
         self::assertCount(1, self::conversions());
         self::assertSame([null, null], [self::logRow($plain)['conversion_id'], self::logRow($plain)['record_started_at']]);
+    }
+
+    /**
+     * The log keeps a request's p202_consent as given ('1') or not ('0'):
+     * given back, a consenting row is recorded consenting and a refusing
+     * one refused, its click with it. A row logged before the log kept it
+     * holds '[redacted]', which cannot say yes, so it reads as a refusal.
+     *
+     * @return array<string, array{0: string, 1: mixed, 2: string, 3: int}>
+     */
+    public static function consentRows(): array
+    {
+        return [
+            'consenting' => ['1', null, '0', 0],
+            'refusing' => ['0', null, '1', 1],
+            'logged before the log kept it' => ['0', \Prosper202\InboundLog\Redactor::REDACTED, '1', 1],
+            // A value no endpoint writes (a log edited by hand) cannot say yes.
+            'a number in the log' => ['1', 1, '1', 1],
+            'a list in the log' => ['1', ['1'], '1', 1],
+        ];
+    }
+
+    /** @dataProvider consentRows */
+    public function testARowGivenBackIsRecordedWithTheConsentItCarried(
+        string $sent,
+        mixed $logAs,
+        string $withheld,
+        int $refusals
+    ): void {
+        $id = self::refused('gpb', ['subid' => (string) self::CLICK, 'txid' => 'NW-C1', 'p202_consent' => $sent]);
+        self::assertSame($sent, self::logRow($id)['fields']['p202_consent'], 'the log keeps given or not');
+        if ($logAs !== null) {
+            self::q('UPDATE 202_inbound_log SET fields = ' . self::str(json_encode(
+                ['subid' => (string) self::CLICK, 'txid' => 'NW-C1', 'p202_consent' => $logAs],
+                JSON_THROW_ON_ERROR
+            )) . " WHERE inbound_id = $id");
+        }
+
+        $answer = (new InboundReplay(self::requireScratch()))->replay(self::ACCOUNT, $id);
+
+        self::assertSame('recorded', $answer['status'], $answer['message']);
+        $stored = self::$db->query('SELECT consent_withheld FROM 202_conversion_logs WHERE click_id = ' . self::CLICK)
+            ->fetch_all(MYSQLI_NUM);
+        self::assertSame([[$withheld]], $stored, 'recorded with the consent it carried');
+        $count = self::$db->query('SELECT COUNT(*) FROM 202_click_consent_refusals WHERE click_id = ' . self::CLICK)
+            ->fetch_row()[0];
+        self::assertSame($refusals, (int) $count, 'its click refused only when it refused');
+    }
+
+    /**
+     * On a campaign that pays in accumulate mode, a click a sale with a
+     * transaction id made a lead: a row given back with no transaction id
+     * records nothing more whether it consented or refused, and only the
+     * refusing one refuses the click, as at pb.php.
+     */
+    public function testAnIdLessRowGivenBackAfterAKeyedSaleRecordsNothingMore(): void
+    {
+        self::q("UPDATE 202_aff_campaigns SET payout_mode = 'accumulate' WHERE aff_campaign_id = " . self::CAMPAIGN);
+        try {
+            $replay = new InboundReplay(self::requireScratch());
+            $sale = self::refused('gpb', ['subid' => (string) self::CLICK, 'txid' => 'NW-K1', 'p202_consent' => '1']);
+            self::assertSame('recorded', $replay->replay(self::ACCOUNT, $sale)['status']);
+            $refusals = static fn (): int => (int) self::$db->query(
+                'SELECT COUNT(*) FROM 202_click_consent_refusals WHERE click_id = ' . self::CLICK
+            )->fetch_row()[0];
+            foreach (['1' => 0, '0' => 1] as $consent => $refused) {
+                $row = self::refused('gpb', ['subid' => (string) self::CLICK, 'p202_consent' => (string) $consent]);
+                $answer = $replay->replay(self::ACCOUNT, $row);
+                self::assertSame('refused', $answer['status'], "'$consent': " . $answer['message']);
+                self::assertCount(1, self::conversions(), "'$consent': nothing more is recorded");
+                self::assertSame($refused, $refusals(), "'$consent': the click refused only by a refusal");
+            }
+        } finally {
+            self::q("UPDATE 202_aff_campaigns SET payout_mode = 'replace' WHERE aff_campaign_id = " . self::CAMPAIGN);
+        }
+    }
+
+    /**
+     * A row given back that refused consent, on a click that is already a
+     * lead, records no second conversion, but its refusal is the click's
+     * from then on, as at the endpoint.
+     */
+    public function testARefusingRowGivenBackOnALeadClickRefusesTheClick(): void
+    {
+        $replay = new InboundReplay(self::requireScratch());
+        $first = self::refused('gpb', ['subid' => (string) self::CLICK]);
+        self::assertSame('recorded', $replay->replay(self::ACCOUNT, $first)['status']);
+        $refusals = static fn (): int => (int) self::$db->query(
+            'SELECT COUNT(*) FROM 202_click_consent_refusals WHERE click_id = ' . self::CLICK
+        )->fetch_row()[0];
+        self::assertSame(0, $refusals(), 'a consenting request stores no refusal');
+
+        $refusing = self::refused('gpb', ['subid' => (string) self::CLICK, 'p202_consent' => '0']);
+        $answer = $replay->replay(self::ACCOUNT, $refusing);
+
+        self::assertSame('refused', $answer['status'], $answer['message']);
+        self::assertCount(1, self::conversions(), 'the click converts once');
+        self::assertSame(1, $refusals(), 'the refusal is the click\'s');
     }
 
     /** @return array{0: string, 1: array<string, mixed>} the question asked of the row, and what recording it did */
