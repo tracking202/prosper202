@@ -23,9 +23,8 @@ class ClickServerKeyValidator
     public const int MAX_REDIRECTS = 3;
 
     /**
-     * Sent with every request: it tells the service and its edge that this
-     * install reads 503 as "no answer" (the grace period), so they may answer
-     * that when they cannot decide, where a client without it gets "Key valid".
+     * Sent with every request: it tells the service that this install reads
+     * 503 and "Key not checked" as "no answer" (the grace period).
      */
     public const array REQUEST_HEADERS = ['X-P202-Licence-Grace: 1'];
 
@@ -43,13 +42,14 @@ class ClickServerKeyValidator
     /**
      * Full licence answer for a key.
      *
-     * 'paid' is true when the key's account has an active Prosper202
-     * ClickServer subscription (trials count). It is null when the answer
-     * carried no 'paid' field (older backend, or the edge fallback that
-     * answers while the backend is unreachable); callers must treat null as
-     * "unknown", not as "not paid".
+     * 'paid' is the service's word on whether the key's account pays for
+     * ClickServer. Nothing in Prosper202 is gated on it: the Go CLI and AI
+     * connections need a valid key (ShellAccessCache::admits()). It is null
+     * when the answer carried no boolean 'paid', which is "unknown", never
+     * "not paid": an answer without a boolean 'paid' is no answer.
      *
-     * @return array{valid: bool, paid: ?bool}|null null = network failure
+     * @return array{valid: bool, paid: ?bool}|null null = no usable answer (an
+     *         outage, or one interpret() does not recognise)
      */
     public static function check(string $key, int $connectTimeoutSeconds = 5, int $timeoutSeconds = 10): ?array
     {
@@ -198,9 +198,7 @@ class ClickServerKeyValidator
      * plus an optional boolean "paid", and only these four answers exist:
      *
      *   200 {"code":200,"msg":"Key valid","paid":true|false}  the key and its licence
-     *   200 {"code":200,"msg":"Key valid"}                    the key; licence unknown
-     *       (the service's own answer while its database is down, and the
-     *       edge fallback's while the service is unreachable)
+     *   200 {"code":200,"msg":"Key valid"}                    no boolean paid: no answer
      *   404 {"code":404,"msg":"Key not found"}                no such key
      *   404 {"code":403,"msg":"API key requires an active CPM* Newsletter subscription."}
      *
@@ -213,11 +211,9 @@ class ClickServerKeyValidator
      * Everything else is an outage or somebody else's answer and returns
      * null: a 5xx, a redirect, an HTML error page, malformed JSON, JSON
      * without the envelope, a 200 or a 404 whose message the service never
-     * sends. A 'paid' that is not a
-     * boolean is unknown too ('paid' => null) rather than "not paid": a
-     * malformed value must never resolve to the answer that happens to be a
-     * denial (CLAUDE.md #11). A licence gate then counts the key as licensed
-     * only on a yes within the grace period
+     * sends. A 'paid' that is not a boolean is unknown ('paid' => null),
+     * never read as either answer (CLAUDE.md #11). On null a licence gate
+     * counts the key as licensed only on a yes within the grace period
      * (ShellAccessCache::validWithinGrace()), and nothing is cached from it.
      *
      * @return array{valid: bool, paid: ?bool}|null

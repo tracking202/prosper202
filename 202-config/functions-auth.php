@@ -6,7 +6,6 @@ declare(strict_types=1);
 // this file before the Composer autoloader is registered.
 require_once __DIR__ . '/License/ClickServerKeyValidator.php';
 require_once __DIR__ . '/License/ShellAccessCache.php';
-require_once __DIR__ . '/License/CliAccessCache.php';
 require_once __DIR__ . '/License/LicenceAnswerStore.php';
 require_once __DIR__ . '/License/MysqlLicenceAnswerStore.php';
 
@@ -789,12 +788,6 @@ class AUTH
             return false;
         }
         $keyIsValid = $licence['valid'];
-        // The same answer carries the CLI licence; record it so a verdict the
-        // web app has already heard is not asked for again by the Go CLI gate,
-        // and a key found invalid here stops a cached CLI allow at once.
-        if ($licence['paid'] !== null) {
-            \Prosper202\License\CliAccessCache::recordAnswer($answers, $cacheKey, $licence['paid']);
-        }
 
         if ($keyIsValid) {
         //update the api key
@@ -805,12 +798,14 @@ class AUTH
 							WHERE 	user_id='" . (int) $_SESSION['user_id'] . "'";
             _mysqli_query($user_sql);
             self::writeSessionValue('valid_key', true);
-            // Warm the CLI shell license cache so p202 shell works without its own round-trip.
-            \Prosper202\License\ShellAccessCache::recordAnswer($answers, $cacheKey, true);
+            // Record it for the grace period when the service confirmed it
+            // (a boolean paid): the Go CLI's gate reads the same record, and
+            // admits only a confirmed key (ShellAccessCache::confirmed()).
+            \Prosper202\License\ShellAccessCache::recordLicence($answers, $cacheKey, $licence);
             return true;
         } else {
-            // Deny the CLI shell immediately when the key is no longer valid.
-            \Prosper202\License\ShellAccessCache::recordAnswer($answers, $cacheKey, false);
+            // A refusal ends the grace period, and stops the Go CLI, at once.
+            \Prosper202\License\ShellAccessCache::recordLicence($answers, $cacheKey, $licence);
             return false;
         }
     }

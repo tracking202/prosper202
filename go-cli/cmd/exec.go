@@ -166,7 +166,7 @@ var execCmd = &cobra.Command{
 }
 
 // execFailure is the parent's error for a run with failed children: the
-// licence refusal (category licence, exit 6, the trial hint) when every
+// licence refusal (category licence, exit 6, the licence hint) when every
 // failed child exited for it, so the contract the children honoured survives
 // the process boundary; the generic failure otherwise.
 func execFailure(results map[string]execResult) error {
@@ -186,7 +186,7 @@ func execFailure(results map[string]execResult) error {
 		}
 	}
 	if failed > 0 && refused == failed {
-		return licenceRefusalError(fmt.Sprintf("%d of %d selected profiles failed, each refused the CLI: its install's ClickServer API key needs an active Prosper202 ClickServer Pro licence", failed, len(results)))
+		return licenceRefusalError(fmt.Sprintf("%d of %d selected profiles failed, each refused the CLI: its install's ClickServer API key needs to be an active free ClickServer licence", failed, len(results)))
 	}
 	if failed > 0 && limited == failed {
 		// Rate limits keep their exit code across the boundary too; running

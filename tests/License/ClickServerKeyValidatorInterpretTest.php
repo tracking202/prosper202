@@ -27,7 +27,7 @@ final class ClickServerKeyValidatorInterpretTest extends TestCase
             'valid + unpaid' => [
                 200, '{"code":200,"msg":"Key valid","paid":false}', ['valid' => true, 'paid' => false],
             ],
-            'valid, no paid field (service DB down / edge fallback)' => [
+            'valid, no boolean paid: no answer at the gate' => [
                 200, '{"code":200,"msg":"Key valid"}', ['valid' => true, 'paid' => null],
             ],
             '404 no such key' => [

@@ -11,7 +11,7 @@ import (
 )
 
 // A licence that lapses mid-run refuses every later request too: the bulk
-// tracker URLs stop at the first refusal and end with it (exit 6, the trial
+// tracker URLs stop at the first refusal and end with it (exit 6, the licence
 // hint), with nothing on stdout.
 func TestBulkURLsStopsOnTheLicenceRefusal(t *testing.T) {
 	var mu sync.Mutex

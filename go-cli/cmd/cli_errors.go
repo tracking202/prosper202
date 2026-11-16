@@ -24,7 +24,7 @@ const (
 	ExitNetwork        = 3 // connection timeout, DNS failure
 	ExitServer         = 4 // API returned 5xx
 	ExitPartialFailure = 5 // bulk operation with some successes and some failures
-	ExitLicence        = 6 // the install requires a Pro licence for the CLI (HTTP 402)
+	ExitLicence        = 6 // the install's ClickServer key is not an active free licence (HTTP 402)
 	ExitRateLimited    = 7 // HTTP 429: nothing is wrong with the request; run it again after retry_after_seconds
 )
 
@@ -133,9 +133,9 @@ func validationError(format string, args ...interface{}) *CLIError {
 // licenceRefusal returns the first of errs when every non-nil one is the
 // install's licence refusal (category licence), and nil when any other
 // failure is among them or there is none. A command that aggregates several
-// requests reports licence/exit 6 and the trial hint only when a licence is
+// requests reports licence/exit 6 and the licence hint only when a licence is
 // what every failure needs; one refused profile beside an unreachable one is
-// not fixed by a trial, so that run keeps its generic error.
+// not fixed by a licence, so that run keeps its generic error.
 func licenceRefusal(errs ...error) error {
 	var refused error
 	for _, err := range errs {

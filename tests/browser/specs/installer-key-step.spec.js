@@ -16,7 +16,7 @@
  * P202_USER / P202_PASS, so the other specs can sign in afterwards. The
  * installer checks the key with my.tracking202.com from the server, so the
  * instance's PHP must reach a stub that answers "Key valid" (as CI's
- * licence-stub.sh does), never the real service with a made-up key: set
+ * licence-stub.sh does), never the real service with a test key: set
  * P202_LICENCE_STUB=1 to say it does. The browser itself never reaches the
  * real service either (lib/browser.js aborts every external host).
  *
