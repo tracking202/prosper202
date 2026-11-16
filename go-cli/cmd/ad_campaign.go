@@ -54,7 +54,7 @@ var adCampaignCmd = &cobra.Command{
 		"  p202 ad-campaign list 1\n" +
 		"  p202 ad-campaign list 1 --level ads --ad-group-id adgrp_12\n" +
 		"  p202 ad-campaign pause 1 cmpn_101 --dry-run\n" +
-		"  p202 ad-campaign set-template 1 cmpn_101          (the template Get Links gives)\n" +
+		"  p202 ad-campaign set-template 1 cmpn_101          (the generic ChatGPT Ads template)\n" +
 		"  p202 ad-campaign attach-events 1 cmpn_101         (the ones made when it was connected)\n" +
 		"  p202 ad-campaign spend 1 --since 2026-11-01 --until 2026-11-10",
 }
@@ -183,8 +183,9 @@ var adCampaignSetTemplateCmd = &cobra.Command{
 	Use:   "set-template <connection-id> <id>",
 	Short: "Set the tracking template OpenAI appends to ad URLs",
 	Long: "Sets the query string OpenAI appends to the ad's URL on a campaign (or --level ad-groups, ads; the\n" +
-		"lowest level set wins). Without --template it is the template Get Links shows for the ChatGPT Ads source;\n" +
-		"for a tracker that sends visitors straight to your site, pass the one `p202 tracker get-url <id>` gives (with t202id).",
+		"lowest level set wins). Without --template it is the generic ChatGPT Ads template, not your tracker's: it\n" +
+		"matches Get Links only for a tracker whose destination is its tracking link, on a source with no other\n" +
+		"variables. Otherwise pass the template `p202 tracker get-url <id>` gives (a landing-page tracker's has its t202id).",
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := adCampaignArgs(args); err != nil {
@@ -196,7 +197,7 @@ var adCampaignSetTemplateCmd = &cobra.Command{
 			t = strings.TrimPrefix(strings.TrimSpace(t), "?")
 			if t == "" || len(t) > 2048 || strings.ContainsAny(t, " \t\r\n#") {
 				return validationError("--template must be a query string of at most 2048 characters with no spaces or #").
-					WithHint("For example utm_source=chatgpt&campaign_id={campaign_id}&ad_id={ad_id}&oppref={oppref}; leave --template out for the Get Links one.")
+					WithHint("For example utm_source=chatgpt&campaign_id={campaign_id}&ad_id={ad_id}&oppref={oppref}; leave --template out for the generic ChatGPT Ads template.")
 			}
 			body["template"] = t
 		}
@@ -275,7 +276,7 @@ func init() {
 	adCampaignListCmd.Flags().String("ad-group-id", "", "With --level ads: only this ad group's")
 	adCampaignListCmd.Flags().Int("limit", 100, "Rows to return (1-500)")
 	adCampaignListCmd.Flags().String("after", "", "Continue after this row: meta.after of the previous answer")
-	adCampaignSetTemplateCmd.Flags().String("template", "", "The query string to append (at most 2048 characters); default the Get Links template")
+	adCampaignSetTemplateCmd.Flags().String("template", "", "The query string to append (at most 2048 characters); default the generic ChatGPT Ads template, not your tracker's")
 	adCampaignAttachEventsCmd.Flags().StringArray("event-setting-id", nil, "An event setting to add (ces_…, repeatable); default the ones made for the connection")
 	adCampaignSpendCmd.Flags().String("since", "", "First day, YYYY-MM-DD (the ad account's zone)")
 	adCampaignSpendCmd.Flags().String("until", "", "Last day, included")

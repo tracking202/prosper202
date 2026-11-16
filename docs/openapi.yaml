@@ -5877,8 +5877,10 @@ paths:
       description: |
         Sets `landing_page_configuration.query_string_template` (at most
         2048 characters; the lowest level set wins: account < campaign < ad
-        group < ad). Without `template`, the ChatGPT Ads template Get Links
-        gives. `?dry_run=1` answers the template now and the one it would get.
+        group < ad). Without `template`, the generic ChatGPT Ads template, not a
+        tracker's: a landing-page tracker's own (with its `t202id`) and a
+        source's other variables come only from Get Links or `GET
+        /trackers/{id}/url`, sent as `template`. `?dry_run=1` answers the template now and the one it would get.
       operationId: setAdConnectionCampaignTemplate
       parameters:
         - {name: dry_run, in: query, required: false, schema: {type: string, enum: ["1"]}, description: "Read the object and answer what would change; nothing is sent"}
@@ -6071,8 +6073,10 @@ paths:
       description: |
         Sets `landing_page_configuration.query_string_template` (at most
         2048 characters; the lowest level set wins: account < campaign < ad
-        group < ad). Without `template`, the ChatGPT Ads template Get Links
-        gives. `?dry_run=1` answers the template now and the one it would get.
+        group < ad). Without `template`, the generic ChatGPT Ads template, not a
+        tracker's: a landing-page tracker's own (with its `t202id`) and a
+        source's other variables come only from Get Links or `GET
+        /trackers/{id}/url`, sent as `template`. `?dry_run=1` answers the template now and the one it would get.
       operationId: setAdConnectionAdGroupTemplate
       parameters:
         - {name: dry_run, in: query, required: false, schema: {type: string, enum: ["1"]}, description: "Read the object and answer what would change; nothing is sent"}
@@ -6265,8 +6269,10 @@ paths:
       description: |
         Sets `landing_page_configuration.query_string_template` (at most
         2048 characters; the lowest level set wins: account < campaign < ad
-        group < ad). Without `template`, the ChatGPT Ads template Get Links
-        gives. `?dry_run=1` answers the template now and the one it would get.
+        group < ad). Without `template`, the generic ChatGPT Ads template, not a
+        tracker's: a landing-page tracker's own (with its `t202id`) and a
+        source's other variables come only from Get Links or `GET
+        /trackers/{id}/url`, sent as `template`. `?dry_run=1` answers the template now and the one it would get.
       operationId: setAdConnectionAdTemplate
       parameters:
         - {name: dry_run, in: query, required: false, schema: {type: string, enum: ["1"]}, description: "Read the object and answer what would change; nothing is sent"}
