@@ -45,7 +45,8 @@ use Prosper202\Setup\PostbackCode;
 final class SetupCodeController
 {
     public const TOKEN_WITHHELD = 'These URLs leave out p202_token: this API key may read conversions but not write them,'
-        . ' and the token records and reverses them. Use a key with conversions:write, or copy the URLs from'
+        . ' and once the account requires its token, the token records and reverses them.'
+        . ' Use a key with conversions:write, or copy the URLs from'
         . ' Setup › Postback / Pixel.';
 
     use StatementHelpers;
@@ -216,7 +217,8 @@ final class SetupCodeController
      *
      * The URLs carry the account's postback token only for a caller that may
      * write conversions ($withToken: index.php passes whether the key has
-     * conversions:write), since the token alone records and reverses them.
+     * conversions:write), since once the account requires it the token records and
+     * reverses them.
      * For any other the URLs leave it out and postback_token_withheld says
      * why; nothing is minted or opened for it.
      *

@@ -293,9 +293,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				// The mode and its credentials are saved together or not at all.
 				$pbSaved = $pbStore->setMode($pbUser, $pbMode, time());
 				p202_account_flash('ok', match ($pbMode) {
-					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::OFF => 'Every postback and pixel is accepted again, with or without credentials.',
+					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::OFF => 'Every postback and pixel for this account is accepted again, with or without credentials.',
 					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::TOKEN => 'Postbacks and pixels without your token or a signature are now refused.',
-					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::SIGNED => 'Only signed postbacks are accepted now: the token alone is refused, and so is every pixel.',
+					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::SIGNED => 'Only signed postbacks are accepted now: the token alone is refused, and so are the pixels on your pages, which a browser cannot sign.',
 				});
 			}
 			if ($pbSaved?->recoveryNotice() !== null) {
@@ -931,23 +931,24 @@ template_top('API Integrations');
 					<?php }
 					$pbNow = time();
 					$pbModes = [
-						'off' => ['Not required', 'Every postback and pixel is accepted, as before 1.9.80, with or without the token.'],
+						'off' => ['Not required', 'Every postback and pixel for this account is accepted, as before 1.9.80, with or without the token.'],
 						'token' => ['Token or signature', 'A postback or pixel must carry the token (as the URLs in Setup › Postback / Pixel do) or a signature.'],
-						'signed' => ['Signed postbacks only', 'Only a request signed with the signing secret is accepted; the token alone is refused. Pixels cannot sign, so every pixel is refused.'],
+						'signed' => ['Signed postbacks only', 'Only a request signed with the signing secret is accepted; the token alone is refused. A pixel on a page cannot sign, so the pixels on your pages are refused.'],
 					];
 					$pbGraceSelect = static function (string $id): string {
 						return '<select class="form-select" id="' . $id . '" name="grace_hours">'
 							. '<option value="168" selected>for 7 days</option><option value="24">for 1 day</option>'
 							. '<option value="720">for 30 days</option><option value="0">not at all (it leaked)</option></select>';
 					}; ?>
-					<p class="text-secondary">Click ids count up, so anyone who can guess one could record or reverse a
-						conversion with a bare postback URL. Your postback URLs and pixels carry this account's token as
+					<p class="text-secondary">Once required, authentication refuses postbacks and pixels that carry neither
+						this account's token nor a valid signature. Your postback URLs and pixels carry this account's token as
 						<code>p202_token</code>. A sender that can compute an HMAC can instead sign each request with
 						<code>p202_ts</code> and <code>p202_sig</code>, keyed with the signing secret below, which no URL ever
 						carries. Unless authentication is off, a wrong token or signature is refused.</p>
-					<p class="text-secondary">A pixel runs in the visitor's browser, so its token can be read on the
-						advertiser's page: it stops guessing, not someone who saw the page. A pixel cannot sign, so
-						<strong>Signed postbacks only</strong> refuses every pixel.</p>
+					<p class="text-secondary">A pixel runs in the visitor's browser, so anyone who sees a page with your
+						pixel can read its token: for senders that can sign, signed mode is the stronger choice. A pixel
+						on a page cannot sign, so
+						<strong>Signed postbacks only</strong> refuses the pixels on your pages.</p>
 					<?php
 					$pbOff = $pbAuth->mode === \Prosper202\Conversion\PostbackAuth\PostbackAuthMode::OFF;
 					$pbWithout = $pbReady['without_credentials'] ?? 0;
@@ -996,8 +997,8 @@ template_top('API Integrations');
 							<?php if ($pbReady['more_senders'] > 0) { ?>
 								<p class="form-text"><?php echo $e(number_format($pbReady['more_senders'])); ?> more with fewer requests are not listed<?php echo $userObj->hasPermission('access_to_setup_section') ? '; the <a href="' . $e($base . 'tracking202/setup/inbound_log.php') . '">Inbound Log</a> has every request' : ''; ?>.</p>
 							<?php } ?>
-							<?php if ($pbReady['token_only'] + $pbReady['pixels'] > 0) { ?>
-								<p class="form-text">Signed postbacks only would also refuse the <?php echo $e(number_format($pbReady['token_only'])); ?> that carried the token alone, and every pixel (<?php echo $e(number_format($pbReady['pixels'])); ?> here).</p>
+							<?php if ($pbReady['token_only'] + $pbReady['pixels'] > 0 && $pbAuth->mode !== \Prosper202\Conversion\PostbackAuth\PostbackAuthMode::SIGNED) { ?>
+								<p class="form-text">Signed postbacks only would also refuse the <?php echo $e(number_format($pbReady['token_only'])); ?> that carried the token alone, and your pixels unless they are signed (<?php echo $e(number_format($pbReady['pixels'])); ?> pixel requests here, signed or not).</p>
 							<?php } ?>
 						<?php } ?>
 						<?php if ($pbReady !== null && $pbReady['covers_since'] > $pbReady['since']) { ?>
@@ -1005,7 +1006,7 @@ template_top('API Integrations');
 						<?php } ?>
 					</div>
 					<form method="post" action="<?php echo $e($self . '#postback-auth'); ?>" class="mb-4"
-						data-p202-confirm="<?php echo $e('Change what your postbacks and pixels must carry? Anything your networks call that does not carry it will be refused from now on, and nothing recorded.'
+						data-p202-confirm="<?php echo $e('Change what your postbacks and pixels must carry? Under Token or signature and Signed postbacks only, anything your networks call that does not carry what the mode asks will be refused from now on, and nothing recorded; Not required refuses nothing.'
 							. ($pbOff && $pbWithout > 0 ? ' In the last 7 days ' . number_format($pbWithout) . ' came without your token.' : '')); ?>">
 						<?php echo p202_account_token_field(); ?>
 						<input type="hidden" name="postback_auth_action" value="mode">

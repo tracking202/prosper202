@@ -21,7 +21,7 @@ List, inspect, manually create, and delete conversions.
 | `DELETE` | `/conversions/{id}` | Delete a conversion |
 | `GET` | `/conversions/postback-code` | The conversion pixels and postback URLs Setup › Postback / Pixel shows ([Setup API](27-setup.md)) |
 | `GET` | `/conversions/postback-auth` | The mode, the postback token those URLs carry, the signing secret, and how to sign ([Setup API](27-setup.md#postback-authentication)) |
-| `PUT` | `/conversions/postback-auth` | Choose what postbacks and pixels must carry: `off`, `token` (token or signature) or `signed` (signatures only; pixels refused) |
+| `PUT` | `/conversions/postback-auth` | Choose what postbacks and pixels must carry: `off`, `token` (token or signature) or `signed` (signatures only; unsigned pixels refused) |
 | `POST` | `/conversions/postback-auth/rotate` | Replace the token or the signing secret, the old one working for a grace period |
 
 Each conversion is answered with `currency`, the currency its
@@ -419,7 +419,8 @@ goals and app installs, and `GET /clicks/{id}/conversions` shows the latest
 visit's value.
 
 The per-campaign postback (`pb.php?acip=…&subid=…`, with or without `event=`;
-also `p202_token`, or a signature, when the account requires one) accepts a
+also `p202_token` or a signature when the account is in mode `token`, and a
+signature in mode `signed`) accepts a
 click any of whose visits was on the campaign it names, when that campaign
 is the click's account's, and credits the latest visit: the network posts
 back for the offer it sold, which may be on any visit of the click.

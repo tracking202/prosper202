@@ -24,8 +24,8 @@ namespace Prosper202\Setup;
  * JavaScript pixel's `cid` stays empty whatever campaign was chosen.
  *
  * Every URL ends with the account's postback token, `&p202_token=…`
- * (Prosper202\Conversion\PostbackAuth), which an account that requires it
- * refuses a postback or pixel without; '' leaves it out.
+ * (Prosper202\Conversion\PostbackAuth), which an account in mode token
+ * refuses a postback or pixel without unless it is signed; '' leaves it out.
  *
  * $root is `scheme://host[:port]/<install path>/tracking202/static/`. The
  * values are written in as given: a network's macro such as {aff_sub} or

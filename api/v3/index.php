@@ -511,7 +511,8 @@ try {
         }, [$setupSection]);
         // Postback authentication: what Account › API Integrations asks for,
         // as the page does. The read too needs conversions:write: it hands out
-        // the token and the signing secret, which record and reverse conversions.
+        // the token and the signing secret, which record and reverse conversions
+        // under the modes that require them.
         $router->group('/conversions/postback-auth', function (Router $r) use ($crud, $idempotent, $payload) {
             $cls = \Api\V3\Controllers\PostbackAuthController::class;
             $r->get('', fn() => $crud($cls)->show());

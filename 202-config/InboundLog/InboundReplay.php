@@ -223,7 +223,7 @@ final class InboundReplay
         return ($takesMoney ? 'Record this reversal now? It takes money off a sale already recorded. ' : 'Record this request now? ')
             . 'It says: ' . implode(', ', $said) . '.' . $outcome . ' '
             . (in_array($row['auth'] ?? null, ['none', 'invalid'], true)
-                ? 'It did not carry your postback token, so nothing shows who sent it: record it only if you know it is real. '
+                ? 'It carried no valid postback token or signature, so nothing shows who sent it: record it only if you know it is real. '
                 : '')
             . 'It is recorded as it would have been when it arrived, ' . date('M j, Y g:i a', $arrived) . '.'
             . self::tooOldFor($destinations, $arrived, $now, $click);

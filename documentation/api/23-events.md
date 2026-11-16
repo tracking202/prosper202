@@ -31,7 +31,7 @@ https://track.example.com/tracking202/static/gpb.php?subid=[[subid]]&event=upsel
 ```
 
 When your account requires it, every postback and pixel carries your postback
-token: copy it from Setup › Postback / Pixel, or read it with
+token (under Signed postbacks only, a signature instead): copy it from Setup › Postback / Pixel, or read it with
 `GET /conversions/postback-auth`.
 
 | Parameter | |

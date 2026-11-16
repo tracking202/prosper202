@@ -281,7 +281,7 @@ final class PostbackAuthIntegrationTest extends TestCase
         self::store()->setMode(self::B, PostbackAuthMode::SIGNED, time());
         [$status, $body] = self::runQuery('px', 'acip=' . $acip . '&p202_token=' . $mine . '&txid=px-2', $cookie);
         self::assertSame(403, $status, $body);
-        self::assertStringContainsString('cannot sign, so px.php is refused', $body);
+        self::assertStringContainsString('cannot sign, so an unsigned px.php request is refused', $body);
         self::assertSame(1, self::conversions(self::B));
     }
 

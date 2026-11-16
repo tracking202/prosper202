@@ -79,7 +79,8 @@ final class PostbackAuthReadiness
             $counts[$auth]++;
             $pixel = in_array((string) $row['endpoint'], ['px', 'gpx', 'upx'], true);
             $pixels += $pixel ? 1 : 0;
-            // A signed postback passes every mode; a pixel passes none that asks for a signature.
+            // A signed postback passes every mode. A pixel is listed and counted even when signed, which
+            // signed mode accepts: the count errs toward caution.
             if ($auth === '' || ($auth === 'signed' && !$pixel)) {
                 continue;
             }
