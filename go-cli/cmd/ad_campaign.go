@@ -183,9 +183,10 @@ var adCampaignSetTemplateCmd = &cobra.Command{
 	Use:   "set-template <connection-id> <id>",
 	Short: "Set the tracking template OpenAI appends to ad URLs",
 	Long: "Sets the query string OpenAI appends to the ad's URL on a campaign (or --level ad-groups, ads; the\n" +
-		"lowest level set wins). Without --template it is the generic ChatGPT Ads template, not your tracker's: it\n" +
-		"matches Get Links only for a tracker whose destination is its tracking link, on a source with no other\n" +
-		"variables. Otherwise pass the template `p202 tracker get-url <id>` gives (a landing-page tracker's has its t202id).",
+		"lowest level set wins). Without --template it is the generic ChatGPT Ads template, not your tracker's. It\n" +
+		"matches Get Links only when the destination is the tracking link, campaign_id and ad_id keep their default\n" +
+		"placeholders, and the link has no other variables; otherwise pass the template `p202 tracker get-url <id>`\n" +
+		"gives (for a landing page whose URL has a host, it carries the tracker's t202id).",
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := adCampaignArgs(args); err != nil {

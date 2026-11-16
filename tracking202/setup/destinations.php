@@ -142,7 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['p202_ad_campaign_done'] = match ($action) {
                         'ad_campaign_pause', 'ad_campaign_activate' => $objectId . ($unchanged ? ' was already ' : ' is now ') . (string) ($record['status'] ?? '') . ' at OpenAI'
                             . ($unchanged ? '; nothing was sent.' : ' (it was ' . (string) ($done['previous']['status'] ?? '') . ').'),
-                        'ad_campaign_template' => $unchanged ? $objectId . ' already has the Get Links tracking template; nothing was sent.'
+                        'ad_campaign_template' => $unchanged ? $objectId . ' already has the generic ChatGPT Ads tracking template; nothing was sent.'
                             : $objectId . '\'s tracking template at OpenAI is now ' . (string) ($record['query_string_template'] ?? '') . ' (it was '
                             . (string) ($done['previous']['query_string_template'] ?? 'not set') . ').',
                         default => $unchanged ? $objectId . ' already counts every event setting setup made; nothing was changed.' : $objectId . ' now counts the event settings setup made, besides its own.',
