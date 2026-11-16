@@ -1,0 +1,2 @@
+-- New: A ChatGPT Ads guide in the documentation: one page from your first ad to conversions and real cost. It covers adding the ChatGPT Ads traffic source and its tracking template, connecting the ad account, sending conversions to OpenAI and what OpenAI does not take (refunds, conversions older than 7 days), using what OpenAI billed as cost, and pausing campaigns, with the page and the CLI command for each step.
+app: New: A ChatGPT Ads guide: one page from your first ad to conversions and real cost.

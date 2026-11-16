@@ -6886,10 +6886,10 @@ paths:
         a failed attempt; 8 attempts in all, 1 minute doubling to 6 hours
         apart), `sent`, `failed` (attempts ran out, the platform refused it,
         or the request was refused before it was sent), `withheld` (nothing
-        was sent - the click was guessed rather than named, the privacy
+        was sent, for example because the click was guessed rather than named, the privacy
         setting holds the visitor back (`eu`, the default, holds back every
-        visitor who may be in the EEA or UK whatever consent is stated), or,
-        with the setting `disabled`, the visitor may be in the EEA or UK and
+        visitor who may be in Europe whatever consent is stated), or,
+        with the setting `disabled`, the visitor may be in Europe and
         the destination does not state both consent signals granted) or
         `cancelled` (the conversion or the destination was deleted first).
         `summary` is what was sent, without identifiers' values.
@@ -20802,7 +20802,7 @@ components:
         `send_user_data`; GA4 and Google Ads take `consent` (ChatGPT Ads
         refuses it: OpenAI has no field that states a visitor's consent to
         measurement, its per-event opt_out being about personalisation only,
-        so a visitor who may be in the EEA or UK is withheld from it). GA4 takes `measurement_id` to
+        so a visitor who may be in Europe is withheld from it). GA4 takes `measurement_id` to
         `params`, Google Ads `customer_id` to `campaign_conversion_actions`,
         ChatGPT Ads `pixel_id` to `ppc_account_id`.
       properties:
