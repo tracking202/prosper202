@@ -6880,7 +6880,7 @@ paths:
         a failed attempt; 8 attempts in all, 1 minute doubling to 6 hours
         apart), `sent`, `failed` (attempts ran out, the platform refused it,
         or the request was refused before it was sent), `withheld` (nothing
-        was sent - the click was guessed rather than named, the privacy
+        was sent, for example because the click was guessed rather than named, the privacy
         setting holds the visitor back (`eu`, the default, holds back every
         visitor who may be in Europe whatever consent is stated), or,
         with the setting `disabled`, the visitor may be in Europe and

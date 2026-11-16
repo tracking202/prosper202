@@ -88,9 +88,10 @@ once.
 ## Privacy and personal data
 
 - **Only clicks the conversion named are sent.** A conversion whose click
-  was found by its postback's or pixel's subid, an API call, an upload or a
-  tracking cookie is sent; one whose click was guessed (the visitor id, or the
-  latest click from the same IP address) is withheld, as the offline
+  was found by its postback's or pixel's subid, an ad click id, an API call, an
+  upload or a tracking cookie is sent; one whose click was guessed (the
+  visitor id, or the latest click from the same IP address) or not recorded
+  (stored before 1.9.79, or otherwise without a recorded method) is withheld, as the offline
   conversion files leave it out: a guess would teach the platform's bidding
   the wrong clicks.
 - **A visitor who may be in Europe is sent only when two things
@@ -396,10 +397,10 @@ Settings and press **Connect ChatGPT Ads**. Prosper202 checks it with OpenAI and
 account's name, currency and time zone. Then **Run setup**: it finds or
 makes your web pixel, makes a Conversions API key, adds this destination
 with both (or takes over an enabled one for the same pixel and replaces its
-key; a switched-off one is left as it is, and that step asks you to switch it
-on or delete it and run setup again), and makes an event setting (30-day click
+key; when none for the pixel is enabled and one is switched off, it is left as it
+is, and that step asks you to switch it on or delete it and run setup again), and makes an event setting (30-day click
 window) for each event type you pick; with none picked, for the types sent by a
-destination this connection set up on an earlier run, else `order_created`. Each step says what it did, and any can be
+destination this connection set up on an earlier run (standard types only), else `order_created`. Each step says what it did, and any can be
 unticked. Where OpenAI has pixel or key creation switched off for your
 account, setup says so; make them in Ads Manager and give them under
 Advanced. **Replace key**, under the connection, takes a new Advertiser API
@@ -446,7 +447,8 @@ What OpenAI does not take, and what that means here:
 - **Only the first event counts.** OpenAI keeps the first event it gets
   under an id and takes no adjustment, retraction or refund. A conversion
   that restates an earlier one is sent under the earlier one's id and
-  ignored; its log row says so. A refund does not reach ChatGPT Ads.
+  ignored once OpenAI already has the earlier one (if that was withheld,
+  failed or never sent, OpenAI takes the restating one when it is sent); its log row says so. A refund does not reach ChatGPT Ads.
 - **7 days.** OpenAI refuses an event more than 7 days old, or more than
   10 minutes ahead of its clock, so such a conversion fails unsent and a
   backfill offers at most 7 days.

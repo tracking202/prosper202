@@ -1217,8 +1217,8 @@ A flag of the other type is refused, not ignored: `--credentials-file`, `--custo
 
 A conversion goes out with the minutely cron job and is retried with backoff,
 8 tries in all. A conversion whose click was guessed (same IP, visitor id), a
-visitor your privacy setting holds back, and a visitor who may be in the EEA
-or UK when the destination does not state both consent signals `granted` are
+visitor your privacy setting holds back, and a visitor who may be in Europe
+when the destination does not state both consent signals `granted` are
 `withheld`, never sent.
 
 ## Reports
