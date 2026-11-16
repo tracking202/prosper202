@@ -395,8 +395,10 @@ ChatGPT Ads, paste the **Advertiser API key** from ChatGPT Ads Manager ›
 Settings and press **Connect ChatGPT Ads**. Prosper202 checks it with OpenAI and shows the
 account's name, currency and time zone. Then **Run setup**: it finds or
 makes your web pixel, makes a Conversions API key, adds this destination
-with both, and makes an event setting (30-day click window) for each event
-type this destination sends, `order_created` unless you pick others. Each step says what it did, and any can be
+with both (or takes over an enabled one for the same pixel and replaces its
+key; a switched-off one stops setup and asks), and makes an event setting
+(30-day click window) for each event type you pick; with none picked, for the
+types the destination already sends, else `order_created`. Each step says what it did, and any can be
 unticked. Where OpenAI has pixel or key creation switched off for your
 account, setup says so; make them in Ads Manager and give them under
 Advanced. **Replace key**, under the connection, takes a new Advertiser API

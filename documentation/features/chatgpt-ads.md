@@ -2,8 +2,8 @@
 
 This page walks through running ChatGPT ads with Prosper202, from the
 first link to conversions that reach OpenAI and reports whose cost is what
-OpenAI billed. Each step names the page in Prosper202, the command that does
-the same, and the reference page with the details.
+OpenAI billed. Where a step has them, it names the page in Prosper202, the
+command that does the same, and the reference page with the details.
 
 Before you start, you need:
 
@@ -45,15 +45,17 @@ OpenAI's click id, `oppref`, which is what a conversion sent back to OpenAI is
 credited by. A tracker with a landing page whose URL has a host sends the visitor
 straight to the page. Any other tracker's destination is its tracking link.
 Ads Manager takes a template of up to 2,048 characters, and Get Links warns,
-under the link it has just made, when it is longer.
+above the destination URL and template it has just made, when it is longer.
 
 If you connect the ad account (step 3), **Setup › Destinations › ChatGPT Ads
 › campaigns** has a *push template* action on each campaign whose template is
 not already the generic one. It pushes the generic ChatGPT Ads template, not
 your tracker's: that is enough for a tracker whose destination is its tracking
-link, on a source with no custom variables beyond the two above. A
+link, on a source with no custom variables beyond the two above, and with
+those two keeping their placeholders (`{campaign_id}`, `{ad_id}`). A
 landing-page tracker's template also carries its `t202id`, and a source's other
-variables add their own parameters, so for those paste the Get Links template
+variables add their own parameters (and an edited placeholder changes the
+template), so for those paste the Get Links template
 into Ads Manager, or push it from a script with `--template`.
 
 From a script: `p202 tracker get-url <id>` answers `chatgpt_ads`, with the
@@ -76,11 +78,15 @@ connection):
 1. Paste the **Advertiser API key**, choose the ChatGPT Ads **traffic source
    account** from step 1, and press **Connect ChatGPT Ads**. Prosper202 checks the key with
    OpenAI and shows the ad account's name, currency and time zone.
-2. Press **Run setup**. It finds or makes your web pixel, makes a Conversions
-   API key, adds a ChatGPT Ads destination with both, and makes an event
-   setting (30-day click window) for each event type the destination sends:
-   `order_created` unless you pick others under Advanced (`--event-type` from
-   the CLI). Each step says what it did.
+2. Press **Run setup**. It finds or makes your web pixel and makes a
+   Conversions API key. It adds a ChatGPT Ads destination with both, or takes
+   over an enabled one for the same pixel and replaces its key (a switched-off
+   one stops setup and asks you). It makes an event setting (30-day click
+   window) for each event type you pick under Advanced (`--event-type` from the
+   CLI); with none picked, for the types the destination already sends, else
+   `order_created`. A setting already on the pixel is found rather than made
+   again, and a new destination sends the first type picked. Each step says
+   what it did.
    Where OpenAI has pixel or key creation switched off for your account, setup
    says so: make them in Ads Manager and give them under Advanced.
 3. Test the destination. *Send test* sends a made-up event that OpenAI checks
@@ -111,7 +117,17 @@ credit people who saw an ad without clicking it, set the destination's
 [Destinations › ChatGPT Ads](destinations.md#chatgpt-ads) lists every field and
 answer.
 
-**What OpenAI doesn't take**, so plan for it:
+**What is not sent, or not taken**, so plan for it:
+
+- **Privacy holds.** Under the privacy setting `all`, no visitor's conversion
+  is sent. A visitor who is or may be in the EEA or UK, or whose address can't
+  be placed, is held back under every setting: under `eu` (the default for new
+  accounts) by the setting, and under `disabled` because ChatGPT Ads has no
+  field that states consent to measurement
+  ([privacy](destinations.md#privacy-and-personal-data)).
+- **Guessed clicks.** A conversion whose click was only guessed (by visitor
+  id, or the latest click from the same IP address) is withheld; only a click
+  the conversion named is sent.
 
 - **No refunds or changes.** OpenAI keeps the first event it gets for a
   conversion. A refund or a corrected amount doesn't reach ChatGPT Ads.
@@ -130,7 +146,7 @@ cause.
 
 If the ChatGPT Ads pixel on your site reports the same sale, give the pixel's
 event the event type the destination sends (`order_created` unless you picked
-another), and as its `event_id` the id Prosper202 sends (the
+another; for a `custom` type, its custom event name), and as its `event_id` the id Prosper202 sends (the
 conversion's transaction id, else `P202-<conversion id>`). Otherwise OpenAI
 counts the sale twice.
 
@@ -139,15 +155,17 @@ counts the sale twice.
 Until now each click costs the CPC typed on its tracker. To use what OpenAI
 billed, turn on the spend pull: **Setup › Traffic Sources › ChatGPT Ads spend
 › turn on** (the card is there once the ad account is connected). Each hour
-the install's cron job runs (or AutoCron), Prosper202 then reads what OpenAI
+the install's cron job (or AutoCron) runs, Prosper202 then reads what OpenAI
 billed per ad per hour into the spend ledger, and the first run reads back
-about 30 days. Without a cron job it runs only when you run it (`p202 spend
-sync run`, below), and until then cost stays at the CPC. The card shows the last run, how far the spend reaches, and
+about 30 days. Without one it still runs once an hour while someone is signed
+in and loading pages; a cron job or AutoCron keeps it going when nobody is on
+the site. `p202 spend sync run` runs it now, once the sync is turned on. The card shows the last run, how far the spend reaches, and
 any error.
 
 Reports then cost each click that carries an ad at its share of that ad's
-spend for the hour, and say how far the spend data reaches. Clicks after that
-point keep their CPC. On an account with a marked ChatGPT Ads source, the
+spend for the hour, and say how far the spend data reaches. A click whose ad
+has no spend recorded for its hour, and clicks after that point, keep their
+CPC. On an account with a marked ChatGPT Ads source, the
 spend goes only to that source's clicks. Spend in hours no click carried the
 ad is shown as unallocated.
 
@@ -177,7 +195,7 @@ OpenAI right away, after a confirm. `p202 ad-campaign pause
 <connection-id> <campaign-id> --dry-run` shows what would change first.
 
 A [money-loss alert](money-loss-alerts.md) for spend without conversions (a
-campaign whose cost today reaches its daily cost cap with no conversion today)
+campaign whose cost today reaches your daily cost cap with no conversion today)
 names up to three ChatGPT Ads campaigns the clicks came from, when those clicks
 were on a traffic source account linked to the ad connection. The alert on Home
 then has a pause button for each: it shows what pausing changes, and pauses
