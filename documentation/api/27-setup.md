@@ -157,10 +157,10 @@ HTML attribute or a JavaScript string is refused: whitespace, quotes, `<`, `>`,
 For a key with `conversions:write`, every URL ends with the account's postback
 token, `&p202_token=…`, minted the first time a URL is handed out; the answer
 also carries it as `postback_token`, with the account's mode as
-`postback_auth_mode` ([below](#postback-authentication)). The token records
-and reverses conversions, so a key without `conversions:write` gets the URLs
+`postback_auth_mode` ([below](#postback-authentication)). Once the account
+requires it, the token records and reverses conversions, so a key without `conversions:write` gets the URLs
 without it: `postback_token` is `null` and `postback_token_withheld` says why. In `signed` mode these URLs are refused
-as they are: sign them, and pixels cannot be used.
+as they are: sign them. A pixel a browser loads cannot sign, so it is refused too.
 
 ```bash
 curl -H "Authorization: Bearer $KEY" \
@@ -266,7 +266,7 @@ The account's **mode** says what `pb.php`, `gpb.php`, `px.php`, `gpx.php` and
 
 | `mode` | What happens |
 | ------ | ------------ |
-| `off` | Every request is accepted, as before 1.9.80, whatever credentials it carries: refusing a stale or wrong token would stop no one (leaving it out passes) and would lose the conversions of URLs that still carry a replaced token. |
+| `off` | Every request for the account is accepted, as before 1.9.80, whatever credentials it carries: refusing a stale or wrong token would stop no one (leaving it out passes) and would lose the conversions of URLs that still carry a replaced token. |
 | `token` | The token or a valid signature is needed. |
 | `signed` | Only a valid signature is accepted. The token alone is refused, with a message naming the signing secret. **A pixel cannot sign** (the visitor's browser loads it), so `px.php`, `gpx.php` and `upx.php` are refused too unless the request is signed. |
 | `token`, `signed` | A wrong token or signature is refused. One account's token or secret opens nothing of another account's. |
@@ -297,7 +297,7 @@ accepts only signed requests.
 | `POST` | `/conversions/postback-auth/rotate` | `{"credential": "token", "grace_hours": 168}` (`token` or `signing_secret`; 0–720 hours, default 168) | `access_to_api_integrations`, `conversions:write` |
 
 The read hands out the token and the signing secret, which record and
-reverse conversions, so it asks what the page asks and a key that may write
+reverse conversions under the modes that require them, so it asks what the page asks and a key that may write
 conversions. `GET /conversions/postback-code` answers the token
 (`postback_token`) and the mode (`postback_auth_mode`) with the snippets,
 under Setup's permission, to a key with `conversions:write` only. The mode
@@ -307,8 +307,9 @@ rotating again (a replay shows the credentials as they are now, since the
 recorded answer keeps none).
 
 If a stored token or secret cannot be read (the key that encrypts them was
-lost from the database, or a value was altered), a postback that presents it
-is answered `500`, never let through, while one that presents nothing is
+lost from the database, or a value was altered), under `token` and `signed` a
+postback that presents it is answered `500` and never let through (`gpx.php`
+has sent its image already, so it records nothing and logs why), while one that presents nothing is
 still decided by the mode, and `off` accepts both. Opening Account › API
 Integrations, Setup › Postback / Pixel, `GET` or `PUT`
 `/conversions/postback-auth`, or a rotation replaces it with a new one, and the answer says so (`recovered`):
@@ -370,7 +371,8 @@ amount=9.99&p202_ts=1800000000&subid=123&txid=A-1
 
 A PurLink SubID's signature says which click and offer the SubID names; it
 does not authenticate the postback, and the mode applies all the same.
-Payment notifications (ClickBank, JVZoo, PayKickstart, Zaxaa) verify their
+Payment notifications (ClickBank, JVZoo, PayKickstart, Zaxaa) and Shopify
+order webhooks on `gpb.php` verify their
 own signatures and are not affected.
 
 ## A traffic source's custom variables — `/ppc-networks/{id}/variables`

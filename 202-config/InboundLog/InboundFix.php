@@ -19,7 +19,8 @@ final class InboundFix
     /** outcome => [what to do, page or null, the link's words or null] */
     private const BY_OUTCOME = [
         'unauthenticated' => [
-            'Give the sender the URL or pixel from Setup › Postback / Pixel, which carries your token.'
+            'Give the sender the URL or pixel from Setup › Postback / Pixel, which carries your token, or have it sign'
+                . ' each request (under Signed postbacks only the token alone is refused, so it has to sign).'
                 . ' Account › API Integrations › Postback authentication decides what a request must carry.',
             self::POSTBACK_PAGE, 'Copy the URL with your token',
         ],

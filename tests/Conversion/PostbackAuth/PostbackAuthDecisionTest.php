@@ -151,7 +151,7 @@ final class PostbackAuthDecisionTest extends TestCase
         foreach (['px', 'gpx', 'upx'] as $pixel) {
             $refusal = PostbackAuthGate::decide($signedOnly, $this->query('subid=12&p202_token=' . self::TOKEN), $pixel, self::NOW);
             self::assertSame('signature_required', $refusal?->reason, $pixel);
-            self::assertStringContainsString('cannot sign, so ' . $pixel . '.php is refused', (string) $refusal?->message);
+            self::assertStringContainsString('cannot sign, so an unsigned ' . $pixel . '.php request is refused', (string) $refusal?->message);
         }
         $signed = PostbackSignature::signedQuery('gpb', ['subid' => '12'], self::SECRET, self::NOW);
         self::assertNull($this->decide($signedOnly, PresentedCredentials::fromQueryString($signed)));

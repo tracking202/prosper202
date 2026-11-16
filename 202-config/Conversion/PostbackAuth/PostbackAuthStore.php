@@ -31,8 +31,8 @@ use Prosper202\OfflineConversion\StoredRow;
  * only the credentials asked for, so a value that cannot be read stops only
  * a request that presents that credential; ensureCredentials(), rotate()
  * and setMode() replace it with a new one.
- * Every read is on the primary, so a credential rotated a moment ago is
- * refused at once.
+ * Every read is on the primary, so outside mode off a credential rotated
+ * a moment ago is refused at once.
  */
 final class PostbackAuthStore
 {

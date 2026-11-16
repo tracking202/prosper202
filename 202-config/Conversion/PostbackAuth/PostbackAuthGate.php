@@ -10,10 +10,13 @@ use Prosper202\Database\Connection;
  * Whether a postback or pixel request may change an account's conversions:
  * pb.php, gpb.php, px.php, gpx.php and upx.php ask it, for the account whose
  * campaign (pb, px) or click (gpb, gpx, upx) the request names, before
- * anything is written.
+ * anything is written. A Shopify order webhook on gpb.php is verified by
+ * shopify.php against Shopify's signature and does not come here.
  *
  * - Mode off (every account already there at the 1.9.80 upgrade, until its
- *   owner changes it): every request passes and nothing is opened. Refusing
+ *   owner changes it): every request that names the account passes and
+ *   nothing is opened (one that names no account is refused first, in every
+ *   mode). Refusing
  *   a wrong token there would stop no one (leaving it out passes) and would
  *   lose the conversions of URLs still carrying a replaced token.
  * - Otherwise a request presenting a token or a signature is held to it: a
@@ -23,7 +26,8 @@ use Prosper202\Database\Connection;
  * - Mode signed: a signature is needed; the token alone is refused. A pixel
  *   is fetched by a browser and cannot sign, so a pixel request is refused
  *   unless it is signed.
- * - A row that cannot be read throws: the caller answers 500, never a pass.
+ * - Outside mode off, a row that cannot be read throws: the caller refuses
+ *   (500; gpx.php has sent its image and only logs), never a pass.
  *   Only what the request presents is opened: a request presenting nothing
  *   is decided by the mode alone.
  *
@@ -49,7 +53,7 @@ final class PostbackAuthGate
         if ($userId <= 0) {
             return new PostbackAuthRefusal('no_account', 'The request names no account this install can authenticate it for.');
         }
-        // Mode off accepts every request and opens nothing: a stale token on a
+        // Mode off accepts every request for the account and opens nothing: a stale token on a
         // network's URL keeps converting, and a credential that cannot be read
         // stops nothing.
         $mode = $this->store->mode($userId);
@@ -121,7 +125,7 @@ final class PostbackAuthGate
         $pixel = in_array($endpoint, ['px', 'gpx', 'upx'], true);
         $signingOnly = 'This account accepts only signed postbacks: p202_ts and p202_sig, keyed with its signing secret'
             . ' (Account › API Integrations › Postback authentication), not p202_token alone.'
-            . ($pixel ? ' A pixel is loaded by the visitor\'s browser and cannot sign, so ' . $endpoint . '.php is refused'
+            . ($pixel ? ' A pixel is loaded by the visitor\'s browser and cannot sign, so an unsigned ' . $endpoint . '.php request is refused'
                 . ' while the account accepts only signed postbacks.' : '');
         if ($presented->presentsNothing()) {
             return match ($settings->mode) {

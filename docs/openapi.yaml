@@ -13572,8 +13572,8 @@ paths:
 
         For a key with `conversions:write`, every URL ends with the account's
         postback token, `&p202_token=…` (`postback_token`, minted the first
-        time a URL is handed out). The token alone records and reverses
-        conversions, so a key without `conversions:write` gets the URLs
+        time a URL is handed out). Once the account requires it, the token records and
+        reverses conversions, so a key without `conversions:write` gets the URLs
         without it: `postback_token` is null and `postback_token_withheld`
         says why. The account's mode (`postback_auth_mode`, see
         `GET /conversions/postback-auth`) says whether a postback or pixel
@@ -13682,7 +13682,7 @@ paths:
       tags: [Setup]
       summary: Choose what the account's postbacks and pixels must carry
       description: |
-        `mode`: `off` accepts every request (a stale or wrong token too, since
+        `mode`: `off` accepts every request for the account (a stale or wrong token too, since
         leaving it out would pass); `token` refuses one that carries
         neither the token nor a signature; `signed` refuses one that is not
         signed with the signing secret, the token alone and every unsigned pixel

@@ -31,7 +31,8 @@ use Prosper202\Database\Connection;
  *
  * Every route asks for what the page asks, access_to_api_integrations,
  * and for conversions:write, the read included (index.php): the token and
- * the secret record and reverse conversions, so a key that may only read
+ * the secret record and reverse conversions under the modes that require
+ * them, so a key that may only read
  * them is not given either. A credential stored but unreadable is replaced
  * by a new one on any of the three, and `recovered` says so.
  */
@@ -78,7 +79,8 @@ final class PostbackAuthController
         $mode = is_string($payload['mode'] ?? null) ? PostbackAuthMode::tryFrom($payload['mode']) : null;
         if ($mode === null) {
             throw new ValidationException('mode is required', [
-                'mode' => 'One of off (every postback and pixel is accepted, with or without credentials),'
+                'mode' => 'One of off (every postback and pixel for the account is accepted, with or without'
+                    . ' credentials),'
                     . ' token (they must carry the token or a signature) or signed (only a signature: the token alone is'
                     . ' refused, and so is a pixel that is not signed, as a browser cannot sign).',
             ]);

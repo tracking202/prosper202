@@ -38,7 +38,8 @@ if (!function_exists('p202PostbackAuthRefusal')) {
      * (Prosper202\Conversion\PostbackAuth\PostbackAuthGate), or null when
      * it may. Asked before anything is written. A refusal is logged, and
      * noted in the inbound log when there is one. A failed read refuses
-     * (500), never passes, except while the 1.9.80 upgrade has not run:
+     * (500; gpx.php has sent its image by then and only logs it), never
+     * passes, except while the 1.9.80 upgrade has not run:
      * the table is not there yet, and the install works as 1.9.79 did, as
      * the upgrade leaves every account it finds.
      *
