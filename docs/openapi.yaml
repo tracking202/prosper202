@@ -13649,7 +13649,7 @@ paths:
         `off`; an account made later starts at `token`. Asks for the role
         permission access_to_api_integrations and the key scope
         `conversions:write`, read included: the token and the secret record
-        and reverse conversions.
+        and reverse conversions under the modes that require them.
 
         A token or secret stored but unreadable (its encryption key missing
         from the install, or a value that does not open) is replaced by a

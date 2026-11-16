@@ -293,7 +293,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				// The mode and its credentials are saved together or not at all.
 				$pbSaved = $pbStore->setMode($pbUser, $pbMode, time());
 				p202_account_flash('ok', match ($pbMode) {
-					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::OFF => 'Every postback and pixel is accepted again, with or without credentials.',
+					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::OFF => 'Every postback and pixel for this account is accepted again, with or without credentials.',
 					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::TOKEN => 'Postbacks and pixels without your token or a signature are now refused.',
 					\Prosper202\Conversion\PostbackAuth\PostbackAuthMode::SIGNED => 'Only signed postbacks are accepted now: the token alone is refused, and so are the pixels on your pages, which a browser cannot sign.',
 				});
@@ -931,7 +931,7 @@ template_top('API Integrations');
 					<?php }
 					$pbNow = time();
 					$pbModes = [
-						'off' => ['Not required', 'Every postback and pixel is accepted, as before 1.9.80, with or without the token.'],
+						'off' => ['Not required', 'Every postback and pixel for this account is accepted, as before 1.9.80, with or without the token.'],
 						'token' => ['Token or signature', 'A postback or pixel must carry the token (as the URLs in Setup › Postback / Pixel do) or a signature.'],
 						'signed' => ['Signed postbacks only', 'Only a request signed with the signing secret is accepted; the token alone is refused. A pixel on a page cannot sign, so the pixels on your pages are refused.'],
 					];
