@@ -51,8 +51,9 @@ If you connect the ad account (step 3), **Setup › Destinations › ChatGPT Ads
 › campaigns** has a *push template* action on each campaign whose template is
 not already the generic one. It pushes the generic ChatGPT Ads template, not
 your tracker's: that is enough for a tracker whose destination is its tracking
-link, on a source with no custom variables beyond the two above, and with
-those two keeping their placeholders (`{campaign_id}`, `{ad_id}`). A
+link, on a source with no custom variables beyond the two above, with
+those two keeping their placeholders (`{campaign_id}`, `{ad_id}`), and with
+nothing filled in on the Get Links form. A
 landing-page tracker's template also carries its `t202id`, and a source's other
 variables add their own parameters (and an edited placeholder changes the
 template), so for those paste the Get Links template
@@ -80,11 +81,13 @@ connection):
    OpenAI and shows the ad account's name, currency and time zone.
 2. Press **Run setup**. It finds or makes your web pixel and makes a
    Conversions API key. It adds a ChatGPT Ads destination with both, or takes
-   over an enabled one for the same pixel and replaces its key (a switched-off
-   one stops setup and asks you). It makes an event setting (30-day click
-   window) for each event type you pick under Advanced (`--event-type` from the
-   CLI); with none picked, for the types the destination already sends, else
-   `order_created`. A setting already on the pixel is found rather than made
+   over an enabled one for the same pixel and replaces its key. A switched-off
+   one is left as it is, and that step asks you to switch it on or delete it,
+   then run setup again; the other steps still run. It makes an event setting
+   (30-day click window) for each event type you pick under Advanced
+   (`--event-type` from the CLI). With none picked, it uses the types sent by a
+   destination this connection set up on an earlier run, else `order_created`
+   (so the run that takes a destination over makes `order_created`). A setting already on the pixel is found rather than made
    again, and a new destination sends the first type picked. Each step says
    what it did.
    Where OpenAI has pixel or key creation switched off for your account, setup
@@ -108,7 +111,8 @@ p202 destination test 3            # --real for an event OpenAI counts
 
 ([Ad connections API](../api/28-ad-connections.md))
 
-**What is sent.** Each conversion goes once to OpenAI's Conversions API, as an
+**What is sent.** A conversion that qualifies goes once to OpenAI's
+Conversions API, as an
 `order_created` event unless you pick another event type, with the click's
 `oppref`, the landing page and the payout. By default only conversions whose
 click came from a ChatGPT ad (it carries an `oppref`) are sent. To let OpenAI
@@ -120,15 +124,17 @@ answer.
 **What is not sent, or not taken**, so plan for it:
 
 - **Privacy holds.** Under the privacy setting `all`, no visitor's conversion
-  is sent. A visitor who is or may be in the EEA or UK, or whose address can't
-  be placed, is held back under every setting: under `eu` (the default for new
+  is sent. A visitor who is or may be in Europe (the EU, the EEA, the UK or
+  elsewhere on the continent), or whose address can't be placed, is held back under every setting: under `eu` (the default for new
   accounts) by the setting, and under `disabled` because ChatGPT Ads has no
   field that states consent to measurement
   ([privacy](destinations.md#privacy-and-personal-data)).
-- **Guessed clicks.** A conversion whose click was only guessed (by visitor
-  id, or the latest click from the same IP address) is withheld; only a click
-  the conversion named is sent.
-
+- **Clicks the conversion didn't name.** Only a conversion that named its
+  click is sent. One whose click was found another way is withheld: by
+  visitor id, by the latest click from the same IP address, or by a method
+  not recorded (conversions from before 1.9.79, goal events).
+- **Missing details.** A conversion with no landing page or tracking link
+  stored fails, and one whose amount has no recorded currency is withheld.
 - **No refunds or changes.** OpenAI keeps the first event it gets for a
   conversion. A refund or a corrected amount doesn't reach ChatGPT Ads.
 - **7 days.** A conversion more than 7 days old isn't taken, so a backfill
@@ -155,7 +161,7 @@ counts the sale twice.
 Until now each click costs the CPC typed on its tracker. To use what OpenAI
 billed, turn on the spend pull: **Setup › Traffic Sources › ChatGPT Ads spend
 › turn on** (the card is there once the ad account is connected). Each hour
-the install's cron job (or AutoCron) runs, Prosper202 then reads what OpenAI
+the install's cron job (or AutoCron) runs, unless OpenAI asked it to wait, Prosper202 then reads what OpenAI
 billed per ad per hour into the spend ledger, and the first run reads back
 about 30 days. Without one it still runs once an hour while someone is signed
 in and loading pages; a cron job or AutoCron keeps it going when nobody is on

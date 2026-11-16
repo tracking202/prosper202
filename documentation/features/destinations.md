@@ -93,7 +93,7 @@ once.
   latest click from the same IP address) is withheld, as the offline
   conversion files leave it out: a guess would teach the platform's bidding
   the wrong clicks.
-- **A visitor who may be in the EEA or UK is sent only when two things
+- **A visitor who may be in Europe is sent only when two things
   hold**: your privacy setting is `disabled`, and the destination states
   both consent signals (`ad_user_data` and `ad_personalization`) as
   `granted`. Under `eu`, the default for new accounts, stating consent
@@ -103,7 +103,7 @@ once.
   destination that states both signals granted while the setting still
   holds those visitors back. ChatGPT Ads has no field that states a
   visitor's consent to measurement (its per-event `opt_out` is about
-  personalisation only), so a visitor who may be in the EEA or UK is never
+  personalisation only), so a visitor who may be in Europe is never
   sent to it, whatever the setting.
 - **Your privacy setting** (Personal settings, the same setting that masks
   addresses and drops cookies) applies on top: `all` sends no visitor; `eu`
@@ -396,9 +396,10 @@ Settings and press **Connect ChatGPT Ads**. Prosper202 checks it with OpenAI and
 account's name, currency and time zone. Then **Run setup**: it finds or
 makes your web pixel, makes a Conversions API key, adds this destination
 with both (or takes over an enabled one for the same pixel and replaces its
-key; a switched-off one stops setup and asks), and makes an event setting
-(30-day click window) for each event type you pick; with none picked, for the
-types the destination already sends, else `order_created`. Each step says what it did, and any can be
+key; a switched-off one is left as it is, and that step asks you to switch it
+on or delete it and run setup again), and makes an event setting (30-day click
+window) for each event type you pick; with none picked, for the types sent by a
+destination this connection set up on an earlier run, else `order_created`. Each step says what it did, and any can be
 unticked. Where OpenAI has pixel or key creation switched off for your
 account, setup says so; make them in Ads Manager and give them under
 Advanced. **Replace key**, under the connection, takes a new Advertiser API
