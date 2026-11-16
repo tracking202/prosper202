@@ -48,12 +48,11 @@ $apps = [
     ['Resources202', 'More applications to help you sell.', $base . '202-resources/', 'basket.svg', false],
 ];
 $resources = [
-    ['Blog', 'The latest updates.', 'http://blog.tracking202.com/', 'news.svg'],
+    ['Blog', 'The latest updates.', 'https://blog.tracking202.com/', 'news.svg'],
     ['Twitter', 'Follow along.', 'https://twitter.tracking202.com/', 'news.svg'],
-    ['Newsletter', 'Updates in your inbox.', 'http://newsletter.tracking202.com', 'news.svg'],
-    ['Community support', 'Talk with other users, and get help.', 'http://support.tracking202.com/', 'support.svg'],
-    ['Developers', 'Do cool things with the Tracking202 APIs.', 'http://developers.tracking202.com', 'settings.svg'],
-    ['Meetup202', 'Marketing meetup groups around the world.', 'http://meetup.tracking202.com', 'shirt.svg'],
+    ['Newsletter', 'Updates in your inbox.', 'https://newsletter.tracking202.com/', 'news.svg'],
+    ['Community support', 'Talk with other users, and get help.', 'https://support.tracking202.com/', 'support.svg'],
+    ['Developers', 'Do cool things with the Tracking202 APIs.', 'https://developers.tracking202.com/', 'settings.svg'],
 ];
 
 template_top('Prosper202 ClickServer');  ?>

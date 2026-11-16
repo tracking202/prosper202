@@ -1,0 +1,1 @@
+-- Fixed: Home's Extra resources links all open again (Blog, Newsletter and Developers led nowhere), and Meetup202, which no longer runs, is gone from the list
