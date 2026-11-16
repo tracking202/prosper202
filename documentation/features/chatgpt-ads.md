@@ -63,7 +63,8 @@ set-template <connection-id> <campaign-id>` pushes the generic template,
 and with `--template '<the template get-url gave>'` your tracker's own.
 
 A click that arrives with `oppref` on its URL keeps it (clicks from 1.9.80
-on; the URL carries it when the campaign has the tracking template). Put `[[oppref]]` in an
+on; the URL carries it when the campaign's tracking template has
+`oppref={oppref}`, as the Get Links one does). Put `[[oppref]]` in an
 offer URL to pass it on, and a postback that sends it back finds its click
 ([tokens](../tutorials-and-guides/999-prosper202-tokens.md)).
 
@@ -140,8 +141,8 @@ billed, turn on the spend pull: **Setup › Traffic Sources › ChatGPT Ads spen
 › turn on** (the card is there once the ad account is connected). Each hour
 the install's cron job runs (or AutoCron), Prosper202 then reads what OpenAI
 billed per ad per hour into the spend ledger, and the first run reads back
-about 30 days; without a cron job the card's last run stays *never* and cost
-stays at the CPC. The card shows the last run, how far the spend reaches, and
+about 30 days. Without a cron job it runs only when you run it (`p202 spend
+sync run`, below), and until then cost stays at the CPC. The card shows the last run, how far the spend reaches, and
 any error.
 
 Reports then cost each click that carries an ad at its share of that ad's
