@@ -78,16 +78,16 @@ function p202_ad_campaigns_view(array $connection, ?array $campaigns, ?string $e
                 . '<td>' . $e($issues($c['serving_issues'])) . '</td>'
                 . '<td class="num">' . $e($money($c['budget']['daily_spend_limit_micros'] ?? null)) . '</td>'
                 . '<td class="num">' . $e(isset($spentBy[$cid]) ? $currency . ' ' . number_format((float) $spentBy[$cid]['spend'], 2) : '—') . '</td>'
-                . '<td>' . $e($template === null ? 'not set' : ($template === $default ? 'the Get Links one' : 'its own')) . '</td>'
+                . '<td>' . $e($template === null ? 'not set' : ($template === $default ? 'the generic one' : 'its own')) . '</td>'
                 . '<td>' . (is_array($c['conversion_event_setting_ids']) ? count($c['conversion_event_setting_ids']) : 'not read') . '</td>'
                 . '<td class="text-nowrap">' . $statusActions('campaigns', $c)
-                . ($template === $default ? '' : ' ' . $form('ad_campaign_template', 'campaigns', $cid, 'push template', 'Change ' . $cid . '\'s tracking template to the Get Links one? '
+                . ($template === $default ? '' : ' ' . $form('ad_campaign_template', 'campaigns', $cid, 'push template', 'Change ' . $cid . '\'s tracking template to the generic ChatGPT Ads one (not a tracker\'s own)? '
                     . ($template === null ? 'It has none now.' : 'It replaces ' . $template . '.') . ' OpenAI appends it to every ad\'s URL.'))
                 . ' ' . $form('ad_campaign_events', 'campaigns', $cid, 'attach event settings') . '</td></tr>';
         }
         $out .= '</tbody></table></div>'
             . ($more ? p202_flash('info', 'These are the first ' . count($campaigns) . ' campaigns; OpenAI has more. p202 ad-campaign list ' . $id . ' --after <the last id> reads the rest.') : '')
-            . '<div class="form-text">The Get Links template is <code>' . $e($default) . '</code>; for a tracker on a landing page, Get Links adds its t202id. Event settings attached are the ones setup made, added to the campaign\'s own. The same from a script: <code>p202 ad-campaign</code>.</div>';
+            . '<div class="form-text">Push template sends the generic template, <code>' . $e($default) . '</code>. A tracker\'s own from Get Links can differ: it adds a landing page\'s t202id, the source\'s own placeholders and the link\'s other variables; paste that one in Ads Manager, or send it with p202 ad-campaign set-template --template. Event settings attached are the ones setup made, added to the campaign\'s own. The same from a script: <code>p202 ad-campaign</code>.</div>';
     }
     if ($detailError !== null) {
         $out .= p202_flash('bad', 'Its ad groups and ads were not read: ' . $detailError);

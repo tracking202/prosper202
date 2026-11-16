@@ -156,7 +156,7 @@ pause and activate buttons behind a confirm.
 | `GET` | `/ad-connections/{id}/{campaigns,ad-groups,ads}/{objectId}` | One, by OpenAI's id (`cmpn_…`, `adgrp_…`, `ad_…`) |
 | `POST` | `/ad-connections/{id}/{campaigns,ad-groups,ads}/{objectId}/pause` | Pause it at OpenAI |
 | `POST` | `/ad-connections/{id}/{campaigns,ad-groups,ads}/{objectId}/activate` | Activate it |
-| `POST` | `/ad-connections/{id}/{campaigns,ad-groups,ads}/{objectId}/template` | Set `landing_page_configuration.query_string_template`: `template`, or the Get Links ChatGPT Ads template without it |
+| `POST` | `/ad-connections/{id}/{campaigns,ad-groups,ads}/{objectId}/template` | Set `landing_page_configuration.query_string_template`: `template`, or without it the generic ChatGPT Ads template (not a tracker's own: Get Links adds a landing-page tracker's `t202id`, the source's own placeholders and the link's other variables) |
 | `POST` | `/ad-connections/{id}/campaigns/{objectId}/event-settings` | Add `event_setting_ids` (or the ones setup made) to the campaign's own |
 | `GET` | `/ad-connections/{id}/spend` | Spend, impressions and clicks by campaign: `since`, `until` (whole days in the ad account's time zone, at most 365); yesterday there without them |
 

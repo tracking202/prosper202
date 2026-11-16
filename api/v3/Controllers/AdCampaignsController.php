@@ -82,7 +82,7 @@ final class AdCampaignsController
         PayloadKeys::refuseUnknown($payload, ['template'], 'a tracking template');
         $template = $payload['template'] ?? null;
         if ($template !== null && !is_string($template)) {
-            throw new ValidationException('Validation failed', ['template' => 'A query string, or leave it out for the ChatGPT Ads template Get Links gives.']);
+            throw new ValidationException('Validation failed', ['template' => 'A query string, or leave it out for the generic ChatGPT Ads template (not a tracker\'s own).']);
         }
 
         return ['data' => $this->answering(fn (): ?array => $this->campaigns->setTemplate($this->userId, $connectionId, $level, $objectId, $template, $dryRun)) ?? throw self::notFound($connectionId)];

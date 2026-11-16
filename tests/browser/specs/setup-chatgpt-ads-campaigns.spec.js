@@ -84,9 +84,9 @@ module.exports = {
         const push = '#c-cmpn_102 button:has-text("push template")';
         if (await ui.exists(push)) {
           await app.confirmAnd('accept', push);
-          expect.match(await app.messages(), /tracking template is now the Get Links one/, 'the template is pushed');
+          expect.match(await app.messages(), /tracking template at OpenAI is now /, 'the template is pushed');
         }
-        expect.match(await ui.text('#c-cmpn_102'), /the Get Links one/, 'the list reads the template back');
+        expect.match(await ui.text('#c-cmpn_102'), /the generic one/, 'the list reads the template back');
         await ui.clickThrough('#c-cmpn_101 a:has-text("Spring sale")');
         expect.match(await ui.text('#ad-campaigns'), /Running shoes[\s\S]*Road runner[\s\S]*rejected landing page unavailable/, 'ad groups and ads with their review');
         await shot('campaigns');
