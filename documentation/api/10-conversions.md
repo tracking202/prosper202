@@ -408,7 +408,8 @@ goals and app installs, and `GET /clicks/{id}/conversions` shows the latest
 visit's value.
 
 The per-campaign postback (`pb.php?acip=…&subid=…`, with or without `event=`;
-also `p202_token`, or a signature, when the account requires one) accepts a
+also `p202_token` or a signature when the account is in mode `token`, and a
+signature in mode `signed`) accepts a
 click any of whose visits was on the campaign it names, when that campaign
 is the click's account's, and credits the latest visit: the network posts
 back for the offer it sold, which may be on any visit of the click.

@@ -33,8 +33,8 @@ final class InboundReplayQuestionTest extends TestCase
 
         self::assertStringStartsWith('Record this request now? It says: click 5002, amount 12.50, transaction id ORD-7.', $asked);
         self::assertStringContainsString('when it arrived, ' . date('M j, Y g:i a', self::ARRIVED) . '.', $asked);
-        self::assertStringContainsString('did not carry your postback token', $asked);
-        self::assertStringNotContainsString('did not carry', InboundReplay::question(self::row(['subid' => '5'], 'token'), [], self::ARRIVED));
+        self::assertStringContainsString('carried no valid postback token or signature', $asked);
+        self::assertStringNotContainsString('carried no valid', InboundReplay::question(self::row(['subid' => '5'], 'token'), [], self::ARRIVED));
     }
 
     public function testAReversalIsAskedAsAReversalAndSaysWhatBecomesOfIt(): void

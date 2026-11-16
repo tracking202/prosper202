@@ -997,7 +997,7 @@ template_top('API Integrations');
 							<?php if ($pbReady['more_senders'] > 0) { ?>
 								<p class="form-text"><?php echo $e(number_format($pbReady['more_senders'])); ?> more with fewer requests are not listed<?php echo $userObj->hasPermission('access_to_setup_section') ? '; the <a href="' . $e($base . 'tracking202/setup/inbound_log.php') . '">Inbound Log</a> has every request' : ''; ?>.</p>
 							<?php } ?>
-							<?php if ($pbReady['token_only'] + $pbReady['pixels'] > 0) { ?>
+							<?php if ($pbReady['token_only'] + $pbReady['pixels'] > 0 && $pbAuth->mode !== \Prosper202\Conversion\PostbackAuth\PostbackAuthMode::SIGNED) { ?>
 								<p class="form-text">Signed postbacks only would also refuse the <?php echo $e(number_format($pbReady['token_only'])); ?> that carried the token alone, and your pixels unless they are signed (<?php echo $e(number_format($pbReady['pixels'])); ?> pixel requests here, signed or not).</p>
 							<?php } ?>
 						<?php } ?>

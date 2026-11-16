@@ -253,7 +253,9 @@ before.
 
 Once your account requires it (its mode, below), authentication refuses
 postbacks and pixels that carry neither your account's token nor a valid
-signature. Each account has two credentials:
+signature. Each account gets two credentials, made the first time one is
+needed (a postback URL handed out, the API Integrations page, `GET` or `PUT`
+`/conversions/postback-auth`, or a rotation):
 
 - a **postback token**, 32 hex characters, which every pixel and postback URL
   Setup hands out carries as `p202_token`;
