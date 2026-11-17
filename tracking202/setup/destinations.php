@@ -276,6 +276,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     } catch (\Prosper202\AdPlatforms\AdConnectionInputException $e) {
                         $errors['destination'] = $e->getMessage();
                         $real = false;
+                        if ($e->field === 'check_sent_at') {
+                            // A time that is refused would be refused again.
+                            $checkAgain = null;
+                        }
                     }
                     if ($real === null) {
                         $errors['destination'] = 'That destination is not one of yours, or was deleted.';

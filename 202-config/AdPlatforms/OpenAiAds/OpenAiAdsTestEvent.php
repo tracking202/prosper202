@@ -278,9 +278,9 @@ final class OpenAiAdsTestEvent
             if ($answer->isOk()) {
                 $listed = true;
                 if (self::arrived($answer->json, $type, $sentAt)) {
-                    $got = 'OpenAI lists ' . $looked . ' for pixel ' . $pixelId . ': the test event from this server,'
-                        . ' known by its type and the second it was sent at (OpenAI\'s list names no event id). It is'
-                        . ' saved, and counts as a conversion of the pixel.';
+                    $got = 'OpenAI lists ' . $looked . ' for pixel ' . $pixelId . ', which matches the test event'
+                        . ' this server sent by its type and the second it was sent at (OpenAI\'s list names no event'
+                        . ' id). It is saved, and counts as a conversion of the pixel.';
 
                     return $this->answer(true, true, self::ARRIVED, $got, $base);
                 }

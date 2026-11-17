@@ -831,7 +831,8 @@ final class DestinationQueue
      */
     public function realTestSent(int $userId, int $destinationId, int $sentAt, string $eventId): ?array
     {
-        $stmt = $this->conn->prepareRead('SELECT summary FROM `' . TableRegistry::DESTINATION_DELIVERIES
+        // The primary, which the send was just written to: a replica behind it would say no event was sent.
+        $stmt = $this->conn->prepareWrite('SELECT summary FROM `' . TableRegistry::DESTINATION_DELIVERIES
             . "` WHERE user_id = ? AND destination_id = ? AND kind = 'test' AND status = 'sent'
              AND created_at = ? AND sent_at = ?");
         $this->conn->bind($stmt, 'iiii', [$userId, $destinationId, $sentAt, $sentAt]);

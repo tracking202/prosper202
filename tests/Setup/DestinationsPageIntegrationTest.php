@@ -484,6 +484,8 @@ final class DestinationsPageIntegrationTest extends TestCase
         self::openAiControl('reset', []);
         $html = self::page([], $check($now - 7));
         self::assertStringContainsString('shows no real test event sent at ' . ($now - 7), $html);
+        $offered = 'name="sent_at" value="' . ($now - 7) . '"';
+        self::assertStringNotContainsString($offered, $html, 'a refused time is not offered again');
         self::assertStringNotContainsString('That could not be done', $html);
         self::assertSame(0, $posts(), 'the refused check sent no event');
     }
