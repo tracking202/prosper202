@@ -208,6 +208,123 @@ final class RealTestEventIntegrationTest extends TestCase
         self::assertStringContainsString('OpenAI did not take the test event', $answer['message']);
     }
 
+    /** Requests seen by the fake API: [event POSTs, event-list GETs]. */
+    private function seen(): array
+    {
+        $context = stream_context_create(['ssl' => ['cafile' => self::$tls . '/cert.pem', 'verify_peer' => true]]);
+        $body = (string) file_get_contents(self::$origin . '/control/requests', false, $context);
+        $read = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+        $posts = $reads = 0;
+        foreach ($read['requests'] as $request) {
+            $posts += ($request['method'] === 'POST' && $request['path'] === '/v1/events') ? 1 : 0;
+            $reads += ($request['method'] === 'GET' && $request['path'] === '/v1/conversions/events') ? 1 : 0;
+        }
+
+        return [$posts, $reads];
+    }
+
+    /** A check reads the list again for the event already sent and never sends another, which OpenAI would count. */
+    public function testACheckReadsTheListAgainAndSendsNothing(): void
+    {
+        $destination = $this->setUpConnection();
+        $now = time();
+        $sent = $this->testEvent()->send(1, $destination, $now);
+        self::assertSame([true, 'arrived', $now], [$sent['arrived'], $sent['state'], $sent['sent_at']]);
+        [$postsAfterSend, $readsAfterSend] = $this->seen();
+        self::assertSame(1, $postsAfterSend, 'one real event was sent');
+
+        $checked = $this->testEvent()->check(1, $destination, $sent['sent_at'], $now + 30);
+
+        $got = [$checked['sent'], $checked['arrived'], $checked['state'], $checked['sent_at']];
+        self::assertSame([true, true, 'arrived', $now], $got, $checked['message']);
+        [$posts, $reads] = $this->seen();
+        self::assertSame($postsAfterSend, $posts, 'a check sends no event');
+        self::assertGreaterThan($readsAfterSend, $reads, 'it read the list');
+    }
+
+    /** An event OpenAI took but does not list is "not listed yet": no failure, no advice to send another. */
+    public function testAnEventNotListedIsNotListedYetAndTheCheckSendsNothing(): void
+    {
+        $destination = $this->setUpConnection();
+        $now = time();
+        $this->testEvent()->send(1, $destination, $now);
+        [$posts] = $this->seen();
+
+        // The list holds an event at $now only: a check for another second finds none, as for an event not listed yet.
+        $checked = $this->testEvent()->check(1, $destination, $now - 5, $now);
+
+        $got = [$checked['sent'], $checked['arrived'], $checked['state']];
+        self::assertSame([true, false, 'not_listed'], $got, $checked['message']);
+        self::assertStringContainsString('Do not send another test event', $checked['message']);
+        self::assertStringNotContainsString('try again in a minute', strtolower($checked['message']));
+        self::assertSame($posts, $this->seen()[0], 'the check sent nothing');
+    }
+
+    /** Past the 15 minutes OpenAI's list reaches, nothing can be read: "too late", not "did not arrive". */
+    public function testACheckPastFifteenMinutesIsTooLateAndReadsNothing(): void
+    {
+        $destination = $this->setUpConnection();
+        $now = time();
+        [, $readsBefore] = $this->seen();
+
+        $checked = $this->testEvent()->check(1, $destination, $now - OpenAiAdsTestEvent::RECENT_SECONDS - 1, $now);
+
+        self::assertSame([true, false, 'too_late'], [$checked['sent'], $checked['arrived'], $checked['state']]);
+        self::assertStringContainsString('Ads Manager › Conversions', $checked['message']);
+        self::assertSame([0, $readsBefore], $this->seen(), 'nothing was sent or read');
+    }
+
+    public function testACheckRefusesATimeThatIsNotInThePast(): void
+    {
+        $destination = $this->setUpConnection();
+        foreach ([0, -1, time() + 600] as $sentAt) {
+            try {
+                $this->testEvent()->check(1, $destination, $sentAt, time());
+                self::fail('a check at ' . $sentAt . ' was read');
+            } catch (\Prosper202\AdPlatforms\AdConnectionInputException $e) {
+                self::assertStringContainsString('sent_at', $e->getMessage());
+            }
+        }
+        $other = $this->testEvent()->check(2, $destination, time() - 5, time());
+        self::assertNull($other, 'another account has no such destination');
+    }
+
+    /** Over the API a check only reads: no confirmation, and it never goes with real. */
+    public function testOverTheApiACheckNeedsNoConfirmationAndNeverSends(): void
+    {
+        $destination = $this->setUpConnection();
+        $controller = new \Api\V3\Controllers\DestinationsController(self::$db, 1);
+        $now = time();
+        $sent = $controller->test($destination, ['real' => true, 'confirm_counted' => true])['data'];
+        [$posts] = $this->seen();
+
+        $checked = $controller->test($destination, ['check_sent_at' => $sent['sent_at']])['data'];
+        self::assertSame([true, 'arrived'], [$checked['arrived'], $checked['state']], $checked['message']);
+        self::assertSame($posts, $this->seen()[0], 'the check sent nothing');
+
+        $refusals = [
+            'with real' => [['check_sent_at' => $sent['sent_at'], 'real' => true], 'real'],
+            'with a confirmation' => [
+                ['check_sent_at' => $sent['sent_at'], 'confirm_counted' => true],
+                'confirm_counted',
+            ],
+            'a string' => [['check_sent_at' => '12abc'], 'check_sent_at'],
+            'a float' => [['check_sent_at' => 1.5], 'check_sent_at'],
+            'zero' => [['check_sent_at' => 0], 'check_sent_at'],
+            'null' => [['check_sent_at' => null], 'check_sent_at'],
+            'the future' => [['check_sent_at' => $now + 3600], 'check_sent_at'],
+        ];
+        foreach ($refusals as $what => [$body, $field]) {
+            try {
+                $controller->test($destination, $body);
+                self::fail($what . ' was accepted');
+            } catch (\Api\V3\Exception\ValidationException $e) {
+                self::assertArrayHasKey($field, $e->getFieldErrors(), $what);
+            }
+        }
+        self::assertSame($posts, $this->seen()[0], 'no refused check sent anything');
+    }
+
     public function testAnotherAccountsDestinationIsNone(): void
     {
         $destination = $this->setUpConnection();

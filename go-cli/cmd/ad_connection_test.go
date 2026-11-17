@@ -118,6 +118,48 @@ func TestAdConnectionRefusesBadInputBeforeTheServer(t *testing.T) {
 	}
 }
 
+// `destination test --check-sent-at` only reads: its body is the time alone, never real or confirm_counted,
+// so a retry cannot send another counted conversion.
+func TestDestinationTestCheckSentAtOnlyReads(t *testing.T) {
+	var bodies []map[string]interface{}
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		body := map[string]interface{}{}
+		_ = json.Unmarshal(raw, &body)
+		bodies = append(bodies, body)
+		w.Write([]byte(`{"data":{"sent":true,"arrived":false,"state":"not_listed","sent_at":1794849228,"event_type":"order_created","pixel_id":"134500901","connection_id":1,"status_code":null,"message":"OpenAI took the event"}}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	out, _, err := executeCommand("destination", "test", "3", "--check-sent-at", "1794849228", "--json")
+	if err != nil {
+		t.Fatalf("test --check-sent-at: %v", err)
+	}
+	if len(bodies) != 1 || !reflect.DeepEqual(bodies[0], map[string]interface{}{"check_sent_at": float64(1794849228)}) {
+		t.Errorf("bodies = %v", bodies)
+	}
+	if !strings.Contains(out, `"state": "not_listed"`) {
+		t.Errorf("the state is printed: %s", out)
+	}
+
+	for name, args := range map[string][]string{
+		"with --real":  {"destination", "test", "3", "--real", "--check-sent-at", "1794849228"},
+		"not positive": {"destination", "test", "3", "--check-sent-at", "-5"},
+	} {
+		before := len(bodies)
+		_, _, err := executeCommand(append(args, "--json")...)
+		if err == nil || exitCodeForError(err) != 1 {
+			t.Errorf("%s: want a validation error (exit 1), got %v", name, err)
+		}
+		if len(bodies) != before {
+			t.Errorf("%s: nothing may be sent, but %d requests were", name, len(bodies)-before)
+		}
+	}
+}
+
 // `destination test --real` asks for the real event and its read-back; without it the body is empty.
 func TestDestinationTestRealAsksForTheReadBack(t *testing.T) {
 	var bodies []map[string]interface{}

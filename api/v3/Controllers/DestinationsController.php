@@ -119,7 +119,10 @@ final class DestinationsController
      */
     public function test(int $id, array $payload = []): array
     {
-        PayloadKeys::refuseUnknown($payload, ['real', 'confirm_counted'], 'a test');
+        PayloadKeys::refuseUnknown($payload, ['real', 'confirm_counted', 'check_sent_at'], 'a test');
+        if (array_key_exists('check_sent_at', $payload)) {
+            return $this->checkRealTest($id, $payload);
+        }
         $real = $payload['real'] ?? false;
         if (!is_bool($real)) {
             throw new ValidationException('Validation failed', ['real' => 'true sends a real ChatGPT Ads event and reads it back; leave it out for a check that saves nothing.']);
@@ -154,6 +157,44 @@ final class DestinationsController
         }
 
         return ['data' => $this->refusing(fn (): ?array => (new DestinationQueue($this->conn, $this->store))->testFire($this->userId, $id, time())) ?? throw self::notFound($id)];
+    }
+
+    /**
+     * Read OpenAI's recent events again for a real test event already sent,
+     * by the `sent_at` its answer gave. Only reads: nothing is sent, so no
+     * `confirm_counted`, and it does not go with `real`.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private function checkRealTest(int $id, array $payload): array
+    {
+        foreach (['real', 'confirm_counted'] as $other) {
+            if (array_key_exists($other, $payload)) {
+                $why = 'check_sent_at only reads the event already sent; it does not go with ' . $other . '.';
+                throw new ValidationException('Validation failed', [$other => $why]);
+            }
+        }
+        $sentAt = $payload['check_sent_at'];
+        if (!is_int($sentAt) || $sentAt <= 0) {
+            $why = 'A whole number of Unix seconds: the sent_at of the real test event\'s answer.';
+            throw new ValidationException('Validation failed', ['check_sent_at' => $why]);
+        }
+        $state = \Api\V3\Support\ServerStateStore::forInstall($this->conn->writeConnection());
+        try {
+            $answer = (new OpenAiAdsTestEvent(
+                $this->conn,
+                new AdConnectionStore($this->conn),
+                $this->store,
+                AdvertiserApi::fromEnvironment($state),
+                new OpenAiAdsDestination(AdvertiserApi::eventsSender())
+            ))->check($this->userId, $id, $sentAt, time());
+        } catch (AdConnectionInputException $e) {
+            throw new ValidationException($e->getMessage(), ['check_sent_at' => $e->getMessage()], $e);
+        } catch (AdPlatformUnavailable $e) {
+            throw UpstreamUnavailableException::forAdPlatform($e, OpenAiAdsConnections::PLATFORM);
+        }
+
+        return ['data' => $answer ?? throw self::notFound($id)];
     }
 
     /**

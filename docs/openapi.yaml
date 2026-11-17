@@ -6564,8 +6564,16 @@ paths:
         then the account's recent events (`GET /conversions/events?pid=`)
         are read through the connection, and `arrived` says whether it is
         among them as a server event (`server_to_server`). The answer is
-        `sent`, `arrived`, `event_type`, `pixel_id`, `connection_id`,
-        `status_code` and `message`. Because the event is counted, `real`
+        `sent`, `arrived`, `state` (`arrived`, `not_listed` or `not_sent`),
+        `sent_at` (the Unix second it was sent at), `event_type`, `pixel_id`,
+        `connection_id`, `status_code` and `message`. `not_listed` means
+        OpenAI took the event but its recent events do not show it yet: that
+        is not a failure, and sending another real event would be counted
+        as one more conversion. Read again instead with
+        `{"check_sent_at": <sent_at>}`, which only reads and sends nothing
+        (no `confirm_counted`, and it does not go with `real`): `state` is
+        `arrived`, `not_listed`, or `too_late` once more than 15 minutes
+        have passed, the furthest back OpenAI's recent events reach. Because the event is counted, `real`
         is refused (422 naming `confirm_counted`) unless
         `"confirm_counted": true` is sent with it. Without a connection it
         is a 422 naming `real`. OpenAI not reached is a 503, its rate limit
@@ -6583,6 +6591,7 @@ paths:
               properties:
                 real: {type: boolean, description: ChatGPT Ads with a connection - send a real event and read it back}
                 confirm_counted: {type: boolean, description: Required true with real - the event is saved and counted as a conversion}
+                check_sent_at: {type: integer, minimum: 1, description: "Read OpenAI's recent events again for the real test event sent at this Unix second (sent_at of its answer); sends nothing"}
       responses:
         "200":
           description: The platform's verdict
@@ -6599,9 +6608,11 @@ paths:
                       status_code: {type: integer, nullable: true}
                       messages: {type: array, items: {type: string}}
                       reason: {type: string, nullable: true}
+                      arrived: {type: boolean, description: "A real test event or a check: whether OpenAI lists it"}
+                      state: {type: string, enum: [arrived, not_listed, too_late, not_sent], description: "A real test event or a check: not_listed is OpenAI having taken it without listing it yet, not a failure"}
+                      sent_at: {type: integer, nullable: true, description: "A real test event or a check: the Unix second the event was sent at"}
                       sent:
-                        type: object
-                        description: What was sent, without identifiers' values
+                        description: What was sent, without identifiers' values (a validation test, an object); true or false for a real test event or a check
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":

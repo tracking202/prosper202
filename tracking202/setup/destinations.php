@@ -255,6 +255,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     header('location: ' . $self . '?done=tested#d' . $id);
                     die();
                 }
+            } elseif ($action === 'test_real_check') {
+                // Reads OpenAI's recent events again for the event already sent; sends nothing.
+                $sentAt = \Prosper202\Http\PostedId::read($_POST['sent_at'] ?? null);
+                if ($sentAt === null) {
+                    $errors['destination'] = 'The time that test event was sent at was not read: look in Ads Manager'
+                        . ' › Conversions for it.';
+                } else {
+                    try {
+                        $checker = new OpenAiAdsTestEvent(
+                            $conn,
+                            $adStore,
+                            $store,
+                            $advertiserApi(),
+                            new OpenAiAdsDestination(AdvertiserApi::eventsSender())
+                        );
+                        $real = $checker->check($userId, $id, $sentAt, time());
+                    } catch (\Prosper202\AdPlatforms\AdConnectionInputException $e) {
+                        $errors['destination'] = $e->getMessage();
+                        $real = false;
+                    }
+                    if ($real === null) {
+                        $errors['destination'] = 'That destination is not one of yours, or was deleted.';
+                    } elseif ($real !== false) {
+                        $_SESSION['p202_destination_real_test'] = ['id' => $id] + $real;
+                        header('location: ' . $self . '?done=tested#d' . $id);
+                        die();
+                    }
+                }
             } elseif ($action === 'test') {
                 $result = (new DestinationQueue($conn, $store))->testFire($userId, $id, time());
                 if ($result === null) {
@@ -566,7 +594,7 @@ if ($logDestination !== null) {
                                 + (p202_ad_connection_reaches($adConnectionList, $d) ? ['test_real' => 'send a real test event'] : [])
                                 + [$d['enabled'] ? 'disable' : 'enable' => $d['enabled'] ? 'turn off' : 'turn on', 'delete' => 'delete']; ?>
                             <?php foreach ($acts as $act => $label) {
-                                $confirm = ['delete' => 'Delete this destination? What it has not sent is cancelled.', 'test_real' => 'Send a real test event to ChatGPT Ads? OpenAI saves it and counts it as a conversion of the pixel; then its recent events are read back.'][$act] ?? ''; ?>
+                                $confirm = ['delete' => 'Delete this destination? What it has not sent is cancelled.', 'test_real' => 'Send a real test event to ChatGPT Ads? OpenAI saves it and counts it as a conversion of the pixel, every time you send one; then its recent events are read back. If it is not listed yet, use Check again rather than sending another.'][$act] ?? ''; ?>
                             <form method="post" action="<?php echo p202_setup_e($self); ?>" class="d-inline"<?php echo $confirm !== '' ? ' data-p202-confirm="' . p202_setup_e($confirm) . '"' : ''; ?>>
                                 <?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>
                                 <input type="hidden" name="action" value="<?php echo $act; ?>"><input type="hidden" name="destination_id" value="<?php echo $id; ?>">
@@ -596,9 +624,27 @@ if ($logDestination !== null) {
                             . '. They are tried again at ' . $when((int) $d['waiting']['until']) . ', or at once when you connect it again or save its settings or credentials (Edit, below).');
                     } ?>
                     <?php echo p202_destination_privacy_note($privacy, $settings, $base, $adapter?->takesConsent() ?? true); ?>
-                    <?php if ($realTest !== null && (int) $realTest['id'] === $id) {
-                        echo p202_flash(($realTest['arrived'] ?? false) === true ? 'ok' : 'bad', (string) $realTest['message']);
+                    <?php $canCheck = false;
+                    if ($realTest !== null && (int) $realTest['id'] === $id) {
+                        // Taken by OpenAI but not listed yet is not a failure; only a refused event is.
+                        $realArrived = ($realTest['arrived'] ?? false) === true;
+                        $realSent = ($realTest['sent'] ?? false) === true;
+                        $realKind = $realArrived ? 'ok' : ($realSent ? 'info' : 'bad');
+                        echo p202_flash($realKind, (string) $realTest['message']);
+                        $canCheck = $realSent && !$realArrived && ($realTest['state'] ?? '') === 'not_listed'
+                            && is_int($realTest['sent_at'] ?? null);
                     } ?>
+                    <?php if ($canCheck) { ?>
+                    <form method="post" action="<?php echo p202_setup_e($self); ?>" class="mb-3">
+                        <?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>
+                        <input type="hidden" name="action" value="test_real_check">
+                        <input type="hidden" name="destination_id" value="<?php echo $id; ?>">
+                        <input type="hidden" name="sent_at" value="<?php echo (int) $realTest['sent_at']; ?>">
+                        <button type="submit" class="btn btn-secondary btn-sm">
+                            Check again (reads only, sends nothing)
+                        </button>
+                    </form>
+                    <?php } ?>
                     <?php if ($test !== null && (int) $test['id'] === $id) {
                         echo p202_flash($test['valid'] ? 'ok' : 'bad', $test['valid']
                             ? ($d['type'] === OpenAiAdsDestination::TYPE
