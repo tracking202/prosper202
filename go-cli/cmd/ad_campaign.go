@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"net/http"
+	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -186,7 +188,8 @@ var adCampaignSetTemplateCmd = &cobra.Command{
 		"lowest level set wins). Without --template it is the generic ChatGPT Ads template, not your tracker's. It\n" +
 		"matches Get Links only when the destination is the tracking link, campaign_id and ad_id keep their default\n" +
 		"placeholders, and the link has no other variables; otherwise pass the template `p202 tracker get-url <id>`\n" +
-		"gives (for a landing page whose URL has a host, it carries the tracker's t202id).",
+		"gives (for a landing page whose URL has a host, it carries the tracker's t202id). A template must not set\n" +
+		"oppref: OpenAI adds its click id to the URL itself and refuses one that does.",
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := adCampaignArgs(args); err != nil {
@@ -198,12 +201,36 @@ var adCampaignSetTemplateCmd = &cobra.Command{
 			t = strings.TrimPrefix(strings.TrimSpace(t), "?")
 			if t == "" || len(t) > 2048 || strings.ContainsAny(t, " \t\r\n#") {
 				return validationError("--template must be a query string of at most 2048 characters with no spaces or #").
-					WithHint("For example utm_source=chatgpt&campaign_id={campaign_id}&ad_id={ad_id}&oppref={oppref}; leave --template out for the generic ChatGPT Ads template.")
+					WithHint("For example utm_source=chatgpt&campaign_id={campaign_id}&ad_id={ad_id}; leave --template out for the generic ChatGPT Ads template.")
+			}
+			if reserved := adTemplateReservedKeys(t); len(reserved) > 0 {
+				return validationError("--template must not set %s: OpenAI adds its click id (oppref) to the ad's URL itself and refuses a template that sets it", strings.Join(reserved, " or ")).
+					WithHint("Take %s out of the template; Prosper202 still records oppref from the URL. For example utm_source=chatgpt&campaign_id={campaign_id}&ad_id={ad_id}.", strings.Join(reserved, ", "))
 			}
 			body["template"] = t
 		}
 		return adCampaignWrite(cmd, "set-template", "ad-connections/"+args[0]+"/"+adCampaignLevel(cmd)+"/"+args[1]+"/template", body)
 	},
+}
+
+// adTemplateReservedQueryKeys are the query keys OpenAI refuses in a tracking template, because it adds them to
+// the landing URL itself (ChatGptAdsSource::RESERVED_KEYS on the server).
+var adTemplateReservedQueryKeys = []string{"oppref"}
+
+// adTemplateReservedKeys lists the reserved keys a template sets, each once: a key is the text before a pair's
+// first '=', percent-decoded, compared exactly, as the server reads it. {oppref} as another key's value is fine.
+func adTemplateReservedKeys(template string) []string {
+	var found []string
+	for _, pair := range strings.Split(strings.TrimLeft(template, "?"), "&") {
+		key, _, _ := strings.Cut(pair, "=")
+		if decoded, err := url.PathUnescape(key); err == nil {
+			key = decoded
+		}
+		if slices.Contains(adTemplateReservedQueryKeys, key) && !slices.Contains(found, key) {
+			found = append(found, key)
+		}
+	}
+	return found
 }
 
 var adCampaignAttachEventsCmd = &cobra.Command{

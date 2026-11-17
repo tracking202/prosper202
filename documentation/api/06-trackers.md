@@ -67,20 +67,21 @@ other tracker it is `null`:
 "chatgpt_ads": {
   "destination": "landing_page",
   "destination_url": "https://shop.example.com/sale",
-  "tracking_template": "utm_source=chatgpt&utm_medium=paid&utm_campaign={campaign_id}&utm_content={ad_id}&campaign_id={campaign_id}&ad_id={ad_id}&oppref={oppref}&t202id=8837291&t202kw="
+  "tracking_template": "utm_source=chatgpt&utm_medium=paid&utm_campaign={campaign_id}&utm_content={ad_id}&campaign_id={campaign_id}&ad_id={ad_id}&t202id=8837291&t202kw="
 }
 ```
 
 `destination_url` goes in the ad and `tracking_template` in its tracking
-settings; ChatGPT appends the template to the URL and fills in `{campaign_id}`,
-`{ad_id}` and `{oppref}`, its click id. A tracker with a landing page sends the
+settings; ChatGPT appends the template to the URL and fills in `{campaign_id}`
+and `{ad_id}`. It adds its click id, `oppref`, to the URL itself, which is why the
+template leaves it out: OpenAI refuses a template that sets `oppref`. A tracker with a landing page sends the
 visitor straight to the page (`destination` `landing_page`), and the template
 carries `t202id` and `t202kw` for the page's landing page code. Any other
 tracker's destination is its `dl.php` or `rtr.php` link with only `t202id`
 (`destination` `tracking_link`), since ChatGPT fills its macros in the template
 only. The link's other variables and tokens (`c1`, a custom variable) follow
-in the template; what the template already sets (`utm_source`, `oppref`, ...)
-is not written twice. The source's own `campaign_id` and `ad_id` variables give
+in the template; what the template already sets (`utm_source`, `campaign_id`, ...)
+is not written twice, and a variable named `oppref` is left out. The source's own `campaign_id` and `ad_id` variables give
 those two parameters, so a placeholder you change on Traffic Sources reaches
 the template; `utm_campaign` and `utm_content` keep `{campaign_id}` and `{ad_id}`.
 

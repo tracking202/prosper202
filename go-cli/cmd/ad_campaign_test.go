@@ -88,6 +88,41 @@ func TestAdCampaignRefusesBadInputBeforeTheServer(t *testing.T) {
 	}
 }
 
+// OpenAI refuses a template that sets oppref (it adds the click id itself), so
+// the CLI refuses it first, read as the server reads it: by key, decoded, and
+// not by a value or a key that only contains the name.
+func TestAdCampaignSetTemplateRefusesOpenAIsReservedOppref(t *testing.T) {
+	calls, bodies := adCampaignServer(t)
+	for _, template := range []string{
+		"utm_source=chatgpt&oppref={oppref}",
+		"oppref=x",
+		"a=1&oppref",
+		"?oppref=1",
+		"a=1&%6Fppref=x",
+		"oppref=1&b=2&oppref=3",
+	} {
+		_, _, err := executeCommand("ad-campaign", "set-template", "1", "cmpn_1", "--template", template, "--json")
+		if err == nil || exitCodeForError(err) != 1 || !strings.Contains(err.Error(), "oppref") || !strings.Contains(err.Error(), "OpenAI adds") ||
+			!strings.Contains(hintFor(err), "still records oppref") {
+			t.Errorf("%q: err %v, exit %d, hint %q", template, err, exitCodeForError(err), hintFor(err))
+		}
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("a template OpenAI refuses reached the server: %v", *calls)
+	}
+	for _, template := range []string{"ref={oppref}", "xoppref=1", "oppref_x=1", "a=oppref", "OPPREF=1"} {
+		if _, _, err := executeCommand("ad-campaign", "set-template", "1", "cmpn_1", "--template", template, "--json"); err != nil {
+			t.Errorf("%q was refused: %v", template, err)
+		}
+	}
+	if len(*calls) != 5 || (*bodies)[0]["template"] != "ref={oppref}" {
+		t.Errorf("accepted templates sent: %v %v", *calls, *bodies)
+	}
+	if got := adTemplateReservedKeys("oppref=1&b=2&oppref=3"); !reflect.DeepEqual(got, []string{"oppref"}) {
+		t.Errorf("reserved keys = %v, want each once", got)
+	}
+}
+
 // OpenAI not reached, its rate limit and an answer that cannot be used keep the
 // class's "wait and run it again"; a list hint is for a 404 and the key hint
 // for a 422 naming api_key.

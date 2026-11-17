@@ -1042,7 +1042,7 @@ when you quote ROI from it. An ad account in another currency is refused by name
 p202 ad-campaign list <conn> [--level campaigns|ad-groups|ads] [--campaign-id cmpn_…] [--ad-group-id adgrp_…] [--limit N] [--after CURSOR]
 p202 ad-campaign get <conn> <id> [--level …]            # status, serving_issues, query_string_template; budget (campaigns); review_status (ads)
 p202 ad-campaign pause|activate <conn> <id> [--level …] [--dry-run]
-p202 ad-campaign set-template <conn> <id> [--level …] [--template QS] [--dry-run]   # default: the generic ChatGPT Ads template, not the tracker's
+p202 ad-campaign set-template <conn> <id> [--level …] [--template QS] [--dry-run]   # default: the generic ChatGPT Ads template, not the tracker's; a --template setting oppref is refused (OpenAI adds it itself)
 p202 ad-campaign attach-events <conn> <cmpn_…> [--event-setting-id ces_…]... [--dry-run]   # default: the ones setup made
 p202 ad-campaign spend <conn> [--since YYYY-MM-DD --until YYYY-MM-DD]   # by campaign; default yesterday in the ad account's zone
 ```

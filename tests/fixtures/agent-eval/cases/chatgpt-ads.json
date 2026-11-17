@@ -92,8 +92,11 @@
           {
             "run": "p202 ad-campaign get $(p202 ad-connection list --json | jq -r '.data[0].connection_id') cmpn_102 --json | jq -r '.data.query_string_template'",
             "includes": [
-              "oppref={oppref}",
+              "utm_source=chatgpt",
               "campaign_id={campaign_id}"
+            ],
+            "omits": [
+              "oppref"
             ]
           },
           {

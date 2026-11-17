@@ -7,6 +7,7 @@ namespace Tests\Api\V3;
 use Api\V3\Support\AiConnect;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\DataSeeder;
+use Prosper202\Setup\ChatGptAdsSource;
 
 /**
  * ChatGPT Ads connections and campaigns as api/v3/index.php serves them, to the keys an AI connection holds:
@@ -267,5 +268,23 @@ final class AdCampaignsServedIntegrationTest extends TestCase
         self::assertSame(200, $status, $raw);
         self::assertArrayHasKey('query_string_template', $body['data']['previous'] ?? [], $raw);
         self::assertSame(['a={ad_id}', null], [$body['data']['record']['query_string_template'] ?? false, $body['data']['previous']['query_string_template']], $raw);
+    }
+
+    /**
+     * OpenAI adds oppref to the ad's URL itself and answers 400 to a template that sets it (the stand-in does too):
+     * such a template is a 422 naming template, with nothing sent, and the generic one, sent with none given, is taken.
+     */
+    public function testATemplateSettingOpprefIs422AndTheGenericOneIsTaken(): void
+    {
+        $path = '/ad-connections/' . self::$connection . '/campaigns/cmpn_102/template';
+        $before = count(self::sentToOpenAi());
+        [$status, $body, $raw] = self::call('full', 'POST', $path, ['template' => 'utm_source=chatgpt&oppref={oppref}']);
+        self::assertSame(422, $status, $raw);
+        self::assertStringContainsString('OpenAI adds its click id (oppref)', (string) ($body['field_errors']['template'] ?? ''), $raw);
+        self::assertCount($before, self::sentToOpenAi(), 'nothing reached OpenAI');
+
+        [$status, $body, $raw] = self::call('full', 'POST', $path, []);
+        self::assertSame(200, $status, $raw);
+        self::assertSame(ChatGptAdsSource::TEMPLATE, $body['data']['record']['query_string_template'] ?? null, $raw);
     }
 }

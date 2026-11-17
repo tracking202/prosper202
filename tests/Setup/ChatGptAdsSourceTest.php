@@ -16,7 +16,7 @@ final class ChatGptAdsSourceTest extends TestCase
 {
     private const BASE = 'https://track.example.com/';
     private const TEMPLATE = 'utm_source=chatgpt&utm_medium=paid&utm_campaign={campaign_id}&utm_content={ad_id}'
-        . '&campaign_id={campaign_id}&ad_id={ad_id}&oppref={oppref}';
+        . '&campaign_id={campaign_id}&ad_id={ad_id}';
 
     /** What TrackingLinkVariables::query() writes for the source's two variables and no token. */
     private const SOURCE_VARIABLES = '&campaign_id={campaign_id}&ad_id={ad_id}&t202kw=';
@@ -28,6 +28,31 @@ final class ChatGptAdsSourceTest extends TestCase
             ['campaign_id' => '{campaign_id}', 'ad_id' => '{ad_id}'],
             array_column(ChatGptAdsSource::VARIABLES, 'placeholder', 'parameter')
         );
+    }
+
+    /**
+     * OpenAI appends its click id, oppref, to the landing URL itself and answers 400 to a template that sets it
+     * (measured 2026-11-17), so the template does not, and a link variable named oppref is not added to it.
+     */
+    public function testTheTemplateLeavesOpprefToOpenAi(): void
+    {
+        self::assertSame([], ChatGptAdsSource::reservedKeysIn(ChatGptAdsSource::TEMPLATE));
+        foreach ([false, true] as $onPage) {
+            $links = ChatGptAdsSource::links(self::BASE, '5', '', self::SOURCE_VARIABLES . '&oppref=[[oppref]]&c1=x', $onPage ? 'https://shop.example.com/' : '', false);
+            self::assertSame([], ChatGptAdsSource::reservedKeysIn($links['tracking_template']), $links['tracking_template']);
+            self::assertStringEndsWith('&c1=x', $links['tracking_template']);
+        }
+    }
+
+    /** A key is the text before a pair's first =, decoded, compared exactly; {oppref} as a value is not one. */
+    public function testReservedKeysAreReadAsKeys(): void
+    {
+        foreach (['oppref={oppref}', 'a=1&oppref=x', 'a=1&oppref', '?oppref=1', 'a=1&%6Fppref=x', 'oppref=1&b=2&oppref=3'] as $set) {
+            self::assertSame(['oppref'], ChatGptAdsSource::reservedKeysIn($set), $set);
+        }
+        foreach (['ref={oppref}', 'xoppref=1', 'oppref_x=1', 'a=oppref', 'oppref[]=1', 'OPPREF=1', ''] as $unset) {
+            self::assertSame([], ChatGptAdsSource::reservedKeysIn($unset), $unset);
+        }
     }
 
     public function testALandingPageIsTheDestinationAndTheTemplateCarriesTheTracker(): void
@@ -90,7 +115,7 @@ final class ChatGptAdsSourceTest extends TestCase
         $links = ChatGptAdsSource::links(self::BASE, '5', '', '&campaign_id={campaignid}&ad_id={ad_id}&t202kw=', '', false);
 
         self::assertSame(
-            'utm_source=chatgpt&utm_medium=paid&utm_campaign={campaign_id}&utm_content={ad_id}&campaign_id={campaignid}&ad_id={ad_id}&oppref={oppref}',
+            'utm_source=chatgpt&utm_medium=paid&utm_campaign={campaign_id}&utm_content={ad_id}&campaign_id={campaignid}&ad_id={ad_id}',
             $links['tracking_template']
         );
         $none = ChatGptAdsSource::links(self::BASE, '5', '', '&t202kw=', '', false);

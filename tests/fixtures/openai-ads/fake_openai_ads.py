@@ -57,7 +57,7 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlsplit
 
 SEED = {
     'account': {
@@ -329,6 +329,12 @@ class Handler(BaseHTTPRequestHandler):
                     template = (body[field] or {}).get('query_string_template')
                     if template is not None and len(template) > 2048:
                         return 400, {'error': {'message': 'query_string_template is longer than 2048'}}
+                    # OpenAI adds oppref to the landing URL itself and refuses a template that sets it
+                    # (measured against the live API, 2026-11-17).
+                    reserved = sorted({k for k, _ in parse_qsl(template or '', keep_blank_values=True)} & {'oppref'})
+                    if reserved:
+                        return 400, {'error': {'message': 'Invalid landing_page_configuration.query_string_template: landing page'
+                                               ' query string template contains reserved query parameter(s): ' + repr(reserved)}}
                 row[field] = body[field]
         return 200, row
 
