@@ -97,7 +97,11 @@ connection):
 3. Test the destination. *Send test* sends a made-up event that OpenAI checks
    and doesn't save. *Send a real test event* sends one that OpenAI saves and
    counts, then reads the account's recent events and says whether it arrived
-   from this server.
+   from this server. Each one is one more conversion OpenAI counts, so when it
+   is not listed yet, or the list could not be read, use *Check again*, which
+   only reads the list again and sends nothing. OpenAI's list is a sample of
+   its 50 most recent events, so an event missing from it is not lost; after
+   15 minutes look for it in Ads Manager › Conversions.
 
 The keys are stored encrypted and never shown again. If OpenAI later refuses
 the stored key, or you rotate it, **Replace key** takes a new one for the same
@@ -109,6 +113,7 @@ From a script:
 p202 ad-connection create --api-key-file ads-key.txt --ppc-account-id 4
 p202 ad-connection setup 1
 p202 destination test 3            # --real for an event OpenAI counts
+p202 destination test 3 --check-sent-at 1794849228   # reads again for that real event, sends nothing
 ```
 
 ([Ad connections API](../api/28-ad-connections.md))

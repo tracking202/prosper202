@@ -743,7 +743,12 @@ var destinationTestCmd = &cobra.Command{
 	Short: "Send a made-up conversion to the platform's validation endpoint",
 	Long: "Without --real nothing is saved: GA4's /debug/mp/collect, Google Ads' validateOnly, ChatGPT Ads' validate_only.\n\n" +
 		"--real (ChatGPT Ads, with an ad connection to the pixel's account) sends a real event, which OpenAI saves and\n" +
-		"counts as a conversion, then reads the account's recent events and says whether it arrived (arrived: true).",
+		"counts as a conversion, then reads the account's recent events and says whether it arrived (arrived: true).\n" +
+		"Every --real sends one more counted conversion. When the answer is state not_listed (OpenAI took it, but its\n" +
+		"recent events, a sample of at most 50, do not show it yet) or unread (OpenAI took it, and its recent events\n" +
+		"could not be read), do not send another: read again with --check-sent-at <sent_at from that answer>, which\n" +
+		"only reads and sends nothing (OpenAI lists events from the last 15 minutes). A check whose read fails is an\n" +
+		"error, never not_listed. state stream_off: the ad account's event stream is off, so look in Ads Manager.",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := destinationArg(args[0]); err != nil {
@@ -754,6 +759,18 @@ var destinationTestCmd = &cobra.Command{
 			return err
 		}
 		body := map[string]interface{}{}
+		if cmd.Flags().Changed("check-sent-at") {
+			if real, _ := cmd.Flags().GetBool("real"); real {
+				return validationError("--check-sent-at reads the event already sent and does not go with --real").
+					WithHint("Drop --real: --check-sent-at only reads and sends nothing.")
+			}
+			sentAt, _ := cmd.Flags().GetInt64("check-sent-at")
+			if sentAt <= 0 {
+				return validationError("--check-sent-at must be the sent_at (Unix seconds) of the real test event's answer").
+					WithHint("It is in the answer of `p202 destination test <id> --real`.")
+			}
+			body["check_sent_at"] = sentAt
+		}
 		if real, _ := cmd.Flags().GetBool("real"); real {
 			body["real"] = true
 			// The flag is the operator's word that a counted event is meant; the API refuses real without it.
@@ -761,6 +778,12 @@ var destinationTestCmd = &cobra.Command{
 		}
 		data, err := c.Post("destinations/"+args[0]+"/test", body)
 		if err != nil {
+			if _, check := body["check_sent_at"]; check {
+				return withStatusHint(err, statusHint{http.StatusNotFound, "", destinationListHint},
+					statusHint{http.StatusUnprocessableEntity, "check_sent_at", "Use the sent_at of the answer that --real gave; the destination's real test events are the test rows of `p202 destination deliveries <id> --kind test`."},
+					statusHint{http.StatusUnprocessableEntity, "connection", "Replace the ad connection's Advertiser API key: `p202 ad-connection update <id> --api-key-file <file>` (`p202 ad-connection list` names the connection)."},
+					statusHint{http.StatusUnprocessableEntity, "destination", "--check-sent-at needs a ChatGPT Ads destination with an ad connection to its pixel's account (`p202 ad-connection list`)."})
+			}
 			if _, real := body["real"]; real {
 				return withStatusHint(err, statusHint{http.StatusNotFound, "", destinationListHint},
 					statusHint{http.StatusUnprocessableEntity, "real", "--real needs a ChatGPT Ads destination and an ad connection to its pixel's account (`p202 ad-connection list`)."})
@@ -935,6 +958,7 @@ func init() {
 	destinationResendCmd.Flags().Int("delivery-id", 0, "The one delivery to send again (from `destination deliveries`)")
 	destinationResendCmd.Flags().String("status", "", "Send every delivery of this status again, one of {values}")
 	enumFlag(destinationResendCmd, "status", destinationResendStatuses)
+	destinationTestCmd.Flags().Int64("check-sent-at", 0, "Read OpenAI's recent events again for the real test event sent at this Unix time (its sent_at); sends nothing")
 	destinationTestCmd.Flags().Bool("real", false, "ChatGPT Ads with an ad connection: send a real event, which OpenAI saves and counts as a conversion, and read it back")
 	destinationBackfillCmd.Flags().Int("days", 0, "How many days back (1-3 for GA4, 1-7 for ChatGPT Ads, 1-90 for Google Ads)")
 	destinationCmd.AddCommand(destinationListCmd, destinationGetCmd, destinationCreateCmd, destinationUpdateCmd,

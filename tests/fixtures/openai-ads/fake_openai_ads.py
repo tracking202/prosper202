@@ -21,7 +21,8 @@ afterwards and a pause changes the campaign's status.
   POST /v1/conversions/insights         (aggregation_level=ad, time_granularity=daily, group_by_entity): per ad per
                                         local day; a bound in the future or off the account's local midnight is 400,
                                         more than 2000 rows 413
-  GET  /v1/conversions/events?pid=      the events a pixel received (server events as server_to_server)
+  GET  /v1/conversions/events?pid=      the events a pixel received, newest first, at most ?limit (1-50) and no paging
+                                        (server events as server_to_server)
   POST /v1/events?pid=                  the Conversions API host's events (Bearer a capi- key; validate_only saves nothing)
 
 A request without `Authorization: Bearer <--api-key>` is 401. A create with
@@ -291,7 +292,11 @@ class Handler(BaseHTTPRequestHandler):
             if 'events' in STATE.disabled:
                 return not_found
             pid = (query.get('pid') or [''])[0]
-            rows = [e for e in STATE.events if e['pixel_id'] == pid][-50:]
+            # ?limit is 1-50 (openapi.json 2.3.0); the list does not page.
+            limit = (query.get('limit') or ['50'])[0]
+            if not limit.isdigit() or not 1 <= int(limit) <= 50:
+                return 400, {'error': {'message': 'limit must be between 1 and 50'}}
+            rows = [e for e in STATE.events if e['pixel_id'] == pid][-int(limit):]
             return 200, {'object': 'list', 'data': [{k: v for k, v in e.items() if k != 'pixel_id'} for e in reversed(rows)]}
         if path == '/v1/ad_account/insights' and method == 'GET' and query.get('aggregation_level') == ['ad']:
             return hourly_ads(d, query)

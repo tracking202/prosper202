@@ -101,6 +101,34 @@ refused Conversions API key) is OpenAI's verdict, a `200` with `sent` false.
 (rate limited) for the 5xx and 429 answers, with a hint to wait and run the
 command again, and 1 with the key hint for a refused key.
 
+### A real test event, and checking it again
+
+A real test event is sent once and then OpenAI's recent events
+(`GET /conversions/events?pid=&limit=50`) are read. That list is a sample of
+at most 50 recent events, with no paging and no event id, so the event is
+known by its channel (`server_to_server`), its type and the second it was
+stamped with; not finding it never means it was lost. The answer's `state`:
+
+| `state` | Meaning |
+|---------|---------|
+| `arrived` | The list shows it. |
+| `not_listed` | OpenAI took it; the list was read and does not show it yet. Not a failure. |
+| `unread` | OpenAI took it; the list could not be read, so nothing is known of it. |
+| `stream_off` | OpenAI answered 404 to the list: the ad account's event stream is off. Look in Ads Manager › Conversions. |
+| `not_sent` | OpenAI refused the event (`sent` false). |
+
+Each real event is one more conversion OpenAI counts, so after `not_listed`
+or `unread` read again with `{"check_sent_at": <sent_at>}`
+(`p202 destination test <id> --check-sent-at <sent_at>`, *Check again* on the
+page), which only reads and sends nothing. Every test is logged as a delivery
+of kind `test`, a real one with `real: true` in its `summary`, and a check is
+made only for a time that log shows a real test event was sent at; any other
+time is a `422` naming `check_sent_at`. More than 15 minutes after the send it
+answers `too_late`, as OpenAI's list reaches no further back. A check whose
+reads of the list all fail is answered by the table above (`503`, `429`,
+`502`), or a `422` naming `connection` when OpenAI refuses the Advertiser API
+key: never `not_listed`.
+
 ## Setup
 
 ```

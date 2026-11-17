@@ -428,6 +428,68 @@ final class DestinationsPageIntegrationTest extends TestCase
         return ['action' => 'ad_replace_key', 'connection_id' => (string) $connection, 'api_key' => $key];
     }
 
+    /**
+     * Check again on the page: a list OpenAI does not answer is said as that, with the button still there, and a time
+     * the destination logged no real test event at is refused; neither sends an event.
+     */
+    public function testCheckAgainSaysAFailedReadAndRefusesATimeNoRealTestWasSentAt(): void
+    {
+        $id = $this->connected();
+        $steps = \Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsConnections::STEPS;
+        self::page([], ['action' => 'ad_setup', 'connection_id' => (string) $id, 'steps' => $steps]);
+        $found = self::$db->query('SELECT destination_id FROM 202_destinations WHERE user_id = ' . self::USER
+            . " AND type = 'openai_ads'")->fetch_all(MYSQLI_ASSOC);
+        self::assertCount(1, $found, 'setup made the ChatGPT Ads destination');
+        $destination = (int) $found[0]['destination_id'];
+        $conn = new Connection(self::requireScratch());
+        $now = time();
+        $testEvent = new \Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsTestEvent(
+            $conn,
+            new AdConnectionStore($conn),
+            new DestinationStore($conn),
+            AdvertiserApi::fromEnvironment(),
+            new \Prosper202\Destinations\OpenAiAdsDestination(AdvertiserApi::eventsSender()),
+            static function (int $seconds): void {
+            }
+        );
+        $sent = $testEvent->send(self::USER, $destination, $now);
+        self::assertSame('arrived', $sent['state'], $sent['message']);
+        $posts = static function (): int {
+            $ssl = ['ssl' => ['cafile' => self::$openAiTls . '/cert.pem', 'verify_peer' => true]];
+            $url = self::$openAiOrigin . '/control/requests';
+            $read = (string) file_get_contents($url, false, stream_context_create($ssl));
+            $seen = json_decode($read, true, 512, JSON_THROW_ON_ERROR);
+            $isPost = static fn (array $r): bool => $r['method'] === 'POST' && $r['path'] === '/v1/events';
+
+            return count(array_filter($seen['requests'], $isPost));
+        };
+        $before = $posts();
+        $check = static fn (int $sentAt): array => [
+            'action' => 'test_real_check',
+            'destination_id' => (string) $destination,
+            'sent_at' => (string) $sentAt,
+        ];
+
+        $down = ['status' => 503, 'body' => '{"error":{"message":"down"}}', 'path' => '/v1/conversions/events'];
+        self::openAiControl('answer', $down);
+        $html = self::page([], $check($now));
+        self::assertStringContainsString('could not be read, so nothing about the event is known', $html);
+        self::assertStringNotContainsString('do not list', $html, 'a failed read is not "not listed"');
+        self::assertStringNotContainsString('That could not be done', $html);
+        $button = '/name="action" value="test_real_check">\s*<input type="hidden" name="destination_id" value="'
+            . $destination . '">\s*<input type="hidden" name="sent_at" value="' . $now . '">/';
+        self::assertMatchesRegularExpression($button, $html, 'Check again is still offered');
+        self::assertSame($before, $posts(), 'the failed check sent no event');
+
+        self::openAiControl('reset', []);
+        $html = self::page([], $check($now - 7));
+        self::assertStringContainsString('shows no real test event sent at ' . ($now - 7), $html);
+        $offered = 'name="sent_at" value="' . ($now - 7) . '"';
+        self::assertStringNotContainsString($offered, $html, 'a refused time is not offered again');
+        self::assertStringNotContainsString('That could not be done', $html);
+        self::assertSame(0, $posts(), 'the refused check sent no event');
+    }
+
     public function testAnAdvertiserKeyIsReplacedOnThePage(): void
     {
         $id = $this->connected();
