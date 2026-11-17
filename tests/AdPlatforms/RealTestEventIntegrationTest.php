@@ -82,7 +82,7 @@ final class RealTestEventIntegrationTest extends TestCase
         $this->control('reset', []);
     }
 
-    /** @param array<string, bool> $body */
+    /** @param array<string, mixed> $body */
     private function control(string $what, array $body): void
     {
         $context = stream_context_create(['http' => ['method' => 'POST', 'content' => (string) json_encode($body), 'header' => 'Content-Type: application/json'],
@@ -118,7 +118,28 @@ final class RealTestEventIntegrationTest extends TestCase
         self::assertTrue($answer['sent'], $answer['message']);
         self::assertTrue($answer['arrived'], $answer['message']);
         self::assertSame('order_created', $answer['event_type']);
-        self::assertStringContainsString('received the test event from this server (server_to_server', $answer['message']);
+        self::assertStringContainsString('a server event (server_to_server) of type order_created', $answer['message']);
+        self::assertStringContainsString('names no event id', $answer['message'], 'it says what the match rests on');
+        $logged = self::$db->query('SELECT kind, status, sent_at, summary FROM 202_destination_deliveries'
+            . ' WHERE destination_id = ' . $destination)->fetch_all(MYSQLI_ASSOC);
+        self::assertCount(1, $logged, 'the send is in the delivery log');
+        $row = $logged[0];
+        $expected = ['test', 'sent', (string) $answer['sent_at']];
+        self::assertSame($expected, [$row['kind'], $row['status'], $row['sent_at']]);
+        self::assertTrue(json_decode((string) $row['summary'], true, 8, JSON_THROW_ON_ERROR)['real']);
+        $lists = static fn (array $r): bool => $r['path'] === '/v1/conversions/events';
+        $read = array_values(array_filter($this->requests(), $lists));
+        self::assertNotSame([], $read);
+        self::assertStringContainsString('limit=50', $read[0]['query'], 'its largest page: the list does not page');
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function requests(): array
+    {
+        $context = stream_context_create(['ssl' => ['cafile' => self::$tls . '/cert.pem', 'verify_peer' => true]]);
+        $body = (string) file_get_contents(self::$origin . '/control/requests', false, $context);
+
+        return json_decode($body, true, 512, JSON_THROW_ON_ERROR)['requests'];
     }
 
     public function testAnAccountWithoutTheEventStreamIsToldSo(): void
@@ -127,7 +148,7 @@ final class RealTestEventIntegrationTest extends TestCase
         $this->control('disable', ['events' => true]);
         $answer = $this->testEvent()->send(1, $destination, time());
 
-        self::assertSame([true, false], [$answer['sent'], $answer['arrived']]);
+        self::assertSame([true, false, 'stream_off'], [$answer['sent'], $answer['arrived'], $answer['state']]);
         self::assertStringContainsString('event stream is not switched on for this ad account', $answer['message']);
     }
 
@@ -248,16 +269,17 @@ final class RealTestEventIntegrationTest extends TestCase
         $destination = $this->setUpConnection();
         $now = time();
         $this->testEvent()->send(1, $destination, $now);
-        [$posts] = $this->seen();
+        // The stand-in forgets its events, as a list that does not show the event yet.
+        $this->control('reset', []);
 
-        // The list holds an event at $now only: a check for another second finds none, as for an event not listed yet.
-        $checked = $this->testEvent()->check(1, $destination, $now - 5, $now);
+        $checked = $this->testEvent()->check(1, $destination, $now, $now + 5);
 
         $got = [$checked['sent'], $checked['arrived'], $checked['state']];
         self::assertSame([true, false, 'not_listed'], $got, $checked['message']);
+        self::assertStringContainsString('a sample of at most 50 recent events', $checked['message']);
         self::assertStringContainsString('Do not send another test event', $checked['message']);
         self::assertStringNotContainsString('try again in a minute', strtolower($checked['message']));
-        self::assertSame($posts, $this->seen()[0], 'the check sent nothing');
+        self::assertSame(0, $this->seen()[0], 'the check sent nothing');
     }
 
     /** Past the 15 minutes OpenAI's list reaches, nothing can be read: "too late", not "did not arrive". */
@@ -265,13 +287,15 @@ final class RealTestEventIntegrationTest extends TestCase
     {
         $destination = $this->setUpConnection();
         $now = time();
-        [, $readsBefore] = $this->seen();
+        $sentAt = $now - OpenAiAdsTestEvent::RECENT_SECONDS - 1;
+        $this->testEvent()->send(1, $destination, $sentAt);
+        $seen = $this->seen();
 
-        $checked = $this->testEvent()->check(1, $destination, $now - OpenAiAdsTestEvent::RECENT_SECONDS - 1, $now);
+        $checked = $this->testEvent()->check(1, $destination, $sentAt, $now);
 
         self::assertSame([true, false, 'too_late'], [$checked['sent'], $checked['arrived'], $checked['state']]);
         self::assertStringContainsString('Ads Manager › Conversions', $checked['message']);
-        self::assertSame([0, $readsBefore], $this->seen(), 'nothing was sent or read');
+        self::assertSame($seen, $this->seen(), 'nothing was sent or read');
     }
 
     public function testACheckRefusesATimeThatIsNotInThePast(): void
@@ -287,6 +311,117 @@ final class RealTestEventIntegrationTest extends TestCase
         }
         $other = $this->testEvent()->check(2, $destination, time() - 5, time());
         self::assertNull($other, 'another account has no such destination');
+    }
+
+    /** Every read of OpenAI's event list answers $status, until the next reset. */
+    private function failList(int $status, string $message): void
+    {
+        $body = (string) json_encode(['error' => ['message' => $message]]);
+        $this->control('answer', ['status' => $status, 'body' => $body, 'path' => '/v1/conversions/events']);
+    }
+
+    /** A check vouches only for an event this destination logged as a real test sent at that second. */
+    public function testACheckRefusesATimeNoRealTestWasSentAt(): void
+    {
+        $destination = $this->setUpConnection();
+        $now = time();
+        $conn = new Connection(self::$db);
+        // A validation test at that second is not a real event: OpenAI saved nothing.
+        $queue = new \Prosper202\Destinations\DestinationQueue($conn, new DestinationStore($conn));
+        $queue->testFire(1, $destination, $now - 5);
+        [$posts, $reads] = $this->seen();
+        foreach (['no send at all' => $now - 10, 'a validation test' => $now - 5] as $what => $sentAt) {
+            try {
+                $this->testEvent()->check(1, $destination, $sentAt, $now);
+                self::fail($what . ' was answered as a real test event');
+            } catch (AdConnectionInputException $e) {
+                self::assertSame('check_sent_at', $e->field, $what);
+                self::assertStringContainsString('shows no real test event sent at', $e->getMessage(), $what);
+            }
+        }
+        self::assertSame([$posts, $reads], $this->seen(), 'nothing was sent or read');
+
+        $controller = new \Api\V3\Controllers\DestinationsController(self::$db, 1);
+        try {
+            $controller->test($destination, ['check_sent_at' => $now - 10]);
+            self::fail('the API answered a time no real test was sent at');
+        } catch (\Api\V3\Exception\ValidationException $e) {
+            self::assertArrayHasKey('check_sent_at', $e->getFieldErrors());
+        }
+    }
+
+    /**
+     * A check whose reads of OpenAI's list all fail knows nothing about the event: a failure that says so, never
+     * not_listed, and nothing is sent.
+     */
+    public function testACheckWhoseListCannotBeReadIsAFailureNotNotListed(): void
+    {
+        $destination = $this->setUpConnection();
+        $now = time();
+        $this->testEvent()->send(1, $destination, $now);
+        [$posts] = $this->seen();
+        $cases = [
+            'an outage' => [503, 'unreachable'],
+            'a server error' => [500, 'unreachable'],
+            'its rate limit' => [429, 'rate_limited'],
+            'a refused request' => [400, 'unreadable_answer'],
+        ];
+        foreach ($cases as $what => [$status, $reason]) {
+            $this->failList($status, 'Try later');
+            try {
+                $checked = $this->testEvent()->check(1, $destination, $now, $now + 30);
+                self::fail($what . ' was answered as ' . $checked['state']);
+            } catch (\Prosper202\AdPlatforms\AdPlatformUnavailable $e) {
+                self::assertSame($reason, $e->reason, $what);
+                $said = 'could not be read, so nothing about the event is known';
+                self::assertStringContainsString($said, $e->getMessage(), $what);
+            }
+        }
+        $this->failList(401, 'Invalid API key');
+        try {
+            $this->testEvent()->check(1, $destination, $now, $now + 30);
+            self::fail('a refused key was answered');
+        } catch (AdConnectionInputException $e) {
+            self::assertSame('connection', $e->field);
+            self::assertStringContainsString('refused the Advertiser API key', $e->getMessage());
+        }
+
+        $controller = new \Api\V3\Controllers\DestinationsController(self::$db, 1);
+        try {
+            $controller->test($destination, ['check_sent_at' => $now]);
+            self::fail('over the API a refused key was answered');
+        } catch (\Api\V3\Exception\ValidationException $e) {
+            $named = array_keys($e->getFieldErrors());
+            self::assertSame(['connection'], $named, 'the refusal names the key, not the time');
+        }
+        $this->failList(503, 'down');
+        try {
+            $controller->test($destination, ['check_sent_at' => $now]);
+            self::fail('over the API an outage was answered');
+        } catch (UpstreamUnavailableException $e) {
+            self::assertSame(503, $e->getHttpStatus());
+        }
+        self::assertSame($posts, $this->seen()[0], 'no check sent anything');
+    }
+
+    /** A send whose read-back fails says the event went and nothing is known of the list; a later check reads it. */
+    public function testASendWhoseListCannotBeReadIsUnreadAndCanBeCheckedAgain(): void
+    {
+        $destination = $this->setUpConnection();
+        $now = time();
+        $this->failList(503, 'down');
+
+        $sent = $this->testEvent()->send(1, $destination, $now);
+
+        self::assertSame([true, false, 'unread'], [$sent['sent'], $sent['arrived'], $sent['state']], $sent['message']);
+        self::assertStringContainsString('could not be read, so whether it is listed is not known', $sent['message']);
+        self::assertStringContainsString('Do not send another test event', $sent['message']);
+        self::assertSame(1, $this->seen()[0], 'one event was sent');
+
+        $this->control('answer', ['status' => 200, 'body' => '', 'path' => '/nothing']);
+        $checked = $this->testEvent()->check(1, $destination, $sent['sent_at'], $now + 30);
+        self::assertSame([true, 'arrived'], [$checked['arrived'], $checked['state']], $checked['message']);
+        self::assertSame(1, $this->seen()[0], 'the check sent nothing');
     }
 
     /** Over the API a check only reads: no confirmation, and it never goes with real. */

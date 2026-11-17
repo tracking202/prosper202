@@ -262,6 +262,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $errors['destination'] = 'The time that test event was sent at was not read: look in Ads Manager'
                         . ' › Conversions for it.';
                 } else {
+                    // Offered again if this check fails, so a failed read never takes the button away.
+                    $checkAgain = ['id' => $id, 'sent_at' => $sentAt];
                     try {
                         $checker = new OpenAiAdsTestEvent(
                             $conn,
@@ -352,6 +354,7 @@ if (isset($_SESSION['p202_destination_oauth']) && is_array($_SESSION['p202_desti
     unset($_SESSION['p202_destination_oauth']);
 }
 $test = null;
+$checkAgain ??= null;
 $realTest = null;
 if (isset($_SESSION['p202_destination_real_test']) && is_array($_SESSION['p202_destination_real_test'])) {
     $realTest = $_SESSION['p202_destination_real_test'];
@@ -625,21 +628,29 @@ if ($logDestination !== null) {
                     } ?>
                     <?php echo p202_destination_privacy_note($privacy, $settings, $base, $adapter?->takesConsent() ?? true); ?>
                     <?php $canCheck = false;
+                    $checkAt = 0;
                     if ($realTest !== null && (int) $realTest['id'] === $id) {
-                        // Taken by OpenAI but not listed yet is not a failure; only a refused event is.
+                        // Taken by OpenAI but not listed yet is not a failure; only a refused event is. A list that
+                        // could not be read is a warning: nothing is known about the event.
                         $realArrived = ($realTest['arrived'] ?? false) === true;
                         $realSent = ($realTest['sent'] ?? false) === true;
-                        $realKind = $realArrived ? 'ok' : ($realSent ? 'info' : 'bad');
+                        $realUnread = ($realTest['state'] ?? '') === 'unread';
+                        $realKind = $realArrived ? 'ok' : ($realSent ? ($realUnread ? 'warn' : 'info') : 'bad');
                         echo p202_flash($realKind, (string) $realTest['message']);
-                        $canCheck = $realSent && !$realArrived && ($realTest['state'] ?? '') === 'not_listed'
-                            && is_int($realTest['sent_at'] ?? null);
+                        // Not listed yet, or a list that could not be read: reading again can still find it.
+                        $checkable = in_array($realTest['state'] ?? '', ['not_listed', 'unread'], true);
+                        $canCheck = $realSent && !$realArrived && $checkable && is_int($realTest['sent_at'] ?? null);
+                        $checkAt = $canCheck ? (int) $realTest['sent_at'] : 0;
+                    } elseif ($checkAgain !== null && (int) $checkAgain['id'] === $id) {
+                        $canCheck = true;
+                        $checkAt = (int) $checkAgain['sent_at'];
                     } ?>
                     <?php if ($canCheck) { ?>
                     <form method="post" action="<?php echo p202_setup_e($self); ?>" class="mb-3">
                         <?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>
                         <input type="hidden" name="action" value="test_real_check">
                         <input type="hidden" name="destination_id" value="<?php echo $id; ?>">
-                        <input type="hidden" name="sent_at" value="<?php echo (int) $realTest['sent_at']; ?>">
+                        <input type="hidden" name="sent_at" value="<?php echo $checkAt; ?>">
                         <button type="submit" class="btn btn-secondary btn-sm">
                             Check again (reads only, sends nothing)
                         </button>

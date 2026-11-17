@@ -10,8 +10,10 @@ use Prosper202\AdPlatforms\AdConnectionStore;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Schema\TableRegistry;
 use Prosper202\Destinations\ConversionFacts;
+use Prosper202\Destinations\DestinationQueue;
 use Prosper202\Destinations\DestinationStore;
 use Prosper202\Destinations\OpenAiAdsDestination;
+use Prosper202\Destinations\SendResult;
 
 /**
  * "Send a real test event" for a ChatGPT Ads destination that a connection
@@ -26,19 +28,32 @@ use Prosper202\Destinations\OpenAiAdsDestination;
  * take the id of a real conversion.
  *
  * An event OpenAI took but does not list yet is not a failure and not a
- * reason to send another: every send is one more counted conversion.
- * check() reads the list again for the event already sent (by the second it
- * was sent at, which send() answers as sent_at) and sends nothing.
+ * reason to send another: every send is one more counted conversion. Each
+ * send is logged in the destination's delivery log (a test row marked
+ * real), and check() reads the list again for an event that log shows was
+ * sent at that second, and sends nothing.
+ *
+ * OpenAI's list (GET /conversions/events) is a sample of the pixel's recent
+ * events, at most 50 (`limit`), with no paging and no event id; an event is
+ * matched by its channel, type and the second it was stamped with, and the
+ * answer says so. Not finding it is never proof it was lost.
  */
 final class OpenAiAdsTestEvent
 {
     public const SERVER_CHANNEL = 'server_to_server';
     /** Reads of the event stream, a few seconds apart: OpenAI lists an event shortly after it arrives. */
     public const READS = 3;
+    /** The most events OpenAI's list answers (its `limit` maximum); it does not page. */
+    public const LIST_LIMIT = 50;
     // How far back OpenAI's recent events reach, in seconds.
     public const RECENT_SECONDS = 900;
     public const ARRIVED = 'arrived';
+    /** The list was read and does not show the event (yet). */
     public const NOT_LISTED = 'not_listed';
+    /** OpenAI took the event, and its list could not be read: nothing is known about the event. */
+    public const UNREAD = 'unread';
+    /** OpenAI answered 404 to the list: the event stream is off for the ad account, so no check can read it. */
+    public const STREAM_OFF = 'stream_off';
     public const TOO_LATE = 'too_late';
     public const NOT_SENT = 'not_sent';
 
@@ -90,11 +105,12 @@ final class OpenAiAdsTestEvent
             $now,
             $sample->value,
             $sample->currency,
-            'p202-real-test-' . $destinationId . '-' . $now,
+            self::eventId($destinationId, $now),
             $sample->click,
             pageUrl: $sample->pageUrl
         );
         $result = $this->destination->send(['scope' => 'all'] + $settings, $destination['credentials'], $facts, false, $now);
+        $logged = $this->log($userId, $destinationId, $result, $now);
         $base = [
             'sent_at' => $now,
             'event_type' => $type,
@@ -120,17 +136,24 @@ final class OpenAiAdsTestEvent
         }
 
         $key = $connection['credentials']['advertiser_api_key'] ?? '';
+        $answer = $this->readBack($key, $pixelId, $type, $now, true, $base);
+        if (!$logged && in_array($answer['state'], [self::NOT_LISTED, self::UNREAD], true)) {
+            $answer['message'] .= ' It could not be written to the delivery log, so Check again cannot read for'
+                . ' it here: look in Ads Manager › Conversions instead.';
+        }
 
-        return $this->readBack($key, $pixelId, $type, $now, true, $base);
+        return $answer;
     }
 
     /**
-     * Read OpenAI's recent events again for a real test event sent at $sentAt
-     * (send()'s sent_at), and say whether it is listed. Sends nothing.
+     * Read OpenAI's recent events again for the real test event this
+     * destination sent at $sentAt (send()'s sent_at, which its delivery log
+     * holds), and say whether it is listed. Sends nothing.
      *
      * @return array<string, mixed>|null as send() answers
-     * @throws AdConnectionInputException when the destination is not one a check can be made for, or $sentAt is not
-     *     a time in the past
+     * @throws AdConnectionInputException when the destination is not one a check can be made for, it logged no real
+     *     test event sent at $sentAt, or OpenAI refused the connection's key
+     * @throws AdPlatformUnavailable when OpenAI's list could not be read: nothing is known about the event
      */
     public function check(int $userId, int $destinationId, int $sentAt, int $now): ?array
     {
@@ -149,6 +172,16 @@ final class OpenAiAdsTestEvent
                 'check_sent_at',
                 'The time the real test event was sent at (sent_at in the answer that sent it), in Unix seconds and not'
                     . ' in the future.'
+            );
+        }
+        $queue = new DestinationQueue($this->conn, $this->destinations);
+        if ($queue->realTestSent($userId, $destinationId, $sentAt, self::eventId($destinationId, $sentAt)) === null) {
+            throw new AdConnectionInputException(
+                'check_sent_at',
+                'This destination\'s delivery log shows no real test event sent at ' . $sentAt
+                    . ' (' . self::when($sentAt) . '): give the sent_at of the answer that sent it (the test rows of'
+                    . ' p202 destination deliveries '
+                    . $destinationId . ' --kind test). Nothing was read or sent.'
             );
         }
         $settings = $destination['settings'];
@@ -181,6 +214,36 @@ final class OpenAiAdsTestEvent
         return $this->readBack($key, $pixelId, $type, $sentAt, false, $base);
     }
 
+    /** The id a real test event is sent under: its destination and second, never a real conversion's. */
+    private static function eventId(int $destinationId, int $sentAt): string
+    {
+        return 'p202-real-test-' . $destinationId . '-' . $sentAt;
+    }
+
+    private static function when(int $at): string
+    {
+        return gmdate('Y-m-d H:i:s', $at) . ' UTC';
+    }
+
+    /**
+     * The send in the destination's delivery log, which a check reads to know it was sent. False when it could not
+     * be written: the event's answer still stands (OpenAI may have counted it), so it is not thrown.
+     */
+    private function log(int $userId, int $destinationId, SendResult $result, int $now): bool
+    {
+        try {
+            $queue = new DestinationQueue($this->conn, $this->destinations);
+            $queue->recordRealTest($userId, $destinationId, $result, $now);
+
+            return true;
+        } catch (\Throwable $e) {
+            error_log('Prosper202: a real test event of destination ' . $destinationId . ' was not logged: '
+                . $e::class . ': ' . $e->getMessage());
+
+            return false;
+        }
+    }
+
     /**
      * @param array<string, mixed> $base
      * @return array<string, mixed>
@@ -191,47 +254,82 @@ final class OpenAiAdsTestEvent
     }
 
     /**
-     * OpenAI's recent events for the pixel, up to READS times, for the event sent at $sentAt.
+     * OpenAI's recent events for the pixel, up to READS times, for the event sent at $sentAt. A list that was never
+     * read says nothing about the event: after a send that is UNREAD; in a check, where nothing was sent, it is thrown.
      *
      * @param array<string, mixed> $base
      * @return array<string, mixed>
+     * @throws AdConnectionInputException|AdPlatformUnavailable in a check, when no read of the list succeeded
      */
     private function readBack(string $key, string $pixelId, string $type, int $sentAt, bool $justSent, array $base): array
     {
-        $took = $justSent ? 'OpenAI took the test event, but ' : 'OpenAI took the event, but ';
-        $last = '';
+        $looked = 'a server event (' . self::SERVER_CHANNEL . ') of type ' . $type . ' stamped ' . self::when($sentAt);
+        $failed = null;
+        $listed = false;
         for ($read = 1; $read <= self::READS; $read++) {
-            $answer = $this->api->get($key, 'conversions/events', ['pid' => $pixelId]);
+            $answer = $this->api->get($key, 'conversions/events', ['pid' => $pixelId, 'limit' => self::LIST_LIMIT]);
             if ($answer->kind === AdvertiserAnswer::NOT_FOUND) {
                 $off = ($justSent ? 'OpenAI took the test event, but answered' : 'OpenAI answered')
                     . ' 404 Not found to reading recent events: the event stream is not switched on for this ad'
-                    . ' account. Look for it in Ads Manager › Conversions.';
+                    . ' account, so it cannot be read here. Look for it in Ads Manager › Conversions.';
 
-                return $this->answer(true, false, self::NOT_LISTED, $off, $base);
+                return $this->answer(true, false, self::STREAM_OFF, $off, $base);
             }
-            if (!$answer->isOk()) {
-                $last = 'OpenAI\'s answer to reading recent events was: ' . (string) $answer->error;
-            } elseif (self::arrived($answer->json, $type, $sentAt)) {
-                $got = 'OpenAI received the test event from this server (' . self::SERVER_CHANNEL . ', ' . $type
-                    . ', pixel ' . $pixelId . '). It is saved, and counts as a conversion of the pixel.';
+            if ($answer->isOk()) {
+                $listed = true;
+                if (self::arrived($answer->json, $type, $sentAt)) {
+                    $got = 'OpenAI lists ' . $looked . ' for pixel ' . $pixelId . ': the test event from this server,'
+                        . ' known by its type and the second it was sent at (OpenAI\'s list names no event id). It is'
+                        . ' saved, and counts as a conversion of the pixel.';
 
-                return $this->answer(true, true, self::ARRIVED, $got, $base);
+                    return $this->answer(true, true, self::ARRIVED, $got, $base);
+                }
             } else {
-                $last = 'it is not among the recent events yet';
+                $failed = $answer;
+                if (in_array($answer->kind, [AdvertiserAnswer::KEY_REFUSED, AdvertiserAnswer::REFUSED], true)) {
+                    // Refused, not failed: asking again gets the same answer.
+                    break;
+                }
             }
             if ($read < self::READS) {
                 ($this->sleep)(2);
             }
         }
-        $lag = $took . $last . '. That does not mean it was lost: the list can lag. Check again in a few minutes'
-            . ' (that only reads, and sends nothing), or look in Ads Manager › Conversions. Do not send another test'
-            . ' event for this: each one is one more conversion OpenAI counts.';
+        $again = ' Check again in a few minutes (that only reads, and sends nothing), or look in Ads Manager ›'
+            . ' Conversions. Do not send another test event for this: each one is one more conversion OpenAI counts.';
+        if (!$listed && $failed !== null) {
+            $why = 'OpenAI\'s answer to reading recent events was: ' . (string) $failed->error;
+            if ($justSent) {
+                return $this->answer(true, false, self::UNREAD, 'OpenAI took the test event, but its recent events'
+                    . ' could not be read, so whether it is listed is not known. ' . $why . '.' . $again, $base);
+            }
+            if ($failed->kind === AdvertiserAnswer::KEY_REFUSED) {
+                throw new AdConnectionInputException('connection', 'OpenAI refused the Advertiser API key of ad'
+                    . ' connection ' . $base['connection_id'] . ' to reading recent events, so nothing about the event'
+                    . ' is known. '
+                    . $why . '. Replace the key (p202 ad-connection update ' . $base['connection_id']
+                    . ' --api-key-file <file>). Nothing was sent.');
+            }
+            $reason = match ($failed->kind) {
+                AdvertiserAnswer::RATE_LIMITED => AdPlatformUnavailable::RATE_LIMITED,
+                AdvertiserAnswer::UNAVAILABLE => AdPlatformUnavailable::UNREACHABLE,
+                default => AdPlatformUnavailable::UNREADABLE,
+            };
 
-        return $this->answer(true, false, self::NOT_LISTED, $lag, $base);
+            throw new AdPlatformUnavailable($reason, 'OpenAI\'s recent events could not be read, so nothing about the'
+                . ' event is known: ' . (string) $failed->error . '. Nothing was sent; check again in a minute.');
+        }
+        $missing = 'OpenAI\'s recent events for pixel ' . $pixelId . ' do not list ' . $looked . ' yet. That does not'
+            . ' mean it was lost: the list is a sample of at most ' . self::LIST_LIMIT . ' recent events, and it can'
+            . ' lag.' . $again;
+
+        $missing = ($justSent ? 'OpenAI took the test event. ' : '') . $missing;
+
+        return $this->answer(true, false, self::NOT_LISTED, $missing, $base);
     }
 
     /** @param array<string, mixed> $json */
-    private static function arrived(array $json, string $type, int $now): bool
+    private static function arrived(array $json, string $type, int $sentAt): bool
     {
         foreach ((array) ($json['data'] ?? []) as $event) {
             if (!is_array($event)) {
@@ -239,7 +337,7 @@ final class OpenAiAdsTestEvent
             }
             $at = $event['event_timestamp_ms'] ?? null;
             if (($event['api_channel'] ?? null) === self::SERVER_CHANNEL && ($event['event_type'] ?? null) === $type
-                && is_int($at) && intdiv($at, 1000) === $now) {
+                && is_int($at) && intdiv($at, 1000) === $sentAt) {
                 return true;
             }
         }

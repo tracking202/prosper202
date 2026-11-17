@@ -745,8 +745,10 @@ var destinationTestCmd = &cobra.Command{
 		"--real (ChatGPT Ads, with an ad connection to the pixel's account) sends a real event, which OpenAI saves and\n" +
 		"counts as a conversion, then reads the account's recent events and says whether it arrived (arrived: true).\n" +
 		"Every --real sends one more counted conversion. When the answer is state not_listed (OpenAI took it, but its\n" +
-		"recent events do not show it yet), do not send another: read again with --check-sent-at <sent_at from that\n" +
-		"answer>, which only reads and sends nothing (OpenAI lists events from the last 15 minutes).",
+		"recent events, a sample of at most 50, do not show it yet) or unread (OpenAI took it, and its recent events\n" +
+		"could not be read), do not send another: read again with --check-sent-at <sent_at from that answer>, which\n" +
+		"only reads and sends nothing (OpenAI lists events from the last 15 minutes). A check whose read fails is an\n" +
+		"error, never not_listed. state stream_off: the ad account's event stream is off, so look in Ads Manager.",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := destinationArg(args[0]); err != nil {
@@ -778,7 +780,9 @@ var destinationTestCmd = &cobra.Command{
 		if err != nil {
 			if _, check := body["check_sent_at"]; check {
 				return withStatusHint(err, statusHint{http.StatusNotFound, "", destinationListHint},
-					statusHint{http.StatusUnprocessableEntity, "check_sent_at", "--check-sent-at needs a ChatGPT Ads destination with an ad connection to its pixel's account (`p202 ad-connection list`), and the sent_at of the event that --real sent."})
+					statusHint{http.StatusUnprocessableEntity, "check_sent_at", "Use the sent_at of the answer that --real gave; the destination's real test events are the test rows of `p202 destination deliveries <id> --kind test`."},
+					statusHint{http.StatusUnprocessableEntity, "connection", "Replace the ad connection's Advertiser API key: `p202 ad-connection update <id> --api-key-file <file>` (`p202 ad-connection list` names the connection)."},
+					statusHint{http.StatusUnprocessableEntity, "destination", "--check-sent-at needs a ChatGPT Ads destination with an ad connection to its pixel's account (`p202 ad-connection list`)."})
 			}
 			if _, real := body["real"]; real {
 				return withStatusHint(err, statusHint{http.StatusNotFound, "", destinationListHint},

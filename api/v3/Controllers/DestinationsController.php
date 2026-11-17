@@ -189,7 +189,8 @@ final class DestinationsController
                 new OpenAiAdsDestination(AdvertiserApi::eventsSender())
             ))->check($this->userId, $id, $sentAt, time());
         } catch (AdConnectionInputException $e) {
-            throw new ValidationException($e->getMessage(), ['check_sent_at' => $e->getMessage()], $e);
+            // The field the refusal is about: the time, the destination, or the connection's key.
+            throw new ValidationException($e->getMessage(), [$e->field => $e->getMessage()], $e);
         } catch (AdPlatformUnavailable $e) {
             throw UpstreamUnavailableException::forAdPlatform($e, OpenAiAdsConnections::PLATFORM);
         }

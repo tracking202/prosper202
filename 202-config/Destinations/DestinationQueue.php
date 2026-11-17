@@ -813,13 +813,52 @@ final class DestinationQueue
         return $this->conn->executeUpdate($stmt);
     }
 
-    private function insertTest(int $userId, int $destinationId, SendResult $result, int $now): int
+    /**
+     * Log a real test event (OpenAiAdsTestEvent): a test row whose summary
+     * says it was real, so a later check can tell it from a validation test
+     * sent in the same second.
+     */
+    public function recordRealTest(int $userId, int $destinationId, SendResult $result, int $now): int
     {
+        return $this->insertTest($userId, $destinationId, $result, $now, ['real' => true] + $result->summary);
+    }
+
+    /**
+     * The logged summary of the real test event this destination sent at
+     * $sentAt under $eventId, or null when it sent none.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function realTestSent(int $userId, int $destinationId, int $sentAt, string $eventId): ?array
+    {
+        $stmt = $this->conn->prepareRead('SELECT summary FROM `' . TableRegistry::DESTINATION_DELIVERIES
+            . "` WHERE user_id = ? AND destination_id = ? AND kind = 'test' AND status = 'sent'
+             AND created_at = ? AND sent_at = ?");
+        $this->conn->bind($stmt, 'iiii', [$userId, $destinationId, $sentAt, $sentAt]);
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $summary = is_string($row['summary']) ? json_decode($row['summary'], true) : null;
+            if (is_array($summary) && ($summary['real'] ?? null) === true && ($summary['id'] ?? null) === $eventId) {
+                return $summary;
+            }
+        }
+
+        return null;
+    }
+
+    /** @param array<string, mixed>|null $summary what the log keeps, when not the result's own */
+    private function insertTest(
+        int $userId,
+        int $destinationId,
+        SendResult $result,
+        int $now,
+        ?array $summary = null
+    ): int {
         $stmt = $this->conn->prepareWrite('INSERT INTO `' . TableRegistry::DESTINATION_DELIVERIES
             . '` (user_id, destination_id, conv_id, kind, status, attempts, next_attempt_at, last_status_code, last_error, summary, created_at, sent_at)
              VALUES (?, ?, NULL, ?, ?, 1, ?, ?, ?, ?, ?, ?)');
         $this->conn->bind($stmt, 'iissiissii', [$userId, $destinationId, self::KIND_TEST, $result->delivered ? 'sent' : 'failed', $now,
-            $result->status, self::clip($result->reason, 255), self::summaryJson($result->summary), $now, $result->delivered ? $now : null]);
+            $result->status, self::clip($result->reason, 255), self::summaryJson($summary ?? $result->summary), $now,
+            $result->delivered ? $now : null]);
 
         return $this->conn->executeInsert($stmt);
     }

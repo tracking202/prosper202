@@ -145,17 +145,52 @@ func TestDestinationTestCheckSentAtOnlyReads(t *testing.T) {
 		t.Errorf("the state is printed: %s", out)
 	}
 
-	for name, args := range map[string][]string{
-		"with --real":  {"destination", "test", "3", "--real", "--check-sent-at", "1794849228"},
-		"not positive": {"destination", "test", "3", "--check-sent-at", "-5"},
+	for name, c := range map[string]struct {
+		args []string
+		hint string
+	}{
+		"with --real":  {[]string{"destination", "test", "3", "--real", "--check-sent-at", "1794849228"}, "Drop --real"},
+		"not positive": {[]string{"destination", "test", "3", "--check-sent-at", "-5"}, "--real`"},
+		"zero":         {[]string{"destination", "test", "3", "--check-sent-at", "0"}, "--real`"},
 	} {
 		before := len(bodies)
-		_, _, err := executeCommand(append(args, "--json")...)
+		_, _, err := executeCommand(append(c.args, "--json")...)
 		if err == nil || exitCodeForError(err) != 1 {
 			t.Errorf("%s: want a validation error (exit 1), got %v", name, err)
 		}
+		if hint := hintFor(err); !strings.Contains(hint, c.hint) {
+			t.Errorf("%s: hint %q does not say %q", name, hint, c.hint)
+		}
 		if len(bodies) != before {
 			t.Errorf("%s: nothing may be sent, but %d requests were", name, len(bodies)-before)
+		}
+	}
+}
+
+// A refused check's hint is about the field the server named: the time, the connection's key or the destination.
+func TestDestinationTestCheckSentAtHintFollowsTheField(t *testing.T) {
+	field := ""
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		w.Write([]byte(`{"error":true,"status":422,"message":"Validation failed","field_errors":{"` + field + `":"refused"}}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	for f, want := range map[string]string{
+		"check_sent_at": "sent_at of the answer that --real gave",
+		"connection":    "p202 ad-connection update",
+		"destination":   "needs a ChatGPT Ads destination",
+	} {
+		field = f
+		_, _, err := executeCommand("destination", "test", "3", "--check-sent-at", "1794849228", "--json")
+		if err == nil || exitCodeForError(err) != 1 {
+			t.Errorf("%s: want a validation error (exit 1), got %v", f, err)
+		}
+		if hint := hintFor(err); !strings.Contains(hint, want) {
+			t.Errorf("%s: hint %q does not say %q", f, hint, want)
 		}
 	}
 }
