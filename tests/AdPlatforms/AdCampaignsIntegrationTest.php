@@ -22,6 +22,7 @@ use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookSender;
 use Prosper202\Database\Connection;
 use Prosper202\Destinations\DestinationStore;
+use Prosper202\Setup\ChatGptAdsSource;
 use Tests\Apps\Android\AndroidDatabase;
 
 /**
@@ -99,6 +100,11 @@ final class AdCampaignsIntegrationTest extends TestCase
         if ($route === 'POST campaigns/cmpn_101/pause' || $route === 'POST campaigns/cmpn_101/activate') {
             $this->campaign['status'] = str_ends_with($route, 'pause') ? 'paused' : 'active';
         } elseif ($route === 'POST campaigns/cmpn_101' && is_array($body)) {
+            // As the live API answered on 2026-11-17: OpenAI adds oppref itself and refuses a template that sets it.
+            parse_str((string) ($body['landing_page_configuration']['query_string_template'] ?? ''), $query);
+            if (array_key_exists('oppref', $query)) {
+                return ['status' => 400, 'body' => '{"error":{"message":"Invalid landing_page_configuration.query_string_template: landing page query string template contains reserved query parameter(s): [\'oppref\']"}}'];
+            }
             $this->campaign = array_replace($this->campaign, $body);
         } elseif ($route !== 'GET campaigns/cmpn_101') {
             return ['status' => 404, 'body' => '{"error":{"message":"Not found"}}'];
@@ -172,7 +178,9 @@ final class AdCampaignsIntegrationTest extends TestCase
         $this->campaigns()->setTemplate(1, $id, 'campaigns', 'cmpn_101', null, false);
 
         self::assertSame(['landing_page_configuration' => ['query_string_template' => TrackingTemplate::default()]], $this->writes()[0]['body']);
-        self::assertStringContainsString('oppref={oppref}', TrackingTemplate::default());
+        self::assertSame(ChatGptAdsSource::TEMPLATE, TrackingTemplate::default(), 'the push and Get Links hand out one template');
+        self::assertSame([], ChatGptAdsSource::reservedKeysIn(TrackingTemplate::default()), 'OpenAI refuses a template that sets oppref');
+        self::assertSame(TrackingTemplate::default(), $this->campaign['landing_page_configuration']['query_string_template'], 'the stand-in took it');
         foreach (['a b=1', str_repeat('a', 2049), "x=1\ty=2", 'x=1#frag'] as $bad) {
             try {
                 $this->campaigns()->setTemplate(1, $id, 'campaigns', 'cmpn_101', $bad, false);
@@ -182,6 +190,38 @@ final class AdCampaignsIntegrationTest extends TestCase
             }
         }
         self::assertCount(1, $this->writes());
+    }
+
+    /**
+     * OpenAI adds its click id, oppref, to the ad's URL and answers 400 to a template that sets it, so a template
+     * naming it as a key is refused here, naming why, before OpenAI is asked; {oppref} as another key's value is
+     * not a reserved key.
+     */
+    public function testATemplateSettingOpprefIsRefusedBeforeOpenAiIsAsked(): void
+    {
+        $id = $this->connect();
+        foreach (['utm_source=chatgpt&oppref={oppref}', 'oppref', '?oppref=1', 'a=1&%6Fppref=x', 'oppref=1&b=2&oppref=3'] as $bad) {
+            try {
+                $this->campaigns()->setTemplate(1, $id, 'campaigns', 'cmpn_101', $bad, false);
+                self::fail('a template setting oppref was sent: ' . $bad);
+            } catch (AdConnectionInputException $e) {
+                self::assertSame('template', $e->field);
+                self::assertSame('', $e->platform, 'refused for the request, not by OpenAI: ' . $bad);
+                self::assertStringContainsString('must not set oppref: OpenAI adds its click id (oppref)', $e->getMessage());
+            }
+            try {
+                $this->campaigns()->setTemplate(1, $id, 'campaigns', 'cmpn_101', $bad, true);
+                self::fail('a dry run previewed a template setting oppref: ' . $bad);
+            } catch (AdConnectionInputException $e) {
+                self::assertSame('template', $e->field);
+            }
+        }
+        self::assertSame([], $this->requests, 'nothing reached OpenAI, not even a read');
+
+        foreach (['ref={oppref}', 'xoppref=1', 'oppref_x=1', 'a=oppref'] as $good) {
+            $done = $this->campaigns()->setTemplate(1, $id, 'campaigns', 'cmpn_101', $good, false);
+            self::assertSame($good, $done['record']['query_string_template']);
+        }
     }
 
     public function testEventSettingsAreAddedToTheOnesTheCampaignHas(): void

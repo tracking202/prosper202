@@ -40,9 +40,11 @@ two things to copy into Ads Manager:
 - the **destination URL**, which goes in the ad;
 - the **tracking template**, which goes in the ad's tracking settings.
 
-ChatGPT appends the template to the URL and fills in the campaign, the ad and
-OpenAI's click id, `oppref`, which is what a conversion sent back to OpenAI is
-credited by. A tracker with a landing page whose URL has a host sends the visitor
+ChatGPT appends the template to the URL and fills in the campaign and the ad.
+It adds OpenAI's click id, `oppref`, to the URL itself: that is what a conversion
+sent back to OpenAI is credited by. The template must not set an `oppref`
+parameter of its own: OpenAI refuses one that does, and `p202 ad-campaign
+set-template --template` (and the API) refuse it before asking OpenAI. A tracker with a landing page whose URL has a host sends the visitor
 straight to the page. Any other tracker's destination is its tracking link.
 Ads Manager takes a template of up to 2,048 characters, and Get Links warns,
 above the destination URL and template it has just made, when it is longer.
@@ -66,8 +68,8 @@ set-template <connection-id> <campaign-id>` pushes the generic template,
 and with `--template '<the template get-url gave>'` your tracker's own.
 
 A click that arrives with `oppref` on its URL keeps it (clicks from 1.9.80
-on; the URL carries it when the campaign's tracking template has
-`oppref={oppref}`, as the Get Links one does). Put `[[oppref]]` in an
+on). OpenAI adds `oppref` to the click's URL itself, so no tracking template
+carries it. Put `[[oppref]]` in an
 offer URL to pass it on, and a server postback that sends it back, with no SubID
 filled in, can find its click by it when the clicks carrying it are one account's,
 on one campaign and traffic source account, and the latest was in the last 30 days

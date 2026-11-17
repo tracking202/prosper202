@@ -7,6 +7,7 @@ namespace Prosper202\AdPlatforms\OpenAiAds;
 use Prosper202\AdPlatforms\AdConnectionInputException;
 use Prosper202\AdPlatforms\AdConnectionStore;
 use Prosper202\AdPlatforms\AdPlatformUnavailable;
+use Prosper202\Setup\ChatGptAdsSource;
 
 /**
  * A ChatGPT Ads connection's campaigns, ad groups and ads, read from and
@@ -330,12 +331,21 @@ final class OpenAiAdsCampaigns
         return $id;
     }
 
-    /** A tracking template OpenAI takes: at most 2048 characters, a query string with no spaces or control characters. */
+    /**
+     * A tracking template OpenAI takes: at most 2048 characters, a query string with no spaces or control characters,
+     * and no parameter OpenAI reserves (ChatGptAdsSource::RESERVED_KEYS), which it adds to the URL itself.
+     */
     public static function template(string $template): string
     {
         $template = ltrim(trim($template), '?');
         if ($template === '' || strlen($template) > TrackingTemplate::MAX_LENGTH || preg_match('/[\x00-\x20\x7f#]/', $template) === 1) {
             throw new AdConnectionInputException('template', 'template must be a query string of at most ' . TrackingTemplate::MAX_LENGTH . ' characters with no spaces or #, such as ' . TrackingTemplate::default() . '.');
+        }
+        $reserved = ChatGptAdsSource::reservedKeysIn($template);
+        if ($reserved !== []) {
+            throw new AdConnectionInputException('template', 'template must not set ' . implode(' or ', $reserved)
+                . ': OpenAI adds its click id (oppref) to the ad\'s URL itself and refuses a template that sets it. Take ' . implode(', ', $reserved)
+                . ' out (Prosper202 still records it from the URL), as in ' . TrackingTemplate::default() . '. Nothing was sent.');
         }
 
         return $template;

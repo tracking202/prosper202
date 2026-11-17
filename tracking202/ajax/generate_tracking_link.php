@@ -673,7 +673,7 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
     if ($chatGptLinks !== null) {
         echo '<h3 class="h6">ChatGPT Ads</h3>';
         echo '<p class="form-text">In Ads Manager, put the destination URL in the ad and the tracking template in its'
-            . ' tracking settings. ChatGPT fills in the campaign, the ad and its click id (oppref).'
+            . ' tracking settings. ChatGPT fills in the campaign and the ad, and adds its click id (oppref) to the URL itself.'
             . ($chatGptLinks['destination'] === 'landing_page'
                 ? ' The visitor goes straight to your page, whose landing page code records the click.'
                 : ' The visitor goes through your tracking link to the offer.')

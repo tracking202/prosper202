@@ -31,23 +31,38 @@ final class ChatGptAdsSource
     /**
      * The click's campaign and ad, by the macros OpenAI's Ads API (OpenAPI
      * 2.3.0, landing_page_configuration.query_string_template) and its
-     * campaign-management example name: {campaign_id}, {ad_id} ({oppref},
-     * the click id, is read by the click path itself: ClickRecord::AD_CLICK_IDS).
+     * campaign-management example name: {campaign_id}, {ad_id}. OpenAI adds its
+     * click id, oppref, to the landing URL itself, where the click path reads it
+     * (ClickRecord::AD_CLICK_IDS).
      */
     public const VARIABLES = [
         ['name' => 'Campaign ID', 'parameter' => 'campaign_id', 'placeholder' => '{campaign_id}'],
         ['name' => 'Ad ID', 'parameter' => 'ad_id', 'placeholder' => '{ad_id}'],
     ];
 
-    /** What Ads Manager appends to the ad's destination URL. */
+    /**
+     * What Ads Manager appends to the ad's destination URL. No oppref: OpenAI
+     * appends that parameter itself and refuses a template that sets it
+     * (RESERVED_KEYS).
+     */
     public const TEMPLATE = 'utm_source=chatgpt&utm_medium=paid&utm_campaign={campaign_id}&utm_content={ad_id}'
-        . '&campaign_id={campaign_id}&ad_id={ad_id}&oppref={oppref}';
+        . '&campaign_id={campaign_id}&ad_id={ad_id}';
+
+    /**
+     * Query keys OpenAI refuses in a tracking template (measured 2026-11-17:
+     * 400 "contains reserved query parameter(s): ['oppref']"), because it adds
+     * them to the landing URL itself. {oppref} as another key's value is fine.
+     */
+    public const RESERVED_KEYS = ['oppref'];
 
     /** query_string_template's maxLength in OpenAI's Ads API (OpenAPI 2.3.0). */
     public const TEMPLATE_MAX_LENGTH = 2048;
 
-    /** The parameters TEMPLATE sets, which a link's own variables do not repeat. */
-    private const TEMPLATE_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'campaign_id', 'ad_id', 'oppref', 't202id'];
+    /**
+     * The parameters a link's own variables do not add to the template: the
+     * ones TEMPLATE sets, t202id, and the reserved ones OpenAI refuses there.
+     */
+    private const TEMPLATE_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'campaign_id', 'ad_id', 't202id', ...self::RESERVED_KEYS];
 
     /** TEMPLATE's parameters whose value the source's own variable of that name gives, when it has one. */
     private const SOURCE_SET_KEYS = ['campaign_id', 'ad_id'];
@@ -159,6 +174,26 @@ final class ChatGptAdsSource
                 'variables_added' => $added,
             ];
         });
+    }
+
+    /**
+     * The reserved keys (RESERVED_KEYS) a tracking template sets, in the order
+     * it sets them, each once. A key is the text before a pair's first `=`,
+     * percent-decoded, compared exactly; a leading `?` is not part of it.
+     *
+     * @return list<string>
+     */
+    public static function reservedKeysIn(string $template): array
+    {
+        $found = [];
+        foreach (explode('&', ltrim($template, '?')) as $pair) {
+            $key = rawurldecode(explode('=', $pair, 2)[0]);
+            if (in_array($key, self::RESERVED_KEYS, true) && !in_array($key, $found, true)) {
+                $found[] = $key;
+            }
+        }
+
+        return $found;
     }
 
     /** Whether a 202_ppc_networks row (as read with its ppc_network_platform) is a ChatGPT Ads source. */

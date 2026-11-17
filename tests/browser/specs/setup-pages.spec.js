@@ -442,7 +442,7 @@ module.exports = {
       async run(ctx) {
         const { app, ui, db, expect, shot } = ctx;
         const TEMPLATE = 'utm_source=chatgpt&utm_medium=paid&utm_campaign={campaign_id}&utm_content={ad_id}'
-          + '&campaign_id={campaign_id}&ad_id={ad_id}&oppref={oppref}';
+          + '&campaign_id={campaign_id}&ad_id={ad_id}';
         await app.goto(SETUP + 'ppc_accounts.php');
         await app.submit('#chatgpt-ads-form button[type="submit"]');
         expect.match((await app.flashes()).join(' '), /ChatGPT Ads added/, 'the button says what it made');

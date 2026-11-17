@@ -5881,6 +5881,8 @@ paths:
         tracker's: a tracker's own (a landing page's `t202id`, the source's
         own placeholders, the link's other variables) comes from Get Links or
         `GET /trackers/{id}/url`, sent as `template`. `?dry_run=1` answers the template now and the one it would get.
+        A template that sets `oppref` is a 422 naming `template`, and nothing is sent: OpenAI adds its
+        click id, `oppref`, to the ad's URL itself and refuses a template that sets it.
       operationId: setAdConnectionCampaignTemplate
       parameters:
         - {name: dry_run, in: query, required: false, schema: {type: string, enum: ["1"]}, description: "Read the object and answer what would change; nothing is sent"}
@@ -6077,6 +6079,8 @@ paths:
         tracker's: a tracker's own (a landing page's `t202id`, the source's
         own placeholders, the link's other variables) comes from Get Links or
         `GET /trackers/{id}/url`, sent as `template`. `?dry_run=1` answers the template now and the one it would get.
+        A template that sets `oppref` is a 422 naming `template`, and nothing is sent: OpenAI adds its
+        click id, `oppref`, to the ad's URL itself and refuses a template that sets it.
       operationId: setAdConnectionAdGroupTemplate
       parameters:
         - {name: dry_run, in: query, required: false, schema: {type: string, enum: ["1"]}, description: "Read the object and answer what would change; nothing is sent"}
@@ -6273,6 +6277,8 @@ paths:
         tracker's: a tracker's own (a landing page's `t202id`, the source's
         own placeholders, the link's other variables) comes from Get Links or
         `GET /trackers/{id}/url`, sent as `template`. `?dry_run=1` answers the template now and the one it would get.
+        A template that sets `oppref` is a 422 naming `template`, and nothing is sent: OpenAI adds its
+        click id, `oppref`, to the ad's URL itself and refuses a template that sets it.
       operationId: setAdConnectionAdTemplate
       parameters:
         - {name: dry_run, in: query, required: false, schema: {type: string, enum: ["1"]}, description: "Read the object and answer what would change; nothing is sent"}
@@ -15108,8 +15114,9 @@ components:
           type: string
           description: >-
             The ad's tracking template (OpenAI's query_string_template), appended to the
-            destination URL. On a landing page it also carries t202id and t202kw.
-          example: "utm_source=chatgpt&utm_medium=paid&utm_campaign={campaign_id}&utm_content={ad_id}&campaign_id={campaign_id}&ad_id={ad_id}&oppref={oppref}&t202id=8837291&t202kw="
+            destination URL. On a landing page it also carries t202id and t202kw. It never
+            sets oppref, which OpenAI adds to the URL itself.
+          example: "utm_source=chatgpt&utm_medium=paid&utm_campaign={campaign_id}&utm_content={ad_id}&campaign_id={campaign_id}&ad_id={ad_id}&t202id=8837291&t202kw="
     PpcNetworkVariable:
       type: object
       properties:
