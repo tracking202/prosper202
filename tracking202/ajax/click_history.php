@@ -82,6 +82,7 @@ LEFT JOIN 202_site_domains as 2credird ON (2credird.site_domain_id = 2credir.sit
 
 $db_table = "2c";
 
+$spyDb = null;
 if ($isSpy) {
 	// Detect incremental mode before calling query() so we can skip
 	// the count query and LIMIT clause that are wasted for incremental
@@ -115,7 +116,9 @@ if ($isSpy) {
 	// $isspy=true), so skip the calendar time preference — otherwise a saved
 	// date range like "yesterday" or "last month" silently excludes all recent
 	// clicks because the ranges don't overlap.
-	$use_ro = ($dbro instanceof mysqli);
+	// The read connection, opened by the config now that Spy reads through it.
+	$spyDb = \Prosper202\Database\ConnectionFactory::readConnectionOf(DB::getInstance());
+	$use_ro = ($spyDb instanceof mysqli);
 	$query = query($command, $db_table, false, null, null, null, null, $spyLimit, $spyCount, $use_ro, $extra_where);
 } else {
 	$offset = isset($_POST['offset']) && is_numeric($_POST['offset']) ? (int)$_POST['offset'] : 0;
@@ -136,7 +139,7 @@ if ($isSpy) {
 
 //run query — use read-only connection for spy view
 $click_sql = $query['click_sql'];
-$query_db = ($isSpy && $dbro instanceof mysqli) ? $dbro : $db;
+$query_db = ($isSpy && $spyDb instanceof mysqli) ? $spyDb : $db;
 $click_result = $query_db->query($click_sql) or record_mysql_error($click_sql);
 
 // For incremental spy mode, output just the new rows and exit early. The

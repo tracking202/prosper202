@@ -81,6 +81,12 @@ final class P202HarnessDb extends mysqli
 
 $db = (new ReflectionClass(P202HarnessDb::class))->newInstanceWithoutConstructor();
 
+// 'down': the database refused the connection, as connect2.php leaves it.
+if (($p202Harness['down'] ?? false) === true) {
+    $db = null;
+}
+define('ROOT_PATH', dirname(__DIR__) . '/');
+
 register_shutdown_function(static function () use ($p202Harness): void {
     global $memcache;
     $result = ['reads' => $memcache->reads, 'writes' => (object) $memcache->writes];

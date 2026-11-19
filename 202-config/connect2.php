@@ -60,6 +60,13 @@ include_once(ROOT_PATH . '/202-config.php');
 try {
     $database = DB::getInstance();
     $db = $database->getConnection();
+    // Nothing on the click path reads through the read connection; a retained
+    // config opened it anyway, and under load the second connection per click
+    // is what MySQL's max_connections refuses first.
+    if ($db instanceof \mysqli) {
+        require_once __DIR__ . '/Database/ConnectionFactory.php';
+        \Prosper202\Database\ConnectionFactory::releaseReadConnection($database, $db);
+    }
 } catch (\mysqli_sql_exception $connectError) {
     error_log('The click path could not connect to the database: ' . $connectError->getMessage());
     $db = null;

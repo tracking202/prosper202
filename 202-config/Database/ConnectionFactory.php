@@ -57,6 +57,39 @@ final class ConnectionFactory
     }
 
     /**
+     * For a caller that never reads through the read connection (the click
+     * path): closes the one a retained 202-config.php opened in its
+     * constructor beside the primary, and leaves the primary in its place, so
+     * the request holds one connection against MySQL's max_connections rather
+     * than two. The samples of 1.9.55 to 1.9.79 open both when built and keep
+     * the second in `_connectionro`; a config that opens it on first use holds
+     * none yet, and nothing is opened here. Answers whether one was closed.
+     */
+    public static function releaseReadConnection(object $database, \mysqli $primary): bool
+    {
+        if (!property_exists($database, '_connectionro')) {
+            return false;
+        }
+        $property = new \ReflectionProperty($database, '_connectionro');
+        if ($property->isStatic()) {
+            return false;
+        }
+        $held = $property->getValue($database);
+        if (!$held instanceof \mysqli || $held === $primary) {
+            return false;
+        }
+        $property->setValue($database, $primary);
+        try {
+            $held->close();
+        } catch (\Throwable) {
+            // A handle that cannot be closed is one the server has already
+            // dropped; either way this request no longer holds it.
+        }
+
+        return true;
+    }
+
+    /**
      * Create a Connection from explicit mysqli instances (for testing or custom wiring).
      */
     public static function fromConnections(\mysqli $write, ?\mysqli $read = null): Connection

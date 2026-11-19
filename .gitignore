@@ -82,6 +82,10 @@ PHPSTAN_AND_CODE_QUALITY_TOOLS.md
 # written at run time, never part of the tree.
 /202-config/temp/attribution-exports/
 
+# The count of clicks redirected without being saved
+# (Prosper202\Click\UnsavedClickRedirects): this server's, written at run time.
+/202-config/temp/unsaved-click-redirects.json
+
 # What the GeoIP refresh (Prosper202\GeoIp) leaves beside the database: the
 # database it replaced, its lock, and the parts of a run that was stopped.
 /202-config/geo/GeoLite2-City.mmdb.previous

@@ -258,6 +258,34 @@ paths:
                           stale_after_days:
                             type: integer
                             example: 30
+                      unsaved_click_redirects:
+                        type: object
+                        description: >-
+                          Visitors a click script sent on without saving the click, because the
+                          database refused the connection (too many connections, or down): the
+                          cached outage redirect of dl.php, lp.php and off.php. Counted in
+                          202-config/temp/ on the web server, never in the database. A container
+                          started again without that directory reads `none`. A last one in the
+                          past 7 days adds a sentence to `warnings`; `status` stays `healthy`.
+                        properties:
+                          state:
+                            type: string
+                            enum: [none, counted, unreadable]
+                            description: >-
+                              `none`: no file, nothing counted. `unreadable`: the file is there and
+                              cannot be read; never read as 0.
+                          count:
+                            type: integer
+                            nullable: true
+                            description: null when unreadable
+                          first_at:
+                            type: integer
+                            nullable: true
+                            description: Unix seconds of the first one counted
+                          last_at:
+                            type: integer
+                            nullable: true
+                            description: Unix seconds of the last one counted
                       warnings:
                         type: array
                         description: One sentence per problem found; empty when there is none
