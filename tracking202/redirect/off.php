@@ -67,6 +67,8 @@ if ($usedCachedRedirect == true) {
 
             $new_url = setPrePopVars($urlvars, $new_url, false);
 
+            // Counted where an operator looks: the visitor goes on, the click is lost.
+            \Prosper202\Click\UnsavedClickRedirects::record(ROOT_PATH, 'off.php');
             p202NoStore();
             header('location: ' . $new_url);
             die();

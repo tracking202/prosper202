@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Click;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\UnsavedClickRedirects;
 
 /**
  * The real dl.php, lp.php and off.php, run in a child PHP against a stand-in for
@@ -28,6 +29,7 @@ final class FallbackRedirectScriptsTest extends TestCase
         self::$tree = sys_get_temp_dir() . '/p202-fallback-' . bin2hex(random_bytes(4));
         mkdir(self::$tree . '/tracking202/redirect', 0777, true);
         mkdir(self::$tree . '/202-config/Http', 0777, true);
+        mkdir(self::$tree . '/202-config/temp', 0777, true);
         foreach (['dl.php', 'lp.php', 'off.php'] as $script) {
             copy(self::script($repo, $script), self::$tree . '/tracking202/redirect/' . $script);
         }
@@ -49,7 +51,10 @@ final class FallbackRedirectScriptsTest extends TestCase
         foreach ($files as $file) {
             @unlink(self::$tree . '/' . $file);
         }
-        foreach (['tracking202/redirect', 'tracking202', '202-config/Http', '202-config', ''] as $dir) {
+        foreach (['', '.lock', '.tmp'] as $suffix) {
+            @unlink(UnsavedClickRedirects::path(self::$tree) . $suffix);
+        }
+        foreach (['tracking202/redirect', 'tracking202', '202-config/Http', '202-config/temp', '202-config', ''] as $dir) {
             @rmdir(self::$tree . '/' . $dir);
         }
     }
@@ -155,6 +160,91 @@ final class FallbackRedirectScriptsTest extends TestCase
         return md5('lp_' . self::LPIP . 'h');
     }
 
+    /** @return iterable<string, array{string, array<string, mixed>}> */
+    public static function outageRedirects(): iterable
+    {
+        yield 'dl.php' => ['dl.php', [
+            'get' => ['t202id' => self::T202ID], 'cookie' => [], 'row' => [],
+            'cache' => [self::dlKey() => self::NEW_URL . '&subid=[[subid]]'],
+        ]];
+        yield 'lp.php' => ['lp.php', [
+            'get' => ['lpip' => self::LPIP], 'cookie' => [], 'row' => [],
+            'cache' => [self::lpKey() => self::NEW_URL . '&subid=[[subid]]'],
+        ]];
+        yield 'off.php' => ['off.php', [
+            'get' => ['acip' => self::ACIP], 'cookie' => [], 'row' => [],
+            'cache' => [self::offKey() => self::NEW_URL . '&subid=[[subid]]'],
+        ]];
+    }
+
+    /**
+     * With the database refusing the connection, each script sends the
+     * visitor to the URL it keeps for an outage, and counts the click it did
+     * not save where Settings and the health check read it.
+     *
+     * @dataProvider outageRedirects
+     * @param array<string, mixed> $request
+     */
+    public function testAnOutageRedirectIsCounted(string $script, array $request): void
+    {
+        @unlink(UnsavedClickRedirects::path(self::$tree));
+        $request['down'] = true;
+        $key = (string) array_key_first($request['cache']);
+
+        $first = self::runScript($script, $request);
+        self::assertContains($key, $first['reads'], 'the run never reached the outage redirect');
+        self::assertSame(302, $first['status'], 'the visitor is redirected');
+        self::assertIsString($first['url']);
+        self::assertStringStartsWith(self::NEW_URL . '&subid=', $first['url']);
+        self::assertStringNotContainsString('[[', $first['url']);
+        self::assertSame('', $first['output'], 'nothing is printed before the redirect');
+        self::runScript($script, $request);
+
+        $counted = UnsavedClickRedirects::read(self::$tree);
+        self::assertSame('counted', $counted['state']);
+        self::assertSame(2, $counted['count']);
+    }
+
+    /** No URL kept: the visitor is answered 503, and no redirect is counted. */
+    public function testAnOutageWithNoUrlKeptCountsNoRedirect(): void
+    {
+        @unlink(UnsavedClickRedirects::path(self::$tree));
+        $run = self::runScript('dl.php', [
+            'get' => ['t202id' => self::T202ID], 'cookie' => [], 'row' => [], 'cache' => [], 'down' => true,
+        ]);
+
+        self::assertContains(self::dlKey(), $run['reads'], 'the run never reached the outage branch');
+        self::assertSame('none', UnsavedClickRedirects::read(self::$tree)['state']);
+    }
+
+    /**
+     * 202-config/temp/ not writable: the count is lost and said to be, and
+     * the visitor is redirected all the same, with nothing printed.
+     */
+    public function testAnOutageRedirectThatCannotBeCountedStillRedirects(): void
+    {
+        if (function_exists('posix_geteuid') && posix_geteuid() === 0) {
+            self::markTestSkipped('root writes into a read-only directory');
+        }
+        @unlink(UnsavedClickRedirects::path(self::$tree));
+        @unlink(UnsavedClickRedirects::path(self::$tree) . '.lock');
+        chmod(self::$tree . '/202-config/temp', 0555);
+        try {
+            $run = self::runScript('dl.php', [
+                'get' => ['t202id' => self::T202ID], 'cookie' => [], 'row' => [], 'down' => true,
+                'cache' => [self::dlKey() => self::NEW_URL . '&subid=[[subid]]'],
+            ]);
+            $read = UnsavedClickRedirects::read(self::$tree);
+        } finally {
+            chmod(self::$tree . '/202-config/temp', 0777);
+        }
+
+        self::assertSame(302, $run['status']);
+        self::assertStringStartsWith(self::NEW_URL . '&subid=', (string) $run['url']);
+        self::assertSame('', $run['output']);
+        self::assertSame('unrecordable', $read['state']);
+    }
+
     /** @return array{reads: list<string>, writes: array<string, string>} */
     private static function dl(?string $url, ?string $cached): array
     {
@@ -235,7 +325,10 @@ final class FallbackRedirectScriptsTest extends TestCase
         unlink($out);
         self::assertStringNotContainsString('Fatal error', $stdout . $stderr);
 
-        return ['reads' => $result['reads'], 'writes' => $result['writes']];
+        return [
+            'reads' => $result['reads'], 'writes' => $result['writes'],
+            'status' => $result['status'] ?? null, 'url' => $result['url'] ?? null, 'output' => $stdout,
+        ];
     }
 
     private static function script(string $repo, string $name): string

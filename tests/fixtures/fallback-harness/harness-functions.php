@@ -104,3 +104,9 @@ function getCookie202($cookieName)
 {
     return \Prosper202\Http\ClickCookie::value($_COOKIE, (string) $cookieName);
 }
+
+// connect2.php's answer for an outage with no URL kept: the run ends.
+function p202Unavailable(): never
+{
+    exit;
+}

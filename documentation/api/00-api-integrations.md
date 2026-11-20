@@ -695,17 +695,26 @@ Returns supported API versions.
 
 ### GET /system/health
 
-Returns system health status:
+Returns system health status, without authentication:
 
 ```json
 {
   "data": {
     "status": "healthy",
     "timestamp": 1709942400,
-    "api_version": "v3"
+    "api_version": "v3",
+    "geoip_database": { "state": "current", "built_at": 1792500000, "built_on": "2026-10-20", "age_days": 3, "stale_after_days": 30 },
+    "unsaved_click_redirects": { "state": "ok" },
+    "warnings": []
   }
 }
 ```
+
+`unsaved_click_redirects.state` is `warning` when clicks were redirected
+without being saved in the past 7 days because the database refused the
+connection, or when the web server cannot count them; the count and its times
+are on the authenticated `GET /system/info` ([System](15-system.md#install-details)).
+A warning adds a sentence to `warnings` and leaves `status` `healthy`.
 
 ## Legacy API (v1)
 

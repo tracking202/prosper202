@@ -29,6 +29,16 @@ services:
 
   db:
     image: mysql:8.0
+    # max_connections: the web container's 150 Apache workers hold one
+    # connection each (two for a moment on a 202-config.php written before
+    # 1.9.80), with room for the cron jobs and the API; MySQL's default of 151
+    # refused clicks under load. Binary log off: Prosper202 does not replicate,
+    # and writing it costs every commit a second write to disk. To trade the
+    # last second of commits on a crash for faster writes, add
+    # --innodb-flush-log-at-trx-commit=2 (off by default).
+    command:
+      - --max-connections=400
+      - --skip-log-bin
     environment:
       # No default on purpose: this file ships in an open-source repo, so any
       # default would be a well-known credential on every deployment. Set it
