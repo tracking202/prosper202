@@ -57,19 +57,70 @@ include_once(ROOT_PATH . '/202-config.php');
 // and the redirects fall back to the URL they keep in memcache for an outage
 // (dl.php, lp.php, off.php); uncaught, every request was a 500 before any of
 // them could.
-try {
-    $database = DB::getInstance();
-    $db = $database->getConnection();
-    // Nothing on the click path reads through the read connection; a retained
-    // config opened it anyway, and under load the second connection per click
-    // is what MySQL's max_connections refuses first.
-    if ($db instanceof \mysqli) {
-        require_once __DIR__ . '/Database/ConnectionFactory.php';
-        \Prosper202\Database\ConnectionFactory::releaseReadConnection($database, $db);
+//
+// The config's own last lines have already asked DB::getInstance() once, and
+// leave $db false when it threw: that is not asked again. A config written
+// before 1.9.80 opens the read connection in its constructor beside the
+// primary and throws when either is refused, and under MySQL's
+// max_connections the second is the one refused, so on any failure the
+// primary alone is opened once more and the click saved on it
+// (p202ClickPathPrimaryOnly()).
+$p202ConnectError = null;
+if (($db ?? null) === false) {
+    $p202ConnectError = '202-config.php could not connect: ' . (mysqli_connect_error() ?? 'no reason given');
+} else {
+    try {
+        $database = DB::getInstance();
+        $db = $database->getConnection();
+        // Nothing on the click path reads through the read connection; a
+        // retained config opened it anyway, and under load the second
+        // connection per click is what MySQL's max_connections refuses first.
+        if ($db instanceof \mysqli) {
+            require_once __DIR__ . '/Database/ConnectionFactory.php';
+            \Prosper202\Database\ConnectionFactory::releaseReadConnection($database, $db);
+        }
+    } catch (\mysqli_sql_exception $connectError) {
+        $p202ConnectError = $connectError->getMessage();
     }
-} catch (\mysqli_sql_exception $connectError) {
-    error_log('The click path could not connect to the database: ' . $connectError->getMessage());
-    $db = null;
+}
+if ($p202ConnectError !== null) {
+    $db = p202ClickPathPrimaryOnly($p202ConnectError);
+}
+
+/**
+ * The primary connection alone, from 202-config.php's settings, made what
+ * DB::getInstance() answers for the rest of the request; null, logged, when
+ * it is refused too or the config's class cannot take it, and the click
+ * script then takes its outage path.
+ */
+function p202ClickPathPrimaryOnly(string $why): ?\mysqli
+{
+    global $dbhost, $dbuser, $dbpass, $dbname;
+    try {
+        $primary = new \mysqli((string) $dbhost, (string) $dbuser, (string) $dbpass, (string) $dbname);
+        if ($primary->connect_errno !== 0) {
+            throw new \RuntimeException((string) $primary->connect_error);
+        }
+    } catch (\Throwable $e) {
+        error_log('The click path could not connect to the database: ' . $why
+            . '; the primary alone: ' . $e->getMessage());
+
+        return null;
+    }
+    require_once __DIR__ . '/Database/ConnectionFactory.php';
+    if (!class_exists('DB', false) || !\Prosper202\Database\ConnectionFactory::adoptPrimary('DB', $primary)) {
+        error_log('The click path could not connect to the database: ' . $why
+            . '; the primary alone connected, and 202-config.php\'s DB class cannot hold it.');
+        try {
+            $primary->close();
+        } catch (\Throwable) {
+        }
+
+        return null;
+    }
+    error_log('The click path connected to the primary alone (' . $why . '); the click is saved on it.');
+
+    return $primary;
 }
 
 // The click writes are written for this sql_mode. A session that refuses it

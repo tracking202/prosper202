@@ -11,6 +11,7 @@ use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\PayloadKeys;
 use Prosper202\Click\ClickRetention;
 use Prosper202\Click\TrackingBaseUrl;
+use Prosper202\Click\UnsavedClickRedirects;
 use Prosper202\Database\Connection;
 use Prosper202\GeoIp\CityDatabase;
 use Prosper202\GeoIp\RefreshStore;
@@ -149,6 +150,7 @@ final class AdministrationController
             $now = time();
             $geoip = CityDatabase::status(CityDatabase::PATH, $now);
             $geoipRefresh = (new RefreshStore($this->conn))->read();
+            $unsaved = UnsavedClickRedirects::read(dirname(__DIR__, 3));
 
             return ['data' => [
                 'version' => $code,
@@ -183,6 +185,12 @@ final class AdministrationController
                 // the credential.
                 'geoip_database' => $geoip->toArray(),
                 'geoip_refresh' => $geoipRefresh->toArray($geoip, $now),
+                // Clicks this web server redirected without saving while the
+                // database was out of reach (UnsavedClickRedirects), with the
+                // sentence Settings shows, or null.
+                'unsaved_click_redirects' => $unsaved + [
+                    'warning' => UnsavedClickRedirects::warning($unsaved, $now),
+                ],
             ]];
         });
     }

@@ -89,6 +89,11 @@ define('ROOT_PATH', dirname(__DIR__) . '/');
 
 register_shutdown_function(static function () use ($p202Harness): void {
     global $memcache;
-    $result = ['reads' => $memcache->reads, 'writes' => (object) $memcache->writes];
+    // The status a Location header sets, and the URL the script sent the
+    // visitor to (its file-scope $new_url): the CLI keeps no header list.
+    $result = [
+        'reads' => $memcache->reads, 'writes' => (object) $memcache->writes,
+        'status' => http_response_code(), 'url' => $GLOBALS['new_url'] ?? null,
+    ];
     file_put_contents($p202Harness['out'], json_encode($result));
 });

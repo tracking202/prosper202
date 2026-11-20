@@ -99,17 +99,32 @@ completed — you only validate your API key and create the admin account.
   `P202_DISABLE_AUTO_UPGRADE=1` (and the app also detects Coolify's own
   `COOLIFY_*` variables), so the upgrade pages refuse to run and the "new
   version" banner points at the redeploy flow instead.
-- **MySQL settings** — from 1.9.80 the `db` service runs with
-  `--max-connections=400` (the web container's 150 Apache workers hold one
-  connection each; MySQL's default of 151 refused clicks under load, and a
-  refused click is sent on without being saved) and with the binary log off
-  (`--skip-log-bin`: nothing replicates from this database, and the log costs
-  every commit a second write). Binary log files an earlier deploy wrote stay
-  in `db_data` until you delete them. To trade up to a second of commits on a
-  crash for faster writes, add `--innodb-flush-log-at-trx-commit=2` to the
-  service's `command`; it is off by default. Clicks redirected without being
-  saved are counted on `GET /api/v3/system/health`
-  (`unsaved_click_redirects`) and on Account › Settings.
+- **MySQL settings** — from 1.9.80 the template's `db` service runs with
+  `--max-connections=400` (the web container's 150 Apache workers each hold
+  one connection while they answer a request; MySQL's default of 151 refused
+  clicks under load, and a refused click is sent on without being saved) and
+  with the binary log off (`--skip-log-bin`: nothing replicates from this
+  database, and the log costs every commit a second write). With the binary
+  log off there is no point-in-time recovery from it: a restore goes back to
+  the last backup, and the commits after it are not replayed. To keep it,
+  remove `--skip-log-bin` from the service's `command`. Binary log files an
+  earlier deploy wrote stay in `db_data` until you delete them. To trade up
+  to a second of commits on a crash for faster writes, add
+  `--innodb-flush-log-at-trx-commit=2` to the service's `command`; it is off
+  by default. A deployment made from an earlier template is not changed by
+  this one: it keeps the `command` it has until you edit its compose file
+  in Coolify.
+- **Apache** — the image sets `KeepAliveTimeout 2` (Apache's default is 5,
+  which held every worker idle at 30-40 clicks per second) and
+  `MaxRequestWorkers 150`, in every deployment that rebuilds the image.
+  Coolify's proxy keeps its own connections to the container open for
+  longer than 2 seconds; a request it sends on a connection Apache has just
+  closed can fail, and the proxy may not retry it.
+- **Clicks redirected unsaved** — counted on Account › Settings and
+  `GET /api/v3/system/info` (`unsaved_click_redirects`; the unauthenticated
+  `GET /api/v3/system/health` says only whether there is anything to look
+  at). The count is a file in `202-config/temp/` inside the web container,
+  so each container keeps its own and a redeploy starts it again.
 - **Backups** — nearly all state is MySQL (`db_data` volume). Use Coolify's
   scheduled backup feature, or run `mysqldump` in the db container. Note the
   single quotes: the password variable only exists *inside* the container, so

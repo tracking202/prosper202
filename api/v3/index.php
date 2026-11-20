@@ -210,16 +210,17 @@ try {
         // Clicks the click path redirected without saving, counted in a file
         // because the database was out of reach when it happened. A warning,
         // never a status: a monitor restarting the container would not bring
-        // the clicks back.
+        // the clicks back. Only whether there is one is said here; the count
+        // and its times are GET /system/info's.
         $unsaved = \Prosper202\Click\UnsavedClickRedirects::read(dirname(__DIR__, 2));
-        $unsavedWarning = \Prosper202\Click\UnsavedClickRedirects::warning($unsaved);
+        $unsavedWarning = \Prosper202\Click\UnsavedClickRedirects::publicWarning($unsaved);
         Bootstrap::jsonResponse([
             'data' => [
                 'status' => 'healthy',
                 'timestamp' => time(),
                 'api_version' => 'v3',
                 'geoip_database' => $geoip->healthFields(),
-                'unsaved_click_redirects' => $unsaved,
+                'unsaved_click_redirects' => \Prosper202\Click\UnsavedClickRedirects::publicFields($unsaved),
                 'warnings' => array_values(array_filter(
                     [$geoipWarning, $unsavedWarning],
                     static fn (?string $warning): bool => $warning !== null

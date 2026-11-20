@@ -51,7 +51,9 @@ final class FallbackRedirectScriptsTest extends TestCase
         foreach ($files as $file) {
             @unlink(self::$tree . '/' . $file);
         }
-        @unlink(UnsavedClickRedirects::path(self::$tree));
+        foreach (['', '.lock', '.tmp'] as $suffix) {
+            @unlink(UnsavedClickRedirects::path(self::$tree) . $suffix);
+        }
         foreach (['tracking202/redirect', 'tracking202', '202-config/Http', '202-config/temp', '202-config', ''] as $dir) {
             @rmdir(self::$tree . '/' . $dir);
         }
@@ -191,6 +193,11 @@ final class FallbackRedirectScriptsTest extends TestCase
 
         $first = self::runScript($script, $request);
         self::assertContains($key, $first['reads'], 'the run never reached the outage redirect');
+        self::assertSame(302, $first['status'], 'the visitor is redirected');
+        self::assertIsString($first['url']);
+        self::assertStringStartsWith(self::NEW_URL . '&subid=', $first['url']);
+        self::assertStringNotContainsString('[[', $first['url']);
+        self::assertSame('', $first['output'], 'nothing is printed before the redirect');
         self::runScript($script, $request);
 
         $counted = UnsavedClickRedirects::read(self::$tree);
@@ -208,6 +215,34 @@ final class FallbackRedirectScriptsTest extends TestCase
 
         self::assertContains(self::dlKey(), $run['reads'], 'the run never reached the outage branch');
         self::assertSame('none', UnsavedClickRedirects::read(self::$tree)['state']);
+    }
+
+    /**
+     * 202-config/temp/ not writable: the count is lost and said to be, and
+     * the visitor is redirected all the same, with nothing printed.
+     */
+    public function testAnOutageRedirectThatCannotBeCountedStillRedirects(): void
+    {
+        if (function_exists('posix_geteuid') && posix_geteuid() === 0) {
+            self::markTestSkipped('root writes into a read-only directory');
+        }
+        @unlink(UnsavedClickRedirects::path(self::$tree));
+        @unlink(UnsavedClickRedirects::path(self::$tree) . '.lock');
+        chmod(self::$tree . '/202-config/temp', 0555);
+        try {
+            $run = self::runScript('dl.php', [
+                'get' => ['t202id' => self::T202ID], 'cookie' => [], 'row' => [], 'down' => true,
+                'cache' => [self::dlKey() => self::NEW_URL . '&subid=[[subid]]'],
+            ]);
+            $read = UnsavedClickRedirects::read(self::$tree);
+        } finally {
+            chmod(self::$tree . '/202-config/temp', 0777);
+        }
+
+        self::assertSame(302, $run['status']);
+        self::assertStringStartsWith(self::NEW_URL . '&subid=', (string) $run['url']);
+        self::assertSame('', $run['output']);
+        self::assertSame('unrecordable', $read['state']);
     }
 
     /** @return array{reads: list<string>, writes: array<string, string>} */
@@ -290,7 +325,10 @@ final class FallbackRedirectScriptsTest extends TestCase
         unlink($out);
         self::assertStringNotContainsString('Fatal error', $stdout . $stderr);
 
-        return ['reads' => $result['reads'], 'writes' => $result['writes']];
+        return [
+            'reads' => $result['reads'], 'writes' => $result['writes'],
+            'status' => $result['status'] ?? null, 'url' => $result['url'] ?? null, 'output' => $stdout,
+        ];
     }
 
     private static function script(string $repo, string $name): string

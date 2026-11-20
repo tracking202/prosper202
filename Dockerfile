@@ -62,9 +62,11 @@ RUN a2enmod rewrite \
         echo 'SetEnvIf X-Forwarded-Proto "^https$" HTTPS=on'; \
         echo '# Click throughput. An idle keep-alive connection holds a prefork'; \
         echo '# worker for KeepAliveTimeout; at the default 5 s the load test'; \
-        echo '# had every worker held idle at 30-40 clicks/s. Each worker holds one'; \
-        echo '# MySQL connection, so the compose files give MySQL 400'; \
-        echo '# (max_connections) for these 150 and the cron and API besides.'; \
+        echo '# had every worker held idle at 30-40 clicks/s. A worker answering a'; \
+        echo '# click holds one MySQL connection, so the compose files give MySQL'; \
+        echo '# 400 (max_connections) for these 150 and the cron and API besides,'; \
+        echo '# with the binary log off: no point-in-time recovery from it'; \
+        echo '# (documentation/deploying-on-coolify.md).'; \
         echo 'KeepAliveTimeout 2'; \
         echo '<IfModule mpm_prefork_module>'; \
         echo '    MaxRequestWorkers 150'; \
