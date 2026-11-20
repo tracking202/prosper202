@@ -117,9 +117,9 @@ completed — you only validate your API key and create the admin account.
 - **Apache** — the image sets `KeepAliveTimeout 2` (Apache's default is 5,
   which held every worker idle at 30-40 clicks per second) and
   `MaxRequestWorkers 150`, in every deployment that rebuilds the image.
-  Coolify's proxy keeps its own connections to the container open for
-  longer than 2 seconds; a request it sends on a connection Apache has just
-  closed can fail, and the proxy may not retry it.
+  A proxy in front of the container that keeps its connections to Apache
+  open for longer than that can send a request on one Apache has just
+  closed; how Coolify's proxy handles that has not been measured.
 - **Clicks redirected unsaved** — counted on Account › Settings and
   `GET /api/v3/system/info` (`unsaved_click_redirects`; the unauthenticated
   `GET /api/v3/system/health` says only whether there is anything to look
