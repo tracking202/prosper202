@@ -375,15 +375,9 @@ try {
         $error = $db ? $db->connect_error : 'DB object is null';
         throw new Exception("MySQL Connection Error ({$errno}): {$error}");
     }
-    // Retained 202-config.php files may expose only the primary connection.
-    $dbro = \Prosper202\Database\ConnectionFactory::readConnectionOf($database);
-    if ($dbro === null || $dbro->connect_error) {
-        $errno = $dbro ? $dbro->connect_errno : 'N/A';
-        $error = $dbro ? $dbro->connect_error : 'DB RO object is null';
-        // Decide if this is fatal or just a warning
-        error_log("Read-only DB Connection Error ({$errno}): {$error}");
-        // Potentially allow the script to continue if read-only connection is not critical
-    }
+    // The read connection is not asked for here: the config opens it when
+    // something reads through it (the Spy view), so a page that does not
+    // holds one connection.
 } catch (Exception $e) {
     // Capture the specific exception message
     $db_error_msg = $e->getMessage();

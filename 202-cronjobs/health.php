@@ -100,6 +100,10 @@ try {
     // (Account › Settings shows the path and the reader's error to admins).
     $geoip = \Prosper202\GeoIp\CityDatabase::status();
 
+    // Visitors the click path sent on without saving the click, the database
+    // being out of reach (Prosper202\Click\UnsavedClickRedirects).
+    $unsavedClicks = \Prosper202\Click\UnsavedClickRedirects::read(ROOT_PATH);
+
     // Traffic-source postbacks queued with their conversions and left unsent: every account's
     // for a role that manages users, the signed-in account's own for any other.
     $seesEveryAccount = isset($userObj) && $userObj instanceof \User && $userObj->hasPermission('add_users');
@@ -125,6 +129,7 @@ try {
         'isLocked' => $isLocked,
         'dataEngine' => $dataEngineStatus,
         'geoipDatabase' => $geoip->healthFields(),
+        'unsavedClickRedirects' => $unsavedClicks,
         'trafficSourcePostbacks' => $postbackQueue === null ? null : [
             'stuck' => $postbackQueue['stuck'],
             'overdue' => $postbackQueue['overdue'],
@@ -158,6 +163,11 @@ try {
     $geoipWarning = $geoip->warning();
     if ($geoipWarning !== null) {
         $response['recommendations'][] = $geoipWarning;
+    }
+
+    $unsavedWarning = \Prosper202\Click\UnsavedClickRedirects::warning($unsavedClicks);
+    if ($unsavedWarning !== null) {
+        $response['recommendations'][] = $unsavedWarning;
     }
     
     echo json_encode($response, JSON_PRETTY_PRINT);

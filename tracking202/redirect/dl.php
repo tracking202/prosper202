@@ -133,6 +133,8 @@ if ($usedCachedRedirect == true) {
 				$new_url = str_replace("[[$token]]", $sent !== '' ? rawurlencode($sent) : "p202$token", $new_url);
 			}
 
+			// Counted where an operator looks: the visitor goes on, the click is lost.
+			\Prosper202\Click\UnsavedClickRedirects::record(ROOT_PATH, 'dl.php');
 			p202NoStore();
 			header('location: ' . $new_url);
 			die();

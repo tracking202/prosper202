@@ -12,6 +12,8 @@
 202-config*.php
 !202-config-sample.php
 build/staging-config.php
+# This machine's count of clicks redirected unsaved (Prosper202\Click\UnsavedClickRedirects).
+202-config/temp/unsaved-click-redirects.json*
 
 # VCS / CI / editor state
 .git

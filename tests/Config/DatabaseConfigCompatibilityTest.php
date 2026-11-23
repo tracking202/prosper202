@@ -19,34 +19,36 @@ final class DatabaseConfigCompatibilityTest extends TestCase
         return dirname(__DIR__, 2);
     }
 
-    /** @return iterable<string, array{string, ?string, ?string, int}> */
+    /**
+     * The bootstrap asks for the primary alone, whatever the config: the read
+     * connection is opened by the config when something reads through it
+     * (the Spy view), so a page that does not holds one connection, and a
+     * replica that is down fails nothing but what reads from it.
+     *
+     * @return iterable<string, array{string, ?string, int}>
+     */
     public static function configurations(): iterable
     {
-        yield 'retained config without a replica method' => ['legacy', 'primary', null, 0];
-        yield 'config with a distinct replica' => ['replica', 'replica', null, 1];
+        yield 'retained config without a replica method' => ['legacy', null, 0];
+        yield 'config with a distinct replica' => ['replica', null, 0];
         yield 'primary failure in a retained config' => [
-            'legacy-primary-failure', null,
+            'legacy-primary-failure',
             'cannot connect to the database named in 202-config.php: MySQL Connection Error (2002): '
                 . 'primary unavailable',
             0,
         ];
         yield 'primary failure before opening a replica' => [
-            'primary-failure', null,
+            'primary-failure',
             'cannot connect to the database named in 202-config.php: MySQL Connection Error (2002): '
                 . 'primary unavailable',
             0,
         ];
-        yield 'declared replica failure is still reported' => [
-            'replica-failure', null,
-            'cannot connect to the database named in 202-config.php: replica unavailable',
-            1,
-        ];
+        yield 'a replica that is down is not asked for' => ['replica-failure', null, 0];
     }
 
     /** @dataProvider configurations */
     public function testTheBootstrapUsesTheConnectionsTheConfigProvides(
         string $shape,
-        ?string $readRole,
         ?string $error,
         int $replicaCalls
     ): void {
@@ -84,17 +86,17 @@ final class DatabaseConfigCompatibilityTest extends TestCase
         }
         function p202_cli_fail(string $message): void { throw new RuntimeException($message); }
         function _die(string $message): void { throw new RuntimeException($message); }
-        $readRole = null;
         $error = null;
         try {
         CODE;
         $runner .= "\n" . $block . <<<'CODE'
 
-            $readRole = $dbro === $primary ? 'primary' : ($dbro === $replica ? 'replica' : 'unexpected');
+            $primaryRole = $db === $primary ? 'primary' : 'unexpected';
         } catch (Throwable $failure) {
             $error = $failure->getMessage();
         }
-        $answer = ['read' => $readRole, 'error' => $error, 'replica_calls' => $replicaCalls];
+        $answer = ['primary' => $primaryRole ?? null, 'error' => $error, 'replica_calls' => $replicaCalls,
+            'dbro' => isset($dbro)];
         echo json_encode($answer, JSON_THROW_ON_ERROR);
         CODE;
 
@@ -111,7 +113,8 @@ final class DatabaseConfigCompatibilityTest extends TestCase
         self::assertSame(0, proc_close($process), $stdout . $stderr);
         self::assertSame('', $stderr);
         self::assertSame(
-            ['read' => $readRole, 'error' => $error, 'replica_calls' => $replicaCalls],
+            ['primary' => $error === null ? 'primary' : null, 'error' => $error, 'replica_calls' => $replicaCalls,
+                'dbro' => false],
             json_decode($stdout, true, 512, JSON_THROW_ON_ERROR)
         );
     }

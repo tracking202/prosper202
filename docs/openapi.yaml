@@ -258,6 +258,18 @@ paths:
                           stale_after_days:
                             type: integer
                             example: 30
+                      unsaved_click_redirects:
+                        type: object
+                        description: >-
+                          Whether clicks were redirected without being saved in the past 7 days (the
+                          database refused the connection, and dl.php, lp.php or off.php sent the visitor
+                          to the URL kept for an outage), or cannot be counted on this web server. Only
+                          the state is said here; GET /system/info gives the count and its times. A
+                          warning adds a sentence to `warnings`; `status` stays `healthy`.
+                        properties:
+                          state:
+                            type: string
+                            enum: [ok, warning]
                       warnings:
                         type: array
                         description: One sentence per problem found; empty when there is none
@@ -607,6 +619,42 @@ paths:
                             description: >-
                               When the cron job's hourly tier next refreshes (now, when due already); null
                               when no account is stored
+                      unsaved_click_redirects:
+                        type: object
+                        description: >-
+                          Visitors a click script sent on without saving the click, because the database
+                          refused the connection (too many connections, or down): the cached outage redirect
+                          of dl.php, lp.php and off.php. Counted in 202-config/temp/ on the web server that
+                          answers, never in the database: each web server or container keeps its own count,
+                          and one redeployed without that directory starts again. A count waits for no other,
+                          so under contention it can come out low, never high. rtr.php, offrtr.php and a
+                          click answered 503 (no URL kept for an outage) lose their clicks uncounted.
+                        properties:
+                          state:
+                            type: string
+                            enum: [none, counted, unreadable, unrecordable]
+                            description: >-
+                              `none`: nothing counted, and the count can be written. `counted`: see count.
+                              `unreadable`: the file is there and cannot be read; never read as 0.
+                              `unrecordable`: the web server cannot write 202-config/temp/, so a click lost
+                              now is not counted; count and times are what the file held before, or null.
+                          count:
+                            type: integer
+                            nullable: true
+                          first_at:
+                            type: integer
+                            nullable: true
+                            description: Unix seconds of the first one counted
+                          last_at:
+                            type: integer
+                            nullable: true
+                            description: Unix seconds of the last one counted
+                          warning:
+                            type: string
+                            nullable: true
+                            description: >-
+                              The sentence Account › Settings shows: a last one in the past 7 days, or a count
+                              that cannot be read or kept; null otherwise
         "403":
           $ref: "#/components/responses/Forbidden"
 

@@ -34,6 +34,7 @@ System health checks, diagnostics, and administration.
     "timestamp": 1709942400,
     "api_version": "v3",
     "geoip_database": { "state": "stale", "built_at": 1530653216, "built_on": "2018-07-03", "age_days": 3034, "stale_after_days": 30 },
+    "unsaved_click_redirects": { "state": "ok" },
     "warnings": ["The GeoIP database was built on 2018-07-03, 3034 days ago (stale after 30): visitors in address blocks allocated or moved since read as unplaced or in the wrong country. Set up its refresh in Account › Settings › GeoIP database."]
   }
 }
@@ -45,6 +46,7 @@ System health checks, diagnostics, and administration.
 | `timestamp` | integer | Unix timestamp when the check ran. |
 | `api_version` | string | API version this server implements. |
 | `geoip_database` | object | The GeoLite2 City file every location lookup reads, from its own metadata: `state` (`current`, `stale`, `missing`, `unreadable`), `built_at` (unix seconds) and `built_on` (UTC day), `age_days`, and `stale_after_days` (30). The date and age are `null` when the file is missing or cannot be read. Neither its path nor a reader's error is said here; `GET /system/info` says both. |
+| `unsaved_click_redirects` | object | `state` is `warning` when clicks were redirected without being saved in the past 7 days (the database refused the connection), or when this web server cannot count them, and `ok` otherwise; the warning adds a sentence to `warnings` and leaves `status` `healthy`. The count, its times and the file are not said here; `GET /system/info` and Account › Settings say them. |
 | `warnings` | array of strings | A sentence for each problem the probe found; `[]` when there is none. A stale, missing or unreadable GeoIP database is one of them, and leaves `status` `healthy`: a liveness check that restarted the server for it would get the same file back. |
 
 Why 30 days: MaxMind builds GeoLite2 City every Tuesday and Friday and the
@@ -194,6 +196,13 @@ my.tracking202.com).
       "last_checked_at": 1792540800,
       "last_refreshed_at": 1792540800,
       "next_due_at": 1793142000
+    },
+    "unsaved_click_redirects": {
+      "state": "counted",
+      "count": 37,
+      "first_at": 1792540800,
+      "last_at": 1792541400,
+      "warning": "37 clicks were redirected without being saved since 2026-10-20 00:00, the last at 2026-10-20 00:10 UTC: the database refused the connection (too many connections, or down). The visitors reached the offer; the clicks are not in any report."
     }
   }
 }
@@ -233,6 +242,23 @@ MaxMind's answer (`last_checked_at`), the last that replaced the file
 runs it (now, when it is due already; `null` with no account stored). The
 refresh is set up and run in Account › Settings; no route here makes a
 network request.
+
+`unsaved_click_redirects` counts the visitors dl.php, lp.php and off.php sent
+to the URL they keep for an outage because the database refused the
+connection (too many connections, or down): each one reached the offer, and
+its click is in no report. `state` is `none` (nothing counted, and the count
+can be written), `counted` (with `count` and the first and last times in unix
+seconds), `unreadable` (the file cannot be read; never read as 0), or
+`unrecordable`: the web server cannot write `202-config/temp/`, so a click
+lost now is not counted, and the count and times are what the file held
+before, or `null`. `warning` is the sentence Settings shows, `null` when there
+is nothing to say. The count is kept in a file on the web server, not in the
+database, so it is this web server's or container's alone: behind several,
+each keeps its own, and one redeployed without `202-config/temp/` starts
+again. It runs from the first one counted and is never reset except by
+deleting the file. A count waits for no other, so under contention it can come
+out low, never high. rtr.php, offrtr.php and a click answered 503 because no
+URL was kept for an outage lose their clicks without being counted.
 
 ### Sign-in log
 
