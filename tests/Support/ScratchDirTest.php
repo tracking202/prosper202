@@ -88,21 +88,31 @@ final class ScratchDirTest extends TestCase
         yield 'the root by another spelling' => ['/./'];
         yield 'the temp directory itself' => [sys_get_temp_dir()];
         yield 'out of temp through ..' => [sys_get_temp_dir() . '/..'];
-        yield 'this checkout' => [dirname(__DIR__, 2)];
     }
 
-    /** @dataProvider notTemp */
+    /**
+     * Each refusal is asked through clear() with a pattern nothing matches,
+     * so a broken guard deletes nothing: remove() of the same paths would
+     * delete them. A first draft also refused "this checkout", which is
+     * not outside the temp directory when the checkout lives there, and
+     * deleted it.
+     *
+     * @dataProvider notTemp
+     */
     public function testAnythingOutsideTheTempDirectoryIsRefused(string $dir): void
     {
         $this->expectException(\LogicException::class);
-        ScratchDir::remove($dir);
+        ScratchDir::clear($dir, 'p202-scratchdir-matches-nothing-' . bin2hex(random_bytes(8)));
     }
 
-    /** @dataProvider notTemp */
-    public function testClearOutsideTheTempDirectoryIsRefused(string $dir): void
+    /** remove() asks the same guard before it deletes anything. */
+    public function testRemoveAsksTheGuardFirst(): void
     {
-        $this->expectException(\LogicException::class);
-        ScratchDir::clear($dir, 'nothing-matches-this-*');
+        $src = (string) file_get_contents(__DIR__ . '/ScratchDir.php');
+        self::assertMatchesRegularExpression(
+            '/function remove\(string \$dir\): void\s*\{\s*\$root = self::owned\(\$dir\);\s*if \(\$root === null\) \{\s*return;\s*\}/',
+            $src
+        );
     }
 
     public function testAPatternIsANameNotAPath(): void
