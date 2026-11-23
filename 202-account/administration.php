@@ -604,6 +604,24 @@ $tsSaid = $tsReport !== null && ($tsReport['sources'] !== [] || $tsReport['split
 // The splits of the last 30 days, a panel in a column of its own under the open panel.
 $tsSplitsColumn = ($tsPanel['splits'] ?? '') === '' ? '' : '<div class="col-12">' . $tsPanel['splits'] . '</div>';
 
+// Clicks sent on unsaved while the database was out of reach (Prosper202\Click\UnsavedClickRedirects).
+$unsavedClicks = \Prosper202\Click\UnsavedClickRedirects::read(ROOT_PATH);
+$unsavedClicksCounted = static fn (array $read): string => number_format((int) $read['count']) . ' since '
+    . gmdate('Y-m-d', (int) $read['first_at']) . ', the last ' . gmdate('Y-m-d H:i', (int) $read['last_at']) . ' UTC';
+$unsavedClicksText = match ($unsavedClicks['state']) {
+    'none' => 'none counted on this web server',
+    'unreadable' => 'the count cannot be read',
+    'unrecordable' => '202-config/temp/ is not writable, so none can be counted'
+        . ($unsavedClicks['count'] === null ? '' : ' (' . $unsavedClicksCounted($unsavedClicks) . ' before)'),
+    default => $unsavedClicksCounted($unsavedClicks),
+};
+$unsavedClicksAside = match ($unsavedClicks['state']) {
+    'none' => 'None',
+    'unreadable' => 'Unknown',
+    'unrecordable' => 'Not counted',
+    default => 'Some',
+};
+
 template_top('Administration');
 ?>
 
@@ -628,6 +646,10 @@ if ($tsOwners['error'] !== null) {
 }
 echo p202_postback_queue_notice($db, (int) ($_SESSION['user_own_id'] ?? $_SESSION['user_id'] ?? 0), get_absolute_url());
 echo p202_restore_notice(p202_restore_notices($db), $self, (string) ($_SESSION['token'] ?? ''));
+$unsavedWarning = \Prosper202\Click\UnsavedClickRedirects::warning($unsavedClicks);
+if ($unsavedWarning !== null) {
+    echo p202_flash('warn', $unsavedWarning);
+}
 ?>
 
 <div class="p202-tiles">
@@ -652,6 +674,7 @@ echo p202_restore_notice(p202_restore_notices($db), $self, (string) ($_SESSION['
 					<div class="p202-strip__row"><span class="p202-strip__label">PHP safe mode</span><span class="p202-strip__value"><?php echo @ini_get('safe_mode') ? 'On: ask your host to turn it off' : 'Off'; ?></span><span class="p202-strip__aside"><?php echo $yesNo(!@ini_get('safe_mode'), 'Off', 'On'); ?></span></div>
 					<div class="p202-strip__row"><span class="p202-strip__label">Memcache installed</span><span class="p202-strip__value">speeds up redirects</span><span class="p202-strip__aside"><?php echo $yesNo((bool) $memcacheInstalled); ?></span></div>
 					<div class="p202-strip__row"><span class="p202-strip__label">Memcache running</span><span class="p202-strip__value">check 202-config.php if installed but not running</span><span class="p202-strip__aside"><?php echo $yesNo((bool) $memcacheWorking); ?></span></div>
+					<div class="p202-strip__row"><span class="p202-strip__label">Clicks redirected unsaved</span><span class="p202-strip__value"><?php echo $e($unsavedClicksText); ?></span><span class="p202-strip__aside"><?php echo $yesNo($unsavedClicks['state'] === 'none', $unsavedClicksAside, $unsavedClicksAside); ?></span></div>
 					<div class="p202-strip__row"><span class="p202-strip__label">BlazerCache</span><span class="p202-strip__value">redirects survive a MySQL outage; user agents parse faster</span><span class="p202-strip__aside"><?php echo $yesNo((bool) $memcacheWorking, 'Yes', 'Needs Memcache'); ?></span></div>
 					<div class="p202-strip__row"><span class="p202-strip__label">Keyword preference</span><span class="p202-strip__value">pick up the <?php echo $e(strtolower((string) ($pref_row['user_keyword_searched_or_bidded'] ?? ''))); ?> keyword</span><span class="p202-strip__aside"><a class="btn btn-secondary btn-sm" href="<?php echo $e(get_absolute_url() . '202-account/account.php#profile'); ?>">Change</a></span></div>
 				</div>

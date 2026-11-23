@@ -57,6 +57,105 @@ final class ConnectionFactory
     }
 
     /**
+     * For a caller that never reads through the read connection (the click
+     * path): closes the one a retained 202-config.php opened in its
+     * constructor beside the primary, and leaves the primary in its place, so
+     * the request holds one connection against MySQL's max_connections rather
+     * than two. The samples of 1.9.55 to 1.9.79 open both when built and keep
+     * the second in `_connectionro`; a config that opens it on first use holds
+     * none yet, and nothing is opened here. Answers whether one was closed;
+     * false for a class it cannot read, never a throw, since every click
+     * runs it.
+     */
+    public static function releaseReadConnection(object $database, \mysqli $primary): bool
+    {
+        try {
+            if (!property_exists($database, '_connectionro')) {
+                return false;
+            }
+            $property = new \ReflectionProperty($database, '_connectionro');
+            if ($property->isStatic()) {
+                return false;
+            }
+            $held = $property->getValue($database);
+            if (!$held instanceof \mysqli || $held === $primary) {
+                return false;
+            }
+            $property->setValue($database, $primary);
+        } catch (\Throwable) {
+            return false;
+        }
+        try {
+            $held->close();
+        } catch (\Throwable) {
+            // A handle that cannot be closed is one the server has already
+            // dropped; either way this request no longer holds it.
+        }
+
+        return true;
+    }
+
+    /**
+     * For the click path, when a retained 202-config.php's constructor threw
+     * (it opens the read connection beside the primary, and under MySQL's
+     * max_connections the second is the one refused): makes $primary, opened
+     * by the caller, what DB::getInstance() answers from then on, for both
+     * getConnection() and getConnectionro(), so nothing later on the request
+     * builds the class again and opens two more. Only for a class whose
+     * singleton is still unset and whose slots are the samples' (`_instance`,
+     * `_connection`, `_connectionro`); false, with nothing changed, for any
+     * other, and never a throw.
+     */
+    public static function adoptPrimary(string $class, \mysqli $primary): bool
+    {
+        $instance = null;
+        $set = false;
+        try {
+            if (!class_exists($class, false)) {
+                return false;
+            }
+            $reflection = new \ReflectionClass($class);
+            if (
+                !$reflection->hasProperty('_instance') || !$reflection->hasProperty('_connection')
+                || !$reflection->hasMethod('getInstance') || !$reflection->hasMethod('getConnection')
+            ) {
+                return false;
+            }
+            $instance = $reflection->getProperty('_instance');
+            $connection = $reflection->getProperty('_connection');
+            $read = $reflection->hasProperty('_connectionro') ? $reflection->getProperty('_connectionro') : null;
+            if (
+                !$instance->isStatic() || $connection->isStatic() || ($read !== null && $read->isStatic())
+                || $instance->getValue() !== null
+            ) {
+                return false;
+            }
+            $object = $reflection->newInstanceWithoutConstructor();
+            $connection->setValue($object, $primary);
+            $read?->setValue($object, $primary);
+            $instance->setValue(null, $object);
+            $set = true;
+            $adopted = $class::getInstance();
+            if (
+                $adopted === $object && $adopted->getConnection() === $primary
+                && ($read === null || self::readConnectionOf($adopted) === $primary)
+            ) {
+                return true;
+            }
+        } catch (\Throwable) {
+            // Falls through to the undo below.
+        }
+        if ($set && $instance !== null) {
+            try {
+                $instance->setValue(null, null);
+            } catch (\Throwable) {
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Create a Connection from explicit mysqli instances (for testing or custom wiring).
      */
     public static function fromConnections(\mysqli $write, ?\mysqli $read = null): Connection

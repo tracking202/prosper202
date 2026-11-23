@@ -142,6 +142,35 @@ final class OutageFallbackIsDeclaredTest extends TestCase
         self::assertSame(['tracking202/redirect/offrtr.php' => true], $asked);
     }
 
+    /**
+     * Every script that redirects to the URL it keeps for an outage counts
+     * the click it did not save (Prosper202\Click\UnsavedClickRedirects),
+     * under its own name, and nothing else counts one.
+     * FallbackRedirectScriptsTest runs each of them to its redirect.
+     */
+    public function testEveryOutageRedirectIsCounted(): void
+    {
+        $keeps = array_keys(array_filter(
+            self::FALLBACK,
+            static fn (string $what): bool => str_starts_with($what, 'the URL it keeps for an outage')
+        ));
+        $counting = [];
+        foreach (SourceScan::phpFiles() as $file => $source) {
+            if (preg_match_all('~UnsavedClickRedirects::record\(ROOT_PATH, \'(\w+\.php)\'\)~', $source, $m) > 0) {
+                $counting[$file] = $m[1];
+            }
+        }
+        $expected = [];
+        foreach ($keeps as $file) {
+            $expected[$file] = [basename($file)];
+        }
+        ksort($counting);
+        ksort($expected);
+
+        self::assertCount(3, $keeps, 'the scripts that keep a URL were read from the list');
+        self::assertSame($expected, $counting);
+    }
+
     public function testTheBootstrapAsksUnlessTheScriptDeclared(): void
     {
         $bootstrap = SourceScan::phpFiles()['202-config/connect2.php'];

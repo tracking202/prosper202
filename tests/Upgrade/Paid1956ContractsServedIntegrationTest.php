@@ -411,13 +411,22 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
             "'localhostreplica'" => var_export($host, true),
         ]);
         if ($readDbname !== '') {
-            // A replica that is another database: the read connection alone goes elsewhere.
+            // A replica that is another database: the read connection alone
+            // goes elsewhere. The sample reads through the primary when the
+            // replica names its server, so this one is opened whatever it names.
             $config = str_replace(
-                '$this->_connectionro = new mysqli($dbhostro, $dbuser, $dbpass, $dbname);',
-                '$this->_connectionro = new mysqli($dbhostro, $dbuser, $dbpass, ' . var_export($readDbname, true) . ');',
+                [
+                    '$replica = @new mysqli($dbhostro, $dbuser, $dbpass, $dbname);',
+                    '$dbhostro !== $dbhost)',
+                ],
+                [
+                    '$replica = @new mysqli($dbhostro, $dbuser, $dbpass, ' . var_export($readDbname, true) . ');',
+                    'true)',
+                ],
                 $config
             );
             self::assertStringContainsString(var_export($readDbname, true) . ');', $config);
+            self::assertStringNotContainsString('$dbhostro !== $dbhost', $config);
         }
         $file = (string) tempnam(sys_get_temp_dir(), 'p202cfg');
         file_put_contents($file, $config);

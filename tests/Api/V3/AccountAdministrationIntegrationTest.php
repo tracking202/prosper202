@@ -554,6 +554,12 @@ final class AccountAdministrationIntegrationTest extends TestCase
         }
         self::assertIsInt($info['database_size_bytes']);
         self::assertSame(['installed', 'running'], array_keys($info['memcache']));
+        $unsaved = \Prosper202\Click\UnsavedClickRedirects::read(dirname(__DIR__, 3));
+        self::assertSame(
+            $unsaved + ['warning' => \Prosper202\Click\UnsavedClickRedirects::warning($unsaved)],
+            $info['unsaved_click_redirects'],
+            'this web server\'s count of clicks redirected unsaved, with the sentence Settings shows'
+        );
     }
 
     // ─── LTV ──────────────────────────────────────────────────────────

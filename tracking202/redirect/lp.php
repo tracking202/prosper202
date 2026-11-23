@@ -59,6 +59,8 @@ if ($usedCachedRedirect==true) {
 				}
 			}
 			
+				// Counted where an operator looks: the visitor goes on, the click is lost.
+				\Prosper202\Click\UnsavedClickRedirects::record(ROOT_PATH, 'lp.php');
 				p202NoStore();
 				header('location: '. $new_url); 
 				die();
