@@ -151,6 +151,12 @@ final class OneAnalyticsDeliveryAtATimeIntegrationTest extends TestCase
                 rename($this->kept, self::lockPath());
             }
         }
+        // Only the directory setUp made: a test skipped before it made one
+        // left $dir '', and '/*' unlinked the /bin, /lib and /sbin symlinks
+        // of a container this ran in as root.
+        if ($this->dir === '' || !str_starts_with($this->dir, sys_get_temp_dir() . '/p202-delivery-lock-')) {
+            return;
+        }
         foreach (glob($this->dir . '/*') ?: [] as $file) {
             unlink($file);
         }
