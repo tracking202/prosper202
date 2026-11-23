@@ -152,6 +152,11 @@ if ($cloaking_on == true) {
     $cloaking_site_url .= \Prosper202\Click\PurLinkDestination::query(
         $vars[\Prosper202\Click\PurLinkDestination::PARAM] ?? null
     );
+    // And the page's visitor id, which finds the click there when no cookie does.
+    $lpVisitorId = \Prosper202\Identity\RequestSignals::landingPageId($vars);
+    if ($lpVisitorId !== null && \Prosper202\Identity\RequestSignals::consentGiven($vars)) {
+        $cloaking_site_url .= '&p202lpid=' . $lpVisitorId;
+    }
 }
 
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
@@ -170,6 +175,22 @@ $redirect_site_url = \Prosper202\Click\PurLinkDestination::choose(
 $lpClickId = \Prosper202\Click\ClickId::parse(
     getCookie202('tracking202subid_a_' . $tracker_row['aff_campaign_id'])
 );
+// No cookie (a visitor the privacy setting holds back is set none): the
+// click the page's own visitor id was seen on, read from this link's query.
+if ($lpClickId === null) {
+    try {
+        $lpClickId = \Prosper202\Click\LandingPageVisitorClick::find(
+            \Prosper202\Repository\LookupRepositoryFactory::connection($db),
+            (string) $lpPublicId,
+            $vars,
+            $tracker_row,
+            time()
+        );
+    } catch (\Throwable $lpVisitorError) {
+        error_log('lp.php: the click of landing page ' . $lpPublicId . '\'s visitor id could not be read: '
+            . $lpVisitorError->getMessage());
+    }
+}
 if ($lpClickId !== null) {
     $lpRecorded = false;
     try {

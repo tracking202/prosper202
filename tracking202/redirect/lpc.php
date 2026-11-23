@@ -58,6 +58,22 @@ $redirect_site_url = \Prosper202\Click\PurLinkDestination::choose(
 // The visitor's click, by its cookie, read exactly (ClickId): anything else
 // is no click, as no cookie was.
 $lpcClickId = \Prosper202\Click\ClickId::parse(getCookie202('tracking202subid'));
+// No cookie (a visitor held back by the privacy setting): the click lp.php
+// found by the page's visitor id, which it hands on (LandingPageVisitorClick).
+if ($lpcClickId === null) {
+    try {
+        $lpcClickId = \Prosper202\Click\LandingPageVisitorClick::find(
+            \Prosper202\Repository\LookupRepositoryFactory::connection($db),
+            (string) $landingId,
+            $_GET,
+            $tracker_row,
+            time()
+        );
+    } catch (\Throwable $lpcVisitorError) {
+        error_log('lpc.php: the click of landing page ' . $landingId . '\'s visitor id could not be read: '
+            . $lpcVisitorError->getMessage());
+    }
+}
 $mysql['click_id'] = $lpcClickId === null ? '' : (string) $lpcClickId;
 
 $redirect_site_url = replaceTrackerPlaceholders(
