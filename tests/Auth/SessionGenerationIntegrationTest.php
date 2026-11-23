@@ -6,6 +6,7 @@ namespace Tests\Auth;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\DataSeeder;
+use Tests\Support\ScratchDir;
 
 /**
  * A new password ends every other session of the user at its next request,
@@ -77,10 +78,7 @@ final class SessionGenerationIntegrationTest extends TestCase
                 }
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     protected function setUp(): void

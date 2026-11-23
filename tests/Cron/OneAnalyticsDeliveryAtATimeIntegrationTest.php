@@ -8,6 +8,7 @@ use PHPUnit\Framework\TestCase;
 use Prosper202\Cron\CronLock;
 use Tests\Messaging\LocalHttpRecorder;
 use Tests\Report\ScratchReportDatabase;
+use Tests\Support\ScratchDir;
 
 /**
  * One analytics delivery at a time, with 202-cronjobs/sync-messaging.php
@@ -151,18 +152,7 @@ final class OneAnalyticsDeliveryAtATimeIntegrationTest extends TestCase
                 rename($this->kept, self::lockPath());
             }
         }
-        // Only the directory setUp made: a test skipped before it made one
-        // left $dir '', and '/*' unlinked the /bin, /lib and /sbin symlinks
-        // of a container this ran in as root.
-        if ($this->dir === '' || !str_starts_with($this->dir, sys_get_temp_dir() . '/p202-delivery-lock-')) {
-            return;
-        }
-        foreach (glob($this->dir . '/*') ?: [] as $file) {
-            unlink($file);
-        }
-        if (is_dir($this->dir)) {
-            rmdir($this->dir);
-        }
+        ScratchDir::remove($this->dir);
     }
 
     private static function lockPath(): string

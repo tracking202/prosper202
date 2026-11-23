@@ -9,6 +9,7 @@ use Prosper202\Click\ClickRecordBuilder;
 use Prosper202\Click\MysqlClickRepository;
 use Prosper202\Database\Connection;
 use Prosper202\DataEngine\ClickRollupSql;
+use Tests\Support\ScratchDir;
 
 /**
  * Analyze › Publishers, its download, and the Publisher filter of the other
@@ -82,10 +83,7 @@ final class PublishersPagesIntegrationTest extends TestCase
             self::$db->close();
             self::$db = null;
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     protected function setUp(): void

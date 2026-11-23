@@ -6,6 +6,7 @@ namespace Tests\Api\V3;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\DataSeeder;
+use Tests\Support\ScratchDir;
 
 /**
  * POST /spend-ledger/sync/{id}/run as api/v3/index.php serves it: `php -S`
@@ -121,12 +122,7 @@ final class SpendSyncServedIntegrationTest extends TestCase
             }
             @rmdir(self::$tls);
         }
-        if (self::$state !== '' && str_starts_with(self::$state, sys_get_temp_dir() . '/p202-')) {
-            foreach (glob(self::$state . '/{,.}[!.]*', GLOB_BRACE) ?: [] as $file) {
-                @unlink($file);
-            }
-            @rmdir(self::$state);
-        }
+        ScratchDir::remove(self::$state);
         @unlink(self::$log);
         if (self::$db !== null) {
             self::q(self::$stored !== null

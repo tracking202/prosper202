@@ -12,6 +12,7 @@ use Prosper202\PaymentNotification\Receiver;
 use Prosper202\PaymentNotification\Shopify\ShopifyAdapter;
 use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
 use Tests\PaymentNotification\ShopifyAdapterTest;
+use Tests\Support\ScratchDir;
 
 /**
  * Setup › Inbound Log's Shopify refunds panel and the Shopify card on
@@ -110,10 +111,7 @@ final class ShopifyRefundsPagesIntegrationTest extends TestCase
                 }
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     protected function setUp(): void

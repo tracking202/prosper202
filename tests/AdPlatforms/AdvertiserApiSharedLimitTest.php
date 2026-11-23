@@ -10,6 +10,7 @@ use Prosper202\AdPlatforms\OpenAiAds\AdvertiserAnswer;
 use Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi;
 use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookSender;
+use Tests\Support\ScratchDir;
 
 /**
  * OpenAI's per-minute limits are counted where every process of the install
@@ -29,11 +30,7 @@ final class AdvertiserApiSharedLimitTest extends TestCase
     protected function tearDown(): void
     {
         if (is_dir($this->dir)) {
-            $items = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($this->dir, \FilesystemIterator::SKIP_DOTS), \RecursiveIteratorIterator::CHILD_FIRST);
-            foreach ($items as $item) {
-                $item->isDir() ? rmdir($item->getPathname()) : unlink($item->getPathname());
-            }
-            rmdir($this->dir);
+            ScratchDir::remove($this->dir);
         }
     }
 

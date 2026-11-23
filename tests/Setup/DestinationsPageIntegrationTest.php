@@ -11,6 +11,7 @@ use Prosper202\Database\Connection;
 use Prosper202\Destinations\DestinationStore;
 use Prosper202\Destinations\Ga4Destination;
 use Prosper202\Destinations\GoogleAdsDestination;
+use Tests\Support\ScratchDir;
 
 /**
  * tracking202/setup/destinations.php as the web server runs it, signed in
@@ -122,10 +123,7 @@ final class DestinationsPageIntegrationTest extends TestCase
                 self::q('UPDATE 202_users_pref SET user_pref_privacy = ' . self::str(self::$installPrivacy) . ' WHERE user_id = 1');
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     private static function cleanUp(): void
@@ -171,7 +169,7 @@ final class DestinationsPageIntegrationTest extends TestCase
      */
     private static function page(array $get = [], array $post = [], bool $token = true): string
     {
-        array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
+        ScratchDir::clear(self::$sessions, 'sess_*');
         if ($post !== [] && $token) {
             $post['token'] = 'SESSION';
         }

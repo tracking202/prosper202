@@ -7,6 +7,7 @@ namespace Tests\Notifications;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Connection;
 use Prosper202\Notifications\SlackWebhook;
+use Tests\Support\ScratchDir;
 
 /**
  * 974K: a notice goes to the account's own webhook, or none; never account 1's.
@@ -100,10 +101,7 @@ final class SlackNoticesGoToTheAccountsOwnWebhookIntegrationTest extends TestCas
                 }
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     private static function cleanUp(): void

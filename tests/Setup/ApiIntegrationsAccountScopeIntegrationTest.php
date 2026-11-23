@@ -6,6 +6,7 @@ namespace Tests\Setup;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Setup\DniNetworks;
+use Tests\Support\ScratchDir;
 
 /**
  * Account › API integrations shows the signed-in account's own Direct Network
@@ -98,10 +99,7 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
                 }
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     private static function cleanUp(): void

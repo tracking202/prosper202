@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Ltv;
 
 use PHPUnit\Framework\TestCase;
+use Tests\Support\ScratchDir;
 
 /**
  * LTV Settings (tracking202/ajax/ltv_settings.php) reads what its forms and
@@ -84,10 +85,7 @@ final class LtvSettingsPostedValuesIntegrationTest extends TestCase
                 }
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     protected function setUp(): void

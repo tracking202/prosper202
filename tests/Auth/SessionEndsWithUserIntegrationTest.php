@@ -6,6 +6,7 @@ namespace Tests\Auth;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\DataSeeder;
+use Tests\Support\ScratchDir;
 
 /**
  * A signed-in session ends when its user is switched off, removed, or their
@@ -86,10 +87,7 @@ final class SessionEndsWithUserIntegrationTest extends TestCase
                 }
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     protected function setUp(): void

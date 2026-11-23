@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Messaging;
 
+use Tests\Support\ScratchDir;
+
 /**
  * A `php -S` on a free loopback port that records every request it gets
  * (method, the request target as received, body) and answers JSON: a chat
@@ -146,9 +148,6 @@ final class LocalHttpRecorder
     {
         proc_terminate($this->process);
         proc_close($this->process);
-        foreach (glob($this->dir . '/*') ?: [] as $file) {
-            unlink($file);
-        }
-        rmdir($this->dir);
+        ScratchDir::remove($this->dir);
     }
 }

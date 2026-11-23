@@ -11,6 +11,7 @@ use Prosper202\Attribution\ExportFiles;
 use Prosper202\Database\Tables\AttributionTables;
 use Prosper202\User\UserDataPurge;
 use Tests\Attribution\Support\AttributionDatabase;
+use Tests\Support\ScratchDir;
 
 /**
  * Deleting a user removes the MTA engine's state for them (plan §7.2): every
@@ -34,14 +35,7 @@ final class UserDeletionPurgesAttributionTest extends TestCase
 
     protected function tearDown(): void
     {
-        if ($this->exportDir !== '' && is_dir($this->exportDir)) {
-            foreach (glob($this->exportDir . '/{,.}*', GLOB_BRACE) ?: [] as $f) {
-                if (is_file($f)) {
-                    unlink($f);
-                }
-            }
-            rmdir($this->exportDir);
-        }
+        ScratchDir::remove($this->exportDir);
     }
 
     /**

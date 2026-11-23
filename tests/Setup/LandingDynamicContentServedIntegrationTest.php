@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Setup;
 
 use PHPUnit\Framework\TestCase;
+use Tests\Support\ScratchDir;
 
 /**
  * The dynamic-content segments 1.9.56 had, through the real files on a real
@@ -340,7 +341,6 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
     public function testNothingIsLoggedPastTheRateLimit(): void
     {
         $store = \Api\V3\Support\ServerStateStore::forInstall(self::requireScratch());
-        $buckets = $store->baseDir() . '/rate_limits/*dcs-update*';
         try {
             for ($i = 0; $i < 600; $i++) {
                 $store->softIpRateLimit('dcs-update', 600, 60, '127.0.0.1');
@@ -351,9 +351,7 @@ final class LandingDynamicContentServedIntegrationTest extends TestCase
             self::assertSame(429, self::post('/tracking202/static/dcs-update.php', 't202c1=x')[0], 'no proof');
             self::assertSame($before, (string) file_get_contents(self::$log), 'no refusal written');
         } finally {
-            foreach ((array) glob($buckets) as $file) {
-                @unlink((string) $file);
-            }
+            ScratchDir::clear($store->baseDir() . '/rate_limits', '*dcs-update*');
         }
     }
 }

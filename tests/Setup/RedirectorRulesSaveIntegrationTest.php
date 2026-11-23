@@ -6,6 +6,7 @@ namespace Tests\Setup;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Rotator\IpCriterion;
+use Tests\Support\ScratchDir;
 
 /**
  * Setup › Redirectors' save (tracking202/ajax/rotator.php, posted by
@@ -87,10 +88,7 @@ final class RedirectorRulesSaveIntegrationTest extends TestCase
                 }
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     protected function setUp(): void

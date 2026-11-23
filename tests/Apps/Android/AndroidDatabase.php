@@ -13,6 +13,7 @@ use Prosper202\Database\SchemaInstaller;
 use Prosper202\Goals\GoalDefinition;
 use Prosper202\Goals\GoalScope;
 use Prosper202\Goals\MysqlGoalRepository;
+use Tests\Support\ScratchDir;
 
 /**
  * A scratch MySQL/MariaDB for the Android intake's integration tests,
@@ -107,14 +108,7 @@ trait AndroidDatabase
         if (self::$androidStateDir === '' || !is_dir(self::$androidStateDir)) {
             return;
         }
-        $items = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator(self::$androidStateDir, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST
-        );
-        foreach ($items as $item) {
-            $item->isDir() ? rmdir($item->getPathname()) : unlink($item->getPathname());
-        }
-        rmdir(self::$androidStateDir);
+        ScratchDir::remove(self::$androidStateDir);
         self::$androidStateDir = '';
     }
 

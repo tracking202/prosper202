@@ -9,6 +9,7 @@ use Prosper202\Database\Connection;
 use Prosper202\Database\DataSeeder;
 use Prosper202\User\MysqlUserRepository;
 use Prosper202\User\UserDataPurge;
+use Tests\Support\ScratchDir;
 
 /**
  * A remember-me key ends with what ends its sign-in: the sign-out deletes the
@@ -83,10 +84,7 @@ final class RememberMeKeysRevokedIntegrationTest extends TestCase
                 }
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     protected function setUp(): void

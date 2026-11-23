@@ -13,6 +13,7 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\ServerStateStore;
+use Tests\Support\ScratchDir;
 use Tests\TestCase;
 
 final class StagedChangesControllerTest extends TestCase
@@ -39,14 +40,7 @@ final class StagedChangesControllerTest extends TestCase
         if (!is_dir($dir)) {
             return;
         }
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST
-        );
-        foreach ($iterator as $file) {
-            $file->isDir() ? rmdir($file->getPathname()) : unlink($file->getPathname());
-        }
-        rmdir($dir);
+        ScratchDir::remove($dir);
     }
 
     private function authFor(int $userId, string $scope = '*', string $role = 'user', string $bearer = 'key'): Auth

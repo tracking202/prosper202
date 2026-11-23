@@ -8,6 +8,7 @@ use Api\V3\Support\AiConnect;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\DataSeeder;
 use Prosper202\Setup\ChatGptAdsSource;
+use Tests\Support\ScratchDir;
 
 /**
  * ChatGPT Ads connections and campaigns as api/v3/index.php serves them, to the keys an AI connection holds:
@@ -125,12 +126,7 @@ final class AdCampaignsServedIntegrationTest extends TestCase
             }
             @rmdir(self::$tls);
         }
-        if (self::$state !== '' && str_starts_with(self::$state, sys_get_temp_dir() . '/p202-')) {
-            foreach (glob(self::$state . '/{,.}[!.]*', GLOB_BRACE) ?: [] as $file) {
-                @unlink($file);
-            }
-            @rmdir(self::$state);
-        }
+        ScratchDir::remove(self::$state);
         @unlink(self::$log);
         if (self::$db !== null) {
             self::q(self::$stored !== null

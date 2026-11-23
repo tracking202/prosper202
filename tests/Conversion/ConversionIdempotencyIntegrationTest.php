@@ -6,6 +6,7 @@ namespace Tests\Conversion;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\SchemaInstaller;
+use Tests\Support\ScratchDir;
 
 /**
  * End-to-end verification of the conversion-recording guarantees against a REAL
@@ -355,14 +356,7 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
             )['state'];
         } finally {
             \Api\V3\RequestContext::reset();
-            $files = new \RecursiveIteratorIterator(
-                new \RecursiveDirectoryIterator($stateDir, \FilesystemIterator::SKIP_DOTS),
-                \RecursiveIteratorIterator::CHILD_FIRST
-            );
-            foreach ($files as $file) {
-                $file->isDir() ? rmdir($file->getPathname()) : unlink($file->getPathname());
-            }
-            rmdir($stateDir);
+            ScratchDir::remove($stateDir);
         }
 
         foreach ($answers as $i => $answer) {

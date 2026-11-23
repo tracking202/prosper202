@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Config;
 
 use PHPUnit\Framework\TestCase;
+use Tests\Support\ScratchDir;
 
 /** Exercises the CI runner with disposable commands instead of a database. */
 final class IntegrationShardRunnerTest extends TestCase
@@ -43,14 +44,7 @@ SH);
 
     protected function tearDown(): void
     {
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($this->root, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST
-        );
-        foreach ($iterator as $file) {
-            $file->isDir() ? rmdir($file->getPathname()) : unlink($file->getPathname());
-        }
-        rmdir($this->root);
+        ScratchDir::remove($this->root);
     }
 
     private function command(string $name, string $source): void

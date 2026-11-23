@@ -12,6 +12,7 @@ use PHPUnit\Framework\TestCase;
 use Prosper202\Database\SchemaInstaller;
 use Prosper202\Rotator\RuleOrder;
 use Tests\Support\RotatorControllerRemoteApiClient;
+use Tests\Support\ScratchDir;
 
 /**
  * A sync writes a redirector's rules on the target whole or not at all.
@@ -110,14 +111,7 @@ final class SyncRotatorRulesIntegrationTest extends TestCase
     protected function tearDown(): void
     {
         if ($this->stateDir !== '' && is_dir($this->stateDir)) {
-            $files = new \RecursiveIteratorIterator(
-                new \RecursiveDirectoryIterator($this->stateDir, \FilesystemIterator::SKIP_DOTS),
-                \RecursiveIteratorIterator::CHILD_FIRST
-            );
-            foreach ($files as $file) {
-                $file->isDir() ? rmdir($file->getPathname()) : unlink($file->getPathname());
-            }
-            rmdir($this->stateDir);
+            ScratchDir::remove($this->stateDir);
         }
     }
 
