@@ -156,6 +156,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 			$error['aff_campaign_payout'] = '';
 		}
 		$error['aff_campaign_payout'] .= '<div class="error">Please enter in a numeric number for the payout.</div>';
+    } elseif (abs(round((float) $aff_campaign_payout, 2)) > 999999.99) {
+        // The column is decimal(8,2): MySQL stored 1234567 as 999999.99 and
+        // the page said "Campaign added." The API refuses the same range.
+        $error['aff_campaign_payout'] = '<div class="error">A payout must be less than 1,000,000.</div>';
 	}
 
 	// The payout's currency. A post without the field (an older form, a
