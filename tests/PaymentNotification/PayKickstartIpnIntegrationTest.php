@@ -599,6 +599,57 @@ final class PayKickstartIpnIntegrationTest extends TestCase
     }
 
     /**
+     * Two accounts storing one key (K4SH): each sale is credited to the
+     * account whose click it names, whether that account's keys are read
+     * first or last, and a refund reverses it there; a click of an account
+     * that does not store the key is no click of either, said in the plural
+     * without naming them, and the server log names both.
+     */
+    public function testAKeyTwoAccountsStoreCreditsTheClicksOwnerWhicheverIsReadFirst(): void
+    {
+        self::keys(self::SHARING, 'sharing-own-KEY-0003' . "\n" . self::KEY_2);
+
+        // ACCOUNT (990401) is read before SHARING (990403); the key is each one's second.
+        $first = $this->post(self::fields(['transaction_id' => 'PK-TX-K1']), self::KEY_2);
+        $last = $this->post(self::fields(['custom_subid' => (string) self::SHARING_CLICK,
+            'transaction_id' => 'PK-TX-K2']), self::KEY_2);
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $first);
+        self::assertSame(self::ACCOUNT, $first->accountId);
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $last);
+        self::assertSame(self::SHARING, $last->accountId);
+
+        $refund = $this->post(self::fields(['event' => 'refund', 'custom_subid' => (string) self::SHARING_CLICK,
+            'transaction_id' => 'PK-TX-K2']), self::KEY_2);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $refund);
+        self::assertSame(self::SHARING, $refund->accountId);
+
+        $neither = $this->post(self::fields(['custom_subid' => (string) self::OTHER_CLICK,
+            'transaction_id' => 'PK-TX-K3']), self::KEY_2);
+        self::assertOutcome(OutcomeKind::UNKNOWN_CLICK, 404, $neither);
+        self::assertNull($neither->accountId);
+        self::assertSame(
+            'There is no click ' . self::OTHER_CLICK . ' in any of the 2 accounts whose secret key verified this'
+            . ' notification (each stores that key, and the click decides which of them a sale is credited to);'
+            . ' nothing was recorded. The click is the notification\'s custom_subid, which the checkout link\'s'
+            . ' subid=[[subid]] carries when the buyer comes through a tracker of one of those accounts.',
+            $neither->message
+        );
+        self::assertDoesNotMatchRegularExpression(
+            '/\b(' . self::ACCOUNT . '|' . self::SHARING . ')\b/',
+            $neither->message
+        );
+        self::assertStringContainsString('PayKickstart notification: unknown_click (404), verified by the stored'
+            . ' secret of accounts ' . self::ACCOUNT . ', ' . self::SHARING . ', sales (sale), click '
+            . self::OTHER_CLICK, (string) file_get_contents($this->log));
+
+        self::assertSame(
+            [[(string) self::CLICK, (string) self::ACCOUNT], [(string) self::SHARING_CLICK, (string) self::SHARING],
+                [(string) self::SHARING_CLICK, (string) self::SHARING]],
+            array_map(static fn (array $r): array => [$r['click_id'], $r['user_id']], self::conversions())
+        );
+    }
+
+    /**
      * A deleted account owns no key: one it still stores verifies nothing,
      * its clicks are credited by no one's, and an account that stores the
      * same key now is the only one it verifies. An account switched off in

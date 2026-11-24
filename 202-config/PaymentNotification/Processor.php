@@ -39,6 +39,9 @@ use Prosper202\Database\Connection;
  */
 final class Processor
 {
+    /** How many accounts' stored secret verified the notification process() is answering. */
+    private int $verifiedBy = 1;
+
     public function __construct(private readonly \mysqli $db)
     {
     }
@@ -51,6 +54,7 @@ final class Processor
     ): Outcome {
         $event = $notification->event;
         $accounts = $verification->accounts();
+        $this->verifiedBy = count($accounts);
         $account = count($accounts) === 1 ? $accounts[0] : null;
         if ($notification->kind === NotificationKind::TEST) {
             if ($account !== null && $provider instanceof ConfirmsTestNotifications) {
@@ -136,11 +140,11 @@ final class Processor
         }
         $purLink = $this->purLink($n);
         if ($purLink === false) {
-            return self::unknownClick($n->clickId, $provider->clickField());
+            return $this->unknownClick($n->clickId, $provider->clickField());
         }
         $owner = $this->owner($n->clickId, $verification);
         if ($owner === null) {
-            return self::unknownClick($n->clickId, $provider->clickField());
+            return $this->unknownClick($n->clickId, $provider->clickField());
         }
         $currency = $this->currency($n, $owner, $provider, $request);
         if ($currency instanceof Outcome) {
@@ -193,7 +197,7 @@ final class Processor
         try {
             $result = $this->record($clickId, $owner, $provider, $request, $what);
         } catch (PurLinkCampaignChanged) {
-            return self::unknownClick($clickId, $provider->clickField());
+            return $this->unknownClick($clickId, $provider->clickField());
         }
         $on = 'Transaction ' . $transactionId . ' on click ' . $clickId;
         if ($result['recorded']) {
@@ -238,7 +242,7 @@ final class Processor
             );
         }
         if ($result['reason'] === 'unknown_click' || $result['reason'] === 'foreign_click') {
-            return self::unknownClick($clickId, $provider->clickField());
+            return $this->unknownClick($clickId, $provider->clickField());
         }
 
         throw new \RuntimeException($on . ': the conversion writer answered "' . $result['reason'] . '"');
@@ -261,11 +265,11 @@ final class Processor
             return self::noClick($n, $original, $provider->clickField(), 'there is no sale to reverse');
         }
         if ($this->purLink($n) === false) {
-            return self::unknownClick($n->clickId, $provider->clickField());
+            return $this->unknownClick($n->clickId, $provider->clickField());
         }
         $owner = $this->owner($n->clickId, $verification);
         if ($owner === null) {
-            return self::unknownClick($n->clickId, $provider->clickField());
+            return $this->unknownClick($n->clickId, $provider->clickField());
         }
         $currency = $this->currency($n, $owner, $provider, $request, $this->saleCurrency($n->clickId, $original, $owner));
         if ($currency instanceof Outcome) {
@@ -409,7 +413,7 @@ final class Processor
                 $provider->source() === ConversionSource::SHOPIFY);
         }
         if ($result['reason'] === 'unknown_click' || $result['reason'] === 'foreign_click') {
-            return self::unknownClick($clickId, $provider->clickField());
+            return $this->unknownClick($clickId, $provider->clickField());
         }
 
         throw new \RuntimeException($on . ': the conversion writer answered "' . $result['reason'] . '"');
@@ -942,16 +946,25 @@ final class Processor
     /**
      * A click no account whose secret verified the notification has: one of
      * another account reads the same, so the answer tells no key holder which
-     * click ids another account has.
+     * click ids another account has. When several accounts store the key,
+     * the click's owner among them is the one credited, whichever stored
+     * key was read first (K4SH).
      */
-    private static function unknownClick(int $clickId, ClickField $click): Outcome
+    private function unknownClick(int $clickId, ClickField $click): Outcome
     {
+        // Accounts sharing a key are counted, never named: their ids are for the server log (Receiver).
+        $shared = $this->verifiedBy > 1;
+
         return new Outcome(
             OutcomeKind::UNKNOWN_CLICK,
-            'There is no click ' . $clickId . ' in the account whose secret key verified this notification;'
-            . ' nothing was recorded. The click is the notification\'s ' . $click->field . ', which '
-            . $click->link . '\'s ' . $click->variable . ' carries when the buyer comes through a tracker of that'
-            . ' account.'
+            'There is no click ' . $clickId . ' '
+            . ($shared
+                ? 'in any of the ' . $this->verifiedBy . ' accounts whose secret key verified this notification (each'
+                    . ' stores that key, and the click decides which of them a sale is credited to)'
+                : 'in the account whose secret key verified this notification')
+            . '; nothing was recorded. The click is the notification\'s ' . $click->field . ', which '
+            . $click->link . '\'s ' . $click->variable . ' carries when the buyer comes through a tracker of '
+            . ($shared ? 'one of those accounts.' : 'that account.')
         );
     }
 

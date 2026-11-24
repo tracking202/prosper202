@@ -679,6 +679,60 @@ final class JVZooIpnIntegrationTest extends TestCase
     }
 
     /**
+     * Two accounts storing one key (K4SH), through the endpoint itself: a
+     * sale is credited to the account whose click it names, the one whose
+     * key is read last included, and its refund reverses it there; a click
+     * of an account that does not store the key is no click of either, said
+     * in the plural without naming them, and the server log names both.
+     */
+    public function testAKeyTwoAccountsStoreCreditsTheClicksOwnerAtTheEndpoint(): void
+    {
+        self::key(self::SHARING, self::KEY);
+        $sale = ['caffitid' => (string) self::SHARING_CLICK, 'ctransreceipt' => 'K4SH-S1'];
+
+        $signed = JVZooAdapterTest::signed(self::fields($sale), self::KEY);
+        [$status, $body] = self::jvzoo(['role' => 'affiliate'], $signed);
+        self::assertSame(200, $status, $body);
+        [$status, $body] = self::jvzoo(['role' => 'affiliate'], JVZooAdapterTest::signed(
+            self::fields(['ctransaction' => 'RFND'] + $sale),
+            self::KEY
+        ));
+        self::assertSame(200, $status, $body);
+        self::assertSame('reversed', json_decode($body, true, 4, JSON_THROW_ON_ERROR)['outcome']);
+
+        [$status, $body, $logged] = self::jvzoo(['role' => 'affiliate'], JVZooAdapterTest::signed(self::fields([
+            'caffitid' => (string) self::OTHER_CLICK, 'ctransreceipt' => 'K4SH-S2',
+        ]), self::KEY));
+        self::assertSame(404, $status, $body);
+        $answer = json_decode($body, true, 4, JSON_THROW_ON_ERROR);
+        self::assertSame('unknown_click', $answer['outcome']);
+        self::assertSame(
+            'There is no click ' . self::OTHER_CLICK . ' in any of the 2 accounts whose secret key verified this'
+            . ' notification (each stores that key, and the click decides which of them a sale is credited to);'
+            . ' nothing was recorded. The click is the notification\'s caffitid, which the JVZoo affiliate link\'s'
+            . ' ?tid=[[subid]] carries when the buyer comes through a tracker of one of those accounts.',
+            $answer['msg']
+        );
+        self::assertDoesNotMatchRegularExpression(
+            '/\b(' . self::ACCOUNT . '|' . self::SHARING . ')\b/',
+            $answer['msg']
+        );
+        self::assertStringContainsString('JVZoo notification: unknown_click (404), verified by the stored secret of'
+            . ' accounts ' . self::ACCOUNT . ', ' . self::SHARING . ', SALE (sale), click ' . self::OTHER_CLICK,
+            $logged
+        );
+
+        self::assertSame(
+            [[(string) self::SHARING_CLICK, (string) self::SHARING, 'K4SH-S1'],
+                [(string) self::SHARING_CLICK, (string) self::SHARING, 'K4SH-S1']],
+            array_map(
+                static fn (array $r): array => [$r['click_id'], $r['user_id'], $r['transaction_id']],
+                self::conversions()
+            )
+        );
+    }
+
+    /**
      * A deleted account owns no key: one it still stores verifies nothing,
      * its clicks are credited by no one's, and an account that stores the
      * same key now is the only one it verifies. An account switched off in
