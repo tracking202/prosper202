@@ -215,6 +215,57 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
     }
 }
 
+if (!function_exists('p202ConversionPixelTokens')) {
+    /**
+     * The replaceTokens() tokens gpb.php and upx.php hand the click's traffic
+     * source pixels: the click's values as stored. replaceTokens() URL-encodes
+     * each, so a value SQL-escaped first reached the network altered
+     * (O'Brien as O%5C%27Brien, HRR9). The referer is URL-encoded once
+     * before that, as TrafficSourcePixels::clickTokens() gives it to the
+     * queued postbacks.
+     *
+     * @param array<string, mixed> $click p202PostbackClickSql()'s row
+     * @param array<string, string> $adClickIds AdClickIdColumns::of()
+     * @return array<string, scalar>
+     */
+    function p202ConversionPixelTokens(
+        int $clickId,
+        array $click,
+        array $adClickIds,
+        string $cpc,
+        string $payout
+    ): array {
+        $text = static fn (string $column): string => (string) ($click[$column] ?? '');
+
+        return [
+            'subid' => (string) $clickId,
+            't202kw' => $text('keyword'),
+            'c1' => $text('c1'),
+            'c2' => $text('c2'),
+            'c3' => $text('c3'),
+            'c4' => $text('c4'),
+            'gclid' => $text('gclid'),
+            'gbraid' => $adClickIds['gbraid'],
+            'wbraid' => $adClickIds['wbraid'],
+            'ttclid' => $adClickIds['ttclid'],
+            'msclkid' => $adClickIds['msclkid'],
+            'fbclid' => $adClickIds['fbclid'],
+            'oppref' => $adClickIds['oppref'],
+            'utm_source' => $text('utm_source'),
+            'utm_medium' => $text('utm_medium'),
+            'utm_campaign' => $text('utm_campaign'),
+            'utm_term' => $text('utm_term'),
+            'utm_content' => $text('utm_content'),
+            'cpc' => round((float) $cpc, 2),
+            'cpc2' => $cpc,
+            'timestamp' => time(),
+            'payout' => $payout,
+            'random' => mt_rand(1000000, 9999999),
+            'referer' => urlencode($text('site_url_address')),
+        ];
+    }
+}
+
 if (!function_exists('p202ConversionMayTrack')) {
     /**
      * Whether this conversion request's visitor may be sent the click's
