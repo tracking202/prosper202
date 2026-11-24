@@ -283,7 +283,8 @@ affected.
 ### Ad click id parameters (`user_pref_click_id_params`)
 
 Personal settings › Advanced › **Match conversions by ad click id**. When a
-global postback (`gpb.php`) arrives with its SubID empty or unfilled, it finds
+postback or pixel (`gpb.php`, `pb.php`, `gpx.php`, `upx.php`) arrives with its
+SubID empty or unfilled, it finds
 the click by an ad click id the postback sends back
 ([Setup](27-setup.md#when-the-network-does-not-send-the-subid-back)). A
 postback that sends the id as `gclid`, `gbraid`, `wbraid`, `msclkid`,
