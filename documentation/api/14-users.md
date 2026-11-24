@@ -159,7 +159,11 @@ curl -s "$P202/api/v3/users/1/click-filter/test?ip=198.51.100.7" -H "Authorizati
 A user also answers `user_public_publisher_id` (read-only): the id a publisher
 link carries as `t202pubid`. Add `&t202pubid=<id>` to a tracking link to make
 it that user's publisher link; its clicks are credited to the user when they
-hold the Publisher role and the link's account may manage users. Reports
+hold the Publisher role, the link's account may manage users, and that account
+gave them the role (`POST /users/{id}/roles`, User management) or made a
+publisher link for them in Get Links (since 1.9.81; the upgrade counts every
+pair that was credited before). Any other `t202pubid` credits no
+one, and the click is still recorded. Reports
 break down and filter by publisher ([Reports](11-reports.md)).
 
 ## Preference Fields

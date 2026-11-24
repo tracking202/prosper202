@@ -35,6 +35,7 @@ final class TableRegistry
     public const string USERS_PREF = '202_users_pref';
     public const string USERS_LOG = '202_users_log';
     public const string USER_ROLE = '202_user_role';
+    public const string PUBLISHER_GRANTS = '202_publisher_grants';
     public const string ROLES = '202_roles';
     public const string PERMISSIONS = '202_permissions';
     public const string ROLE_PERMISSION = '202_role_permission';

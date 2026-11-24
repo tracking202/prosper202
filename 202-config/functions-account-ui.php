@@ -352,11 +352,13 @@ function p202_account_save_currency(\Prosper202\Database\Connection $conn, int $
  * @param array<string, string|int|null> $userSet  202_users column => value; the
  *   column names are the caller's own literals, never the request's
  * @param (callable(int): mixed)|null $onCreate  run with the new user's id, for a create only
+ * @param int|null $actorUserId  the signed-in account saving it, granted the user when the
+ *   role is Publisher (PublisherCredit::grantWithRole())
  * @return int the user's id
  * @throws DomainException when the edited user is not there any more
  * @throws Throwable when nothing was saved
  */
-function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $editUserId, array $userSet, int $roleId, ?callable $onCreate = null): int
+function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $editUserId, array $userSet, int $roleId, ?callable $onCreate = null, ?int $actorUserId = null): int
 {
     if ($userSet === []) {
         throw new InvalidArgumentException('p202_account_save_user(): nothing to save');
@@ -374,7 +376,7 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
     $revokes = array_key_exists('user_pass', $userSet) || (array_key_exists('user_active', $userSet)
         && !\Prosper202\User\UserStanding::isActive($userSet['user_active']));
 
-    return $conn->transaction(static function () use ($conn, $editUserId, $assignments, $types, $values, $roleId, $onCreate, $revokes): int {
+    return $conn->transaction(static function () use ($conn, $editUserId, $assignments, $types, $values, $roleId, $onCreate, $revokes, $actorUserId): int {
         if ($editUserId !== null) {
             $stmt = $conn->prepareWrite('SELECT `user_id` FROM `202_users` WHERE `user_id` = ? AND `user_deleted` != 1 FOR UPDATE');
             $conn->bind($stmt, 'i', [$editUserId]);
@@ -413,6 +415,9 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
         $stmt = $conn->prepareWrite('INSERT INTO `202_user_role` (`user_id`, `role_id`) VALUES (?, ?)');
         $conn->bind($stmt, 'ii', [$userId, $roleId]);
         $conn->executeInsert($stmt);
+        if ($actorUserId !== null) {
+            (new \Prosper202\Click\PublisherCredit($conn))->grantWithRole($actorUserId, $userId, $roleId, time());
+        }
         if ($editUserId === null && $onCreate !== null) {
             $onCreate($userId);
         }

@@ -193,6 +193,9 @@ final class UserDataPurge
         'DELETE FROM 202_alert_log WHERE user_id = ?',
         // Each change of the account's currency.
         'DELETE FROM 202_currency_changes WHERE user_id = ?',
+        // The publishers the account's links credit, and the accounts whose links credit it.
+        'DELETE FROM 202_publisher_grants WHERE user_id = ?',
+        'DELETE FROM 202_publisher_grants WHERE publisher_user_id = ?',
     ];
 
     /**

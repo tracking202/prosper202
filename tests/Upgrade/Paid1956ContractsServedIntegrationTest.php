@@ -153,6 +153,11 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
         self::q('DELETE FROM 202_ppc_networks WHERE ppc_network_id = ' . self::NETWORK);
         self::q('DELETE FROM 202_bot202_facebook_pixel_assistant WHERE landing_page_id = ' . self::LANDING_PAGE);
         self::q("DELETE FROM 202_api_keys WHERE user_id IN ($users)");
+        // The table is the 1.9.81 rung's: absent while the class sets up the paid shape.
+        $grants = self::$db->query("SHOW TABLES LIKE '202_publisher_grants'");
+        if ($grants instanceof \mysqli_result && $grants->num_rows === 1) {
+            self::q("DELETE FROM 202_publisher_grants WHERE user_id IN ($users) OR publisher_user_id IN ($users)");
+        }
         self::q('DELETE FROM 202_landing_pages WHERE landing_page_id = ' . self::LANDING_PAGE);
         self::q('DELETE FROM 202_aff_campaigns WHERE aff_campaign_id = ' . self::CAMPAIGN);
         self::q("DELETE FROM 202_attribution_models WHERE user_id IN ($users)");
@@ -641,6 +646,37 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
         // A public id of a user without the Publisher role is a claim nobody granted.
         $plain = $this->directLinkClick('&t202pubid=' . self::MANAGER_ID);
         self::assertNull(self::scalar("SELECT publisher_user_id FROM 202_clicks_publisher WHERE click_id = $plain"));
+    }
+
+    /**
+     * After the upgrade a publisher is credited once the account gives them
+     * the role, as `p202 user role assign` does (POST /users/{id}/roles), and
+     * not before: the id alone credits no one.
+     */
+    public function testAUserGivenThePublisherRoleThroughTheApiIsCreditedOnTheGiversLinks(): void
+    {
+        $roles = '/api/v3/users/' . self::MANAGER . '/roles';
+        try {
+            self::q('INSERT INTO 202_user_role SET user_id = ' . self::MANAGER . ', role_id = 6');
+            $before = $this->directLinkClick('&t202pubid=' . self::MANAGER_ID);
+            self::assertNull(
+                self::scalar("SELECT publisher_user_id FROM 202_clicks_publisher WHERE click_id = $before"),
+                'a Publisher the account did not grant'
+            );
+            self::q('DELETE FROM 202_user_role WHERE user_id = ' . self::MANAGER . ' AND role_id = 6');
+
+            [$status, $headers, $body] = self::http($roles, [], '{"role_id": 6}', [
+                'Authorization: Bearer ' . self::API_KEY, 'Content-Type: application/json',
+            ]);
+            self::assertSame(200, $status, $headers . $body . $this->serverLog());
+            $click = $this->directLinkClick('&t202pubid=' . self::MANAGER_ID);
+            self::assertSame((string) self::MANAGER, self::scalar(
+                "SELECT publisher_user_id FROM 202_clicks_publisher WHERE click_id = $click"
+            ));
+        } finally {
+            self::q('DELETE FROM 202_user_role WHERE user_id = ' . self::MANAGER . ' AND role_id = 6');
+            self::q('DELETE FROM 202_publisher_grants WHERE publisher_user_id = ' . self::MANAGER);
+        }
     }
 
     public function testTheClickCookieLastsThirtyDays(): void

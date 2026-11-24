@@ -94,6 +94,10 @@ final class AccountScopedJoinTest extends TestCase
         . ' with the user PublisherCredit::forClick() answered for the click\'s account, a Publisher of its install'
         . ' that the account may grant; the user row is the publisher\'s, not a record the click\'s account owns, so'
         . ' there is no account to tie it to, and only its name is read';
+    private const PUBLISHER_GRANT = 'the publishers an account granted (`g.user_id = ?`, the signed-in account in'
+        . ' Get Links): a grant names another account\'s user on purpose, a Publisher of the same install that the'
+        . ' account made a link for (PublisherCredit::grant() after grantableById()), and only the publisher\'s name'
+        . ' is read';
     private const NOT_SQL = 'an exception message ("has no name join"), not SQL';
     private const CALLER_SCOPE = 'the caller\'s click scope over 202_dataengine (the report\'s own user filter); the rows it selects are one click\'s conversions';
     private const INSTALL_REGISTRATION = 'an install\'s registration: InstallIntake::insert() writes registration_id and user_id together from one registration, and no statement updates either';
@@ -236,6 +240,9 @@ final class AccountScopedJoinTest extends TestCase
                 . ' {$clicks}.user_id AND lead_visit.click_lead = 1' => 'anyVisitIsLead(): tied, to the caller\'s'
                 . ' row\'s own user_id, which the scan reads as an interpolation; it reads only that click\'s rows',
         ],
+        '202-config/Click/PublisherCredit.php' => [
+            'no user_id tie | 202_users | p.user_id = g.publisher_user_id' => self::PUBLISHER_GRANT,
+        ],
         '202-config/Conversion/Ledger/LedgerReportSql.php' => [
             'alias built at runtime | 202_conversion_logs | $t' => self::SAME_CLICK_CONVERSIONS,
             'alias built at runtime | 202_conversion_logs | $b' => self::SAME_CLICK_CONVERSIONS,
@@ -328,6 +335,9 @@ final class AccountScopedJoinTest extends TestCase
         '202-config/functions-upgrade.php' => [
             'no user_id tie | 202_conversion_logs | transaction_id IS NOT NULL' => self::UPGRADE,
             'subquery without a WHERE | 202_users_pref | 202_users_pref' => self::UPGRADE,
+            'no user_id tie | 202_users | CAST ( p.`install_hash` AS BINARY ) = CAST ( o.`install_hash` AS BINARY )'
+                . ' AND p.`user_id` <> o.`user_id`' => self::UPGRADE . '; it pairs each granting account with the'
+                . ' Publishers of its install, the credit paid 1.9.56 and 1.9.80 gave',
         ],
         '202-config/migrations/run_ltv_backfill.php' => [
             'no user_id tie | 202_revenue_events | re.conv_id = cl.conv_id' => self::UPGRADE,

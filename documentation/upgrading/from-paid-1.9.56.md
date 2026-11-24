@@ -45,8 +45,12 @@ address below on a database shaped like a paid 1.9.56 one, after the upgrade.
   Each new order number on a click is recorded as its own sale. `gpb.php`
   also takes its values from a form `POST` body, as well as the query string.
 - **Publisher links.** A link that carries `t202pubid` credits the click to
-  that publisher, but only when the link's account has granted them the
-  Publisher role.
+  that publisher, but only when the link's account may credit them: a user
+  with the Publisher role on the same install, whom the account gave that
+  role or made a publisher link for in Get Links. The upgrade counts every Publisher an
+  account could credit before as one it made a link for, so links you already
+  handed out keep crediting. Get Links lists the publishers your links credit
+  and can stop crediting one.
 - **API v1.** `api/v1/reports/` and the setup reads (`api/v1/campaigns/`
   and the others) still answer with the API keys your accounts made before
   the upgrade.

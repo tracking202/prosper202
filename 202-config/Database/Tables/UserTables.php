@@ -27,6 +27,7 @@ final class UserTables
             self::permissions(),
             self::rolePermission(),
             self::userRole(),
+            self::publisherGrants(),
             self::apiKeys(),
             self::authKeys(),
             self::clickFilterSettings(),
@@ -267,6 +268,28 @@ final class UserTables
                 KEY `role_id` (`role_id`),
                 CONSTRAINT `202_user_role_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `202_users` (`user_id`),
                 CONSTRAINT `202_user_role_ibfk_2` FOREIGN KEY (`role_id`) REFERENCES `202_roles` (`role_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The publishers each account's publisher links may credit, from 1.9.81
+     * (Prosper202\Click\PublisherCredit): user_id is the link's account,
+     * publisher_user_id the publisher. A row is made when the account makes
+     * a link for the publisher in Get Links or gives them the Publisher role,
+     * and removed in Get Links; the 1.9.81
+     * rung grants every pair that could be credited before it.
+     */
+    public static function publisherGrants(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::PUBLISHER_GRANTS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::PUBLISHER_GRANTS . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `publisher_user_id` mediumint(8) unsigned NOT NULL,
+                `granted_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`user_id`, `publisher_user_id`),
+                KEY `publisher_user_id` (`publisher_user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

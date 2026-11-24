@@ -528,7 +528,8 @@ class UsersController
         throw new ValidationException('role_id is required', ['role_id' => 'Must be a positive whole number']);
     }
 
-    public function assignRole(int $userId, array $payload): array
+    /** @param int|null $actorUserId the account assigning it, granted the user when the role is Publisher */
+    public function assignRole(int $userId, array $payload, ?int $actorUserId = null): array
     {
         \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['role_id'], 'a role assignment');
         $roleId = self::roleIdFrom($payload);
@@ -546,10 +547,16 @@ class UsersController
             throw new ValidationException('Unknown role_id', ['role_id' => 'Role does not exist']);
         }
 
-        $stmt = $this->prepare('INSERT IGNORE INTO 202_user_role (user_id, role_id) VALUES (?, ?)');
-        $this->bind($stmt, 'ii', $userId, $roleId);
-        $this->execute($stmt, 'Failed to assign role');
-        $stmt->close();
+        $this->transaction(function () use ($userId, $roleId, $actorUserId): void {
+            $stmt = $this->prepare('INSERT IGNORE INTO 202_user_role (user_id, role_id) VALUES (?, ?)');
+            $this->bind($stmt, 'ii', $userId, $roleId);
+            $this->execute($stmt, 'Failed to assign role');
+            $stmt->close();
+            if ($actorUserId !== null) {
+                (new \Prosper202\Click\PublisherCredit(new Connection($this->db)))
+                    ->grantWithRole($actorUserId, $userId, $roleId, time());
+            }
+        });
 
         return $this->get($userId);
     }
