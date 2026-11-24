@@ -312,6 +312,8 @@ if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
 // Never masked: on these pages it is the operator's own address, which the
 // sign-in log keeps as it arrived.
 $ip_address = ipAddress(\Prosper202\Http\VisitorIp::fromServer($_SERVER), false);
+// Forwarding headers from a proxy nobody listed, for Settings' warning.
+\Prosper202\Http\UnlistedProxySighting::record(ROOT_PATH, $_SERVER);
 include_once(CONFIG_PATH . '/functions-ui.php');
 include_once(CONFIG_PATH . '/template.php');
 

@@ -9,8 +9,9 @@ use Prosper202\Http\VisitorIp;
 use Tests\Support\SourceScan;
 
 /**
- * Only VisitorIp reads a forwarding header (X-Forwarded-For, X-Real-IP,
- * Client-IP, CF-Connecting-IP and the rest).
+ * Only VisitorIp reads a forwarding header (X-Forwarded-For, RFC 7239
+ * Forwarded, X-Real-IP, Client-IP, CF-Connecting-IP and the rest).
+ * ForwardedHeader parses Forwarded's text and names no header.
  *
  * Before it existed, connect.php and connect2.php each rewrote
  * $_SERVER['HTTP_X_FORWARDED_FOR'] in place, and a dozen sites read it back
@@ -175,6 +176,11 @@ final class ForwardedIpHeaderReadTest extends TestCase
         ];
         yield 'Sucuri, no underscore before IP' => ['<?php $ip = $_SERVER[\'HTTP_X_SUCURI_CLIENTIP\'];'];
         yield 'RFC 7239 Forwarded' => ['<?php $f = $_SERVER[\'HTTP_FORWARDED\'];'];
+        yield 'Forwarded in header form' => ['<?php $f = getallheaders()[\'Forwarded\'] ?? \'\';'];
+        yield 'Forwarded, lower case' => ['<?php $f = $headers[\'forwarded\'];'];
+        yield 'Forwarded through getenv()' => ['<?php $f = getenv("HTTP_FORWARDED");'];
+        yield 'Forwarded inside a string' => ['<?php $line = "f=$_SERVER[HTTP_FORWARDED]";'];
+        yield 'a request-context header lookup' => ['<?php $f = RequestContext::header(\'Forwarded\');'];
         yield 'True-Client-IP' => ['<?php $f = $_SERVER[\'HTTP_TRUE_CLIENT_IP\'];'];
         yield 'a piece split at a word boundary' => ['<?php $k = \'HTTP_X_\' . \'FORWARDED_FOR\';'];
         yield 'a hex escape in a double-quoted key' => ['<?php $ip = $_SERVER["HTTP_X_FORWARDED\x5fFOR"];'];
@@ -200,6 +206,8 @@ final class ForwardedIpHeaderReadTest extends TestCase
         yield 'a method named client_ip' => ['<?php $ip = AUTH::client_ip();'];
         yield 'a comment that names the header' => ["<?php // X-Forwarded-For is read by VisitorIp\n\$a = 1;"];
         yield 'REMOTE_ADDR' => ['<?php $ip = $_SERVER[\'REMOTE_ADDR\'];'];
+        yield 'the Forwarded parser\'s pair names' => ['<?php $p = $pairs[\'proto\'] ?? $pairs[\'for\'] ?? \'\';'];
+        yield 'a word that contains Forwarded' => ['<?php $s = \'Forwarded for review\'; $t = \'X_FORWARDED_PROTO\';'];
     }
 
     /** @dataProvider nonReads */

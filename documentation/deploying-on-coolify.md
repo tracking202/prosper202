@@ -59,13 +59,13 @@ Everything else is hands-off:
 - **HTTPS detection** — Coolify's proxy terminates TLS; the image maps
   `X-Forwarded-Proto` back to `HTTPS=on` so secure cookies and generated URLs
   are correct.
-- **Visitor addresses** — the web service sets `P202_TRUSTED_PROXIES` to the
-  private address ranges, so the `X-Forwarded-For` hop Coolify's proxy adds
-  names each visitor (their country, ISP, duplicate-click filter and rate
-  limits). Nothing else can reach the container. If Cloudflare proxies your
-  domain as well, set `P202_TRUSTED_PROXIES` to
-  `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7,cloudflare`, or every
-  visitor is recorded as a Cloudflare edge server.
+- **Visitor addresses** — the web service sets `P202_TRUSTED_PROXIES` to
+  `cloudflare` and the private address ranges, so the `X-Forwarded-For` hop
+  Coolify's proxy adds names each visitor (their country, ISP,
+  duplicate-click filter and rate limits), and so does Cloudflare's when it
+  proxies your domain too. Nothing else can reach the container. To trust
+  another proxy in front, set the variable to the whole list
+  (`cloudflare,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7,<yours>`).
 - **MaxMind ISP database** — if you buy the optional ISP/carrier database,
   upload it to `/var/lib/prosper202/geo/` inside the web container (the
   `geo_isp` volume), not the docroot — the admin page shows this path when

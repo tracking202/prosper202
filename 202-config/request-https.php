@@ -6,7 +6,8 @@ declare(strict_types=1);
  * Whether the browser reached this install over HTTPS: the web server's own
  * answer (HTTPS, port 443, REQUEST_SCHEME, which its configuration sets), or
  * a TLS-terminating proxy listed in P202_TRUSTED_PROXIES that says so
- * (X-Forwarded-Proto, X-Forwarded-SSL, X-Forwarded-Port). The one answer every
+ * (X-Forwarded-Proto, X-Forwarded-SSL, X-Forwarded-Port, or `proto=https` in
+ * the Forwarded element of the client VisitorIp names). The one answer every
  * cookie's Secure flag is set from: connect.php for every page that can load
  * the configuration, the setup wizard (p202_standalone_wizard_token()), which
  * runs before there is one, getSecureStatus(), and the p202vid cookie
@@ -33,7 +34,7 @@ function p202_request_is_https(array $server, ?\Prosper202\Http\TrustedProxies $
         || $lower('REQUEST_SCHEME') === 'https') {
         return true;
     }
-    foreach (['CloudflareRanges', 'TrustedProxies'] as $class) {
+    foreach (['CloudflareRanges', 'TrustedProxies', 'ForwardedHeader', 'VisitorIp'] as $class) {
         if (!class_exists('Prosper202\\Http\\' . $class, false)) {
             require_once __DIR__ . '/Http/' . $class . '.php';
         }
@@ -45,5 +46,6 @@ function p202_request_is_https(array $server, ?\Prosper202\Http\TrustedProxies $
 
     return $lower('HTTP_X_FORWARDED_PROTO') === 'https'
         || $lower('HTTP_X_FORWARDED_SSL') === 'on'
-        || (isset($server['HTTP_X_FORWARDED_PORT']) && (int) $server['HTTP_X_FORWARDED_PORT'] === 443);
+        || (isset($server['HTTP_X_FORWARDED_PORT']) && (int) $server['HTTP_X_FORWARDED_PORT'] === 443)
+        || \Prosper202\Http\VisitorIp::forwardedProtoIsHttps($server, $trusted);
 }

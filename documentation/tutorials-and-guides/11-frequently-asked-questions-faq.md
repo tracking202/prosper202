@@ -56,15 +56,21 @@ To set one, sign in as the account the installer created, open **Account › Per
 
 ## My install is behind Cloudflare, a load balancer or a reverse proxy. Why does every click have the same IP address?
 
-Prosper202 reads the visitor's address from a proxy's `X-Forwarded-For` header only when the proxy is listed in the `P202_TRUSTED_PROXIES` environment variable. Any visitor can send that header, so from an unlisted address it is ignored and the address that connected is recorded. Behind an unlisted proxy that is the proxy's address, for every click.
+Prosper202 reads the visitor's address from a proxy's `X-Forwarded-For` or `Forwarded` header only when the proxy is listed in the `P202_TRUSTED_PROXIES` environment variable. Any visitor can send those headers, so from an unlisted address they are ignored and the address that connected is recorded. Behind an unlisted proxy that is the proxy's address, for every click. **Account › Settings** warns when it sees this, and names the address.
 
-List your proxies, separated by commas or spaces: single addresses, CIDR ranges, or `cloudflare` for Cloudflare's published ranges. For example, with Apache:
+With the variable not set, Cloudflare's published ranges are trusted, so an install behind Cloudflare alone needs nothing. Behind anything else, list your proxies, separated by commas or spaces: single addresses, CIDR ranges, or `cloudflare` for Cloudflare's ranges. A list replaces the default, so keep `cloudflare` in it if Cloudflare is in front too. For example, with Apache:
 
 ```
 SetEnv P202_TRUSTED_PROXIES "cloudflare, 10.0.0.0/8"
 ```
 
-With PHP-FPM use `env[P202_TRUSTED_PROXIES] = ...` in the pool, and in a container set it in the environment. The address is then the rightmost `X-Forwarded-For` hop that is not one of your proxies, so a visitor cannot choose it. The same list decides whether a proxy's `X-Forwarded-Proto: https` makes cookies Secure. If one entry cannot be read, no proxy is trusted and the PHP error log names the entry.
+With PHP-FPM use `env[P202_TRUSTED_PROXIES] = ...` in the pool, and in a container set it in the environment. Account › Settings shows the value it sees under **Trusted proxies**.
+
+- The address recorded is the rightmost hop that is not one of your proxies, so a visitor cannot choose it. A hop that names no address (`unknown`, or an obfuscated `for=_hidden`) stops at the proxy that passed it on.
+- When a request carries both `Forwarded` and `X-Forwarded-For`, each is read on its own; if they name different visitors, the address that connected is recorded.
+- The same list decides whether a proxy's `X-Forwarded-Proto: https` (or `proto=https` in `Forwarded`) makes cookies Secure.
+- `P202_TRUSTED_PROXIES=none` trusts no proxy, not even Cloudflare, and so does a variable that is set but empty.
+- If one entry cannot be read, no proxy is trusted and the PHP error log names the entry, at most once an hour.
 
  ## Is Memcache required?
 

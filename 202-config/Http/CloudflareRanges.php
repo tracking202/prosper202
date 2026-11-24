@@ -6,12 +6,15 @@ namespace Prosper202\Http;
 
 /**
  * Cloudflare's edge servers, which P202_TRUSTED_PROXIES names as
- * `cloudflare` (TrustedProxies). Trusted only when listed. A static list:
- * nothing is fetched at runtime.
+ * `cloudflare` (TrustedProxies) and an unset P202_TRUSTED_PROXIES means. A
+ * static list: nothing is fetched at runtime. `python3
+ * scripts/cloudflare-ranges.py` compares it with Cloudflare's published one
+ * and prints the list to paste when they differ; run it before a release.
  */
 final class CloudflareRanges
 {
-    // From https://www.cloudflare.com/ips-v4 and https://www.cloudflare.com/ips-v6, fetched 2026-11-03.
+    // From https://www.cloudflare.com/ips-v4 and https://www.cloudflare.com/ips-v6
+    // (the same as https://api.cloudflare.com/client/v4/ips), checked 2026-11-24.
     public const CIDRS = [
         '173.245.48.0/20', '103.21.244.0/22', '103.22.200.0/22', '103.31.4.0/22', '141.101.64.0/18',
         '108.162.192.0/18', '190.93.240.0/20', '188.114.96.0/20', '197.234.240.0/22', '198.41.128.0/17',

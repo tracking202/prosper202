@@ -52,6 +52,12 @@ final class SessionCookieSecureTest extends TestCase
             'unlisted peer: X-Forwarded-SSL' => [['HTTP_X_FORWARDED_SSL' => 'on'] + $stranger, false],
             'unlisted peer: X-Forwarded-Port' => [['HTTP_X_FORWARDED_PORT' => '443'] + $stranger, false],
             'no peer: X-Forwarded-Proto' => [['HTTP_X_FORWARDED_PROTO' => 'https'], false],
+            'proxy: Forwarded proto=https' => [['HTTP_FORWARDED' => 'for=198.51.100.7;proto=https'] + $proxy, true],
+            'proxy: Forwarded proto=http' => [['HTTP_FORWARDED' => 'for=198.51.100.7;proto=http'] + $proxy, false],
+            'proxy: Forwarded, a forged https to the left' => [
+                ['HTTP_FORWARDED' => 'for=203.0.113.6;proto=https, for=198.51.100.7;proto=http'] + $proxy, false,
+            ],
+            'unlisted peer: Forwarded proto=https' => [['HTTP_FORWARDED' => 'for=198.51.100.7;proto=https'] + $stranger, false],
             'port 443' => [['SERVER_PORT' => '443'], true],
             'request scheme' => [['REQUEST_SCHEME' => 'https'], true],
             'a header sent as an array' => [['HTTP_X_FORWARDED_PROTO' => ['https']] + $proxy, false],
