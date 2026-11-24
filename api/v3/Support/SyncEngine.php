@@ -360,13 +360,25 @@ class SyncEngine
                             if (!empty($targetRow['etag'])) {
                                 $extraHeaders['If-Match'] = (string)$targetRow['etag'];
                             }
-                            $targetClient->put(self::ENTITY_ENDPOINTS[$entity] . '/' . $targetId, $payload, $extraHeaders);
-                            $putLanded = true;
-                            if (
-                                $entity === 'rotators'
+                            $withRules = $entity === 'rotators'
                                 && $sourceId !== ''
-                                && $this->envFlagEnabled('SYNC_ROTATOR_RULE_RESYNC_ENABLED', true)
-                            ) {
+                                && $this->envFlagEnabled('SYNC_ROTATOR_RULE_RESYNC_ENABLED', true);
+                            if ($withRules && $this->writesRotatorWithRules($targetClient)) {
+                                // One write: the redirector and its rules land together, or neither does.
+                                $rules = $this->targetRuleSet($sourceClient, $targetClient, $sourceId, $targetId, $sourceLookups, $targetLookups);
+                                try {
+                                    $targetClient->put('rotators/' . $targetId . '/rules', $payload + ['rules' => $rules['set']], $extraHeaders);
+                                } catch (RemoteApiException $e) {
+                                    throw self::namingSourceRules($e, $rules['source']);
+                                }
+                                $putLanded = true;
+                                $this->store->incrementMetric('rotator_rule_resync', 1);
+                                $withRules = false;
+                            } else {
+                                $targetClient->put(self::ENTITY_ENDPOINTS[$entity] . '/' . $targetId, $payload, $extraHeaders);
+                                $putLanded = true;
+                            }
+                            if ($withRules) {
                                 $this->resyncRotatorRules(
                                     $sourceClient,
                                     $targetClient,
@@ -413,8 +425,25 @@ class SyncEngine
                     continue;
                 }
 
+                $sourceId = $this->firstStringFromRow($sourceRow, ...self::ENTITY_ID_FIELDS[$entity]);
+                $rulesWritten = false;
                 try {
-                    $created = $targetClient->post(self::ENTITY_ENDPOINTS[$entity], $payload);
+                    if ($entity === 'rotators' && $sourceId !== '' && $this->writesRotatorWithRules($targetClient)) {
+                        // One write: the redirector is created with its rules, or not at all.
+                        $sourceRules = $this->fetchSourceRotatorRules($sourceClient, $sourceId);
+                        $set = [];
+                        foreach ($sourceRules as $rule) {
+                            $set[] = $this->rotatorRulePayload($rule, $sourceLookups, $targetLookups);
+                        }
+                        try {
+                            $created = $targetClient->post(self::ENTITY_ENDPOINTS[$entity], $payload + ['rules' => $set]);
+                        } catch (RemoteApiException $e) {
+                            throw self::namingSourceRules($e, $sourceRules);
+                        }
+                        $rulesWritten = true;
+                    } else {
+                        $created = $targetClient->post(self::ENTITY_ENDPOINTS[$entity], $payload);
+                    }
                 } catch (\Throwable $e) {
                     if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, 'create', '', true)) {
                         throw $this->stopped($results, $dryRun, $result, $entity, $key, 'create', $e);
@@ -434,8 +463,7 @@ class SyncEngine
                 $targetLookups = $this->buildEntityLookups($targetData);
                 $targetIndex = $this->buildEntityIndex($entity, $targetData[$entity], $targetLookups);
 
-                if ($entity === 'rotators' && $createdId !== '') {
-                    $sourceId = $this->firstStringFromRow($sourceRow, ...self::ENTITY_ID_FIELDS[$entity]);
+                if ($entity === 'rotators' && $createdId !== '' && !$rulesWritten) {
                     if ($sourceId !== '') {
                         try {
                             $this->syncRotatorRules($sourceClient, $targetClient, $sourceId, $createdId, $sourceLookups, $targetLookups);
@@ -641,6 +669,59 @@ class SyncEngine
     }
 
     /**
+     * The source redirector's rules as the target is to be sent them, with
+     * the target's ids on what it keeps (`set`), and the source's rules they
+     * were built from (`source`), for naming a refusal. Both are read before
+     * anything is written.
+     *
+     * @return array{set: list<array<string, mixed>>, source: array<int, array<string, mixed>>}
+     */
+    private function targetRuleSet(
+        RemoteApiClient $sourceClient,
+        RemoteApiClient $targetClient,
+        string $sourceRotatorId,
+        string $targetRotatorId,
+        array $sourceLookups,
+        array $targetLookups
+    ): array {
+        $sourceRules = $this->fetchSourceRotatorRules($sourceClient, $sourceRotatorId);
+        $set = [];
+        foreach ($sourceRules as $rule) {
+            $set[] = $this->rotatorRulePayload($rule, $sourceLookups, $targetLookups);
+        }
+        if ($set !== []) {
+            $set = self::withTargetIds($set, $this->fetchTargetRotatorRules($targetClient, $targetRotatorId));
+        }
+
+        return ['set' => $set, 'source' => $sourceRules];
+    }
+
+    /**
+     * Whether the target writes a redirector and its rules in one request
+     * (features.rotator_with_rules: an empty set, the redirector's fields
+     * beside its set, a create with its set), asked once per target. A
+     * target that does not answer the question stops the write: read as
+     * "no", it would be written in two steps that can part.
+     */
+    private function writesRotatorWithRules(RemoteApiClient $targetClient): bool
+    {
+        $this->rotatorWithRules ??= new \WeakMap();
+        if (!isset($this->rotatorWithRules[$targetClient])) {
+            $answer = $targetClient->get('capabilities');
+            $features = is_array($answer['data'] ?? null) ? ($answer['data']['features'] ?? null) : null;
+            if (!is_array($features)) {
+                throw new DatabaseException('The target answered GET /capabilities without its features');
+            }
+            $this->rotatorWithRules[$targetClient] = ($features['rotator_with_rules'] ?? false) === true;
+        }
+
+        return $this->rotatorWithRules[$targetClient];
+    }
+
+    /** @var \WeakMap<RemoteApiClient, bool>|null */
+    private ?\WeakMap $rotatorWithRules = null;
+
+    /**
      * The target redirector's rules, read before the set is written. An
      * answer that is not a list of rules with ids is refused: read as no
      * rules, it would cost every target rule its id.
@@ -667,11 +748,13 @@ class SyncEngine
     /**
      * The set with the target's ids on what it keeps; the source's ids mean
      * nothing on the target. A source rule is the target's rule of the same
-     * name (the first not yet taken, so repeated names pair in order); a
-     * rule with no namesake is added, and a target rule no source rule
-     * names is removed. Rules are not paired by position: a rule inserted
-     * on the source would hand each target rule's id, and the clicks that
-     * name it, to its neighbour. Within a kept rule a destination is the
+     * name (the first not yet taken, so repeated names pair in order), or,
+     * when none is left, the first target rule no name took with the same
+     * criteria and destinations: a rule renamed on the source keeps its id.
+     * A rule paired neither way is added, and a target rule left unpaired
+     * is removed. Rules are not paired by position: a rule inserted on the
+     * source would hand each target rule's id, and the clicks that name it,
+     * to its neighbour. Within a kept rule a destination is the
      * target's with the same URL, campaign or landing page, and a criterion
      * the target's with the same type and statement, each paired in order.
      * A destination with none of the three (the auto-monetizer) is not
@@ -694,9 +777,33 @@ class SyncEngine
             return $parts === ['', '0', '0'] ? null : json_encode($parts, JSON_THROW_ON_ERROR);
         };
 
+        $contentKey = static function (array $r) use ($text, $redirectKey): string {
+            $criteria = [];
+            foreach (is_array($r['criteria'] ?? null) ? $r['criteria'] : [] as $c) {
+                $criteria[] = is_array($c) ? [$text($c['type'] ?? null), $text($c['statement'] ?? null), $text($c['value'] ?? null)] : null;
+            }
+            $redirects = [];
+            foreach (is_array($r['redirects'] ?? null) ? $r['redirects'] : [] as $d) {
+                $redirects[] = is_array($d) ? $redirectKey($d) : null;
+            }
+            sort($criteria);
+            sort($redirects);
+
+            return json_encode([$criteria, $redirects], JSON_THROW_ON_ERROR);
+        };
+
+        // By name first; then a rule still unpaired takes an unpaired target
+        // rule with the same criteria and destinations (a renamed rule).
         $takenRules = [];
+        $pairs = [];
         foreach ($set as $i => $rule) {
-            $held = self::firstUntaken($targetRules, $ruleKey($rule), $ruleKey, $takenRules);
+            $pairs[$i] = self::firstUntaken($targetRules, $ruleKey($rule), $ruleKey, $takenRules);
+        }
+        foreach ($set as $i => $rule) {
+            $pairs[$i] ??= self::firstUntaken($targetRules, $contentKey($rule), $contentKey, $takenRules);
+        }
+        foreach ($set as $i => $rule) {
+            $held = $pairs[$i];
             if ($held === null) {
                 continue;
             }

@@ -4849,8 +4849,21 @@ paths:
         criterion that matches no visitor). Every key is
         checked, at every level; a problem is a `422` naming its place
         (`rules.1.redirects.0.redirect_campaign`), with every problem in the
-        set reported at once and nothing written. A set has at least one
-        rule, and at most 200; a rule at most 100 criteria and 100 redirects.
+        set reported at once and nothing written. A set has at most 200
+        rules; a rule at most 100 criteria and 100 redirects. An empty set
+        (`{"rules": []}`) removes every rule, so every visitor goes to the
+        default (since 1.9.81; before, it was a `422`).
+
+        The body may also carry the redirector's own fields, as
+        `PUT /rotators/{id}` takes them (`name`, `default_url`,
+        `default_campaign`, `default_lp`, and the read-only `id`, `public_id`,
+        `user_id` and `auto_monetizer` with the values the redirector holds),
+        so `GET /rotators/{id}`'s `data`, edited, can be sent back whole. They
+        are written in the same transaction as the set: the redirector and
+        its rules change together or not at all, and the fields' problems are
+        refused in the same `422` as the rules'. The answer then carries the
+        redirector as written, without its rules, as `rotator`. Since 1.9.81;
+        advertised as `features.rotator_with_rules`.
 
         `?dry_run=1` writes nothing and answers the set as it would be
         stored (a new rule, criterion or redirect with `id: null`), in the
@@ -4869,9 +4882,33 @@ paths:
               additionalProperties: false
               required: [rules]
               properties:
+                id:
+                  type: integer
+                  description: Read-only; this redirector's id, as GET answers it.
+                public_id:
+                  type: integer
+                  description: Read-only; the redirector's own, as GET answers it.
+                user_id:
+                  type: integer
+                  description: Read-only; as GET answers it.
+                auto_monetizer:
+                  type: string
+                  nullable: true
+                  description: Read-only; as GET answers it.
+                name:
+                  type: string
+                default_url:
+                  type: string
+                  nullable: true
+                  description: "As on PUT /rotators/{id}: naming any part of the default replaces it whole."
+                default_campaign:
+                  type: integer
+                  nullable: true
+                default_lp:
+                  type: integer
+                  nullable: true
                 rules:
                   type: array
-                  minItems: 1
                   maxItems: 200
                   items:
                     allOf:
@@ -4900,6 +4937,13 @@ paths:
                     properties:
                       dry_run: {type: boolean}
                       rotator_id: {type: integer}
+                      rotator:
+                        allOf:
+                          - $ref: "#/components/schemas/Rotator"
+                        description: >-
+                          Only when the body sent the redirector's fields:
+                          the redirector as written (or, with dry_run=1, as
+                          it would be), without its rules.
                       rules:
                         type: array
                         items:
@@ -18092,6 +18136,19 @@ components:
       type: object
       required: [name]
       properties:
+        rules:
+          type: array
+          maxItems: 200
+          description: >-
+            The redirector's rules, as PUT /rotators/{id}/rules takes a set,
+            each without an id. The redirector and its rules are written in
+            one transaction: a rule refused creates no redirector. Since
+            1.9.81; advertised as features.rotator_with_rules.
+          items:
+            allOf:
+              - $ref: "#/components/schemas/RotatorRuleCreate"
+              - type: object
+                required: [rule_name, criteria, redirects]
         name:
           type: string
         default_url:

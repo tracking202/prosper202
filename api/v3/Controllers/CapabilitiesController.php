@@ -192,6 +192,13 @@ class CapabilitiesController
                     // an operator runs. Admin with access_to_settings. Not
                     // stageable.
                     'traffic_source_owners' => true,
+                    // PUT /rotators/{id}/rules takes an empty set (every
+                    // rule removed) and the redirector's own fields beside
+                    // the set, written in one transaction; POST /rotators
+                    // takes `rules`, the redirector and its set written
+                    // together. A sync writes a redirector this way when
+                    // the target advertises it.
+                    'rotator_with_rules' => true,
                     // App measurement. `app_platforms` is what the registry
                     // (/apps) accepts a registration for. `app_postbacks` is
                     // one entry per platform-signed postback protocol the

@@ -200,14 +200,14 @@ final class SyncRotatorRulesIntegrationTest extends TestCase
     }
 
     /**
-     * A sync of the redirectors, with force_update and skip_errors.
+     * A sync of the redirectors, with force_update and skip_errors; $withRules false is a target before 1.9.81.
      *
      * @return array{0: array<string, mixed>, 1: RotatorControllerRemoteApiClient} the result, the target
      */
-    private function sync(bool $ruleSetRoute = true): array
+    private function sync(bool $ruleSetRoute = true, bool $withRules = true): array
     {
         $source = new RotatorControllerRemoteApiClient(self::$db, self::SOURCE);
-        $target = new RotatorControllerRemoteApiClient(self::$db, self::TARGET, $ruleSetRoute);
+        $target = new RotatorControllerRemoteApiClient(self::$db, self::TARGET, $ruleSetRoute, $withRules);
         $engine = new class (new ServerStateStore($this->stateDir), $source, $target) extends SyncEngine {
             public function __construct(
                 ServerStateStore $store,
@@ -492,6 +492,131 @@ final class SyncRotatorRulesIntegrationTest extends TestCase
         self::assertGreaterThan($synced['us'][1]['https://us.example/'], $resynced['us'][1]['https://added.example/']);
         self::assertSame(array_values($synced['us'][2]), array_values($resynced['us'][2]), 'a criterion of the same type keeps its id');
         self::assertNotContains($resynced['new'][0], [$synced['us'][0], $synced['bots'][0]], 'a new rule takes a new id');
+    }
+
+    /**
+     * A rule renamed on the source keeps its id on the target: no target
+     * rule has its new name, so it pairs with the one that has its criteria
+     * and destinations. A rule paired neither way is new.
+     */
+    public function testARenamedRuleKeepsItsId(): void
+    {
+        $source = self::rotator(self::SOURCE, 7300013);
+        $target = self::rotator(self::TARGET, 7300013);
+        self::setRules(self::SOURCE, $source, [
+            self::rule('us', 'country US', 'https://us.example/'),
+            self::rule('bots', 'device bot', 'https://bot.example/'),
+        ]);
+        [$first] = $this->sync();
+        self::assertSame(0, $first['failed'], json_encode($first) ?: '');
+        $synced = self::ids(self::TARGET, $target);
+
+        self::setRules(self::SOURCE, $source, [
+            self::rule('United States', 'country US', 'https://us.example/'),
+            self::rule('crawlers', 'device bot', 'https://crawler.example/'),
+        ]);
+
+        [$second] = $this->sync();
+
+        self::assertSame([0, 1], [$second['failed'], $second['updated']], json_encode($second) ?: '');
+        self::assertSame(self::rules(self::SOURCE, $source), self::rules(self::TARGET, $target));
+        $resynced = self::ids(self::TARGET, $target);
+        self::assertSame($synced['us'], $resynced['United States'], 'a renamed rule keeps its ids');
+        self::assertNotSame($synced['bots'][0], $resynced['crawlers'][0], 'a rule renamed and changed is new');
+    }
+
+    /**
+     * A source redirector with no rules clears the target's in one write
+     * (an empty set), not by removing them one at a time.
+     */
+    public function testASourceWithNoRulesClearsTheTargetInOneWrite(): void
+    {
+        self::rotator(self::SOURCE, 7300014);
+        $target = self::rotator(self::TARGET, 7300014);
+        self::setRules(self::TARGET, $target, [
+            self::rule('a', 'country ALL', 'https://a.example/'),
+            self::rule('b', 'country ALL', 'https://b.example/'),
+        ]);
+
+        [$result, $client] = $this->sync();
+
+        self::assertSame([0, 1], [$result['failed'], $result['updated']], json_encode($result) ?: '');
+        self::assertSame([], self::rules(self::TARGET, $target));
+        self::assertContains("PUT rotators/$target/rules", $client->requests);
+        foreach ($client->requests as $request) {
+            self::assertStringStartsNotWith('DELETE', $request);
+        }
+    }
+
+    /**
+     * The redirector's own fields and its rules land together: a source rule
+     * the target refuses leaves the target's name as well as its rules, in
+     * one request. A target that does not advertise
+     * features.rotator_with_rules is written in two steps, as before, and
+     * the error says the redirector's update landed.
+     */
+    public function testTheRedirectorAndItsRulesLandTogether(): void
+    {
+        $source = self::rotator(self::SOURCE, 7300015);
+        self::setRules(self::SOURCE, $source, [self::rule('refused', 'device bot', 'https://refused.example/')]);
+        $sql = 'UPDATE 202_rotator_rules_criteria c JOIN 202_rotator_rules r ON r.id = c.rule_id'
+            . " SET c.type = 'nonsense' WHERE r.rotator_id = $source";
+        self::assertTrue(self::$db->query($sql), (string) self::$db->error);
+        self::assertSame(1, self::$db->affected_rows, 'the refused criterion planted');
+        self::assertTrue(self::$db->query("UPDATE 202_rotators SET name = 'renamed' WHERE id = $source"), (string) self::$db->error);
+        $target = self::rotator(self::TARGET, 7300015);
+        self::setRules(self::TARGET, $target, [self::rule('kept', 'country ALL', 'https://kept.example/')]);
+        $before = self::rotators(self::TARGET)->get($target)['data'];
+
+        [$result, $client] = $this->sync();
+
+        self::assertSame($before, self::rotators(self::TARGET)->get($target)['data'], 'the target as it was, name and rules');
+        self::assertSame(1, $result['failed'], json_encode($result) ?: '');
+        self::assertStringContainsString('update: 422 from PUT rotators/' . $target . '/rules', $result['errors'][0]);
+        self::assertStringContainsString('the source rule "refused": ', $result['errors'][0]);
+        self::assertNotContains("PUT rotators/$target", $client->requests);
+
+        [$old, $oldClient] = $this->sync(true, false);
+
+        self::assertSame('renamed', self::rotators(self::TARGET)->get($target)['data']['name'], 'the two-step write lands its first step');
+        self::assertSame($before['rules'], self::rotators(self::TARGET)->get($target)['data']['rules']);
+        self::assertStringContainsString('update (applied; its rules then failed)', $old['errors'][0]);
+        self::assertContains("PUT rotators/$target", $oldClient->requests);
+    }
+
+    /**
+     * A redirector the target lacks is created with its rules in one
+     * request: a source rule the target refuses creates no redirector. A
+     * target before 1.9.81 creates it and then refuses its rules.
+     */
+    public function testARedirectorIsCreatedWithItsRulesOrNotAtAll(): void
+    {
+        $source = self::rotator(self::SOURCE, 7300016);
+        self::setRules(self::SOURCE, $source, [
+            self::rule('good', 'country ALL', 'https://good.example/'),
+            self::rule('refused', 'device bot', 'https://refused.example/'),
+        ]);
+        $sql = 'UPDATE 202_rotator_rules_criteria c JOIN 202_rotator_rules r ON r.id = c.rule_id'
+            . " SET c.type = 'nonsense' WHERE r.rotator_id = $source AND r.rule_name = 'refused'";
+        self::assertTrue(self::$db->query($sql), (string) self::$db->error);
+        self::assertSame(1, self::$db->affected_rows, 'the refused criterion planted');
+        $targets = static fn (): int => (int) self::$db->query('SELECT COUNT(*) FROM 202_rotators WHERE user_id = ' . self::TARGET)->fetch_row()[0];
+
+        [$result] = $this->sync();
+
+        self::assertSame(0, $targets(), 'no redirector created');
+        self::assertSame([1, 0], [$result['failed'], $result['created']], json_encode($result) ?: '');
+        self::assertStringContainsString('create: 422 from POST rotators', $result['errors'][0]);
+        self::assertStringContainsString('the source rule "refused": ', $result['errors'][0]);
+
+        self::assertTrue(self::$db->query("UPDATE 202_rotator_rules_criteria SET type = 'device' WHERE rotator_id = $source AND type = 'nonsense'"), (string) self::$db->error);
+
+        [$made, $client] = $this->sync();
+
+        self::assertSame([0, 1], [$made['failed'], $made['created']], json_encode($made) ?: '');
+        $created = (int) self::$db->query('SELECT id FROM 202_rotators WHERE user_id = ' . self::TARGET)->fetch_row()[0];
+        self::assertSame(self::rules(self::SOURCE, $source), self::rules(self::TARGET, $created));
+        self::assertNotContains("PUT rotators/$created/rules", $client->requests, 'one request, the create');
     }
 
     /** A source redirector with no rules leaves the target's with none. */

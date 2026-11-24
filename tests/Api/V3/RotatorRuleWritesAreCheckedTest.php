@@ -62,6 +62,7 @@ final class RotatorRuleWritesAreCheckedTest extends TestCase
 
     /** @var array<string, string> public method => 'checked', or why it needs no check */
     private const ENTRY_POINTS = [
+        'create' => 'checked',
         'createRule' => 'checked',
         'updateRule' => 'checked',
         'setRules' => 'checked',
@@ -115,6 +116,13 @@ final class RotatorRuleWritesAreCheckedTest extends TestCase
                 });
             }
             public function setRules(): void
+            {
+                $this->transaction(function (): void {
+                    $this->plan();
+                    $this->insert();
+                });
+            }
+            public function create(): void
             {
                 $this->transaction(function (): void {
                     $this->plan();
