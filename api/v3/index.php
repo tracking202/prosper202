@@ -956,6 +956,15 @@ try {
             return $answer;
         });
 
+        // ── Who is signed in ────────────────────────────────────────────
+        // The user, the account's zone and currency, the roles, the
+        // permissions and the flags the pages and routes gate on, the
+        // licence and ad switches, the install version (which GET
+        // /system/version answers to admins only) and the feature list:
+        // what a dashboard decides its screens by. The caller's own facts,
+        // so no scope and no role (Auth::isScopeExemptPath()).
+        $router->get('/me', fn() => (new \Api\V3\Controllers\MeController($db, $auth))->me('api_key', null));
+
         // ── Server-side sync planning (admin + read scope) ─────────────
         $router->group('/sync', function (Router $r) use ($crud, $queryParams, $payload) {
             $cls = \Api\V3\Controllers\SyncController::class;

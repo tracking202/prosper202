@@ -442,6 +442,12 @@ class CapabilitiesController
         return $verdict;
     }
 
+    /** Whether the last cliAccess() refused for want of an answer from Tracking202 (cliRefusal()'s first case). */
+    public function licenceWasUnconfirmed(): bool
+    {
+        return $this->licenceUnconfirmed;
+    }
+
     /** The CLI gate's refusal: the licence could not be checked, or the key is not an active licence. */
     public function cliRefusal(string $notLicensed): string
     {

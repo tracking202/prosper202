@@ -81,6 +81,7 @@ final class RolePermissionTest extends TestCase
         ['#^/events$#', 'goal events, sent by the account\'s own sites; no page'],
         ['#^/staged-changes(/|$)#', 'a proposal; applying runs the target route, its checks included, as the applier'],
         ['#^/capabilities$#', 'what the server offers; no account data'],
+        ['#^/me$#', 'who the caller is and what it may do; every role may read its own'],
         ['#^/$#', 'the API root'],
         ['#^/users/roles$#', 'the role catalogue (names), not an account\'s data'],
         ['#^/apps/\{id\}/install-token$#', 'tracking plumbing a landing page\'s server fetches (AppsRoutePermissionTest)'],

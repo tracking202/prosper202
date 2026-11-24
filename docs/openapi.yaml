@@ -9961,6 +9961,157 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /me:
+    get:
+      tags:
+      - System
+      summary: Who is signed in and what they may see and do
+      description: >-
+        One read for a client deciding which screens, buttons and money figures to show: the user,
+        the account's time zone and currency, the roles, every role permission and the flags derived
+        from them, the licence and sponsored-ads switches, the install version and the feature list.
+        Readable by any valid key, whatever its scope or role, so a role that may not read GET
+        /system/version still learns the version here. See documentation/api/30-me.md.
+      operationId: getMe
+      responses:
+        '200':
+          description: The caller's own facts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [user, account, roles, permissions, flags, scopes, switches, install, features, auth]
+                    properties:
+                      user:
+                        type: object
+                        properties:
+                          user_id:
+                            type: integer
+                          user_name:
+                            type: string
+                          user_email:
+                            type: string
+                          user_fname:
+                            type: string
+                          user_lname:
+                            type: string
+                      account:
+                        type: object
+                        properties:
+                          timezone:
+                            type: string
+                            description: The named zone every report reads hours and days in; UTC when unset or unknown.
+                          currency:
+                            type: string
+                            description: The code the account's money is in (USD when unset), as every page prints it.
+                      roles:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            role_id:
+                              type: integer
+                            role_name:
+                              type: string
+                      permissions:
+                        type: array
+                        description: Every role permission the user holds (202_permissions), sorted.
+                        items:
+                          type: string
+                      flags:
+                        type: object
+                        description: >-
+                          The gates the pages and routes apply, each true only when the routes behind it
+                          answer this caller: a flag whose route asks the key for a scope asks it too, so a
+                          read-only key's can_edit_campaigns is false whatever its role allows.
+                          can_see_money false means reports and records come back masked.
+                        additionalProperties:
+                          type: boolean
+                        properties:
+                          is_admin:
+                            type: boolean
+                          can_manage_admins:
+                            type: boolean
+                          can_see_money:
+                            type: boolean
+                          can_view_setup:
+                            type: boolean
+                          can_edit_campaigns:
+                            type: boolean
+                          can_delete_campaigns:
+                            type: boolean
+                          can_use_update_section:
+                            type: boolean
+                          can_delete_subids:
+                            type: boolean
+                          can_view_attribution:
+                            type: boolean
+                          can_manage_attribution:
+                            type: boolean
+                          can_edit_personal_settings:
+                            type: boolean
+                          can_manage_users:
+                            type: boolean
+                          can_view_settings:
+                            type: boolean
+                          can_use_api_integrations:
+                            type: boolean
+                          can_see_vip_perks:
+                            type: boolean
+                      scopes:
+                        type: array
+                        items:
+                          type: string
+                        description: The calling key's scopes; ["*"] for full access.
+                      switches:
+                        type: object
+                        properties:
+                          licence:
+                            type: string
+                            enum: [licensed, not_licensed, unconfirmed]
+                            description: >-
+                              What the licence-gated surfaces (the Go CLI, connecting an AI assistant)
+                              answer now, as GET /capabilities' cli does. unconfirmed is a refusal because
+                              Tracking202 gave no answer within the grace period. When the install cannot
+                              read whose key counts, the gates let the CLI through, and this is licensed.
+                          sponsored_ads:
+                            type: string
+                            enum: [show_all, hide_login, hide_all]
+                            description: Personal Settings' ad setting.
+                      install:
+                        type: object
+                        properties:
+                          version:
+                            type: string
+                            description: The version of the code this install runs.
+                          schema_version:
+                            type: string
+                            description: The version the database was last upgraded to (unknown without a version row).
+                          api_version:
+                            type: string
+                            enum: [v3]
+                      features:
+                        type: array
+                        description: The names of the features GET /capabilities advertises as on.
+                        items:
+                          type: string
+                      auth:
+                        type: object
+                        properties:
+                          method:
+                            type: string
+                            enum: [api_key]
+                          csrf_token:
+                            type: string
+                            nullable: true
+                            description: Null for a key.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /system/metrics:
     get:
       tags:

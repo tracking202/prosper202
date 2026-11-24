@@ -686,6 +686,7 @@ checked: put it where only the server's user can write.
 | System | Health, version, cron, errors, metrics, db-stats | [System](15-system.md) |
 | Sync | Jobs, planning, change feed, audit | [Sync](16-sync.md) |
 | Capabilities | Version and feature discovery | [Capabilities](17-capabilities.md) |
+| Me | Who is signed in: user, account, roles, permissions and flags, switches, install version | [Me](30-me.md) |
 
 ## Discovery Endpoints (No Auth Required)
 
