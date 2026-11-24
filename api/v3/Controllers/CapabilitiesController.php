@@ -192,6 +192,12 @@ class CapabilitiesController
                     // an operator runs. Admin with access_to_settings. Not
                     // stageable.
                     'traffic_source_owners' => true,
+                    // GET /reports/payout?aff_campaign_id=: a campaign's
+                    // default payout under the reports' rules (reports:read,
+                    // masked for a role without access_to_campaign_data), so
+                    // `report losers|winners|breakeven` and `campaign
+                    // optimize` run for a role without Setup.
+                    'report_payout' => true,
                     // App measurement. `app_platforms` is what the registry
                     // (/apps) accepts a registration for. `app_postbacks` is
                     // one entry per platform-signed postback protocol the

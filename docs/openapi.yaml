@@ -4236,6 +4236,62 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /reports/payout:
+    get:
+      tags: [Reports]
+      summary: A campaign's payout
+      description: >-
+        The default payout of one of the account's campaigns, the figure
+        `p202 report losers`, `report winners`, `report breakeven` and
+        `campaign optimize` price a click with. GET /campaigns/{id} answers
+        it too but is Setup's (access_to_setup_section); this route asks
+        what the reports ask, so a Campaign optimizer reads it. For a role
+        without access_to_campaign_data the payout is null and the answer
+        says `masked: true`, as the reports' money. A campaign that is not
+        the account's, or is deleted, is a 404. Servers that serve it say
+        `features.report_payout` in /capabilities (1.9.81 and later).
+      operationId: reportPayout
+      parameters:
+        - name: aff_campaign_id
+          in: query
+          required: true
+          description: The campaign's internal id (a campaign breakdown row's `id`, or GET /campaigns for a role with Setup)
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: The campaign's payout
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [aff_campaign_id, aff_campaign_name, aff_campaign_payout, aff_campaign_currency]
+                    properties:
+                      aff_campaign_id:
+                        type: integer
+                      aff_campaign_name:
+                        type: string
+                      aff_campaign_payout:
+                        type: number
+                        nullable: true
+                        description: Null only in a masked answer
+                      aff_campaign_currency:
+                        type: string
+                        description: The currency the campaign pays in
+                  masked:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /reports/breakdown:
     get:
       tags: [Reports]
