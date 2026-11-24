@@ -72,6 +72,14 @@ template_top('Prosper202 ClickServer');  ?>
 // The account's money-loss alerts of the last week, whatever became of their messages.
 require_once __DIR__ . '/../202-config/functions-alerts-ui.php';
 echo p202_alerts_home_panel($db, (int) ($_SESSION['user_id'] ?? 0), $base, time());
+// While postbacks and pixels need no token, anyone who guesses a click id records revenue.
+require_once __DIR__ . '/../202-config/functions-postback-auth-ui.php';
+echo p202_postback_auth_home_notice(
+    $db,
+    (int) ($_SESSION['user_id'] ?? 0),
+    $userObj->hasPermission('access_to_api_integrations'),
+    $base
+);
 ?>
 <?php echo p202_postback_queue_notice($db, $gs_user_id, $base); ?>
 
