@@ -509,11 +509,10 @@ final class NotificationOutboxIntegrationTest extends TestCase
         $refusals = \Prosper202\Database\Schema\TableRegistry::CLICK_CONSENT_REFUSALS;
         foreach ([
             'the ledger without its column' => [
-                // Shadows the ledger for this connection only.
-                'CREATE TEMPORARY TABLE 202_conversion_logs (conv_id int unsigned NOT NULL PRIMARY KEY, user_id int unsigned NOT NULL,'
-                    . ' click_id bigint unsigned NOT NULL, superseded_by int unsigned DEFAULT NULL, superseded_reason varchar(16) DEFAULT NULL,'
-                    . ' KEY superseded_by (superseded_by))',
-                'DROP TEMPORARY TABLE 202_conversion_logs',
+                // The real table, not a TEMPORARY shadow: MySQL 8.0 cannot open a temporary table twice in one
+                // statement (1137), and the refusal's read names the ledger twice.
+                'ALTER TABLE 202_conversion_logs RENAME COLUMN consent_withheld TO consent_withheld_away',
+                'ALTER TABLE 202_conversion_logs RENAME COLUMN consent_withheld_away TO consent_withheld',
                 self::OLD,
             ],
             'no click refusals table' => ["RENAME TABLE `$refusals` TO `{$refusals}_away`", "RENAME TABLE `{$refusals}_away` TO `$refusals`", self::NEW],
@@ -522,9 +521,6 @@ final class NotificationOutboxIntegrationTest extends TestCase
                 click_payout = 4, click_time = 1, conv_time = 1, source = 'goal', dedupe_key = 'goal:1:1:1:e$convId', payable = 1");
             self::fixture($before);
             try {
-                if ($case === 'the ledger without its column') {
-                    self::fixture("INSERT INTO 202_conversion_logs SET conv_id = $convId, user_id = 1, click_id = 100");
-                }
                 $calls = [];
                 self::assertSame(1, $outbox->queueReached(1, $convId, 100, 'Level 3', '4.00000', 'goal:1:' . $convId, 'tx-' . $convId), $case);
                 self::assertSame([90 => ['status' => 'pending', 'attempts' => 0]], self::reachedByPixel($convId), $case);
