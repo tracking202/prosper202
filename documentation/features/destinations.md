@@ -197,7 +197,12 @@ once.
   queued before a refusal arrived on a later visit of the click is withheld
   when its turn comes, while one already sent stays sent and a retraction of
   it still goes. A goal's notice says `consent_withheld`, and Conversion
-  Logs and their CSV (`held_back_for_consent`) mark the conversion.
+  Logs and their CSV (`held_back_for_consent`) mark the conversion. A
+  simple landing page's Bot202 Facebook Pixel Assistant events are not sent
+  for a click whose refusal is kept, either: one made on the Google Ads
+  tracking template's hit the page takes its click from, or on an earlier
+  visit, holds them back though the page's own request names no
+  `p202_consent`.
 
   What it does not cover: the conversion webhooks (Event Bridge
   `conversion.recorded`, the LTV webhooks) that go to endpoints you set still

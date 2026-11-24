@@ -149,6 +149,17 @@ final class FacebookPixelAssistantIntegrationTest extends TestCase
         // Another account's page, and a visitor held back: nothing.
         self::assertSame('', FacebookPixelAssistantScript::forClick(new Connection(self::$db), self::OTHER, $mine, $other, 4242, true));
         self::assertSame('', FacebookPixelAssistantScript::forClick(new Connection(self::$db), self::USER, $mine, $account, 4242, false));
+
+        // A request of the click refused consent and it was kept (the tracking template's hit, an earlier visit):
+        // this page's request names no p202_consent, and is sent nothing either.
+        self::exec('DELETE FROM 202_click_consent_refusals WHERE click_id = 4242');
+        try {
+            \Prosper202\Identity\ConsentRefusal::record(new Connection(self::$db), 4242, $now);
+            self::assertSame('', FacebookPixelAssistantScript::forClick(new Connection(self::$db), self::USER, $mine, $account, 4242, true));
+            self::assertNotSame('', FacebookPixelAssistantScript::forClick(new Connection(self::$db), self::USER, $mine, $account, 4243, true), 'another click is not held back');
+        } finally {
+            self::exec('DELETE FROM 202_click_consent_refusals WHERE click_id = 4242');
+        }
     }
 
     public function testATypeSixPixelFiresAPurchaseOnTheConversion(): void
