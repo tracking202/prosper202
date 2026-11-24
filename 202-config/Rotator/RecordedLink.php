@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Rotator;
 
+use Prosper202\Click\AdClickIdColumns;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 
@@ -24,9 +25,13 @@ final class RecordedLink
      */
     public static function read(Connection $conn, int $clickId, int $userId): ?array
     {
+        $utm = '';
+        foreach (array_keys(AdClickIdColumns::UTM_IDS) as $name) {
+            $utm .= ' ' . AdClickIdColumns::utm($name, 'c.click_id') . " AS $name,";
+        }
         $stmt = $conn->prepareWrite(
             'SELECT tc1.c1, tc2.c2, tc3.c3, tc4.c4, kw.keyword,'
-            . ' us.utm_source, um.utm_medium, uca.utm_campaign, ut.utm_term, uco.utm_content,'
+            . $utm
             . ' su.site_url_address AS referer'
             . ' FROM ' . LatestVisit::of('?') . ' AS c'
             . ' LEFT JOIN 202_clicks_advance AS ca ON ca.click_id = c.click_id'
@@ -36,12 +41,6 @@ final class RecordedLink
             . ' LEFT JOIN 202_tracking_c2 AS tc2 ON tc2.c2_id = ct.c2_id'
             . ' LEFT JOIN 202_tracking_c3 AS tc3 ON tc3.c3_id = ct.c3_id'
             . ' LEFT JOIN 202_tracking_c4 AS tc4 ON tc4.c4_id = ct.c4_id'
-            . ' LEFT JOIN 202_google AS g ON g.click_id = c.click_id'
-            . ' LEFT JOIN 202_utm_source AS us ON us.utm_source_id = g.utm_source_id'
-            . ' LEFT JOIN 202_utm_medium AS um ON um.utm_medium_id = g.utm_medium_id'
-            . ' LEFT JOIN 202_utm_campaign AS uca ON uca.utm_campaign_id = g.utm_campaign_id'
-            . ' LEFT JOIN 202_utm_term AS ut ON ut.utm_term_id = g.utm_term_id'
-            . ' LEFT JOIN 202_utm_content AS uco ON uco.utm_content_id = g.utm_content_id'
             . ' LEFT JOIN 202_clicks_site AS cs ON cs.click_id = c.click_id'
             . ' LEFT JOIN 202_site_urls AS su ON su.site_url_id = cs.click_referer_site_url_id'
             . ' WHERE c.user_id = ? LIMIT 1'

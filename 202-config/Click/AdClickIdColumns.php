@@ -84,24 +84,34 @@ final class AdClickIdColumns
         return $conn->fetchOne($stmt) ?? [];
     }
 
+    /** The ids of the UTM values a click keeps in 202_google, by value: sql() reads them, utm() names the value. */
+    public const UTM_IDS = [
+        'utm_source' => 'utm_source_id',
+        'utm_medium' => 'utm_medium_id',
+        'utm_campaign' => 'utm_campaign_id',
+        'utm_term' => 'utm_term_id',
+        'utm_content' => 'utm_content_id',
+    ];
+
     /**
-     * One of a click's ad click ids (ClickRecord::AD_CLICK_IDS) as a scalar
-     * subquery, for a statement that reads clicks: the greatest of the
-     * click's 202_google values, NULL when it has no row (the redirector
-     * writes none). 202_google's key is (click_id, gclid), so a click can
-     * have more than one row, and a join to it repeats the click once for
-     * each. No row says which visit wrote it, so none can be read as the
-     * latest; and taking the row with a gclid would drop an id another row
-     * holds. Each id is read across the rows instead: '' sorts below every
-     * id, so an id any row has is read, and rows that disagree always give
-     * the same one.
+     * One of a click's ad click ids (ClickRecord::AD_CLICK_IDS) or UTM_IDS
+     * as a scalar subquery, for a statement that reads clicks: the greatest
+     * of the click's 202_google values, NULL when it has no row (the
+     * redirector writes none). 202_google's key is (click_id, gclid), so a
+     * click can have more than one row, and a join to it repeats the click
+     * once for each (GoogleRowsAreNotJoinedTest refuses one). No row says
+     * which visit wrote it, so none can be read as the latest; and taking
+     * the row with a gclid would drop an id another row holds. Each id is
+     * read across the rows instead: '' sorts below every id (0 below every
+     * UTM value's), so an id any row has is read, and rows that disagree
+     * always give the same one.
      *
      * @param string $clickId the statement's click id column, alias.column
      */
     public static function sql(string $id, string $clickId): string
     {
-        if (!array_key_exists($id, ClickRecord::AD_CLICK_IDS)) {
-            throw new \InvalidArgumentException("$id is not an ad click id a click keeps");
+        if (!array_key_exists($id, ClickRecord::AD_CLICK_IDS) && !in_array($id, self::UTM_IDS, true)) {
+            throw new \InvalidArgumentException("$id is not an ad click id or a UTM value's id a click keeps");
         }
         if (preg_match('/\A[A-Za-z0-9_]+\.[A-Za-z0-9_]+\z/D', $clickId) !== 1) {
             throw new \InvalidArgumentException("$clickId is not a column");
@@ -109,6 +119,27 @@ final class AdClickIdColumns
 
         // FORCE INDEX: MariaDB 11 can pick a full scan per row here (M4R1); PRIMARY (click_id, …) always exists.
         return "(SELECT MAX(g_ids.$id) FROM 202_google AS g_ids FORCE INDEX (PRIMARY) WHERE g_ids.click_id = $clickId)";
+    }
+
+    /**
+     * One of a click's UTM values (a key of UTM_IDS) as a scalar subquery:
+     * the value of the id sql() reads, NULL when there is none.
+     *
+     * @param string $clickId the statement's click id column, alias.column
+     */
+    public static function utm(string $name, string $clickId): string
+    {
+        // Each table named in full, for the scans that read a statement's tables.
+        $lookup = match ($name) {
+            'utm_source' => '(SELECT utm_v.utm_source FROM 202_utm_source AS utm_v WHERE utm_v.utm_source_id = ',
+            'utm_medium' => '(SELECT utm_v.utm_medium FROM 202_utm_medium AS utm_v WHERE utm_v.utm_medium_id = ',
+            'utm_campaign' => '(SELECT utm_v.utm_campaign FROM 202_utm_campaign AS utm_v WHERE utm_v.utm_campaign_id = ',
+            'utm_term' => '(SELECT utm_v.utm_term FROM 202_utm_term AS utm_v WHERE utm_v.utm_term_id = ',
+            'utm_content' => '(SELECT utm_v.utm_content FROM 202_utm_content AS utm_v WHERE utm_v.utm_content_id = ',
+            default => throw new \InvalidArgumentException("$name is not a UTM value a click keeps"),
+        };
+
+        return $lookup . self::sql(self::UTM_IDS[$name], $clickId) . ')';
     }
 
     /** Whether a URL has a [[token]] for one of them. */

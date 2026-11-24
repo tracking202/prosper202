@@ -125,8 +125,8 @@ final class ClickRollupSqlTest extends TestCase
 
         self::assertNotFalse($sourcePosition);
         self::assertNotFalse($mediumPosition);
-        self::assertSame('2gg.utm_source_id', $selectExpressions[$sourcePosition]);
-        self::assertSame('2gg.utm_medium_id', $selectExpressions[$mediumPosition]);
+        self::assertSame(\Prosper202\Click\AdClickIdColumns::sql('utm_source_id', '2c.click_id') . ' AS utm_source_id', $selectExpressions[$sourcePosition]);
+        self::assertSame(\Prosper202\Click\AdClickIdColumns::sql('utm_medium_id', '2c.click_id') . ' AS utm_medium_id', $selectExpressions[$mediumPosition]);
     }
 
     public function testUsesOnDuplicateKeyUpdate(): void
@@ -288,7 +288,11 @@ final class ClickRollupSqlTest extends TestCase
         preg_match('/SELECT\s+(.*?)\nFROM 202_clicks AS 2c\n/s', $this->sql, $selectMatch);
         self::assertNotEmpty($selectMatch, 'Must find the SELECT list');
 
-        self::assertStringNotContainsStringIgnoringCase('SELECT', $selectMatch[1], 'no subquery in the SELECT list');
+        self::assertStringNotContainsStringIgnoringCase(
+            'SELECT',
+            self::withoutGoogleReads($selectMatch[1]),
+            'no subquery in the SELECT list but the click\'s 202_google values'
+        );
         foreach (['click_filtered', 'click_bot', 'click_lead', 'ppc_account_id'] as $column) {
             self::assertMatchesRegularExpression('/^2c\.`?' . $column . '`?,$/m', $selectMatch[1], $column);
         }
@@ -363,7 +367,7 @@ final class ClickRollupSqlTest extends TestCase
         $sql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_time >= 1 AND 2c.click_time <= 2');
 
         self::assertStringContainsString("\nFROM 202_clicks AS 2c\nLEFT OUTER JOIN 202_clicks_record AS 2cr", $sql);
-        self::assertDoesNotMatchRegularExpression('/\b(FORCE|USE|IGNORE)\s+(INDEX|KEY)\b/i', $sql);
+        self::assertDoesNotMatchRegularExpression('/\b(FORCE|USE|IGNORE)\s+(INDEX|KEY)\b/i', self::withoutGoogleReads($sql));
     }
 
     /** A hint naming a key the table lacks fails every rollup: "Key 'click_id' doesn't exist". */
@@ -418,5 +422,31 @@ final class ClickRollupSqlTest extends TestCase
             }
         }
         self::assertGreaterThanOrEqual(1, $calls, 'the scan found the range rollup DataEngine::getSummary() makes');
+    }
+
+    /**
+     * The UTM values' ids are the click's, one per click across its
+     * 202_google rows (AdClickIdColumns::sql()): a join there counted a click
+     * once per row. Seeded with two rows in GoogleRowsReadOncePerClickIntegrationTest.
+     */
+    public function testTheUtmIdsAreReadOnePerClick(): void
+    {
+        foreach (\Prosper202\Click\AdClickIdColumns::UTM_IDS as $id) {
+            self::assertStringContainsString(
+                \Prosper202\Click\AdClickIdColumns::sql($id, '2c.click_id') . ' AS ' . $id . ",\n",
+                $this->sql
+            );
+        }
+        self::assertDoesNotMatchRegularExpression('/\bJOIN\s+`?202_google\b/i', $this->sql);
+    }
+
+    /** The statement without its reads of the click's 202_google values, which name their own table and key. */
+    private static function withoutGoogleReads(string $sql): string
+    {
+        foreach (\Prosper202\Click\AdClickIdColumns::UTM_IDS as $id) {
+            $sql = str_replace(\Prosper202\Click\AdClickIdColumns::sql($id, '2c.click_id'), $id, $sql);
+        }
+
+        return $sql;
     }
 }

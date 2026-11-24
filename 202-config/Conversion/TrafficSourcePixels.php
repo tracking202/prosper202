@@ -437,23 +437,22 @@ final class TrafficSourcePixels
      */
     public static function clickTokens(Connection $conn, int $userId, int $clickId, bool $inTransaction = false): ?array
     {
+        // The 202_google values one per click (AdClickIdColumns): a join there repeats the click per row.
+        $utm = '';
+        foreach (array_keys(AdClickIdColumns::UTM_IDS) as $name) {
+            $utm .= AdClickIdColumns::utm($name, 'c.click_id') . " AS $name, ";
+        }
         $sql =
-            'SELECT c.click_id, pa.ppc_account_id, c.click_cpc, c1.c1, c2.c2, c3.c3, c4.c4, kw.keyword, g.gclid,
-                    us.utm_source, um.utm_medium, uca.utm_campaign, ut.utm_term, uco.utm_content, su.site_url_address
+            'SELECT c.click_id, pa.ppc_account_id, c.click_cpc, c1.c1, c2.c2, c3.c3, c4.c4, kw.keyword, '
+                . AdClickIdColumns::sql('gclid', 'c.click_id') . ' AS gclid, ' . $utm . 'su.site_url_address
              FROM ' . FirstVisit::of('?') . ' AS c
              LEFT JOIN 202_ppc_accounts AS pa ON (pa.ppc_account_id = c.ppc_account_id AND pa.user_id = c.user_id)
              LEFT JOIN 202_clicks_tracking AS ct ON ct.click_id = c.click_id
              LEFT JOIN 202_clicks_advance AS ca ON ca.click_id = c.click_id
-             LEFT JOIN 202_google AS g ON g.click_id = c.click_id
              LEFT JOIN 202_tracking_c1 AS c1 ON c1.c1_id = ct.c1_id
              LEFT JOIN 202_tracking_c2 AS c2 ON c2.c2_id = ct.c2_id
              LEFT JOIN 202_tracking_c3 AS c3 ON c3.c3_id = ct.c3_id
              LEFT JOIN 202_tracking_c4 AS c4 ON c4.c4_id = ct.c4_id
-             LEFT JOIN 202_utm_source AS us ON us.utm_source_id = g.utm_source_id
-             LEFT JOIN 202_utm_medium AS um ON um.utm_medium_id = g.utm_medium_id
-             LEFT JOIN 202_utm_campaign AS uca ON uca.utm_campaign_id = g.utm_campaign_id
-             LEFT JOIN 202_utm_term AS ut ON ut.utm_term_id = g.utm_term_id
-             LEFT JOIN 202_utm_content AS uco ON uco.utm_content_id = g.utm_content_id
              LEFT JOIN 202_keywords AS kw ON kw.keyword_id = ca.keyword_id
              LEFT JOIN 202_clicks_site AS cs ON cs.click_id = c.click_id
              LEFT JOIN 202_site_urls AS su ON su.site_url_id = cs.click_referer_site_url_id
