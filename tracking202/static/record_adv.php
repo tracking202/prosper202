@@ -356,7 +356,8 @@ if ($raParallelClick !== null) {
     $mysql['aff_campaign_id'] = $raParallelClick->affCampaignId;
 } else {
     $click_id = $clickRepo->allocateClickId();
-    $click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);
+    // Not the click id with a digit either side, which named its neighbours (PublicClickId).
+    $click_id_public = \Prosper202\Click\PublicClickIdKey::forNewClick($db, (int) $click_id);
 }
 $mysql['click_id'] = (string) $click_id;
 $mysql['click_id_public'] = (string) $click_id_public;
