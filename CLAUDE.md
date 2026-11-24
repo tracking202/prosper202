@@ -447,9 +447,11 @@ A row of another account named by id reads as naming nothing.
   by the expression you select, count a none row by the same NULL, and give
   a row whose record is not the account's no action rather than a different
   one. Click-path reads go through `ClickPathReads`.
-- Writes too: every UPDATE and DELETE in served pages carries
-  `user_id = <the account>` in its own WHERE, or a listed check that runs
-  first (`AccountScopedWriteTest`; SQL only).
+- Writes too: every UPDATE and DELETE in served pages and in the classes
+  (`202-config/`, `api/v3/`) carries `user_id = <the account>` in its own
+  WHERE, or is listed with the check that runs first: a guard method the
+  test holds to running first (`CallsBefore`), or a reviewer's reason,
+  which only shrinks (`AccountScopedWriteTest`; SQL only).
 - When a fix closes a hole, ask what the hole left behind. A sign with two
   origins is a report, not a repair (`TrafficSourceOwners`: moved only on an
   admin's say-so, never in the upgrade). Only an act that is right
