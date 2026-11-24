@@ -182,6 +182,22 @@ func ltvGet(path string, params map[string]string) error {
 	return nil
 }
 
+// ltvGetPage is ltvGet for a read that pages with --limit and --offset and answers no pagination: under a table it
+// says when rows remain (notePagedRows).
+func ltvGetPage(cmd *cobra.Command, path string, params map[string]string) error {
+	c, err := api.NewFromConfig()
+	if err != nil {
+		return err
+	}
+	data, err := c.Get(path, params)
+	if err != nil {
+		return ltvFilterError(err)
+	}
+	render(data)
+	notePagedRows(cmd, data)
+	return nil
+}
+
 // ltvFilterError names where the field keys and types are when the server
 // refuses a --cf filter (an unknown key, a range on a text field, a value
 // that is not a number or date).
@@ -296,7 +312,7 @@ var ltvBreakdownCmd = &cobra.Command{
 		if v := getStringFlagOrDefault(cmd, "ltv", "by"); v != "" {
 			params["by"] = v
 		}
-		return ltvGet("ltv/breakdown", params)
+		return ltvGetPage(cmd, "ltv/breakdown", params)
 	},
 }
 
@@ -350,7 +366,7 @@ var ltvProductsCmd = &cobra.Command{
 		if err := collectLtvPaging(cmd, params); err != nil {
 			return err
 		}
-		return ltvGet("ltv/products", params)
+		return ltvGetPage(cmd, "ltv/products", params)
 	},
 }
 
@@ -370,7 +386,7 @@ var ltvAbmCmd = &cobra.Command{
 			params["name"] = company
 			path = "ltv/abm/company"
 		}
-		return ltvGet(path, params)
+		return ltvGetPage(cmd, path, params)
 	},
 }
 

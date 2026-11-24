@@ -53,6 +53,12 @@ the profile default `p202 config set-default output.format <format>`; an agent m
 its pretty-printed form, and `p202 config show` reports the format in use and why. The evidence for
 each marker is in `docs/cli-agent.md`.
 
+**One page of a list.** A command that reads one page (`--limit`, `--offset`) passes the server's
+`truncated` through under `--json`: `true` when rows remain after the page. A table says so on
+stderr, naming the next `--offset`; `--all` reads on while `truncated` is `true` and stops when it is
+`false`, whatever `pagination.total` says (from a server before `truncated`, the total and a short
+page decide, as before).
+
 ## Finding a Command
 
 `p202 commands --brief` is the catalog to read when choosing a command: every

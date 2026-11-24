@@ -134,6 +134,8 @@ func fetchAllPages(c *api.Client, endpoint string, baseParams map[string]string,
 	all := make([]map[string]interface{}, 0)
 	seenKeys := map[string]struct{}{}
 	masked := false
+	// remain is whether the last page read said rows remain after it.
+	remain := false
 
 	for page := 0; page < maxPages; page++ {
 		params := map[string]string{
@@ -164,7 +166,11 @@ func fetchAllPages(c *api.Client, endpoint string, baseParams map[string]string,
 		if err != nil {
 			return nil, false, err
 		}
+		pg := extractPaginationInfo(data)
 		if len(rows) == 0 {
+			if pg.hasTruncated && pg.truncated {
+				return nil, false, withHint(fmt.Errorf("pagination stalled for %s: the page at offset %d is empty but says rows remain (truncated)", endpoint, offset), "The server contradicts itself; retry, and if it persists check the API version with `p202 system version` and the server logs.")
+			}
 			break
 		}
 
@@ -179,8 +185,6 @@ func fetchAllPages(c *api.Client, endpoint string, baseParams map[string]string,
 			added++
 		}
 
-		pg := extractPaginationInfo(data)
-
 		step := pageSize
 		if pg.hasLimit && pg.limit > 0 {
 			step = pg.limit
@@ -189,12 +193,18 @@ func fetchAllPages(c *api.Client, endpoint string, baseParams map[string]string,
 			return nil, false, withHint(fmt.Errorf("pagination stalled for %s: invalid page size at offset %d", endpoint, offset), "The server returned an unusable page; retry, and if it persists check the API version with `p202 system version` and the server logs.")
 		}
 
-		if pg.hasTotal && len(all) >= pg.total {
-			break
-		}
-
-		if !pg.hasTotal && len(rows) < step {
-			break
+		// `truncated` says whether rows remain after the page; a server from before it says nothing, and the total
+		// or a short page decides.
+		switch {
+		case pg.hasTruncated && !pg.truncated:
+			return all, masked, nil
+		case pg.hasTruncated:
+			// Rows remain: the next page starts after the rows this one held, whatever its length.
+			step = len(rows)
+		case pg.hasTotal && len(all) >= pg.total:
+			return all, masked, nil
+		case !pg.hasTotal && len(rows) < step:
+			return all, masked, nil
 		}
 
 		if added == 0 {
@@ -211,19 +221,27 @@ func fetchAllPages(c *api.Client, endpoint string, baseParams map[string]string,
 		}
 
 		offset = nextOffset
-		pageSize = step
+		if !pg.hasTruncated {
+			pageSize = step
+		}
+		remain = pg.hasTruncated
+	}
+	if remain {
+		return nil, false, withHint(fmt.Errorf("%s has more than %d pages: the server still says rows remain at offset %d", endpoint, maxPages, offset), "Narrow the read with the command's filters or a shorter window, so every row fits.")
 	}
 
 	return all, masked, nil
 }
 
 type paginationInfo struct {
-	total     int
-	limit     int
-	offset    int
-	hasTotal  bool
-	hasLimit  bool
-	hasOffset bool
+	total        int
+	limit        int
+	offset       int
+	hasTotal     bool
+	hasLimit     bool
+	hasOffset    bool
+	truncated    bool
+	hasTruncated bool
 }
 
 func extractPaginationInfo(data []byte) paginationInfo {
@@ -231,12 +249,20 @@ func extractPaginationInfo(data []byte) paginationInfo {
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return paginationInfo{}
 	}
+	info := paginationInfo{}
+	if t, ok := payload["truncated"].(bool); ok {
+		info.truncated = t
+		info.hasTruncated = true
+	}
 	rawPagination, ok := payload["pagination"].(map[string]interface{})
 	if !ok {
-		return paginationInfo{}
+		if v, ok := intValue(payload["offset"]); ok {
+			info.offset = v
+			info.hasOffset = true
+		}
+		return info
 	}
 
-	info := paginationInfo{}
 	if v, ok := intValue(rawPagination["total"]); ok {
 		info.total = v
 		info.hasTotal = true

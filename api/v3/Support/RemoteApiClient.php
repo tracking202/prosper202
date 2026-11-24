@@ -258,6 +258,22 @@ class RemoteApiClient
             if ($total !== null && !(is_int($total) && $total >= 0)) {
                 throw SyncException::remoteFailed($at . ' answered a pagination total that is not a whole number.');
             }
+            // `truncated` says whether records follow the page; a remote
+            // from before it says nothing, and the page's length and the
+            // total decide as they did.
+            if (array_key_exists('truncated', $resp)) {
+                if (!is_bool($resp['truncated'])) {
+                    throw SyncException::remoteFailed($at . ' answered a truncated that is not true or false.');
+                }
+                if ($resp['truncated'] && count($list) < self::PAGE_ROWS) {
+                    throw SyncException::remoteFailed($at . ' answered ' . count($list) . ' records with more to follow, '
+                        . 'to a request for ' . self::PAGE_ROWS . '.');
+                }
+                if (!$resp['truncated']) {
+                    break;
+                }
+                continue;
+            }
             if (count($list) < self::PAGE_ROWS) {
                 break; // a short page: no more records, whatever total says
             }

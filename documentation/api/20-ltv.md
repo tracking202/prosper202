@@ -106,7 +106,13 @@ is not a field is a `422` naming it (`cf.nope`).
 more orders; `subscribers`: an active subscription; `at_risk`: a past-due
 one). A value off a list, or a `limit` that is not a whole number in range
 (`abc`, `1000`), is a `422` naming the parameter and its range — never one
-row, never the first 500 read as all of them.
+row, never the first 500 read as all of them. Every answer to a request that
+takes `offset` (customers, breakdown, abm, products, companies,
+subscriptions) carries `truncated`: `true` when rows remain after the page,
+`false` on the last one, a page of exactly the remaining rows included. Read
+on with `offset` plus `limit` until it is `false` before summing or ranking.
+`breakdown`, `abm` and `products`, which have no `pagination`, also answer the
+`limit` and `offset` of the page.
 
 **Numbers.** Every `/ltv` read answers money, averages and rates as a JSON
 number and a count or a unix time as an integer: a customer's

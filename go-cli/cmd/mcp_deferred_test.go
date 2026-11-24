@@ -48,7 +48,9 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 	// paid for by a shorter help line on the link-token flags; get_more_tools
 	// and its sentence in the instructions about 700 (every later tool is
 	// listed on request, mcpDeferredToolSpecs), paid for by the click
-	// filter tools' user_id, which their Omit meant to leave out.
+	// filter tools' user_id, which their Omit meant to leave out; the
+	// instructions' line on truncated (every paged answer's) about 100, paid
+	// for by the two report tools' notes it replaced.
 	const budget = 100500
 	if len(body) > budget {
 		t.Fatalf("the tool list is %d characters, over its %d budget; trim notes or omit flags", len(body), budget)

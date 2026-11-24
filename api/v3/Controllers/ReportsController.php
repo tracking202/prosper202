@@ -8,6 +8,7 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\AccountTimezone;
+use Api\V3\Support\PageRows;
 use Api\V3\Support\ReportFilter;
 use Api\V3\Support\ResponseSanitizer;
 use Api\V3\Support\StatementHelpers;
@@ -453,7 +454,7 @@ class ReportsController
             LIMIT ? OFFSET ?";
 
         // One row past the page says whether rows remain (`truncated`).
-        $binds[] = $limit + 1;
+        $binds[] = PageRows::fetchLimit($limit);
         $types .= 'i';
         $binds[] = $offset;
         $types .= 'i';
@@ -479,10 +480,7 @@ class ReportsController
         }
         $stmt->close();
 
-        $truncated = count($rows) > $limit;
-        if ($truncated) {
-            $rows = array_slice($rows, 0, $limit);
-        }
+        [$rows, $truncated] = PageRows::cut($rows, $limit);
 
         return [
             'data' => $rows,

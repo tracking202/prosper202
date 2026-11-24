@@ -333,6 +333,7 @@ their cost, the population the classic reports count.`,
 			return err
 		}
 		render(data)
+		notePagedRows(cmd, data)
 		return nil
 	},
 }

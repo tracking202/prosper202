@@ -109,10 +109,9 @@ var mcpDeferredToolSpecs = []mcpToolSpec{
 }
 
 // destinationDeliveriesNote names only keys the install's answer carries
-// (DestinationsController::deliveries; TestMCPDeferredNotesNameKeysTheAnswerCarries):
-// it has no truncated, unlike the report tools' pageNote.
+// (DestinationsController::deliveries; TestMCPDeferredNotesNameKeysTheAnswerCarries).
 const destinationDeliveriesNote = "Why each failed or was withheld. meta.summary counts each status; " +
-	"pagination.total counts every row the filters match, so more remain while it is past offset plus the rows returned."
+	"truncated: true: more rows at offset + limit; pagination.total counts every row the filters match."
 
 // mcpAllToolSpecs is every tool `p202 mcp call` can run.
 func mcpAllToolSpecs() []mcpToolSpec {

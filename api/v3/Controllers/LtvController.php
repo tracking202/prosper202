@@ -11,6 +11,7 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\AccountTimezone;
 use Api\V3\Support\LtvBody;
+use Api\V3\Support\PageRows;
 use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\QueryInt;
 use Api\V3\Support\RequestFlag;
@@ -91,14 +92,16 @@ class LtvController
                 $this->query($params),
                 $sort,
                 $dir,
-                $limit,
+                PageRows::fetchLimit($limit),
                 $offset,
                 isset($params['q']) ? (string) $params['q'] : null,
                 $segment
             );
+            [$rows, $truncated] = PageRows::cut($result['rows'], $limit);
 
             return [
-                'data' => $result['rows'],
+                'data' => $rows,
+                'truncated' => $truncated,
                 'pagination' => ['total' => $result['total'], 'limit' => $limit, 'offset' => $offset],
             ];
         });
@@ -158,9 +161,17 @@ class LtvController
             $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
             $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
 
+            [$rows, $truncated] = PageRows::cut(
+                $this->ltv->breakdown($this->query($params), $by, PageRows::fetchLimit($limit), $offset),
+                $limit
+            );
+
             return [
-                'data' => $this->ltv->breakdown($this->query($params), $by, $limit, $offset),
+                'data' => $rows,
                 'breakdown' => $by,
+                'truncated' => $truncated,
+                'limit' => $limit,
+                'offset' => $offset,
             ];
         });
     }
@@ -189,9 +200,15 @@ class LtvController
                  FROM 202_products WHERE user_id = ?
                  ORDER BY product_id DESC LIMIT ? OFFSET ?'
             );
-            $this->conn->bind($stmt, 'iii', [$this->userId, $limit, $offset]);
+            $this->conn->bind($stmt, 'iii', [$this->userId, PageRows::fetchLimit($limit), $offset]);
+            [$rows, $truncated] = PageRows::cut($this->conn->fetchAll($stmt), $limit);
 
-            return ['data' => array_map(self::presentProduct(...), $this->conn->fetchAll($stmt))];
+            return [
+                'data' => array_map(self::presentProduct(...), $rows),
+                'truncated' => $truncated,
+                'limit' => $limit,
+                'offset' => $offset,
+            ];
         });
     }
 
@@ -338,9 +355,14 @@ class LtvController
             $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
             $engagement = new \Prosper202\Ltv\MysqlEngagementRepository($this->conn);
 
+            [$rows, $truncated] = PageRows::cut($engagement->abmBreakdown($this->userId, $days, PageRows::fetchLimit($limit), $offset), $limit);
+
             return [
-                'data' => $engagement->abmBreakdown($this->userId, $days, $limit, $offset),
+                'data' => $rows,
                 'window_days' => $days,
+                'truncated' => $truncated,
+                'limit' => $limit,
+                'offset' => $offset,
             ];
         });
     }
@@ -1261,10 +1283,12 @@ class LtvController
         return $this->wrap(function () use ($params): array {
             $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
             $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
-            $result = (new MysqlCompanyRepository($this->conn))->listWithRollups($this->userId, $limit, $offset);
+            $result = (new MysqlCompanyRepository($this->conn))->listWithRollups($this->userId, PageRows::fetchLimit($limit), $offset);
+            [$rows, $truncated] = PageRows::cut($result['rows'], $limit);
 
             return [
-                'data' => $result['rows'],
+                'data' => $rows,
+                'truncated' => $truncated,
                 'pagination' => ['total' => $result['total'], 'limit' => $limit, 'offset' => $offset],
             ];
         });
@@ -1368,10 +1392,12 @@ class LtvController
             $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
             $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
             $status = self::choices($params, ['status' => MysqlSubscriptionRepository::STATUSES])['status'];
-            $result = $this->subscriptions->listForUser($this->userId, $status, $limit, $offset);
+            $result = $this->subscriptions->listForUser($this->userId, $status, PageRows::fetchLimit($limit), $offset);
+            [$rows, $truncated] = PageRows::cut($result['rows'], $limit);
 
             return [
-                'data' => $result['rows'],
+                'data' => $rows,
+                'truncated' => $truncated,
                 'pagination' => ['total' => $result['total'], 'limit' => $limit, 'offset' => $offset],
             ];
         });

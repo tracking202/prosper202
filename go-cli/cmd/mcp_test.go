@@ -367,9 +367,11 @@ func TestMCPCallCarriesProfileAndStaged(t *testing.T) {
 	}
 }
 
-// The report tools that can leave rows out answer with truncated; the ones
-// that commonly do say in their description what to do then, and the
-// one-page ones take the offset that reads on.
+// The report tools that can leave rows out answer with truncated; what a
+// page's truncated means, and that offset + limit reads on, the instructions
+// say once for every tool (every API answer to a request taking offset
+// carries it); crosstab's, which also counts columns, its description says.
+// The one-page ones take the offset that reads on.
 func TestMCPReportToolsSayWhenRowsRemain(t *testing.T) {
 	cat, err := buildMCPCatalog(rootCmd, false, false)
 	if err != nil {
@@ -379,10 +381,11 @@ func TestMCPReportToolsSayWhenRowsRemain(t *testing.T) {
 	for _, tool := range cat.Tools {
 		tools[tool.Name] = tool
 	}
-	for _, name := range []string{"report_breakdown", "report_breakeven", "report_crosstab"} {
-		if !strings.Contains(tools[name].Description, "truncated: true") {
-			t.Errorf("%s's description does not say what truncated means: %q", name, tools[name].Description)
-		}
+	if !strings.Contains(cat.Instructions, "truncated: true: rows remain") || !strings.Contains(cat.Instructions, "offset + limit") {
+		t.Errorf("the instructions do not say what a page's truncated means: %q", cat.Instructions)
+	}
+	if !strings.Contains(tools["report_crosstab"].Description, "truncated: true") {
+		t.Errorf("report_crosstab's description does not say what its truncated means: %q", tools["report_crosstab"].Description)
 	}
 	for _, name := range []string{"report_breakdown", "report_breakeven"} {
 		for _, arg := range []string{"limit", "offset"} {
