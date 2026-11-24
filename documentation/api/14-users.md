@@ -19,8 +19,10 @@ Admin or Super user role; only the Super user role carries the
 `add_edit_delete_admin` permission.
 
 - **Your own account**: your email, name and password are always yours to
-  change; changing your own password needs `current_password` as well (see
-  [User Fields](#user-fields)). Your preferences, your API keys and your time
+  change; changing your own password, or your own email to another
+  address, needs `current_password` as well (see
+  [User Fields](#user-fields)), since the lost-password page mails its reset
+  to the stored email. Your preferences, your API keys and your time
   zone are Personal Settings', and need the `access_to_personal_settings`
   permission, as the page does (it shows a user without it only their email
   and password); the Campaign manager, optimizer, viewer and Publisher roles
@@ -148,9 +150,9 @@ curl -s "$P202/api/v3/users/1/click-filter/test?ip=198.51.100.7" -H "Authorizati
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
 | `user_name` | string | Yes | Username, 1-50 characters; another account's (in any case) is `409`. Changing it on `PUT` renames the account, as the Users page does: it needs a user you may manage, even when that is you |
-| `user_email` | string | Yes | Email address, at most 100 characters; another account's is `422` |
+| `user_email` | string | Yes | Email address, at most 100 characters; another account's is `422`. Changing your own to another address needs `current_password`; the stored address sent back (a GET body) does not |
 | `user_pass` | string | Yes (create) | Password, 8-72 characters (bcrypt reads only the first 72 bytes), hashed server-side. On an update, every remember-me key the user holds is deleted in the same write, so no browser kept signed in ("Keep me signed in") signs in with a cookie from before the new password, and every browser signed in as the user is signed out at its next request; a key or session that cannot be ended leaves the old password and answers `500` |
-| `current_password` | string | When you change your **own** `user_pass` | Your present password, as Personal settings asks for it: a key that is not the password must not be enough to take over the sign-in. Missing or wrong is `422` naming `current_password`. A Super user or Admin resetting another user's password does not send it |
+| `current_password` | string | When you change your **own** `user_pass`, or your **own** `user_email` to another address | Your present password, as Personal settings asks for it: a key that is not the password must not be enough to take over the sign-in, by a new password or by a new email the reset link is mailed to. Missing or wrong is `422` naming `current_password`. A Super user or Admin changing another user's password or email does not send it |
 | `user_fname` | string | No | First name, at most 50 characters |
 | `user_lname` | string | No | Last name, at most 50 characters |
 | `user_timezone` | string | No | A PHP time zone name such as `America/New_York`, as Personal settings offers them (default: UTC); anything else is `422` |
@@ -410,6 +412,8 @@ curl -X PUT https://your-domain.com/api/v3/users/1 \
 
 `p202 user update <id> --current-password --set-password` reads both without
 echo, at a terminal or as two lines of piped stdin (current first).
+`p202 user update <id> --user-email new@example.com --current-password` sends
+the current password with a new email of your own.
 
 A new password, set here, on Personal settings, on Account › Users or through
 the reset link, deletes every remember-me key of the user and signs out every

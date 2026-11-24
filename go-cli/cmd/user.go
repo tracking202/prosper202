@@ -148,9 +148,9 @@ var userUpdateCmd = &cobra.Command{
 		} else if pass, _ := cmd.Flags().GetString("user_pass"); pass != "" {
 			body["user_pass"] = pass
 		}
-		if askCurrent && body["user_pass"] == nil {
-			return validationError("--current-password is only needed with a new password").
-				WithHint("Add --set-password (or --user-pass) to change the password.")
+		if askCurrent && body["user_pass"] == nil && body["user_email"] == nil {
+			return validationError("--current-password is only needed with a new password or email").
+				WithHint("Add --set-password (or --user-pass) to change the password, or --user-email to change the email.")
 		}
 		if len(body) == 0 {
 			return validationError("no fields specified; pass at least one flag to update")
@@ -160,12 +160,13 @@ var userUpdateCmd = &cobra.Command{
 			return err
 		}
 		data, err := c.Put("users/"+args[0], body)
-		if err != nil && body["user_pass"] != nil && body["current_password"] == nil && needsCurrentPassword(err) {
-			// Your own password: the server wants the current one too. At a
-			// terminal, ask and try once more; through a pipe, say how.
+		if err != nil && (body["user_pass"] != nil || body["user_email"] != nil) && body["current_password"] == nil && needsCurrentPassword(err) {
+			// Your own password or email: the server wants the current
+			// password too. At a terminal, ask and try once more; through a
+			// pipe, say how.
 			if !isTerminal(os.Stdin) {
-				return withHint(err, "Changing your own password needs your current password: re-run with --current-password "+
-					"and pipe it on the first line of stdin (the new one on the second, with --set-password), or run it at a terminal to be asked.")
+				return withHint(err, "Changing your own password or email needs your current password: re-run with --current-password "+
+					"and pipe it on the first line of stdin (the new password on the second, with --set-password), or run it at a terminal to be asked.")
 			}
 			current, rerr := readSecret("Your current password (hidden): ")
 			if rerr != nil {
@@ -677,7 +678,7 @@ func init() {
 	userUpdateCmd.Flags().String("user_email", "", "Email")
 	userUpdateCmd.Flags().String("user_pass", "", "New password, 8-72 characters (prefer --set-password: a value here stays in shell history)")
 	userUpdateCmd.Flags().Bool("set-password", false, "Set a new password, read without echo: asked twice at a terminal, or one line of piped stdin")
-	userUpdateCmd.Flags().Bool("current-password", false, "Send your current password, which changing your OWN password needs (asked without echo, or the first line of piped stdin)")
+	userUpdateCmd.Flags().Bool("current-password", false, "Send your current password, which changing your OWN password or email needs (asked without echo, or the first line of piped stdin)")
 	userUpdateCmd.Flags().String("user_timezone", "", "Time zone, e.g. America/New_York (a PHP time zone name)")
 	userUpdateCmd.Flags().String("user_active", "", "1=active, 0=inactive")
 	enumFlag(userUpdateCmd, "user_active", newEnum(binaryValues))
