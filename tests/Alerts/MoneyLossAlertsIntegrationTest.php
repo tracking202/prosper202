@@ -75,7 +75,11 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
             return;
         }
         self::cleanUp();
-        self::$now = time();
+        // 10:00 in the owner's zone, today or yesterday: every run below
+        // (up to $now + 4h) stays in that local day, so "today" does not
+        // roll over under the test when CI runs near the zone's midnight.
+        $tenAm = AccountActivity::dayStart(time(), self::ZONE) + 10 * 3600;
+        self::$now = $tenAm <= time() ? $tenAm : $tenAm - 86400;
         self::user(self::OWNER, self::ZONE);
         self::user(self::OTHER);
         self::user(self::QUIET);
