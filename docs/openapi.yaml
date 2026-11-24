@@ -18589,7 +18589,7 @@ components:
           nullable: true
         attempts:
           type: integer
-          description: Runs so far; a retryable webhook failure (no connection, timeout, 5xx, 408, 429) is retried after 1 and then 2 minutes, 3 runs in all.
+          description: Runs so far; a retryable webhook failure (no connection, timeout, 5xx, 408, 429, a host that does not resolve) is retried after 1 and then 2 minutes, 3 runs in all.
         last_error:
           type: string
           nullable: true
