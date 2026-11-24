@@ -76,7 +76,6 @@ final class LandingPageCheck
         }
         try {
             $this->guard ??= new WebhookGuard();
-            $proxy = EgressProxy::configured();
         } catch (\UnexpectedValueException $e) {
             return self::error('Your page was not fetched: ' . $e->getMessage());
         }
@@ -97,6 +96,11 @@ final class LandingPageCheck
             if ($left < 1) {
                 return self::error('Checking your page took more than ' . self::TIMEOUT . ' seconds (looking up its host'
                     . ($redirects > 0 ? ' and following ' . $redirects . ' redirects' : '') . '), so it was stopped. Try again.');
+            }
+            try {
+                $proxy = EgressProxy::configured();
+            } catch (\UnexpectedValueException $e) {
+                return self::error('Your page was not fetched: ' . $e->getMessage());
             }
             $answer = ($this->transport)(self::curlOptions($target, $left, $proxy));
 

@@ -155,7 +155,7 @@ PHP;
         } catch (\UnexpectedValueException $e) {
             self::assertStringStartsWith('P202_EGRESS_PROXY in 202-config.php is ', $e->getMessage());
             self::assertStringContainsString($why, $e->getMessage());
-            self::assertStringContainsString('nothing that goes through the outbound guard is sent until it is fixed', $e->getMessage());
+            self::assertStringContainsString('nothing this server sends out is sent until it is fixed', $e->getMessage());
         }
     }
 
@@ -235,20 +235,34 @@ PHP;
         }
     }
 
+    /**
+     * Where curl connected is read from a transfer the proxy carried to the
+     * end (the http tunnel), never from one it refused: CURLINFO_PRIMARY_IP
+     * after a refused CONNECT came back empty on CI's runner and 127.0.0.1
+     * here, so it says nothing either way there. The refused https tunnel
+     * still shows, in the proxy's own log, where the CONNECT asked to go.
+     */
     public function testRealCurlTunnelsToTheCheckedAddressNotTheName(): void
     {
         [$port, $log] = $this->proxy();
         $proxy = EgressProxy::parse('http://127.0.0.1:' . $port);
         self::assertNotNull($proxy);
         // The name resolves elsewhere for everyone but the guard: only the tunnel's target says where it went.
-        $target = self::guard()->check('https://hooks.example.com/x');
-        $answer = WebhookSender::curlTransport(WebhookSender::curlOptions($target, 'x', [], 5, $proxy));
+        $tls = self::guard()->check('https://hooks.example.com/x');
+        $refused = WebhookSender::curlTransport(WebhookSender::curlOptions($tls, 'x', [], 5, $proxy));
+        self::assertSame(0, $refused['status']);
+        self::assertStringContainsString('403', (string) $refused['error'], 'the proxy refused the tunnel');
+        $seen = (string) file_get_contents($log);
+        self::assertStringStartsWith('CONNECT ' . self::PUBLIC . ':443 HTTP/1.1', $seen);
+        self::assertStringNotContainsString('hooks.example.com', $seen, 'the proxy is never told the name');
 
-        self::assertSame(0, $answer['status']);
-        self::assertStringContainsString('403', (string) $answer['error'], 'the proxy refused the tunnel');
-        self::assertSame('127.0.0.1', $answer['primary_ip'], 'curl connected to the proxy');
-        self::assertStringStartsWith('CONNECT ' . self::PUBLIC . ':443 HTTP/1.1', (string) file_get_contents($log));
-        self::assertStringNotContainsString('hooks.example.com', (string) file_get_contents($log), 'the proxy is never told the name');
+        $plain = self::guard()->checkPostback('http://pb.network.example/pb?subid=1');
+        $carried = PostbackSender::curlTransport(PostbackSender::curlOptions($plain, 5, $proxy));
+        self::assertSame(200, $carried['status'], (string) $carried['error']);
+        self::assertSame('127.0.0.1', $carried['primary_ip'], 'curl connected to the proxy, and only to it');
+        $seen = substr((string) file_get_contents($log), strlen($seen));
+        self::assertStringStartsWith('CONNECT ' . self::PUBLIC . ':80 HTTP/1.1', $seen);
+        self::assertStringNotContainsString('CONNECT pb.network.example', $seen, 'the proxy is never asked for the name');
     }
 
     /**

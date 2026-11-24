@@ -8,11 +8,12 @@ use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookTarget;
 
 /**
- * The operator's egress proxy, for an install that reaches the internet
- * only through one: `define('P202_EGRESS_PROXY', 'http://proxy.example:3128');`
- * in 202-config.php. Not to be confused with the trusted proxies in front
- * of this server, which say who a visitor is; this one is what the server's
- * own requests go out through.
+ * The egress proxy, for an install that reaches the internet only through
+ * one: set by an admin on Account › Settings (EgressProxyStore), or by the
+ * operator with `define('P202_EGRESS_PROXY', 'http://proxy.example:3128');`
+ * in 202-config.php, which overrides the saved one. Not to be confused with
+ * the trusted proxies in front of this server, which say who a visitor is;
+ * this one is what the server's own requests go out through.
  *
  * routeOptions() is the one place a request to a URL someone else chose is
  * routed: the guard (WebhookGuard) has resolved the host and approved every
@@ -26,45 +27,113 @@ use Prosper202\Attribution\WebhookTarget;
  * the operator's own network (one P202_WEBHOOK_ALLOW_NETWORKS admits) is
  * reached direct, as before there was a proxy (tunnels()). Plain-http
  * postbacks are tunnelled too, so the proxy must allow CONNECT to the ports
- * they name (80, and any other a network uses), not only 443.
+ * they name (80, and any other a network uses), not only 443. The calls to
+ * fixed hosts route through FixedHostRoute, which pins them the same way.
  *
  * The guard still needs this server's resolver: the destination is checked
  * here, never left to the proxy. A value that does not read as
- * `http(s)://[user:password@]host:port` refuses every guarded request,
- * naming the setting; it never falls back to sending direct (CLAUDE.md #11).
+ * `http(s)://[user:password@]host:port`, or a saved one that cannot be
+ * read, refuses every request it would route, naming the setting; it never
+ * falls back to sending direct (CLAUDE.md #11).
  */
 final class EgressProxy
 {
     public const CONSTANT = 'P202_EGRESS_PROXY';
-    private const HELD = 'nothing that goes through the outbound guard is sent until it is fixed.';
+    public const FROM_CONSTANT = 'constant';
+    public const FROM_SETTINGS = 'settings';
+    private const IN_CONFIG = self::CONSTANT . ' in 202-config.php';
+    private const IN_SETTINGS = 'The egress proxy saved on Account › Settings';
+    private const HELD = 'nothing this server sends out is sent until it is fixed.';
+
+    /** @var (callable(): ?StoredEgressProxy)|null the saved setting's reader; null for p202EgressProxyStored() */
+    private static $storedReader = null;
 
     private function __construct(
         public readonly string $scheme,
         /** bracketed when an IPv6 address */
         public readonly string $host,
         public readonly int $port,
-        private readonly ?string $user,
-        private readonly ?string $password,
+        #[\SensitiveParameter] private readonly ?string $user,
+        #[\SensitiveParameter] private readonly ?string $password,
+        public readonly string $source,
     ) {
     }
 
     /**
-     * The proxy 202-config.php names, or null when it names none.
+     * Where the saved setting is read from. By default it is
+     * p202EgressProxyStored() (functions-shared.php, the install's database),
+     * so every bootstrap that loads that file (connect.php, connect2.php, the
+     * API) reads it; a process that loads none (the PHP CLI on an operator's
+     * machine) has only the constant. A test names its own reader.
      *
-     * @throws \UnexpectedValueException when the setting does not read as a proxy URL
+     * @param (callable(): ?StoredEgressProxy)|null $reader null for the default
+     */
+    public static function readStoredFrom(?callable $reader): void
+    {
+        self::$storedReader = $reader;
+    }
+
+    /**
+     * The proxy in force: the constant's when it is defined, else the one
+     * saved on Account › Settings, else null.
+     *
+     * @throws \UnexpectedValueException when the setting does not read as a proxy URL, or the saved one cannot be read
      */
     public static function configured(): ?self
     {
-        if (!defined(self::CONSTANT)) {
+        if (defined(self::CONSTANT)) {
+            $value = constant(self::CONSTANT);
+            if (!is_string($value)) {
+                throw new \UnexpectedValueException(self::IN_CONFIG . ' is a ' . get_debug_type($value)
+                    . ', not a proxy URL such as http://proxy.example:3128; ' . self::HELD);
+            }
+
+            return self::parse($value);
+        }
+        $reader = self::$storedReader ?? (function_exists('p202EgressProxyStored') ? 'p202EgressProxyStored' : null);
+        if ($reader === null) {
             return null;
         }
-        $value = constant(self::CONSTANT);
-        if (!is_string($value)) {
-            throw new \UnexpectedValueException(self::CONSTANT . ' in 202-config.php is a ' . get_debug_type($value)
-                . ', not a proxy URL such as http://proxy.example:3128; ' . self::HELD);
+        try {
+            $stored = $reader();
+        } catch (\Throwable $e) {
+            throw new \UnexpectedValueException(self::IN_SETTINGS . ' could not be read (' . get_class($e) . ': '
+                . $e->getMessage() . '); ' . self::HELD, 0, $e);
         }
 
-        return self::parse($value);
+        return $stored === null ? null : self::fromStored($stored);
+    }
+
+    /**
+     * A saved row as a proxy. Its URL carries no credentials; they are its
+     * own columns.
+     *
+     * @throws \UnexpectedValueException when the saved URL does not read
+     */
+    public static function fromStored(StoredEgressProxy $stored): self
+    {
+        if (str_contains($stored->url, '@')) {
+            throw self::unreadable($stored->url, 'its URL carries a user name, which is stored on its own', self::IN_SETTINGS);
+        }
+        $proxy = self::parse($stored->url, self::IN_SETTINGS);
+        if ($proxy === null) {
+            throw self::unreadable($stored->url, 'it is empty', self::IN_SETTINGS);
+        }
+        [$user, $password] = $stored->credentials();
+
+        return new self(
+            $proxy->scheme,
+            $proxy->host,
+            $proxy->port,
+            $stored->credentialsStored() ? $user : null,
+            $stored->credentialsStored() ? $password : null,
+            self::FROM_SETTINGS,
+        );
+    }
+
+    public function hasCredentials(): bool
+    {
+        return $this->user !== null;
     }
 
     /**
@@ -72,7 +141,7 @@ final class EgressProxy
      *
      * @throws \UnexpectedValueException naming what does not read
      */
-    public static function parse(string $value): ?self
+    public static function parse(string $value, string $named = self::IN_CONFIG): ?self
     {
         if ($value === '') {
             return null;
@@ -82,23 +151,23 @@ final class EgressProxy
             . '(?:\[(?<v6>[0-9A-Fa-f:.]+)\]|(?<host>[A-Za-z0-9.-]+))'
             . '(?::(?<port>[0-9]+))?/?$#D';
         if (strlen($value) > 500 || preg_match($pattern, $value, $m) !== 1) {
-            throw self::unreadable($value, 'it is not of the form http://host:port');
+            throw self::unreadable($value, 'it is not of the form http://host:port', $named);
         }
         $scheme = strtolower($m['scheme']);
         if ($scheme !== 'http' && $scheme !== 'https') {
-            throw self::unreadable($value, 'its scheme is ' . $scheme . '; only an http:// or https:// proxy is used');
+            throw self::unreadable($value, 'its scheme is ' . $scheme . '; only an http:// or https:// proxy is used', $named);
         }
         $port = $m['port'] ?? '';
         if ($port === '') {
-            throw self::unreadable($value, 'it names no port (curl would use 1080, not 80 or 443)');
+            throw self::unreadable($value, 'it names no port (curl would use 1080, not 80 or 443)', $named);
         }
         if ($port[0] === '0' || strlen($port) > 5 || (int) $port > 65535) {
-            throw self::unreadable($value, 'its port ' . $port . ' is not a port from 1 to 65535');
+            throw self::unreadable($value, 'its port ' . $port . ' is not a port from 1 to 65535', $named);
         }
         if (($m['v6'] ?? '') !== '') {
             $binary = @inet_pton($m['v6']);
             if ($binary === false || strlen($binary) !== 16) {
-                throw self::unreadable($value, '[' . $m['v6'] . '] is not an IPv6 address');
+                throw self::unreadable($value, '[' . $m['v6'] . '] is not an IPv6 address', $named);
             }
             $host = '[' . inet_ntop($binary) . ']';
         } else {
@@ -106,13 +175,13 @@ final class EgressProxy
             $labels = explode('.', $host);
             foreach ($labels as $label) {
                 if (preg_match('/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/D', $label) !== 1) {
-                    throw self::unreadable($value, $host . ' is not a host name or an IPv4 address');
+                    throw self::unreadable($value, $host . ' is not a host name or an IPv4 address', $named);
                 }
             }
             if (preg_match('/^[0-9.]+$/D', $host) === 1
                 && (count($labels) !== 4 || @inet_pton($host) === false || preg_match('/(^|\.)0[0-9]/', $host) === 1)
             ) {
-                throw self::unreadable($value, $host . ' is not an IPv4 address in dotted form');
+                throw self::unreadable($value, $host . ' is not an IPv4 address in dotted form', $named);
             }
         }
         $hasCredentials = isset($m['user']) && $m['user'] !== '' || isset($m['password']) && $m['password'] !== '';
@@ -123,6 +192,7 @@ final class EgressProxy
             (int) $port,
             $hasCredentials ? rawurldecode($m['user']) : null,
             $hasCredentials ? rawurldecode($m['password']) : null,
+            $named === self::IN_CONFIG ? self::FROM_CONSTANT : self::FROM_SETTINGS,
         );
     }
 
@@ -204,14 +274,14 @@ final class EgressProxy
         return $proxy !== null && (new WebhookGuard(null, ''))->refusal($target->pinned()) === null;
     }
 
-    private static function unreadable(string $value, string $why): \UnexpectedValueException
+    private static function unreadable(string $value, string $why, string $named = self::IN_CONFIG): \UnexpectedValueException
     {
         // A value carrying a password is never repeated.
         $shown = str_contains($value, '@')
             ? '(not shown: it has a user name or password)'
             : '"' . mb_substr((string) preg_replace('/[^\x21-\x7E]/', '?', $value), 0, 200) . '"';
 
-        return new \UnexpectedValueException(self::CONSTANT . ' in 202-config.php is ' . $shown . ', which is not a proxy URL: '
+        return new \UnexpectedValueException($named . ' is ' . $shown . ', which is not a proxy URL: '
             . $why . '. Write it as http://host:port; ' . self::HELD);
     }
 }

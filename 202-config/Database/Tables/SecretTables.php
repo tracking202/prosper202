@@ -33,7 +33,32 @@ final class SecretTables
             self::deploymentSecrets(),
             self::geoipRefresh(),
             self::licenceAnswers(),
+            self::egressProxy(),
         ];
+    }
+
+    /**
+     * The egress proxy this install's outbound requests go through
+     * (Prosper202\Http\EgressProxyStore), set on Account › Settings. One
+     * row, proxy_id 1: the proxy URL as http(s)://host:port, and its user
+     * name and password, which are never served back. P202_EGRESS_PROXY in
+     * 202-config.php overrides it. From 1.9.81, added by its rung.
+     */
+    public static function egressProxy(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::EGRESS_PROXY,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::EGRESS_PROXY . "` (
+                `proxy_id` tinyint(3) unsigned NOT NULL,
+                `proxy_url` varchar(500) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',
+                `proxy_username` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',
+                `proxy_password` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',
+                `updated_at` int(10) unsigned DEFAULT NULL,
+                `updated_by` int(10) unsigned DEFAULT NULL,
+                PRIMARY KEY (`proxy_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+              COMMENT='The egress proxy outbound requests go through, and its credentials'"
+        );
     }
 
     /**

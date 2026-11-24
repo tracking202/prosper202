@@ -250,6 +250,115 @@ if (isset($_POST['geoip_action'])) {
     }
 }
 
+// The egress proxy (Prosper202\Http\EgressProxy): saved here for the
+// install, overridden by P202_EGRESS_PROXY in 202-config.php. The URL is
+// shown back; its user name and password never are (an empty box keeps the
+// stored ones). Test connection sends one guarded request through the proxy
+// typed in the form, or the constant's when it overrides, and saves nothing.
+$egressTest = null;
+if (isset($_POST['egress_action'])) {
+    $egressStore = new \Prosper202\Http\EgressProxyStore(new \Prosper202\Database\Connection($db));
+    $egressAction = (string) $_POST['egress_action'];
+    $egressBy = (int) ($_SESSION['user_id'] ?? 0);
+    try {
+        if ($egressAction === 'save' || $egressAction === 'test') {
+            $egressUrl = trim((string) ($_POST['egress_proxy_url'] ?? ''));
+            $egressUser = (string) ($_POST['egress_proxy_username'] ?? '');
+            $egressPassword = (string) ($_POST['egress_proxy_password'] ?? '');
+            $egressClear = ($_POST['egress_proxy_clear_credentials'] ?? null) === '1';
+            $egressStored = $egressStore->read();
+            $egressProxy = null;
+            if ($egressUrl === '') {
+                $fieldErrors['egress_proxy_url'] = 'Enter the proxy URL, such as http://proxy.example:3128, or use'
+                    . ' Remove the proxy to send directly.';
+            } elseif (str_contains($egressUrl, '@')) {
+                $fieldErrors['egress_proxy_url'] = 'Put the user name and password in their own boxes under Advanced,'
+                    . ' not in the URL.';
+            } else {
+                try {
+                    $egressProxy = \Prosper202\Http\EgressProxy::parse($egressUrl, 'The proxy URL');
+                } catch (\UnexpectedValueException $egressFailure) {
+                    $fieldErrors['egress_proxy_url'] = (string) preg_replace('/; nothing this server sends out.*$/', '.',
+                        $egressFailure->getMessage());
+                }
+            }
+            $userError = \Prosper202\Http\EgressProxyStore::credentialError($egressUser, 'user name', true);
+            $passwordError = \Prosper202\Http\EgressProxyStore::credentialError($egressPassword, 'password', false);
+            if ($userError !== null) {
+                $fieldErrors['egress_proxy_username'] = $userError;
+            }
+            if ($passwordError !== null) {
+                $fieldErrors['egress_proxy_password'] = $passwordError;
+            }
+            $typedCredentials = !$egressClear && ($egressUser !== '' || $egressPassword !== '');
+            if ($typedCredentials && $egressUser === '') {
+                $fieldErrors['egress_proxy_username'] = 'Enter the user name that goes with the password.';
+            }
+            if ($fieldErrors === [] && $egressProxy !== null) {
+                // The stored credentials go only to the proxy they were saved
+                // for: a new host or port without them typed again drops them,
+                // so no one can have this server hand them to another proxy.
+                $egressSameProxy = $egressStored !== null && $egressStored->url === $egressProxy->label();
+                $egressDropped = !$typedCredentials && !$egressClear && !$egressSameProxy
+                    && $egressStored !== null && $egressStored->credentialsStored();
+                $credentials = match (true) {
+                    $egressClear => ['', ''],
+                    $typedCredentials => [$egressUser, $egressPassword],
+                    $egressSameProxy => $egressStored->credentials(),
+                    default => ['', ''],
+                };
+                if ($egressAction === 'save') {
+                    $egressStore->save(
+                        (string) $egressProxy->label(),
+                        $typedCredentials ? $egressUser : null,
+                        $typedCredentials ? $egressPassword : null,
+                        $egressClear || $egressDropped,
+                        $egressBy,
+                        time()
+                    );
+                    p202_account_flash('ok', (defined(\Prosper202\Http\EgressProxy::CONSTANT)
+                        ? 'Saved. P202_EGRESS_PROXY in 202-config.php still overrides it: remove that line to use this one.'
+                        : 'Saved. Webhooks, postbacks, notices, syncs and calls to Tracking202 now go out through '
+                            . $egressProxy->label() . '.')
+                        . ($egressDropped ? ' The stored user name and password were for another proxy, so they were'
+                            . ' removed; type them again if this one needs them.' : ''));
+                    p202_account_redirect('202-account/administration.php#egress-proxy');
+                }
+                try {
+                    $testing = defined(\Prosper202\Http\EgressProxy::CONSTANT)
+                        ? \Prosper202\Http\EgressProxy::configured()
+                        : \Prosper202\Http\EgressProxy::fromStored(
+                            new \Prosper202\Http\StoredEgressProxy($egressProxy->label(), $credentials[0], $credentials[1], null)
+                        );
+                    $egressTest = $testing === null
+                        ? ['ok' => false, 'message' => 'P202_EGRESS_PROXY in 202-config.php is empty, so no proxy is in use.']
+                        : (new \Prosper202\Http\EgressProxyCheck())->run($testing);
+                    if ($testing !== null && $testing->source === \Prosper202\Http\EgressProxy::FROM_CONSTANT) {
+                        $egressTest['message'] = 'Tested P202_EGRESS_PROXY from 202-config.php, which overrides this form. '
+                            . $egressTest['message'];
+                    }
+                } catch (\UnexpectedValueException $egressFailure) {
+                    $egressTest = ['ok' => false, 'message' => $egressFailure->getMessage()];
+                }
+            }
+        } elseif ($egressAction === 'forget') {
+            $egressStore->forget($egressBy, time());
+            p202_account_flash('ok', defined(\Prosper202\Http\EgressProxy::CONSTANT)
+                ? 'The saved proxy was removed. P202_EGRESS_PROXY in 202-config.php is still in force.'
+                : 'The proxy was removed: requests go out directly again.');
+            p202_account_redirect('202-account/administration.php#egress-proxy');
+        } else {
+            p202_account_flash('bad', 'The egress proxy form sent an action this page does not know, so nothing was changed.');
+            p202_account_redirect('202-account/administration.php#egress-proxy');
+        }
+    } catch (\Throwable $egressFailure) {
+        error_log('administration.php: the egress proxy could not be read or written: ' . $egressFailure->getMessage());
+        p202_account_flash('bad', 'The egress proxy setting could not be read or saved just now; the server log says'
+            . ' why. Nothing was changed.');
+        p202_account_redirect('202-account/administration.php#egress-proxy');
+    }
+}
+
 if (isset($_POST['database_management'])) {
     // The date comes from a native date input (YYYY-MM-DD); the classic
     // datepicker posted DD-MM-YYYY, which is still read. An empty or
@@ -538,9 +647,9 @@ $geoipNow = time();
 $geoipDatabase = \Prosper202\GeoIp\CityDatabase::status(\Prosper202\GeoIp\CityDatabase::PATH, $geoipNow);
 try {
     $geoipState = (new \Prosper202\GeoIp\RefreshStore(new \Prosper202\Database\Connection($db)))->read();
-} catch (\Throwable $e) {
+} catch (\Throwable $geoipFailure) {
     // Not "no account stored": that would offer to set up what may be set up.
-    error_log('administration.php: the GeoIP refresh row could not be read: ' . $e->getMessage());
+    error_log('administration.php: the GeoIP refresh row could not be read: ' . $geoipFailure->getMessage());
     $geoipState = null;
 }
 $geoipPill = match ($geoipDatabase->state) {
@@ -577,6 +686,42 @@ $geoipAccountInvalid = p202_account_invalid($fieldErrors, 'geoip_account_id');
 $geoipKeyInvalid = p202_account_invalid($fieldErrors, 'geoip_license_key');
 $geoipForgetConfirm = 'Remove the MaxMind account ID and licence key? The installed database stays, and is no longer'
     . ' refreshed.';
+// The egress proxy panel: the setting in force and the saved one, which
+// differ when P202_EGRESS_PROXY overrides it. A value that does not read is
+// said, never shown as "none".
+$egressError = null;
+try {
+    $egressInForce = \Prosper202\Http\EgressProxy::configured();
+} catch (\UnexpectedValueException $egressFailure) {
+    $egressInForce = null;
+    $egressError = $egressFailure->getMessage();
+}
+try {
+    $egressSaved = (new \Prosper202\Http\EgressProxyStore(new \Prosper202\Database\Connection($db)))->read();
+    $egressSavedRead = true;
+} catch (\Throwable $egressFailure) {
+    error_log('administration.php: the egress proxy row could not be read: ' . $egressFailure->getMessage());
+    $egressSaved = null;
+    $egressSavedRead = false;
+}
+$egressOverridden = defined(\Prosper202\Http\EgressProxy::CONSTANT);
+$egressPill = match (true) {
+    $egressError !== null => '<span class="p202-pill p202-pill--bad">Not sending</span>',
+    $egressInForce !== null => '<span class="p202-pill p202-pill--good">On</span>',
+    default => '<span class="p202-pill p202-pill--warn">Off</span>',
+};
+$egressInForceText = match (true) {
+    $egressError !== null => 'unreadable: nothing is sent until it is fixed',
+    $egressInForce === null => 'none: requests go out directly',
+    default => $egressInForce->label() . ($egressInForce->source === \Prosper202\Http\EgressProxy::FROM_CONSTANT
+        ? ' (P202_EGRESS_PROXY in 202-config.php)' : ' (saved here)'),
+};
+$egressFormOpen = isset($fieldErrors['egress_proxy_username']) || isset($fieldErrors['egress_proxy_password']);
+$egressFormUrl = isset($_POST['egress_action']) ? trim((string) ($_POST['egress_proxy_url'] ?? '')) : ($egressSaved?->url ?? '');
+$egressCredentialsStored = $egressSaved?->credentialsStored() ?? false;
+$egressCredentialHint = $egressCredentialsStored ? 'stored; type a new one to replace it' : 'none';
+$egressForgetConfirm = 'Remove the saved proxy? Requests then go out directly'
+    . ($egressOverridden ? ', unless P202_EGRESS_PROXY in 202-config.php names one.' : '.');
 $yesNo = static fn (bool $on, string $yes = 'Yes', string $no = 'No'): string => $on
 	? '<span class="p202-pill p202-pill--good">' . $yes . '</span>'
 	: '<span class="p202-pill p202-pill--warn">' . $no . '</span>';
@@ -591,8 +736,8 @@ $tsPanel = null;
 if ($tsReview && $tsOwners['controller'] !== null && $tsOwners['report'] !== null) {
     try {
         $tsPanel = p202_ts_owners_panel($tsOwners['report'], $tsOwners['controller'], $self);
-    } catch (\Throwable $e) {
-        error_log('Account › Settings: the traffic source owners panel could not be drawn: ' . $e->getMessage());
+    } catch (\Throwable $tsFailure) {
+        error_log('Account › Settings: the traffic source owners panel could not be drawn: ' . $tsFailure->getMessage());
         $tsOwners['error'] = 'Who may move each traffic source could not be checked just now; the server log says why.'
             . ' Reload the page to try again.';
     }
@@ -783,6 +928,98 @@ if ($unsavedWarning !== null) {
 			</div>
 		</section>
 	</div>
+
+    <div class="col-12">
+        <section class="p202-panel" id="egress-proxy">
+            <div class="p202-panel__head">
+                <h2 class="p202-panel__title">Egress proxy</h2>
+                <?php echo $egressPill; ?>
+            </div>
+            <div class="p202-panel__body">
+                <p class="text-secondary">For a server that reaches the internet only through an HTTP proxy.
+                    Webhooks, postbacks, Slack notices, syncs, conversion destinations, the GeoIP download and the
+                    calls to Tracking202 then go out through it. This server still looks up every host itself and
+                    checks the address; the proxy is asked to open a tunnel to that address, never to look up a
+                    name, so it must allow CONNECT to port 443 (and 80 for http postbacks).</p>
+                <div class="p202-strip mb-3">
+                    <div class="p202-strip__row">
+                        <?php echo $egressPill; ?>
+                        <span class="p202-strip__label">In use</span>
+                        <span class="p202-strip__value" id="egress-proxy-in-use"><?php echo $e($egressInForceText); ?></span>
+                    </div>
+                    <?php if ($egressOverridden) { ?>
+                        <div class="p202-strip__note">P202_EGRESS_PROXY in 202-config.php overrides what is saved
+                            here. Remove that line to use this setting.</div>
+                    <?php } ?>
+                </div>
+                <?php if ($egressError !== null) { ?>
+                    <?php echo p202_flash('bad', $egressError); ?>
+                <?php } ?>
+                <?php if ($egressTest !== null) { ?>
+                    <div id="egress-proxy-test"><?php echo p202_flash($egressTest['ok'] ? 'ok' : 'bad', $egressTest['message']); ?></div>
+                <?php } ?>
+                <?php if (!$egressSavedRead) { ?>
+                    <?php echo p202_flash('bad', 'The saved proxy could not be read just now; the server log says why.'
+                        . ' Reload the page to try again.'); ?>
+                <?php } else { ?>
+                    <form method="post" action="<?php echo $e($self . '#egress-proxy'); ?>">
+                        <?php echo p202_account_token_field(); ?>
+                        <label class="form-label" for="egress_proxy_url">Proxy URL</label>
+                        <input type="text" class="form-control<?php echo p202_account_invalid($fieldErrors, 'egress_proxy_url'); ?>"
+                            id="egress_proxy_url" name="egress_proxy_url" autocomplete="off" spellcheck="false"
+                            placeholder="http://proxy.example:3128" value="<?php echo $e($egressFormUrl); ?>">
+                        <?php echo p202_account_field_error($fieldErrors, 'egress_proxy_url'); ?>
+                        <div class="form-text">http:// or https://, the host and the port.</div>
+                        <details class="p202-disclosure mt-3"<?php echo $egressFormOpen ? ' open' : ''; ?>>
+                            <summary>Advanced <span class="p202-disclosure__hint">a user name and password for the proxy</span></summary>
+                            <div class="p202-disclosure__body">
+                                <div class="row g-3">
+                                    <div class="col-12 col-md-6">
+                                        <label class="form-label" for="egress_proxy_username">User name
+                                            <?php echo $egressCredentialsStored ? '<span class="p202-pill p202-pill--good">Stored</span>' : ''; ?></label>
+                                        <input type="text" class="form-control<?php echo p202_account_invalid($fieldErrors, 'egress_proxy_username'); ?>"
+                                            id="egress_proxy_username" name="egress_proxy_username" autocomplete="off"
+                                            spellcheck="false" placeholder="<?php echo $e($egressCredentialHint); ?>">
+                                        <?php echo p202_account_field_error($fieldErrors, 'egress_proxy_username'); ?>
+                                    </div>
+                                    <div class="col-12 col-md-6">
+                                        <label class="form-label" for="egress_proxy_password">Password
+                                            <?php echo $egressCredentialsStored ? '<span class="p202-pill p202-pill--good">Stored</span>' : ''; ?></label>
+                                        <input type="password" class="form-control<?php echo p202_account_invalid($fieldErrors, 'egress_proxy_password'); ?>"
+                                            id="egress_proxy_password" name="egress_proxy_password"
+                                            autocomplete="new-password" spellcheck="false"
+                                            placeholder="<?php echo $e($egressCredentialHint); ?>">
+                                        <?php echo p202_account_field_error($fieldErrors, 'egress_proxy_password'); ?>
+                                    </div>
+                                </div>
+                                <?php if ($egressCredentialsStored) { ?>
+                                    <div class="form-check mt-2">
+                                        <input class="form-check-input" type="checkbox" value="1"
+                                            id="egress_proxy_clear_credentials" name="egress_proxy_clear_credentials">
+                                        <label class="form-check-label" for="egress_proxy_clear_credentials">Remove the
+                                            stored user name and password</label>
+                                    </div>
+                                <?php } ?>
+                                <div class="form-text">Stored here and never shown again.</div>
+                            </div>
+                        </details>
+                        <div class="p202-toolbar mt-3">
+                            <button class="btn btn-primary btn-sm" type="submit" name="egress_action" value="save">Save</button>
+                            <button class="btn btn-secondary btn-sm" type="submit" name="egress_action" value="test">Test connection</button>
+                        </div>
+                    </form>
+                    <?php if ($egressSaved !== null) { ?>
+                        <form method="post" class="mt-2" action="<?php echo $e($self . '#egress-proxy'); ?>"
+                            data-p202-confirm="<?php echo $e($egressForgetConfirm); ?>">
+                            <?php echo p202_account_token_field(); ?>
+                            <input type="hidden" name="egress_action" value="forget">
+                            <button class="btn btn-outline-danger btn-sm" type="submit">Remove the proxy</button>
+                        </form>
+                    <?php } ?>
+                <?php } ?>
+            </div>
+        </section>
+    </div>
 
     <div class="col-12">
         <section class="p202-panel" id="geoip">

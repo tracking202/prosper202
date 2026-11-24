@@ -5570,6 +5570,8 @@ class UPGRADE
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
+                // The egress proxy set on Account › Settings (Prosper202\Http\EgressProxyStore).
+                \Prosper202\Database\Tables\SecretTables::egressProxy(),
             ]);
             if ($step_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.81'") !== false) {

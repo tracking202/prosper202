@@ -25,12 +25,13 @@ $mchost = 'localhostmemcache'; // this is the memcache server host, if you don't
 // define('P202_CONVERSION_LOGS_CSV_MAX', 50000);
 
 // ** Optional: egress proxy ** //
-// For a server that reaches the internet only through an HTTP proxy. Webhooks,
-// postbacks, Slack notices, syncs, destinations and the GeoIP download then go
-// through it, each tunnelled (CONNECT) to the address this server checked; the
-// proxy must allow CONNECT to the ports they use (443, and 80 for http
-// postbacks). This server still looks up each host itself. A value that does
-// not read as http(s)://[user:password@]host:port stops them all until fixed.
+// For a server that reaches the internet only through an HTTP proxy. Set it on
+// Account › Settings › Egress proxy (with a Test connection button); a value
+// here overrides that one. Everything this server sends out then goes through
+// it, each request tunnelled (CONNECT) to the address this server looked up
+// itself; the proxy must allow CONNECT to the ports used (443, and 80 for http
+// postbacks). A value that does not read as http(s)://[user:password@]host:port
+// stops them all until it is fixed.
 //
 // define('P202_EGRESS_PROXY', 'http://proxy.example:3128');
 

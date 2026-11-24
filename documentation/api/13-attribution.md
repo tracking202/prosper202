@@ -202,17 +202,21 @@ whose receiver is on their own network can allow that network with
 `define('P202_WEBHOOK_ALLOW_NETWORKS', '10.20.0.0/16');` in `202-config.php`;
 link-local and the metadata endpoints can never be allowed, and an entry that
 does not parse stops every webhook until it is fixed. A server that reaches
-the internet only through a proxy names it with
+the internet only through a proxy names it on Account › Settings › Egress
+proxy (an admin's page: the proxy URL, a user name and password under
+Advanced that are never shown again, and a Test connection button), or with
 `define('P202_EGRESS_PROXY', 'http://proxy.example:3128');` in
-`202-config.php` (an `https://` proxy, and `user:password@` before the host,
-percent-encoded, are read too; the port is required). Each webhook is then
+`202-config.php`, which overrides the saved one (an `https://` proxy, and
+`user:password@` before the host, percent-encoded, are read too; the port is
+required). Each webhook is then
 checked here as before, its host looked up by this server, and sent through a
 CONNECT tunnel to the address that passed: the proxy is never asked to look
 up the name, and must allow CONNECT to the receiver's port. An address only
 `P202_WEBHOOK_ALLOW_NETWORKS` admits is reached directly, as without a proxy.
-A value that does not read as a proxy URL stops every webhook, postback,
-Slack notice, sync and destination until it is fixed; nothing is sent around
-the proxy instead. The same setting, and
+A value that does not read as a proxy URL, or a saved one that cannot be
+read, stops every webhook, postback, Slack notice, sync and destination, and
+every call to my.tracking202.com and the other fixed services, until it is
+fixed; nothing is sent around the proxy instead. The same setting, and
 the same address rules, govern the LTV webhooks ([20-ltv.md](20-ltv.md#webhooks))
 and, with http:// allowed, the traffic sources' server-to-server postbacks
 ([27-setup.md](27-setup.md#an-accounts-pixels--ppc-accountsidpixels)).
