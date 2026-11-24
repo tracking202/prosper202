@@ -869,10 +869,17 @@ if (!empty($_POST['update_p202_customer_api_key']) && $_POST['update_p202_custom
 		p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
 		p202_account_redirect('202-account/account.php#customer-key');
 	}
-	$postedCustomerKey = trim((string)($_POST['p202_customer_api_key'] ?? ''));
+	// The field is never filled with the saved key, so an empty one keeps it
+	// (SavedSecret::keeps()); removing it is the Remove key button.
+	$removeCustomerKey = ($_POST['remove_p202_customer_api_key'] ?? '') === '1';
+	$postedCustomerKey = $removeCustomerKey || \Prosper202\Setup\SavedSecret::keeps($_POST['p202_customer_api_key'] ?? null)
+		? ''
+		: trim($_POST['p202_customer_api_key']);
 	$mysql['p202_customer_api_key'] = $db->real_escape_string($postedCustomerKey);
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-	if ($postedCustomerKey !== '') {
+	if ($postedCustomerKey === '' && !$removeCustomerKey) {
+		$keyErrors['p202_customer_api_key'] = 'Enter a customer API key to save. A saved key is kept until you replace it or press Remove key.';
+	} elseif ($postedCustomerKey !== '') {
 		if (($customerKeyError = p202_check_customer_key($postedCustomerKey)) !== null) {
 			$keyErrors['p202_customer_api_key'] = $customerKeyError;
 		}
@@ -1133,8 +1140,12 @@ template_top('Personal Settings');
 
 <?php
 $extraFlashes = $pageFlashes;
+// The customer key unlocks a paid install, so the page says only that one is
+// saved and how it ends: never the key, in the field or anywhere else.
+$customerKeySaved = \Prosper202\Setup\SavedSecret::isSaved($user_row['p202_customer_api_key'] ?? null);
+$customerKeyHint = \Prosper202\Setup\SavedSecret::hint($user_row['p202_customer_api_key'] ?? null);
 if ($pendingCustomerApiKey !== null) {
-	$extraFlashes[] = ['kind' => 'info', 'text' => 'Your customer API key from my.tracking202.com is filled in under Prosper202 customer API key below. Press Save key to connect it to this account; nothing is saved until you do.'];
+	$extraFlashes[] = ['kind' => 'info', 'text' => 'Your customer API key from my.tracking202.com is ready under Prosper202 customer API key below. Press Save this key to connect it to this account; nothing is saved until you do.'];
 }
 foreach (['clickserver_api_key', 'user_api_key', 'user_stats202_app_key'] as $keyField) {
 	if (isset($keyErrors[$keyField])) {
@@ -1526,15 +1537,29 @@ echo p202_account_render_flashes($extraFlashes);
 					<span class="p202-panel__sub">for paid features, upgrades and the Landing Page Optimizer</span>
 				</div>
 				<div class="p202-panel__body">
+					<p class="mb-2"><span class="text-secondary">This account's key:</span> <span data-saved-secret><?php echo $e($customerKeyHint); ?></span></p>
+					<?php if ($pendingCustomerApiKey !== null) { ?>
+					<form method="post" class="mb-3" action="<?php echo $e(get_absolute_url() . '202-account/account.php#customer-key'); ?>">
+						<input type="hidden" name="update_p202_customer_api_key" value="1">
+						<?php echo p202_account_token_field(); ?>
+						<?php // The hand-back's key, from this request's own URL, carried to the token-checked save. ?>
+						<input type="hidden" name="p202_customer_api_key" value="<?php echo $e($pendingCustomerApiKey); ?>">
+						<p class="mb-2">Key from my.tracking202.com: <span data-saved-secret><?php echo $e(str_replace('Saved', 'Ready to save', \Prosper202\Setup\SavedSecret::hint($pendingCustomerApiKey))); ?></span></p>
+						<button class="btn btn-primary" type="submit">Save this key</button>
+					</form>
+					<?php } ?>
 					<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php#customer-key'); ?>">
 						<input type="hidden" name="update_p202_customer_api_key" value="1">
 						<?php echo p202_account_token_field(); ?>
-						<label class="form-label" for="p202_customer_api_key">Customer API key</label>
+						<label class="form-label" for="p202_customer_api_key"><?php echo $customerKeySaved ? 'Replace it with a new key' : 'Customer API key'; ?></label>
 						<div class="input-group">
-							<input type="text" class="form-control<?php echo p202_account_invalid($keyErrors, 'p202_customer_api_key'); ?>" id="p202_customer_api_key" name="p202_customer_api_key" autocomplete="off" spellcheck="false" value="<?php echo $e($_POST['p202_customer_api_key'] ?? $pendingCustomerApiKey ?? ($user_row['p202_customer_api_key'] ?? '')); ?>">
+							<input type="text" class="form-control<?php echo p202_account_invalid($keyErrors, 'p202_customer_api_key'); ?>" id="p202_customer_api_key" name="p202_customer_api_key" autocomplete="off" spellcheck="false" value="">
 							<button class="btn btn-secondary" type="submit">Save key</button>
+							<?php if ($customerKeySaved) { ?>
+							<button class="btn btn-outline-danger" type="submit" name="remove_p202_customer_api_key" value="1" formnovalidate>Remove key</button>
+							<?php } ?>
 						</div>
-						<div class="form-text">From your <a href="https://my.tracking202.com/api/customers/register" target="_blank" rel="noopener">Prosper202 customer dashboard</a>. It is checked with the dashboard before it is saved; save it empty to remove it.</div>
+						<div class="form-text">From your <a href="https://my.tracking202.com/api/customers/register" target="_blank" rel="noopener">Prosper202 customer dashboard</a>. It is checked with the dashboard before it is saved<?php echo $customerKeySaved ? '; leave the field empty to keep the saved key' : ''; ?>.</div>
 						<?php echo p202_account_field_error($keyErrors, 'p202_customer_api_key'); ?>
 					</form>
 				</div>
