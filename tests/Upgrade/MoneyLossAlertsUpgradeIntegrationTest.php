@@ -84,7 +84,7 @@ final class MoneyLossAlertsUpgradeIntegrationTest extends TestCase
             self::assertSame([['2']], $kept->fetch_all());
             $version = self::$db->query('SELECT version FROM 202_version');
             self::assertInstanceOf(\mysqli_result::class, $version);
-            self::assertSame('1.9.80', $version->fetch_row()[0]);
+            self::assertSame('1.9.81', $version->fetch_row()[0]);
         } finally {
             self::q('DELETE FROM 202_conversion_logs WHERE user_id = 7899');
         }

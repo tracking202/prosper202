@@ -245,7 +245,7 @@ final class PurLinkCarryOverUpgradeIntegrationTest extends TestCase
 
         self::assertSame('RETURNED true', $out, $err);
         self::assertStringNotContainsString('Prosper202 upgrade', $err, 'a rung that converged logs nothing');
-        self::assertSame('1.9.80', self::version());
+        self::assertSame('1.9.81', self::version());
         self::assertStringContainsString(
             'Prosper202 PurLink carry-over: 2 pending click(s) of 202_clicks_purlink carried; skipped 6 row(s):'
                 . ' expired 1, superseded 1, other_page 1, no_offer 1, converted 1, no_click 1.'
@@ -305,7 +305,7 @@ final class PurLinkCarryOverUpgradeIntegrationTest extends TestCase
         [$out, $err] = self::upgrade();
 
         self::assertSame('RETURNED true', $out, $err);
-        self::assertSame('1.9.80', self::version());
+        self::assertSame('1.9.81', self::version());
         self::assertStringNotContainsString('PurLink carry-over', $err);
         self::assertStringNotContainsString('Prosper202 upgrade', $err);
     }
@@ -318,7 +318,7 @@ final class PurLinkCarryOverUpgradeIntegrationTest extends TestCase
         [$out, $err] = self::upgrade();
 
         self::assertSame('RETURNED true', $out, $err);
-        self::assertSame('1.9.80', self::version());
+        self::assertSame('1.9.81', self::version());
         self::assertStringContainsString(
             '202_clicks_purlink does not have paid 1.9.56\'s columns; nothing carried',
             $err
@@ -346,7 +346,7 @@ final class PurLinkCarryOverUpgradeIntegrationTest extends TestCase
         [$out, $err] = self::upgrade();
 
         self::assertSame('RETURNED true', $out, $err);
-        self::assertSame('1.9.80', self::version());
+        self::assertSame('1.9.81', self::version());
         self::assertSame((string) self::$campaign[self::OFFER], self::campaignOf($clickId));
     }
 }

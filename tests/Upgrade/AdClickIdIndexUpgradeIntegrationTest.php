@@ -187,7 +187,7 @@ final class AdClickIdIndexUpgradeIntegrationTest extends TestCase
 
         self::assertSame('RETURNED true', $out, $err);
         self::assertStringNotContainsString('Prosper202 upgrade', $err, 'a rung that converged logs nothing');
-        self::assertSame('1.9.80', (string) self::$db->query('SELECT version FROM 202_version')->fetch_row()[0]);
+        self::assertSame('1.9.81', (string) self::$db->query('SELECT version FROM 202_version')->fetch_row()[0]);
         foreach (self::$installed as $table => $installed) {
             self::assertSame($installed, self::createTable($table), "upgraded, $table is what an install creates");
         }

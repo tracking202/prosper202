@@ -152,7 +152,7 @@ final class PaidVersionUpgradeIntegrationTest extends TestCase
     {
         self::assertSame('RETURNED true', $out, $err);
         self::assertStringNotContainsString('Prosper202 upgrade', $err, 'a rung that converged logs nothing');
-        self::assertSame('1.9.80', (string) self::$db->query('SELECT version FROM 202_version')->fetch_row()[0]);
+        self::assertSame('1.9.81', (string) self::$db->query('SELECT version FROM 202_version')->fetch_row()[0]);
         foreach (self::$fresh as $table => $ddl) {
             self::assertSame($ddl, self::shape($table), "the upgraded $table is the installed one");
         }
@@ -167,7 +167,7 @@ final class PaidVersionUpgradeIntegrationTest extends TestCase
 
         self::assertUpgradedToTheInstalledSchema($out, $err);
         self::assertTrue(
-            \Prosper202\Update\PaidOrigin::isPaid1956(self::$db, '1.9.80'),
+            \Prosper202\Update\PaidOrigin::isPaid1956(self::$db, '1.9.81'),
             'the upgraded install is still known to have come from paid 1.9.56, by the table the upgrade leaves'
         );
         $pass = self::$db->query('SELECT user_pass FROM 202_users WHERE user_id = ' . self::USER)->fetch_row()[0];

@@ -29,7 +29,7 @@ $memcacheInstalled = isset($memcacheInstalled) ? (bool)$memcacheInstalled : fals
 
 //check to see if this is already installed, if so don't do anything
 if (upgrade_needed() == false && !(
-    $version === '1.9.80'
+    $version === '1.9.81'
     && \Prosper202\PaymentNotification\Shopify\SettlementSchema::needsRepair($db)
 )) {
     header('location: ' . get_absolute_url() . '202-login.php');

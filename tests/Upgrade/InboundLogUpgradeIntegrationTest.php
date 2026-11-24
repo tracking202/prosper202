@@ -57,7 +57,7 @@ final class InboundLogUpgradeIntegrationTest extends TestCase
         self::assertSame('RETURNED true', $out, $err);
         self::assertStringNotContainsString('Prosper202 upgrade', $err, 'a rung that converged logs nothing');
         self::assertSame($fresh, self::shape(), 'the table is the installed one');
-        self::assertSame('1.9.80', self::storedVersion());
+        self::assertSame('1.9.81', self::storedVersion());
     }
 
     public function testTheRungConvergesOnATableAlreadyThere(): void
@@ -71,7 +71,7 @@ final class InboundLogUpgradeIntegrationTest extends TestCase
         self::assertSame('RETURNED true', $out, $err);
         self::assertStringNotContainsString('Prosper202 upgrade', $err);
         self::assertSame($fresh, self::shape());
-        self::assertSame('1.9.80', self::storedVersion());
+        self::assertSame('1.9.81', self::storedVersion());
     }
 
     public function testAlreadyUpgradedDatabaseCanRepairMissingShopifyTables(): void
@@ -86,7 +86,7 @@ final class InboundLogUpgradeIntegrationTest extends TestCase
 
         self::assertSame('RETURNED true', $out, $err);
         self::assertFalse(SettlementSchema::needsRepair($db));
-        self::assertSame('1.9.80', self::storedVersion());
+        self::assertSame('1.9.81', self::storedVersion());
         // A failed reconcile can leave both tables but a missing index.
         self::q('ALTER TABLE 202_shopify_pending_refunds DROP INDEX pending_order');
         self::assertTrue(SettlementSchema::needsRepair($db));

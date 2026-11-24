@@ -456,7 +456,7 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
     {
         [$out, $err] = self::$upgrade;
         self::assertSame('RETURNED true', $out, $err);
-        self::assertSame('1.9.80', self::scalar('SELECT version FROM 202_version'));
+        self::assertSame('1.9.81', self::scalar('SELECT version FROM 202_version'));
         self::assertSame('0123456789abcdef0123456789abcdef', self::scalar(
             'SELECT user_pass FROM 202_users WHERE user_id = ' . self::OWNER
         ), 'the stored 1.9.56 password is kept, so its sign-in still works');
@@ -776,7 +776,7 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
     {
         [$status, , $body] = self::http('/api/v1/version/?apikey=' . self::API_KEY);
         self::assertSame(200, $status, $body);
-        self::assertSame(['version' => '1.9.80'], json_decode($body, true));
+        self::assertSame(['version' => '1.9.81'], json_decode($body, true));
         [$status, , $body] = self::http('/api/v1/campaigns/?apikey=' . self::API_KEY);
         self::assertSame(200, $status, $body);
         self::assertContains('Store checkout', array_column(json_decode($body, true)['campaigns'] ?? [], 'aff_campaign_name'));

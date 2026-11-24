@@ -73,7 +73,7 @@ final class IpqsScoringUpgradeIntegrationTest extends TestCase
         self::assertSame($prefs, self::shape('202_users_pref'), '202_users_pref is not altered');
         $version = self::$db->query('SELECT version FROM 202_version');
         self::assertInstanceOf(\mysqli_result::class, $version);
-        self::assertSame('1.9.80', $version->fetch_row()[0]);
+        self::assertSame('1.9.81', $version->fetch_row()[0]);
     }
 
     /** @return array<string, string> */

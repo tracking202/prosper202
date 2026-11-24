@@ -114,7 +114,7 @@ final class DestinationDeliveriesKeyUpgradeIntegrationTest extends TestCase
 
         self::stored('1.9.79');
         [$out, $err] = self::upgrade();
-        self::assertSame('1.9.80', self::$db->query('SELECT version FROM 202_version')->fetch_row()[0], "the rung ran: $out $err");
+        self::assertSame('1.9.81', self::$db->query('SELECT version FROM 202_version')->fetch_row()[0], "the rung ran: $out $err");
         self::assertTrue(self::hasKey(), 'the rung added it');
         self::assertSame($fresh, self::shape(), 'the upgraded table is the installed one');
         self::assertSame('failed', self::$db->query('SELECT status FROM 202_destination_deliveries WHERE user_id = ' . self::USER)->fetch_row()[0], 'its rows are kept');

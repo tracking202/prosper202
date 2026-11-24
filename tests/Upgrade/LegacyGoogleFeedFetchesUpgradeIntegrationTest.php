@@ -57,7 +57,7 @@ final class LegacyGoogleFeedFetchesUpgradeIntegrationTest extends TestCase
         self::assertSame('RETURNED true', $out, $err);
         self::assertStringNotContainsString('Prosper202 upgrade', $err, 'a rung that converged logs nothing');
         self::assertSame($fresh, self::shape(), 'the table is the installed one');
-        self::assertSame('1.9.80', self::storedVersion());
+        self::assertSame('1.9.81', self::storedVersion());
     }
 
     public function testTheRungConvergesOnATableAlreadyThere(): void
@@ -71,7 +71,7 @@ final class LegacyGoogleFeedFetchesUpgradeIntegrationTest extends TestCase
         self::assertSame('RETURNED true', $out, $err);
         self::assertStringNotContainsString('Prosper202 upgrade', $err);
         self::assertSame($fresh, self::shape());
-        self::assertSame('1.9.80', self::storedVersion());
+        self::assertSame('1.9.81', self::storedVersion());
     }
 
     private static function version(string $version): void

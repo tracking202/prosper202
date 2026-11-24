@@ -1651,8 +1651,8 @@ class UPGRADE
     {
         try {
             $laddered = self::ladder($time_from);
-            if ($laddered === true && PROSPER202::prosper202_version() === '1.9.80'
-                && PROSPER202::php_version() === '1.9.80') {
+            if ($laddered === true && PROSPER202::prosper202_version() === '1.9.81'
+                && PROSPER202::php_version() === '1.9.81') {
                 $laddered = \Prosper202\PaymentNotification\Shopify\SettlementSchema::repair(
                     DB::getInstance()->getConnection()
                 );
@@ -5559,10 +5559,34 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.80', '>')) {
+        if ($prosper202_version == '1.9.80') {
 
-            $prosper202_version = '1.9.80';
+            // A schema change for 1.9.81 belongs in this block, reconciled
+            // before the version is written.
+            //
+            // The Shopify refund tables, which a database upgraded by an
+            // early 1.9.80 build can lack (Prosper202\PaymentNotification\
+            // Shopify\SettlementSchema), reconciled on the way up.
+            $step_ok = _upgrade_measurement_tables([
+                \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
+                \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
+            ]);
+            if ($step_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.81'") !== false) {
+                    $prosper202_version = '1.9.81';
+                } else {
+                    _upgrade_note('failed to persist version 1.9.81; leaving version at 1.9.80 so the next run retries.');
+                }
+            } else {
+                _upgrade_note('a table of the 1.9.81 step could not be reconciled (the list above);'
+                    . ' leaving version at 1.9.80 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.81', '>')) {
+
+            $prosper202_version = '1.9.81';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }

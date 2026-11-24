@@ -1,0 +1,1 @@
+-- Changed: The database upgrade gains its 1.9.80 -> 1.9.81 step, which reconciles the Shopify refund tables on the way up, and the downgrade guard moves to 1.9.81.

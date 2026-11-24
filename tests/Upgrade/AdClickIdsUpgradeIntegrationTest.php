@@ -202,7 +202,7 @@ final class AdClickIdsUpgradeIntegrationTest extends TestCase
 
         self::assertSame('RETURNED true', $out, $err);
         self::assertStringNotContainsString('Prosper202 upgrade', $err, 'a rung that converged logs nothing');
-        self::assertSame('1.9.80', (string) self::all('SELECT version FROM 202_version')[0]['version']);
+        self::assertSame('1.9.81', (string) self::all('SELECT version FROM 202_version')[0]['version']);
         self::assertSame(self::$installed, self::createTable(), 'upgraded, 202_google is what an install creates');
 
         self::q('DELETE FROM 202_version');
@@ -221,7 +221,7 @@ final class AdClickIdsUpgradeIntegrationTest extends TestCase
         [$out, $err] = self::upgrade();
 
         self::assertSame('RETURNED true', $out, $err);
-        self::assertSame('1.9.80', (string) self::all('SELECT version FROM 202_version')[0]['version']);
+        self::assertSame('1.9.81', (string) self::all('SELECT version FROM 202_version')[0]['version']);
         self::assertSame(self::$installed, self::createTable(), 'upgraded, 202_google is what an install creates');
     }
 

@@ -22,8 +22,8 @@ use Tests\TestCase;
  */
 final class UpgradeLadderTest extends TestCase
 {
-    private const CURRENT_VERSION = '1.9.80';
-    private const PRIOR_VERSION = '1.9.79';
+    private const CURRENT_VERSION = '1.9.81';
+    private const PRIOR_VERSION = '1.9.80';
 
     /**
      * The step that reconciles 202_users_pref and drops the chat cache:
@@ -38,6 +38,9 @@ final class UpgradeLadderTest extends TestCase
      */
     private const APP_TABLES_STEP = '1.9.75';
     private const APP_TABLES_STEP_TO = '1.9.76';
+
+    /** The step that hashes the stored API keys: 1.9.79 -> 1.9.80. */
+    private const API_KEY_HASH_STEP = '1.9.79';
 
     /** The reconcile call a step must make; also how a step is recognised. */
     private const RECONCILE_CALL = '_upgrade_measurement_tables(';
@@ -1235,7 +1238,7 @@ final class UpgradeLadderTest extends TestCase
             }
         }
         $this->assertGreaterThan(1, count($apiKeys), 'the 1.9.78 and 1.9.80 rungs both reconcile 202_api_keys');
-        $this->assertSame([[self::PRIOR_VERSION]], $hashing, 'only the rung gated on ' . self::PRIOR_VERSION . ' hashes');
+        $this->assertSame([[self::API_KEY_HASH_STEP]], $hashing, 'only the rung gated on ' . self::API_KEY_HASH_STEP . ' hashes');
     }
 
     /**

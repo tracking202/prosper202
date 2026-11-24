@@ -49,7 +49,7 @@ final class PurLinkOrderUpgradeIntegrationTest extends TestCase
         [$out, $err] = self::upgrade();
         self::assertSame('RETURNED true', $out, $err);
         self::assertStringNotContainsString('Prosper202 upgrade', $err);
-        self::assertSame('1.9.80', self::version());
+        self::assertSame('1.9.81', self::version());
         self::assertSame($shape, self::shape());
         self::assertSame($goalShape, self::goalShape());
         self::assertSame($pixelShape, self::pixelShape());
@@ -59,7 +59,7 @@ final class PurLinkOrderUpgradeIntegrationTest extends TestCase
         self::setVersion($version);
         [$out, $err] = self::upgrade();
         self::assertSame('RETURNED true', $out, $err);
-        self::assertSame('1.9.80', self::version());
+        self::assertSame('1.9.81', self::version());
         self::assertSame('3', self::$db->query('SELECT sequence FROM 202_purlink_exit_order WHERE click_id=123')->fetch_row()[0]);
         self::assertSame('4', self::$db->query('SELECT campaign_id FROM 202_purlink_goal_subjects WHERE subject_id=456')->fetch_row()[0]);
         self::assertSame('123', self::$db->query('SELECT click_id FROM 202_purlink_pixel_fires WHERE conv_id=789')->fetch_row()[0]);
@@ -83,7 +83,7 @@ final class PurLinkOrderUpgradeIntegrationTest extends TestCase
         }
         [$out, $err] = self::upgrade();
         self::assertSame('RETURNED true', $out, $err);
-        self::assertSame('1.9.80', self::version());
+        self::assertSame('1.9.81', self::version());
         self::assertNotSame('', self::shape());
     }
 
