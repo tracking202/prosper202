@@ -14,6 +14,15 @@ info:
     ```
     API keys are managed via the `/users/{id}/api-keys` endpoints.
 
+    A page on the same origin may instead send the session cookie the
+    sign-in set, with no Authorization header. The session is read as the
+    pages read it, so switching the user off or changing their password ends
+    it on the next call. Every method but GET and HEAD sends the session's
+    token in an `X-P202-CSRF` header (`GET /me` answers it as
+    `auth.csrf_token`); a write without it is `403` and changes nothing. A
+    request with an Authorization header is always a key's, whatever cookie
+    it carries.
+
     ## Pagination
     List endpoints return paginated results:
     ```json
@@ -143,6 +152,7 @@ servers:
 
 security:
   - BearerAuth: []
+  - SessionCookie: []
 
 tags:
   - name: System
@@ -10104,11 +10114,16 @@ paths:
                         properties:
                           method:
                             type: string
-                            enum: [api_key]
+                            enum: [api_key, session]
+                            description: >-
+                              How this request was signed in: a key in the Authorization header, or the
+                              pages' session cookie.
                           csrf_token:
                             type: string
                             nullable: true
-                            description: Null for a key.
+                            description: >-
+                              For a session, the token every request but GET and HEAD sends in the
+                              X-P202-CSRF header. Null for a key.
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -14415,6 +14430,13 @@ components:
       type: http
       scheme: bearer
       description: API key from /users/{id}/api-keys
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: PHPSESSID
+      description: >-
+        The session cookie the sign-in sets, for a page on the same origin. Every method but GET and HEAD
+        also sends the session's token in the X-P202-CSRF header (GET /me answers it as auth.csrf_token).
 
   # ─── Shared parameters ──────────────────────────────────────────────
 

@@ -130,7 +130,7 @@ final class SessionCookieSecureTest extends TestCase
         self::assertSame([], $problems, implode("\n", $problems));
         sort($sites);
         self::assertSame(
-            ['202-config/connect.php', '202-config/functions-standalone-ui.php'],
+            ['202-config/functions-standalone-ui.php', '202-config/session-settings.php'],
             $sites,
             'the two session starts that set the flag were both read'
         );

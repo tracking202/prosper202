@@ -146,6 +146,18 @@ class AUTH
     }
 
     /**
+     * The user this request's session is signed in as, by logged_in()'s
+     * rule (its standing and session generation read now, the session
+     * ended when either says no), or null. The v3 API's session sign-in
+     * (Api\V3\SessionSignIn) asks this, so it ends a session where the
+     * pages would.
+     */
+    public static function signedInUserId(): ?int
+    {
+        return self::logged_in() ? self::sessionUserId() : null;
+    }
+
+    /**
      * connect.php, once it has read the session's user (new User()): a
      * session whose user may no longer act, or which began before the user's
      * password changed (sessionUserStands()), is ended there, before the page
