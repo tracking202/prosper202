@@ -6,6 +6,7 @@ namespace Tests\Apps\Android;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Attribution\WebhookGuard;
+use Prosper202\Conversion\AdPlatformConsent;
 use Prosper202\Database\Connection;
 use Prosper202\Notifications\NotificationOutbox;
 use Prosper202\Notifications\PostbackResult;
@@ -49,6 +50,10 @@ final class NotificationOutboxIntegrationTest extends TestCase
 
     private function queue(int $convId): int
     {
+        // The conversion the rows are for: without it nothing says its visitor consented (AdPlatformConsent).
+        self::fixture("INSERT IGNORE INTO 202_conversion_logs SET conv_id = $convId, click_id = 100, campaign_id = 30, user_id = 1,
+            click_payout = 4, click_time = 1, conv_time = 1, source = 'goal', dedupe_key = 'goal:1:1:1:e$convId', payable = 1");
+
         return $this->outboxWith(static fn (string $u): bool => true)
             ->queueReached(1, $convId, 100, 'Level 3', '4.00000', 'goal:1:1', 'tx-' . $convId);
     }
@@ -88,7 +93,7 @@ final class NotificationOutboxIntegrationTest extends TestCase
 
             return !(str_starts_with($url, 'https://b.example/') && $bFails);
         });
-        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 1], $outbox->sendDue(10));
+        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 1, 'withheld' => 0], $outbox->sendDue(10));
         $rows = self::$db->query("SELECT destination, url, status, attempts FROM 202_notification_pending WHERE conv_id = " . self::OLD . ' ORDER BY destination')->fetch_all(MYSQLI_ASSOC);
         self::assertSame([
             ['0', 'https://a.example/pb?s=100', 'sent', '1'],
@@ -98,7 +103,7 @@ final class NotificationOutboxIntegrationTest extends TestCase
         // Past the backoff, B recovers: only B is fetched again.
         $bFails = false;
         $this->clock += NotificationOutbox::backoff(1);
-        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 0], $outbox->sendDue(10));
+        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 0, 'withheld' => 0], $outbox->sendDue(10));
         self::assertSame(['https://a.example/pb?s=100', 'https://b.example/pb?s=100&v=4.00', 'https://b.example/pb?s=100&v=4.00'], $calls,
             'A accepted the conversion once and is never sent it again');
     }
@@ -120,7 +125,7 @@ final class NotificationOutboxIntegrationTest extends TestCase
 
             return $url === 'https://a.example/1' ? PostbackResult::failed('https://a.example answered 400', 400) : true;
         });
-        self::assertSame(['sent' => 2, 'failed' => 0, 'retrying' => 1], $outbox->sendDue(10));
+        self::assertSame(['sent' => 2, 'failed' => 0, 'retrying' => 1, 'withheld' => 0], $outbox->sendDue(10));
         self::assertSame(['https://a.example/1', 'https://a.example/2', 'https://b.example/3'], $calls);
 
         // The same host giving no answer at all: its next row waits.
@@ -132,7 +137,7 @@ final class NotificationOutboxIntegrationTest extends TestCase
 
             return $url === 'https://a.example/1' ? PostbackResult::failed('not delivered to https://a.example: timed out') : true;
         });
-        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 1], $outbox->sendDue(10));
+        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 1, 'withheld' => 0], $outbox->sendDue(10));
         self::assertSame(['https://a.example/1', 'https://b.example/3'], $calls);
     }
 
@@ -180,7 +185,7 @@ final class NotificationOutboxIntegrationTest extends TestCase
         $log = (string) tempnam(sys_get_temp_dir(), 'p202-outbox-log');
         $previous = ini_set('error_log', $log);
         try {
-            self::assertSame(['sent' => 1, 'failed' => 1, 'retrying' => 0], $outbox->sendDue(10));
+            self::assertSame(['sent' => 1, 'failed' => 1, 'retrying' => 0, 'withheld' => 0], $outbox->sendDue(10));
         } finally {
             ini_set('error_log', (string) $previous);
         }
@@ -198,7 +203,7 @@ final class NotificationOutboxIntegrationTest extends TestCase
 
         $this->clock += NotificationOutbox::backoff(NotificationOutbox::MAX_ATTEMPTS);
         $again = $outbox->sendDue(10);
-        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 0], $again, 'a refusal is final');
+        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 0, 'withheld' => 0], $again, 'a refusal is final');
         self::assertCount(1, $calls);
     }
 
@@ -220,7 +225,7 @@ final class NotificationOutboxIntegrationTest extends TestCase
             ini_set('error_log', (string) $previous);
             unlink($log);
         }
-        self::assertSame(['sent' => 0, 'failed' => 2, 'retrying' => 0], $sent);
+        self::assertSame(['sent' => 0, 'failed' => 2, 'retrying' => 0, 'withheld' => 0], $sent);
         $metadata = 'not sent: 169.254.169.254, which is a link-local address, where cloud metadata services answer.'
             . ' Postbacks are only sent to public addresses.';
         self::assertSame(
@@ -421,6 +426,116 @@ final class NotificationOutboxIntegrationTest extends TestCase
         ], $sent, 'the reached that never went out, and a correction from 0 wherever the retraction may have landed');
     }
 
+    /** A conversion whose visitor refused consent is told to no traffic source: its postbacks are stored withheld and never sent. */
+    public function testARefusedConversionsPostbacksAreHeldBackAndNeverSent(): void
+    {
+        $this->click(100);
+        self::pixels([90 => 'https://ts.example/pb?s=[[subid]]']);
+        self::fixture("INSERT INTO 202_conversion_logs SET conv_id = " . self::OLD . ", click_id = 100, campaign_id = 30, user_id = 1,
+            click_payout = 4, click_time = 1, conv_time = 1, source = 'goal', dedupe_key = 'goal:1:1:1:refused', payable = 1, consent_withheld = 1");
+        self::assertSame(1, $this->queue(self::OLD), 'recorded, so the operator can see it');
+        self::assertSame([90 => ['status' => 'withheld', 'attempts' => 0]], self::reachedByPixel(self::OLD));
+        self::assertSame(
+            AdPlatformConsent::REFUSED . ' on the conversion\'s request',
+            (string) self::$db->query('SELECT last_error FROM 202_notification_pending WHERE conv_id = ' . self::OLD)->fetch_assoc()['last_error']
+        );
+
+        // The writer's request refused: held back whatever the row says.
+        $outbox = $this->outboxWith(static fn (string $u): bool => true);
+        self::fixture("INSERT INTO 202_conversion_logs SET conv_id = " . self::NEW . ", click_id = 100, campaign_id = 30, user_id = 1,
+            click_payout = 4, click_time = 1, conv_time = 1, source = 'goal', dedupe_key = 'goal:1:1:1:asked', payable = 1");
+        self::assertSame(1, $outbox->queueReached(1, self::NEW, 100, 'Level 3', '4.00000', 'goal:1:2', 'tx-new', null, true));
+        self::assertSame([90 => ['status' => 'withheld', 'attempts' => 0]], self::reachedByPixel(self::NEW));
+
+        $calls = [];
+        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 0, 'withheld' => 0], $this->outboxWith(function (string $u) use (&$calls): bool {
+            $calls[] = $u;
+
+            return true;
+        })->sendDue(10));
+        self::assertSame([], $calls);
+        self::assertSame(['total' => 1, 'live' => 0, 'pending' => 0, 'withheld' => 1], $outbox->reachedState(self::OLD));
+    }
+
+    /**
+     * A refusal on a later visit of the click holds back whatever has not
+     * gone out yet; a retraction of what went out before it still goes.
+     */
+    public function testALaterRefusalHoldsBackWhatHadNotGoneOutAndARetractionStillGoes(): void
+    {
+        $this->click(100);
+        self::pixels([140 => 'https://ts.example/pb?s=[[subid]]', 141 => 'https://ts2.example/pb?s=[[subid]]']);
+        self::assertSame(2, $this->queue(self::OLD));
+        self::$db->query("UPDATE 202_notification_pending SET status = 'sent', attempts = 1, sent_at = 1 WHERE conv_id = " . self::OLD . ' AND pixel_id = 140');
+        self::fixture('INSERT INTO ' . \Prosper202\Database\Schema\TableRegistry::CLICK_CONSENT_REFUSALS . ' SET click_id = 100, refused_at = 1');
+
+        $calls = [];
+        $outbox = $this->outboxWith(function (string $u) use (&$calls): bool {
+            $calls[] = $u;
+
+            return true;
+        }, self::FIX);
+        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 0, 'withheld' => 1], $outbox->sendDue(10));
+        self::assertSame([], $calls);
+        self::assertSame([140 => ['status' => 'sent', 'attempts' => 1], 141 => ['status' => 'withheld', 'attempts' => 0]], self::reachedByPixel(self::OLD));
+        self::assertStringStartsWith(
+            AdPlatformConsent::REFUSED . ' on a visit',
+            (string) self::$db->query('SELECT last_error FROM 202_notification_pending WHERE pixel_id = 141')->fetch_assoc()['last_error']
+        );
+        self::assertSame(['total' => 2, 'live' => 1, 'pending' => 0, 'withheld' => 1], $outbox->reachedState(self::OLD));
+
+        // Deleted: the network told before the refusal is told to take it back; the one never told hears nothing.
+        $outbox->onReplaced(1, self::OLD, null);
+        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 0, 'withheld' => 0], $outbox->sendDue(10));
+        self::assertSame(['https://ts.example/fix?v=0.00&was=4.00&k=retraction'], $calls);
+        self::assertSame([], self::suppressed(self::OLD, 'retraction'));
+    }
+
+    /**
+     * Before the 1.9.80 upgrade no refusal is stored to read (the ledger's
+     * column, the click refusals' table): the postbacks are queued and sent
+     * as before it, and the answer is not "unread".
+     */
+    public function testBeforeTheUpgradeAddsTheRefusalsTheyAreQueuedAndSent(): void
+    {
+        $this->click(100);
+        self::pixels([90 => 'https://ts.example/pb?s=[[subid]]']);
+        $calls = [];
+        $outbox = $this->outboxWith(function (string $u) use (&$calls): bool {
+            $calls[] = $u;
+
+            return true;
+        });
+        $refusals = \Prosper202\Database\Schema\TableRegistry::CLICK_CONSENT_REFUSALS;
+        foreach ([
+            'the ledger without its column' => [
+                // Shadows the ledger for this connection only.
+                'CREATE TEMPORARY TABLE 202_conversion_logs (conv_id int unsigned NOT NULL PRIMARY KEY, user_id int unsigned NOT NULL,'
+                    . ' click_id bigint unsigned NOT NULL, superseded_by int unsigned DEFAULT NULL, superseded_reason varchar(16) DEFAULT NULL,'
+                    . ' KEY superseded_by (superseded_by))',
+                'DROP TEMPORARY TABLE 202_conversion_logs',
+                self::OLD,
+            ],
+            'no click refusals table' => ["RENAME TABLE `$refusals` TO `{$refusals}_away`", "RENAME TABLE `{$refusals}_away` TO `$refusals`", self::NEW],
+        ] as $case => [$before, $after, $convId]) {
+            self::fixture("INSERT INTO 202_conversion_logs SET conv_id = $convId, click_id = 100, campaign_id = 30, user_id = 1,
+                click_payout = 4, click_time = 1, conv_time = 1, source = 'goal', dedupe_key = 'goal:1:1:1:e$convId', payable = 1");
+            self::fixture($before);
+            try {
+                if ($case === 'the ledger without its column') {
+                    self::fixture("INSERT INTO 202_conversion_logs SET conv_id = $convId, user_id = 1, click_id = 100");
+                }
+                $calls = [];
+                self::assertSame(1, $outbox->queueReached(1, $convId, 100, 'Level 3', '4.00000', 'goal:1:' . $convId, 'tx-' . $convId), $case);
+                self::assertSame([90 => ['status' => 'pending', 'attempts' => 0]], self::reachedByPixel($convId), $case);
+                self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 0, 'withheld' => 0], $outbox->sendDue(10), $case);
+                self::assertSame(['https://ts.example/pb?s=100'], $calls, $case);
+            } finally {
+                self::fixture($after);
+            }
+        }
+    }
+
     public function testWithoutACorrectionUrlARevivalAfterADeliveredRetractionRecordsTheCorrectionSuppressed(): void
     {
         $this->click(100);
@@ -435,7 +550,7 @@ final class NotificationOutboxIntegrationTest extends TestCase
         $outbox->onRevived(1, self::OLD);
         self::assertSame([90 => ['reached:sent', 'retraction:sent', 'correction:suppressed']], self::byPixel(self::OLD));
         self::assertStringStartsWith('no correction URL', (string) self::$db->query("SELECT last_error FROM 202_notification_pending WHERE kind = 'correction'")->fetch_assoc()['last_error']);
-        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 0], $outbox->sendDue(10));
+        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 0, 'withheld' => 0], $outbox->sendDue(10));
     }
 
     /**

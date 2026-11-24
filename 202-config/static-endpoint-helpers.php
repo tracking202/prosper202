@@ -196,7 +196,10 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
      *        Performs a type-4 GET and says whether it succeeded; injected by tests.
      * @param (\Closure(): bool)|null $visitorMayBeTracked whether a Meta
      *        Purchase (type 6) may fire (p202ConversionMayTrack()); held back without it
-     * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int, server_skipped: int}
+     * @param \Prosper202\Conversion\AdPlatformConsent|null $consent the
+     *        conversion's (AdPlatformConsent::ofConversion()); without one that
+     *        allows it no pixel fires
+     * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int, server_skipped: int, withheld: string|null}
      */
     function p202FireTrafficSourcePixels(
         mysqli $db,
@@ -204,14 +207,15 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
         array $tokens,
         ?callable $fetch = null,
         bool $server = true,
-        ?\Closure $visitorMayBeTracked = null
+        ?\Closure $visitorMayBeTracked = null,
+        ?\Prosper202\Conversion\AdPlatformConsent $consent = null
     ): array {
         // $server false: the type-4 postbacks were queued with the
         // conversion (notify_traffic_source) and go out after the answer
         // (p202SendQueuedPostbacksAfterAnswer()) or from the worker.
         $conn = new \Prosper202\Database\Connection($db);
 
-        return \Prosper202\Conversion\TrafficSourcePixels::fire($conn, $ppcAccountId, $tokens, $fetch, true, $server, $visitorMayBeTracked);
+        return \Prosper202\Conversion\TrafficSourcePixels::fire($conn, $ppcAccountId, $tokens, $fetch, true, $server, $visitorMayBeTracked, $consent);
     }
 }
 
@@ -1524,7 +1528,8 @@ if (!function_exists('p202RecordWebEvent')) {
         $notifier = new \Prosper202\Goals\TrafficSourceNotifier(
             $conn,
             (bool) ($opts['browser'] ?? false),
-            static fn (int $click): bool => p202ConversionMayTrack($db, $click, $get)
+            static fn (int $click): bool => p202ConversionMayTrack($db, $click, $get),
+            !\Prosper202\Identity\RequestSignals::consentGiven($get)
         );
         $engine = new \Prosper202\Goals\GoalEngine($conn, null, null, null, $notifier);
         try {
@@ -1605,7 +1610,7 @@ if (!function_exists('p202RecordPurLinkWebEvent')) {
             return ['status' => 'not_found', 'reason' => 'unknown_click'];
         }
         $events = new \Prosper202\Goals\WebEvents($conn);
-        $notifier = new \Prosper202\Goals\TrafficSourceNotifier($conn, false);
+        $notifier = new \Prosper202\Goals\TrafficSourceNotifier($conn, false, null, !\Prosper202\Identity\RequestSignals::consentGiven($get));
         $engine = new \Prosper202\Goals\GoalEngine($conn, null, null, null, $notifier);
         $event = null;
         try {

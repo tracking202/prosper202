@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Click;
 
+use Prosper202\Conversion\AdPlatformConsent;
 use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\TrafficSourcePixels;
 use Prosper202\Database\Connection;
@@ -23,6 +24,10 @@ use Prosper202\Identity\RequestSignals;
  * (TrafficSourcePixels::visitorMayBeTracked()), read under the lock so a
  * failed read rolls the poll back and the next poll retries it. A poll that
  * refuses consent fires and marks nothing: the visitor may consent later.
+ * A conversion whose visitor refused consent where it is kept (its request,
+ * a conversion it replaced, any visit, conversion or goal event of its
+ * click; AdPlatformConsent) fires nothing and is marked handed out: a
+ * refusal kept there is never given back.
  */
 final class PurLinkPixels
 {
@@ -150,7 +155,8 @@ final class PurLinkPixels
                     null,
                     true,
                     false,
-                    $visitorMayBeTracked
+                    $visitorMayBeTracked,
+                    AdPlatformConsent::ofConversion($this->conn, $claims['user_id'], (int) $conversion['conv_id'], false, true)
                 )['markup'];
             }
             $stmt = $this->conn->prepareWrite(

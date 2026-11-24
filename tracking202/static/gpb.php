@@ -302,7 +302,14 @@ if ($newlyRecorded && $conversionResult['reverses_conv_id'] === 0 && $mysql['ppc
         $tokens,
         null,
         false,
-        static fn (): bool => p202ConversionMayTrack($db, (int) $mysql['click_id'], $request)
+        static fn (): bool => p202ConversionMayTrack($db, (int) $mysql['click_id'], $request),
+        // None at all for a visitor who refused consent, here or on any visit of the click.
+        \Prosper202\Conversion\AdPlatformConsent::ofConversion(
+            new \Prosper202\Database\Connection($db),
+            (int) ($cvar_sql_row['user_id'] ?? 0),
+            (int) $conversionId,
+            !\Prosper202\Identity\RequestSignals::consentGiven($request)
+        )
     );
 	if (array_intersect($fired['types'], [1, 2, 3, 4]) !== []) {
 		header('HTTP/1.1 202 Accepted', true, 202);

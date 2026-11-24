@@ -836,9 +836,9 @@ function RunSecondsCronjob()
         // failure is recorded on its row and retried with backoff.
         try {
             $notifications = (new \Prosper202\Notifications\NotificationOutbox(new \Prosper202\Database\Connection($db)))->sendDue(200);
-            if ($notifications['sent'] + $notifications['failed'] + $notifications['retrying'] > 0) {
+            if ($notifications['sent'] + $notifications['failed'] + $notifications['retrying'] + $notifications['withheld'] > 0) {
                 echo 'Traffic-source notifications: ' . (int) $notifications['sent'] . ' sent, ' . (int) $notifications['retrying'] . ' retrying, '
-                    . (int) $notifications['failed'] . ' failed<br>';
+                    . (int) $notifications['failed'] . ' failed, ' . (int) $notifications['withheld'] . ' held back for consent<br>';
             }
         } catch (\Throwable $e) {
             error_log('Notification outbox failed: ' . $e->getMessage());

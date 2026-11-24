@@ -8896,15 +8896,17 @@ paths:
         failed attempt), `sent`, `failed` (attempts ran out, or the sender
         refused the URL, or a redirect it answered with, as an address it
         never calls: a refusal is final, sent no further, and `last_error`
-        says why in either case), `cancelled` (replaced before it went out) or
+        says why in either case), `cancelled` (replaced before it went out),
         `suppressed` (a correction or retraction for a pixel with no
-        correction URL). `meta.summary` counts every status under the same
+        correction URL) or `withheld` (the visitor refused consent, so
+        nothing is sent about the install; `last_error` says where).
+        `meta.summary` counts every status under the same
         filters except `status`. Web clicks' postbacks go through the same
         outbox and are not listed here.
       operationId: listAppNotifications
       parameters:
         - {name: registration_id, in: query, schema: {type: integer}}
-        - {name: status, in: query, schema: {type: string, enum: [pending, sent, failed, cancelled, suppressed]}}
+        - {name: status, in: query, schema: {type: string, enum: [pending, sent, failed, cancelled, suppressed, withheld]}}
         - {name: kind, in: query, schema: {type: string, enum: [reached, correction, retraction]}}
         - $ref: "#/components/parameters/timeFrom"
         - $ref: "#/components/parameters/timeTo"
@@ -8935,6 +8937,7 @@ paths:
                           failed: {type: integer}
                           cancelled: {type: integer}
                           suppressed: {type: integer}
+                          withheld: {type: integer}
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -19899,7 +19902,7 @@ components:
                   conversion_id: {type: integer, nullable: true}
                   payable: {type: boolean}
                   amount: {type: string, nullable: true}
-                  notify: {type: string, enum: [reached, suppressed, "off", none], description: "reached: announced to the traffic source (its server postbacks queued in the notification outbox); suppressed: a replacement of an outcome already announced, never announced twice; off: the campaign does not notify for this goal; none: not payable"}
+                  notify: {type: string, enum: [reached, suppressed, "off", none], description: "reached: announced to the traffic source (its server postbacks queued in the notification outbox); suppressed: not announced, either a replacement of an outcome already announced (never announced twice) or an outcome whose visitor refused consent (reason consent_withheld in notifications); off: the campaign does not notify for this goal; none: not payable"}
             notifications:
               type: array
               items:
@@ -19910,7 +19913,7 @@ components:
                   outcome_id: {type: integer}
                   kind: {type: string}
                   status: {type: string, enum: [queued, rendered, failed, not_sent, no_pixels, browser_only], description: "queued: the server-to-server postbacks are in the notification outbox, which the worker sends with retries; rendered: browser pixels were returned to the browser that asked"}
-                  reason: {type: string, nullable: true}
+                  reason: {type: string, nullable: true, description: "Why a notice was not_sent: replacement, no_click, no_traffic_source, or consent_withheld (the visitor refused consent, so no pixel or postback goes)"}
                   queued: {type: integer, description: "Server-to-server postbacks waiting in the notification outbox"}
                   browser_pixels: {type: integer}
                   browser_skipped: {type: integer}
@@ -21052,7 +21055,7 @@ components:
           enum: [reached, correction, retraction]
         status:
           type: string
-          enum: [pending, sent, failed, cancelled, suppressed]
+          enum: [pending, sent, failed, cancelled, suppressed, withheld]
         url:
           type: string
           description: The URL as filled when queued (empty for a suppressed correction)

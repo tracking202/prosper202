@@ -31,6 +31,9 @@ use Prosper202\Notifications\PostbackSender;
  *   6 Bot202 Facebook Pixel Assistant — a Meta Pixel ID (FacebookPixelId):
  *     a Purchase event image for a browser, returned only for a visitor
  *     who may be tracked (visitorMayBeTracked()).
+ *
+ * None of them, for a conversion whose visitor refused consent
+ * (AdPlatformConsent): the rule the destinations follow.
  */
 final class TrafficSourcePixels
 {
@@ -189,13 +192,17 @@ final class TrafficSourcePixels
      * click's visitor may be sent a Meta Purchase (visitorMayBeTracked()).
      * Without it the Purchase is held back; types 1-5 do not ask.
      *
+     * $consent is the conversion's (AdPlatformConsent::ofConversion()). One
+     * that does not allow it, or none given, fires no pixel of any type:
+     * `withheld` says why, and `types` still lists what the account has.
+     *
      * @param array<string, scalar|null> $tokens
      * @param (callable(string): (bool|PostbackResult))|null $fetch Performs a
      *        type-4 GET and says whether it succeeded (a 2xx or 3xx status);
      *        defaults to PostbackSender, which refuses an address it does not
      *        call. Injected by tests.
      * @param (\Closure(): bool)|null $visitorMayBeTracked
-     * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int, server_skipped: int}
+     * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int, server_skipped: int, withheld: string|null}
      */
     public static function fire(
         Connection $conn,
@@ -205,8 +212,9 @@ final class TrafficSourcePixels
         bool $browser = true,
         bool $server = true,
         ?\Closure $visitorMayBeTracked = null,
+        ?AdPlatformConsent $consent = null,
     ): array {
-        $out = ['markup' => '', 'types' => [], 'server_calls' => 0, 'server_failures' => 0, 'browser_skipped' => 0, 'server_skipped' => 0];
+        $out = ['markup' => '', 'types' => [], 'server_calls' => 0, 'server_failures' => 0, 'browser_skipped' => 0, 'server_skipped' => 0, 'withheld' => null];
         if ($ppcAccountId <= 0) {
             return $out;
         }
@@ -217,6 +225,13 @@ final class TrafficSourcePixels
         );
         $conn->bind($stmt, 'i', [$ppcAccountId]);
         $pixels = $conn->fetchAll($stmt);
+        $consent ??= AdPlatformConsent::unread('the caller did not say');
+        if (!$consent->allows()) {
+            $out['types'] = array_values(array_unique(array_map(static fn (array $p): int => (int) $p['pixel_type_id'], $pixels)));
+            $out['withheld'] = $pixels !== [] ? $consent->reason() : null;
+
+            return $out;
+        }
 
         // The one server-to-server sender, shared with the notification
         // outbox's worker (PR 5): it answers whether the network heard us
