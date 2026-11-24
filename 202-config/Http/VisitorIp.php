@@ -5,120 +5,119 @@ declare(strict_types=1);
 namespace Prosper202\Http;
 
 /**
- * The visitor's IP address, as every click endpoint, pixel, page and audit
- * row records it: the one place in the served tree that reads a forwarding
- * header (ForwardedIpHeaderReadTest refuses a read anywhere else).
+ * The client's IP address, as every click endpoint, pixel, page, rate limit
+ * and audit row takes it: the one place in the served tree that reads a
+ * forwarding header (ForwardedIpHeaderReadTest refuses a read anywhere else).
  *
- * The rule is the one connect.php and connect2.php each applied by
- * rewriting $_SERVER['HTTP_X_FORWARDED_FOR'] in place, which a dozen sites
- * then read back with their own fallbacks (`?? REMOTE_ADDR`, `?? '0.0.0.0'`,
- * nothing at all in offrtr.php): they agreed only because the bootstrap had
- * already run, and none of them checked the value was an address, so a
- * header of `nope` was stored in 202_ips and handed to the GEO, ISP and
- * filter lookups as one.
+ * Identity is what the client cannot choose (CLAUDE.md #16):
  *
- *  1. The first non-empty header of FORWARDING_HEADERS, most specific first:
- *     a CDN's own header (Cloudflare, Sucuri, a cluster) before the generic
- *     ones, X-Forwarded-For last and ignored when it names this server.
- *  2. Its leftmost hop (a proxy chain is `client, proxy1, proxy2`), trimmed.
- *  3. Kept only when it parses as an IPv4 or IPv6 address, in canonical form
- *     (inet_ntop), so `2001:DB8::1` and `2001:db8:0::1` are one visitor.
- *     A hop with a port, `unknown`, or anything else that is not an
- *     address falls back to REMOTE_ADDR, under the same check.
- *  4. Nothing usable at all (a CLI run has no REMOTE_ADDR): ''.
+ *  1. The connecting peer, REMOTE_ADDR, validated. When it is not one of
+ *     the proxies P202_TRUSTED_PROXIES names (TrustedProxies) it is the
+ *     client, and every forwarding header is ignored: it is the client's own
+ *     claim.
+ *  2. From a trusted proxy, X-Forwarded-For is walked from its right end,
+ *     the hop that proxy appended, past every hop that is itself a trusted
+ *     proxy; the first one that is not is the client. What a client sends in
+ *     the header lands to the left of that hop and is never reached. A hop
+ *     may carry a port (`198.51.100.7:8080`, `[2001:db8::1]:443`).
+ *  3. A hop on the way that is not an address (`unknown`, garbage) stops
+ *     the walk at the trusted proxy that passed it on, which then stands for
+ *     the client: an address nobody chose, never a guess past it. So does a
+ *     chain of more than MAX_HOPS.
+ *  4. Every hop trusted: the leftmost, which is one of the proxies.
+ *  5. Nothing usable at all (a CLI run has no REMOTE_ADDR): ''.
  *
- * What a header can win (CLAUDE.md error pattern #16). Every header here is
- * sent by the client; there is no trusted-proxy setting, so behind no proxy
- * a visitor chooses this value outright. It is believed because the click
- * path is the visitor's own record: the GEO and ISP of their click, the
- * rotator rule that routes them, the address shown in reports, and the
- * product depends on it — behind Cloudflare or a load balancer REMOTE_ADDR
- * is the proxy, and every click would share one address, one country and
- * one duplicate-IP filter bucket; `p202 tracker test --geo` simulates a
- * visitor's country through X-Forwarded-For. A false claim moves the
- * claimant's own click. It must never key a decision whose loser is someone
- * else — a rate limit, a dedupe, a lockout: those key on REMOTE_ADDR
- * (ServerStateStore::softIpRateLimit(), the intake rate limits). Two
- * existing consumers are such decisions and are weaker for it, which a
- * trusted-proxy setting, not this method, would fix: the click filter's
- * duplicate-IP check (FILTER::checkLastIps) and the login throttle's per-IP
- * limb (AUTH::is_rate_limited; its per-username limb is unaffected).
+ * The single-value headers (CF-Connecting-IP, X-Real-IP, Client-IP and the
+ * rest of FORWARDING_HEADERS) are never read for the address: each is only
+ * as good as a proxy that overwrites it, which nothing here can tell, and
+ * the proxies that set one also append X-Forwarded-For. Their presence still
+ * marks a request that came through a proxy (knownClient()).
+ *
+ * With no setting, behind a CDN or a load balancer every request is the
+ * proxy's address: one address, one country, one rate-limit bucket. That is
+ * the safe answer for an install that has not said which proxy it is behind.
  */
 final class VisitorIp
 {
-    /** Most specific first; the order is the precedence. */
+    /** Headers a proxy (or a client claiming to be one) names a client address in. */
     public const FORWARDING_HEADERS = [
+        'HTTP_X_FORWARDED_FOR',
         'HTTP_CF_CONNECTING_IP',
         'HTTP_X_CLUSTER_CLIENT_IP',
         'HTTP_X_SUCURI_CLIENTIP',
         'HTTP_X_REAL_IP',
         'HTTP_CLIENT_IP',
-        'HTTP_X_FORWARDED_FOR',
+        'HTTP_TRUE_CLIENT_IP',
+        'HTTP_FORWARDED',
+        'HTTP_X_FORWARDED',
+        'HTTP_FORWARDED_FOR',
     ];
+
+    /** Hops walked before the chain is not believed. */
+    public const MAX_HOPS = 20;
 
     private function __construct()
     {
     }
 
     /**
-     * The visitor's address, or '' when the request carries none.
+     * The client's address, or '' when the request carries none.
      *
      * @param array<string, mixed> $server normally $_SERVER
+     * @param ?TrustedProxies $trusted the environment's setting when not given
      */
-    public static function fromServer(array $server): string
+    public static function fromServer(array $server, ?TrustedProxies $trusted = null): string
     {
-        $claimed = self::claimedHeader($server);
-        if ($claimed !== null) {
-            $address = self::address($claimed);
-            if ($address !== '') {
+        $trusted ??= TrustedProxies::fromEnvironment();
+        $peer = self::address(self::scalar($server['REMOTE_ADDR'] ?? null));
+        if ($peer === '' || !$trusted->trusts($peer)) {
+            return $peer;
+        }
+        $hops = explode(',', self::scalar($server['HTTP_X_FORWARDED_FOR'] ?? null));
+        if (count($hops) > self::MAX_HOPS) {
+            return $peer;
+        }
+        $client = $peer;
+        foreach (array_reverse($hops) as $hop) {
+            if (trim($hop) === '') {
+                continue;
+            }
+            $address = self::address(self::withoutPort(trim($hop)));
+            if ($address === '') {
+                return $client;
+            }
+            $client = $address;
+            if (!$trusted->trusts($address)) {
                 return $address;
             }
         }
 
-        return self::address(self::scalar($server['REMOTE_ADDR'] ?? null));
+        return $client;
     }
 
     /**
-     * The connecting peer's address for a decision a client must not be able
-     * to steer: REMOTE_ADDR, or '' when the request carries any forwarding
-     * header (there is no trusted-proxy setting to say which to believe).
+     * fromServer(), or '' when the peer is no trusted proxy but the request
+     * carries a forwarding header: it may have come through a proxy this
+     * install was not told about, whose address would stand in for the
+     * client's. For an answer that is better unknown than wrong (the sign-in
+     * location that holds analytics for an EU account).
      *
      * @param array<string, mixed> $server normally $_SERVER
+     * @param ?TrustedProxies $trusted the environment's setting when not given
      */
-    public static function unforwardedPeer(array $server): string
+    public static function knownClient(array $server, ?TrustedProxies $trusted = null): string
     {
-        foreach ([...self::FORWARDING_HEADERS, 'HTTP_FORWARDED', 'HTTP_X_FORWARDED', 'HTTP_FORWARDED_FOR'] as $key) {
-            if (isset($server[$key]) && self::scalar($server[$key]) !== '') {
-                return '';
+        $trusted ??= TrustedProxies::fromEnvironment();
+        $peer = self::address(self::scalar($server['REMOTE_ADDR'] ?? null));
+        if ($peer !== '' && !$trusted->trusts($peer)) {
+            foreach (self::FORWARDING_HEADERS as $key) {
+                if (self::scalar($server[$key] ?? null) !== '') {
+                    return '';
+                }
             }
         }
 
-        return self::address(self::scalar($server['REMOTE_ADDR'] ?? null));
-    }
-
-    /**
-     * unforwardedPeer(), except that a request from one of Cloudflare's edge
-     * servers is the visitor its CF-Connecting-IP names (every other
-     * forwarding header ignored), and only when that is one public address;
-     * anything else answers ''.
-     *
-     * @param array<string, mixed> $server normally $_SERVER
-     */
-    public static function cloudflareOrUnforwardedPeer(array $server): string
-    {
-        $peer = self::address(self::scalar($server['REMOTE_ADDR'] ?? null));
-        if ($peer === '' || !CloudflareRanges::contains($peer)) {
-            return self::unforwardedPeer($server);
-        }
-        $claimed = trim(self::scalar($server['HTTP_CF_CONNECTING_IP'] ?? null));
-        $public = filter_var($claimed, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
-        if ($public === false) {
-            return '';
-        }
-        $packed = inet_pton($public);
-        $canonical = $packed === false ? false : inet_ntop($packed);
-
-        return $canonical === false ? '' : $canonical;
+        return self::fromServer($server, $trusted);
     }
 
     /**
@@ -130,45 +129,37 @@ final class VisitorIp
      */
     public static function forwardedForAsSent(array $server): string
     {
-        return self::scalar($server['HTTP_X_FORWARDED_FOR'] ?? null);
+        $value = $server['HTTP_X_FORWARDED_FOR'] ?? null;
+
+        return is_string($value) || is_int($value) ? (string) $value : '';
     }
 
-    /** @param array<string, mixed> $server */
-    private static function claimedHeader(array $server): ?string
+    /** `198.51.100.7:8080` and `[2001:db8::1]:443` without the port; anything else as it is. */
+    private static function withoutPort(string $hop): string
     {
-        foreach (self::FORWARDING_HEADERS as $key) {
-            $value = self::scalar($server[$key] ?? null);
-            // empty() semantics, as the bootstrap's match(true) had: '' and
-            // '0' are no header at all.
-            if ($value === '' || $value === '0') {
-                continue;
-            }
-            // A proxy that forwards to itself names this server; the client
-            // is then REMOTE_ADDR. The whole header is compared, as before.
-            if ($key === 'HTTP_X_FORWARDED_FOR' && $value === self::scalar($server['SERVER_ADDR'] ?? null)) {
-                continue;
-            }
-
-            return $value;
+        if (preg_match('/^\[([0-9A-Fa-f:.]+)\](?::[0-9]{1,5})?$/D', $hop, $m) === 1) {
+            return $m[1];
+        }
+        if (preg_match('/^([0-9.]+):[0-9]{1,5}$/D', $hop, $m) === 1) {
+            return $m[1];
         }
 
-        return null;
+        return $hop;
     }
 
     private static function address(string $value): string
     {
-        $first = trim(explode(',', $value, 2)[0]);
-        if ($first === '' || filter_var($first, FILTER_VALIDATE_IP) === false) {
+        if ($value === '' || filter_var($value, FILTER_VALIDATE_IP) === false) {
             return '';
         }
-        $packed = inet_pton($first);
+        $packed = inet_pton($value);
         $canonical = $packed === false ? false : inet_ntop($packed);
 
-        return $canonical === false ? $first : $canonical;
+        return $canonical === false ? $value : $canonical;
     }
 
     private static function scalar(mixed $value): string
     {
-        return is_string($value) || is_int($value) ? (string) $value : '';
+        return is_string($value) || is_int($value) ? trim((string) $value) : '';
     }
 }

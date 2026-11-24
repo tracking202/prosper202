@@ -32,13 +32,85 @@ use Tests\Support\SourceScan;
  * to: a name assembled from pieces that split a stem (`'X_FORWARD' .
  * 'ED_FOR'`) or computed by a transform — a deliberate evasion, not the slip
  * this guards against.
+ *
+ * The scheme and host a proxy forwards (X-Forwarded-Proto, -SSL, -Port,
+ * -Host, Front-End-Https, CF-Visitor and the rest) are a second family with
+ * one reader, p202_request_is_https(): both believe a header only from a
+ * proxy listed in P202_TRUSTED_PROXIES (TrustedProxies, CLAUDE.md #16), and
+ * a second reader would be a second rule.
  */
 final class ForwardedIpHeaderReadTest extends TestCase
 {
     /** @var array<string, string> repo-relative path => why it may read the headers */
     private const ALLOWED = [
-        '202-config/Http/VisitorIp.php' => 'the one reader: precedence, leftmost hop, validation, REMOTE_ADDR fallback',
+        '202-config/Http/VisitorIp.php' => 'the one reader: REMOTE_ADDR unless a listed proxy, then X-Forwarded-For from the right',
     ];
+
+    /** @var array<string, string> repo-relative path => why it may read the scheme headers */
+    private const SCHEME_ALLOWED = [
+        '202-config/request-https.php' => 'the one reader: the web server\'s HTTPS, or a listed proxy\'s forwarded scheme',
+    ];
+
+    public function testNoServedFileReadsAForwardedSchemeOutsideTheHttpsAnswer(): void
+    {
+        $found = [];
+        $seenAllowed = 0;
+        foreach (SourceScan::phpFiles() as $path => $source) {
+            $reads = self::headerNames($source, self::namesSchemeHeader(...));
+            if (isset(self::SCHEME_ALLOWED[$path])) {
+                $seenAllowed += count($reads);
+                continue;
+            }
+            foreach ($reads as [$line, $text]) {
+                $found[] = sprintf('%s:%d  %s', $path, $line, $text);
+            }
+        }
+
+        self::assertGreaterThanOrEqual(3, $seenAllowed, 'the scan finds request-https.php\'s own reads');
+        self::assertSame([], $found, "A forwarded scheme or host is read outside p202_request_is_https():\n  "
+            . implode("\n  ", $found)
+            . "\nAsk p202_request_is_https(\$_SERVER), which believes a proxy only when P202_TRUSTED_PROXIES lists it.");
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function schemeSpellings(): iterable
+    {
+        yield 'X-Forwarded-Proto key' => ['<?php $p = $_SERVER[\'HTTP_X_FORWARDED_PROTO\'] ?? \'\';'];
+        yield 'header form, lower case' => ['<?php $p = $headers[\'x-forwarded-proto\'];'];
+        yield 'X-Forwarded-SSL' => ['<?php $p = $_SERVER["HTTP_X_FORWARDED_SSL"];'];
+        yield 'X-Forwarded-Port' => ['<?php $p = getenv(\'HTTP_X_FORWARDED_PORT\');'];
+        yield 'X-Forwarded-Host' => ['<?php $h = $_SERVER[\'HTTP_X_FORWARDED_HOST\'];'];
+        yield 'X-Forwarded-Scheme' => ['<?php $h = $_SERVER[\'HTTP_X_FORWARDED_SCHEME\'];'];
+        yield 'Front-End-Https' => ['<?php $h = $_SERVER[\'HTTP_FRONT_END_HTTPS\'];'];
+        yield 'X-Url-Scheme' => ['<?php $h = $_SERVER[\'HTTP_X_URL_SCHEME\'];'];
+        yield 'CF-Visitor' => ['<?php $h = $_SERVER[\'HTTP_CF_VISITOR\'];'];
+        yield 'unquoted key inside a string' => ['<?php $line = "p=$_SERVER[HTTP_X_FORWARDED_PROTO]";'];
+    }
+
+    /** @dataProvider schemeSpellings */
+    public function testEverySpellingOfASchemeReadIsSeen(string $source): void
+    {
+        self::assertNotSame([], self::headerNames($source, self::namesSchemeHeader(...)), 'not seen: ' . $source);
+    }
+
+    public function testWhatIsNotASchemeHeaderIsNotReported(): void
+    {
+        foreach ([
+            '<?php $p = $_SERVER[\'HTTPS\'];',
+            '<?php $p = $_SERVER[\'REQUEST_SCHEME\'];',
+            '<?php $p = $_SERVER[\'HTTP_X_FORWARDED_FOR\'];',
+            "<?php // X-Forwarded-Proto is read by request-https.php\n\$a = 1;",
+        ] as $source) {
+            self::assertSame([], self::headerNames($source, self::namesSchemeHeader(...)), $source);
+        }
+    }
+
+    private static function namesSchemeHeader(string $text): bool
+    {
+        $n = (string) preg_replace('/^HTTP_/', '', strtoupper(str_replace('-', '_', trim($text))));
+
+        return preg_match('/^(?:X_FORWARDED_(?:PROTO|PROTOCOL|SSL|PORT|HOST|SCHEME|SERVER|PREFIX)|FRONT_END_HTTPS|X_URL_SCHEME|CF_VISITOR)$/D', $n) === 1;
+    }
 
     public function testEveryHeaderVisitorIpReadsIsOneTheScanKnows(): void
     {
@@ -141,8 +213,9 @@ final class ForwardedIpHeaderReadTest extends TestCase
      *
      * @return list<array{int, string}> [line, text]
      */
-    private static function headerNames(string $source): array
+    private static function headerNames(string $source, ?\Closure $names = null): array
     {
+        $names ??= self::namesForwardingHeader(...);
         $tokens = token_get_all($source);
         $found = [];
         foreach ($tokens as $i => $t) {
@@ -161,7 +234,7 @@ final class ForwardedIpHeaderReadTest extends TestCase
                 $texts = [$t[1]];
             }
             foreach ($texts as $text) {
-                if (self::namesForwardingHeader($text)) {
+                if ($names($text)) {
                     $found[] = [$t[2], trim($t[1])];
                     break;
                 }

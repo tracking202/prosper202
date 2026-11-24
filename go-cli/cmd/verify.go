@@ -48,7 +48,8 @@ func withLinkParam(link, key, value string) string {
 }
 
 // geoIPs maps an ISO country code to a representative public IP, used to spoof
-// the visitor's geo (via X-Forwarded-For) for tracker test.
+// the visitor's geo (via X-Forwarded-For) for tracker test. The install believes
+// the header only from an address its P202_TRUSTED_PROXIES lists.
 var geoIPs = map[string]string{
 	"US": "8.8.8.8",
 	"CA": "24.48.0.1",
@@ -618,7 +619,7 @@ func init() {
 	rotatorTestCmd.Flags().Bool("explain", false, "Show per-criteria pass/fail for each geo")
 	rotatorCmd.AddCommand(rotatorTestCmd)
 
-	trackerTestCmd.Flags().String("geo", "", "Comma-separated country codes to simulate (spoofs X-Forwarded-For)")
+	trackerTestCmd.Flags().String("geo", "", "Comma-separated country codes to simulate (sends X-Forwarded-For, which the install reads only from an address in its P202_TRUSTED_PROXIES)")
 	trackerTestCmd.Flags().String("device", "", "Device to simulate")
 	enumFlag(trackerTestCmd, "device", newEnum(sortedKeys(deviceUAs), enumFoldCase()))
 	// The tracker command is built dynamically in crud.go's init() (which runs

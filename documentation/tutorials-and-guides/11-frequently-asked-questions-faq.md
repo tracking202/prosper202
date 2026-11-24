@@ -54,6 +54,18 @@ No. A fresh install has no tracking domain stored, and until you set one:
 
 To set one, sign in as the account the installer created, open **Account › Personal Settings**, expand **Advanced** and fill in **Tracking domain** with the host only, such as `track.example.com`. The same value is `user_tracking_domain` on `PUT /api/v3/users/1/preferences`, or `p202 user prefs update 1 --user-tracking-domain track.example.com` from the CLI. That first account's value is the one the password reset email, the landing-page script and the scheduled jobs use; any other account's value is used only by the pages that account signs in to.
 
+## My install is behind Cloudflare, a load balancer or a reverse proxy. Why does every click have the same IP address?
+
+Prosper202 reads the visitor's address from a proxy's `X-Forwarded-For` header only when the proxy is listed in the `P202_TRUSTED_PROXIES` environment variable. Any visitor can send that header, so from an unlisted address it is ignored and the address that connected is recorded. Behind an unlisted proxy that is the proxy's address, for every click.
+
+List your proxies, separated by commas or spaces: single addresses, CIDR ranges, or `cloudflare` for Cloudflare's published ranges. For example, with Apache:
+
+```
+SetEnv P202_TRUSTED_PROXIES "cloudflare, 10.0.0.0/8"
+```
+
+With PHP-FPM use `env[P202_TRUSTED_PROXIES] = ...` in the pool, and in a container set it in the environment. The address is then the rightmost `X-Forwarded-For` hop that is not one of your proxies, so a visitor cannot choose it. The same list decides whether a proxy's `X-Forwarded-Proto: https` makes cookies Secure. If one entry cannot be read, no proxy is trusted and the PHP error log names the entry.
+
  ## Is Memcache required?
 
 No, but strongly recommended.

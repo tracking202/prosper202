@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace Prosper202\Http;
 
 /**
- * Whether an address is one of Cloudflare's edge servers, whose
- * CF-Connecting-IP header names the visitor. A static list: nothing is
- * fetched at runtime.
+ * Cloudflare's edge servers, which P202_TRUSTED_PROXIES names as
+ * `cloudflare` (TrustedProxies). Trusted only when listed. A static list:
+ * nothing is fetched at runtime.
  */
 final class CloudflareRanges
 {

@@ -102,7 +102,7 @@ you reach the API on is not always one a visitor can.
 stored with `https://` or `http://` keeps that scheme, whichever way the request
 came; a domain stored without one, or none at all, takes the scheme this
 request arrived on, as a proxy that terminates TLS reports it
-(`X-Forwarded-Proto`). Setup › Get Links builds its links on the same rule, so
+(`X-Forwarded-Proto`, believed only from a proxy listed in `P202_TRUSTED_PROXIES`). Setup › Get Links builds its links on the same rule, so
 the page and this endpoint give one URL for the same tracker and request; to
 have links on `https://` from a client that calls the API over plain HTTP,
 store the domain as `https://track.example.com`.

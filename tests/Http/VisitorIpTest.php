@@ -5,96 +5,106 @@ declare(strict_types=1);
 namespace Tests\Http;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Http\TrustedProxies;
 use Prosper202\Http\VisitorIp;
 
 /**
- * The visitor's address every click endpoint records and routes on. The
- * precedence and the SERVER_ADDR rule are the ones connect.php and
- * connect2.php applied before; validation and canonical form are new (a
- * header of `nope` used to be stored as an address).
+ * The client's address every click endpoint records and every rate limit
+ * keys on: REMOTE_ADDR, unless that is a proxy P202_TRUSTED_PROXIES lists,
+ * whose X-Forwarded-For is walked from the right (CLAUDE.md #16).
  */
 final class VisitorIpTest extends TestCase
 {
-    /** @return iterable<string, array{array<string, mixed>, string}> */
+    /** @return iterable<string, array{array<string, mixed>, string, string}> */
     public static function servers(): iterable
     {
         $peer = ['REMOTE_ADDR' => '10.0.0.1'];
         $xff = static fn (string $value): array => ['HTTP_X_FORWARDED_FOR' => $value] + $peer;
+        $lan = '10.0.0.0/8';
 
-        yield 'no proxy: the peer' => [['REMOTE_ADDR' => '203.0.113.9'], '203.0.113.9'];
-        yield 'X-Forwarded-For' => [$xff('198.51.100.7'), '198.51.100.7'];
-        yield 'a chain keeps the leftmost hop' => [$xff('198.51.100.7, 10.0.0.2, 10.0.0.3'), '198.51.100.7'];
-        yield 'padding around the hop is trimmed' => [$xff('  198.51.100.7 ,10.0.0.2'), '198.51.100.7'];
-        yield 'CF-Connecting-IP beats X-Forwarded-For' => [
-            ['HTTP_CF_CONNECTING_IP' => '203.0.113.50'] + $xff('198.51.100.7'),
-            '203.0.113.50',
+        yield 'no proxy: the peer' => [['REMOTE_ADDR' => '203.0.113.9'], '', '203.0.113.9'];
+
+        // No setting: every header is the client's claim.
+        yield 'no setting: X-Forwarded-For is ignored' => [$xff('198.51.100.7'), '', '10.0.0.1'];
+        yield 'no setting: CF-Connecting-IP is ignored' => [['HTTP_CF_CONNECTING_IP' => '198.51.100.7'] + $peer, '', '10.0.0.1'];
+        yield 'no setting: X-Real-IP is ignored' => [['HTTP_X_REAL_IP' => '198.51.100.7'] + $peer, '', '10.0.0.1'];
+        yield 'a peer outside the list: ignored' => [$xff('198.51.100.7'), '192.168.0.0/16', '10.0.0.1'];
+        yield 'a malformed setting trusts nothing' => [$xff('198.51.100.7'), '10.0.0.0/8, 10.0.0/33', '10.0.0.1'];
+        yield 'a /0 trusts nothing' => [$xff('198.51.100.7'), '0.0.0.0/0', '10.0.0.1'];
+
+        // A trusted peer: X-Forwarded-For from the right.
+        yield 'one hop' => [$xff('198.51.100.7'), $lan, '198.51.100.7'];
+        yield 'a single trusted address' => [$xff('198.51.100.7'), '10.0.0.1', '198.51.100.7'];
+        yield 'a forged hop left of the real one is never reached' => [$xff('203.0.113.66, 198.51.100.7'), $lan, '198.51.100.7'];
+        yield 'trusted hops are walked past' => [$xff('198.51.100.7, 10.0.0.2, 10.0.0.3'), $lan, '198.51.100.7'];
+        yield 'padding around the hop is trimmed' => [$xff('  198.51.100.7 ,10.0.0.2'), $lan, '198.51.100.7'];
+        yield 'an empty hop is skipped' => [$xff('198.51.100.7,,'), $lan, '198.51.100.7'];
+        yield 'a hop with a port' => [$xff('198.51.100.7:8080'), $lan, '198.51.100.7'];
+        yield 'an IPv6 hop with a port' => [$xff('[2001:DB8::7]:443'), $lan, '2001:db8::7'];
+        yield 'IPv6 comes back in canonical form' => [$xff('2001:DB8:0:0::1'), $lan, '2001:db8::1'];
+        yield 'garbage stops at the proxy that passed it on' => [$xff('198.51.100.7, nope, 10.0.0.2'), $lan, '10.0.0.2'];
+        yield 'garbage from the peer itself is the peer' => [$xff('nope'), $lan, '10.0.0.1'];
+        yield 'unknown is not an address' => [$xff('unknown'), $lan, '10.0.0.1'];
+        yield 'an overlong header is the peer' => [$xff(str_repeat('A', 4000)), $lan, '10.0.0.1'];
+        yield 'too many hops is the peer' => [$xff(implode(',', array_fill(0, VisitorIp::MAX_HOPS + 1, '10.0.0.9'))), $lan, '10.0.0.1'];
+        yield 'every hop trusted: the leftmost' => [$xff('10.0.0.3, 10.0.0.2'), $lan, '10.0.0.3'];
+        yield 'no header from a trusted peer: the peer' => [$peer, $lan, '10.0.0.1'];
+        yield 'a header that is not a string is no header' => [['HTTP_X_FORWARDED_FOR' => ['198.51.100.7']] + $peer, $lan, '10.0.0.1'];
+        yield 'CF-Connecting-IP is not read even from a trusted peer' => [
+            ['HTTP_CF_CONNECTING_IP' => '203.0.113.50'] + $xff('198.51.100.7'), $lan, '198.51.100.7',
         ];
-        yield 'X-Real-IP beats Client-IP beats X-Forwarded-For' => [
-            ['HTTP_X_REAL_IP' => '203.0.113.60', 'HTTP_CLIENT_IP' => '203.0.113.61'] + $xff('198.51.100.7'),
-            '203.0.113.60',
-        ];
-        yield 'an invalid chosen header falls back to the peer, not the next header' => [
-            ['HTTP_CF_CONNECTING_IP' => 'nope'] + $xff('198.51.100.7'),
-            '10.0.0.1',
-        ];
-        yield 'garbage X-Forwarded-For falls back to the peer' => [$xff('nope'), '10.0.0.1'];
-        yield 'an overlong header falls back to the peer' => [$xff(str_repeat('A', 4000)), '10.0.0.1'];
-        yield 'an unknown leftmost hop falls back to the peer' => [$xff('unknown, 198.51.100.7'), '10.0.0.1'];
-        yield 'a hop with a port is not an address' => [$xff('198.51.100.7:8080'), '10.0.0.1'];
-        yield 'X-Forwarded-For naming this server is ignored' => [
-            ['SERVER_ADDR' => '10.0.0.5'] + $xff('10.0.0.5'),
-            '10.0.0.1',
-        ];
-        yield 'a header of "0" is no header (empty() semantics)' => [
-            ['HTTP_CF_CONNECTING_IP' => '0'] + $xff('198.51.100.7'),
+        yield 'Cloudflare, then a trusted balancer' => [
+            ['REMOTE_ADDR' => '10.0.0.1', 'HTTP_X_FORWARDED_FOR' => '203.0.113.66, 198.51.100.7, 172.64.0.1'],
+            'cloudflare 10.0.0.0/8',
             '198.51.100.7',
         ];
-        yield 'a header that is not a string is no header' => [
-            ['HTTP_X_FORWARDED_FOR' => ['198.51.100.7']] + $peer,
-            '10.0.0.1',
+        yield 'Cloudflare not listed: its edge is the client' => [
+            ['REMOTE_ADDR' => '10.0.0.1', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7, 172.64.0.1'],
+            '10.0.0.0/8',
+            '172.64.0.1',
         ];
-        yield 'IPv6 comes back in canonical form' => [$xff('2001:DB8:0:0::1'), '2001:db8::1'];
-        yield 'an IPv6 peer' => [['REMOTE_ADDR' => '::1'], '::1'];
-        yield 'nothing valid at all' => [['HTTP_X_FORWARDED_FOR' => 'nope', 'REMOTE_ADDR' => 'also nope'], ''];
-        yield 'nothing at all (CLI)' => [[], ''];
+        yield 'an IPv4-mapped peer is not its IPv4 range' => [['REMOTE_ADDR' => '::ffff:10.0.0.1', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'], $lan, '::ffff:10.0.0.1'];
+
+        yield 'an IPv6 peer' => [['REMOTE_ADDR' => '::1'], '', '::1'];
+        yield 'a peer that is not an address' => [['HTTP_X_FORWARDED_FOR' => '198.51.100.7', 'REMOTE_ADDR' => 'nope'], $lan, ''];
+        yield 'nothing at all (CLI)' => [[], $lan, ''];
     }
 
     /**
      * @dataProvider servers
      * @param array<string, mixed> $server
      */
-    public function testResolvesTheVisitorsAddress(array $server, string $expected): void
+    public function testResolvesTheClientsAddress(array $server, string $setting, string $expected): void
     {
-        self::assertSame($expected, VisitorIp::fromServer($server));
+        self::assertSame($expected, VisitorIp::fromServer($server, TrustedProxies::parse($setting)));
     }
 
-    public function testThePrecedenceIsTheOneTheBootstrapsHad(): void
+    public function testKnownClientIsUnknownWhenAnUnlistedPeerForwards(): void
     {
-        // connect.php and connect2.php's match(true), in its order: changing
-        // it moves every click's recorded address behind a CDN.
-        self::assertSame([
-            'HTTP_CF_CONNECTING_IP',
-            'HTTP_X_CLUSTER_CLIENT_IP',
-            'HTTP_X_SUCURI_CLIENTIP',
-            'HTTP_X_REAL_IP',
-            'HTTP_CLIENT_IP',
-            'HTTP_X_FORWARDED_FOR',
-        ], VisitorIp::FORWARDING_HEADERS);
+        $lan = TrustedProxies::parse('10.0.0.0/8');
+        foreach (VisitorIp::FORWARDING_HEADERS as $key) {
+            $server = ['REMOTE_ADDR' => '192.0.2.1', $key => '198.51.100.7'];
+            self::assertSame('', VisitorIp::knownClient($server, $lan), $key);
+            self::assertSame('192.0.2.1', VisitorIp::fromServer($server, $lan), $key);
+        }
+        self::assertSame('192.0.2.1', VisitorIp::knownClient(['REMOTE_ADDR' => '192.0.2.1'], $lan));
+        self::assertSame('198.51.100.7', VisitorIp::knownClient(
+            ['REMOTE_ADDR' => '10.0.0.1', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7', 'HTTP_X_REAL_IP' => '203.0.113.1'],
+            $lan
+        ));
     }
 
-    public function testEveryHeaderOutranksTheOnesAfterIt(): void
+    public function testTheEnvironmentDecidesWhenNoneIsGiven(): void
     {
-        $headers = VisitorIp::FORWARDING_HEADERS;
-        foreach ($headers as $rank => $key) {
-            $server = ['REMOTE_ADDR' => '10.0.0.1'];
-            foreach ($headers as $otherRank => $other) {
-                $server[$other] = '198.51.100.' . (10 + $otherRank);
-            }
-            // Drop every header ranked above this one: this one must win.
-            foreach (array_slice($headers, 0, $rank) as $higher) {
-                unset($server[$higher]);
-            }
-            self::assertSame('198.51.100.' . (10 + $rank), VisitorIp::fromServer($server), $key);
+        $server = ['REMOTE_ADDR' => '10.0.0.1', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'];
+        $before = getenv(TrustedProxies::ENV);
+        try {
+            putenv(TrustedProxies::ENV);
+            self::assertSame('10.0.0.1', VisitorIp::fromServer($server), 'unset: nothing is trusted');
+            putenv(TrustedProxies::ENV . '=10.0.0.0/8');
+            self::assertSame('198.51.100.7', VisitorIp::fromServer($server));
+        } finally {
+            putenv($before === false ? TrustedProxies::ENV : TrustedProxies::ENV . '=' . $before);
         }
     }
 
