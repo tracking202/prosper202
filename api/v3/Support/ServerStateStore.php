@@ -6,6 +6,7 @@ namespace Api\V3\Support;
 
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ConflictException;
+use Api\V3\Exception\SyncException;
 use Prosper202\Database\InstallId;
 
 class ServerStateStore implements QuotaStore
@@ -1216,7 +1217,7 @@ class ServerStateStore implements QuotaStore
 
         if (!flock($fh, LOCK_EX | LOCK_NB)) {
             fclose($fh);
-            throw new DatabaseException('Sync lock is already held for this source/target pair');
+            throw SyncException::pairBusy();
         }
 
         return static function () use ($fh): void {

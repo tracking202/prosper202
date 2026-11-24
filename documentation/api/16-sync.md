@@ -148,7 +148,7 @@ so `"prune_denylist": "campaigns"` protected no campaign from the prune.
 | Status | Description |
 | ------ | ----------- |
 | `queued` | Job created, waiting to be processed |
-| `running` | Job currently executing |
+| `running` | Job currently executing (`running_since` is when the run began) |
 | `succeeded` | All items synced successfully |
 | `failed` | Job failed (check events for details) |
 | `cancelled` | Job was cancelled |
@@ -200,14 +200,33 @@ The job then says why in `error` and which kind in `error_code`:
 | `sync_limit` | A cap above was reached | No |
 | `sync_key_unreadable` | The job's stored key could not be opened; queue the sync again | No |
 | `sync_remote_failed` | A remote did not answer, or answered something no Prosper202 API does | Yes |
+| `sync_pair_busy` | Another sync between the same source and target is running on this server; the job waits for it | Yes |
+| `sync_record_unusable` | A record the sync cannot match or write as the source has it (an empty name it matches by, a reference to a record the target lacks); `error` names the record and what to change | No |
+| `sync_worker_lost` | The process running the job ended before it finished (see below) | No |
+| `sync_internal` | An error inside this server, not an answer from either instance; `error` names the log entry that has it | Yes |
 
-`error_code` is `null` for any other failure. When a sync stops after it
+`sync_record_unusable` stops the run only without `skip_errors`; with it the
+record is counted as failed and the run goes on. `error_code` is `null` for
+any other failure. When a sync stops after it
 began writing, `written` lists what the target had confirmed by then, by
 entity (`{"campaigns": {"created": 3, "updated": 1}}`), and `error` ends
 with the same in words ("Writes the target confirmed before it stopped:
 …"); a stop while still reading ends "Nothing was written." Records synced
 are found by their natural key the next time, so running the same sync
 again finishes it.
+
+### A run whose process ended
+
+A worker killed, or out of memory or time, cannot mark its own job. A run
+PHP stops with a fatal error or an exit is failed at once, with PHP's
+message in `error`. A run whose process was killed is failed by the next
+read of the job, the next worker run or the next queued sync for the pair,
+once it began 1,200 seconds ago (the 900 a sync may take, and 300 more) and
+no process holds the job: `error_code` is `sync_worker_lost`, `written`
+counts the writes its events logged (`Created`, `Updated` and `Deleted
+target record`), and `error` says the same and that the job is not tried
+again by itself. A cancel asked while it ran makes it `cancelled` instead.
+Run the sync again to finish it; `POST /sync/plan` shows what is left.
 
 ### The profiles' API keys
 
