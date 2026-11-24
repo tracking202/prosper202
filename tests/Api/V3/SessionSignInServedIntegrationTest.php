@@ -190,6 +190,30 @@ final class SessionSignInServedIntegrationTest extends TestCase
         return $jar;
     }
 
+    /**
+     * The pages' licence gate (AUTH::require_valid_api_key()) as it stands in a
+     * browser whose key the licence service confirmed: the session remembers
+     * it. Without this the gate asks my.tracking202.com about the test's key,
+     * which refuses it wherever the service is reachable (CI) and is waved
+     * through on the seeded grace answer where it is not.
+     */
+    private static function licenceConfirmed(string $jar): void
+    {
+        $id = null;
+        foreach (file($jar, FILE_IGNORE_NEW_LINES) ?: [] as $line) {
+            $fields = explode("\t", $line);
+            if (count($fields) === 7 && $fields[5] === 'PHPSESSID') {
+                $id = $fields[6];
+            }
+        }
+        self::assertIsString($id, 'the jar holds the session cookie');
+        self::assertSame(1, preg_match('/^[A-Za-z0-9,-]+$/', $id), 'a session id names a file');
+        $file = self::$dir . '/sessions/sess_' . $id;
+        self::assertFileExists($file);
+        // The php serializer writes name|value; entries one after another.
+        self::assertNotFalse(file_put_contents($file, 'valid_key|b:1;', FILE_APPEND));
+    }
+
     private static function csrf(string $jar): string
     {
         [, $body] = self::call('GET', '/api/v3/me', $jar);
@@ -261,7 +285,9 @@ final class SessionSignInServedIntegrationTest extends TestCase
     {
         $dashboard = self::signIn();
         $settings = self::signIn();
-        [, , $page] = self::call('GET', '/202-account/account.php', $settings);
+        self::licenceConfirmed($settings);
+        [$status, , $page] = self::call('GET', '/202-account/account.php', $settings);
+        self::assertSame(200, $status, 'Personal settings is served: ' . substr($page, 0, 300));
         self::assertSame(1, preg_match('/name="token" value="([^"]+)"/', $page, $m), 'Personal settings carries a token');
         [$status] = self::call('POST', '/202-account/account.php', $settings, [], null, [
             'token' => $m[1], 'change_user_pass' => '1', 'user_pass' => self::PASSWORD,
