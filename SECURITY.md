@@ -5,12 +5,11 @@
 Please report security vulnerabilities privately, not in a public issue,
 pull request or discussion.
 
-- **GitHub:** open a private report at
-  [Security › Report a vulnerability](https://github.com/tracking202/prosper202/security/advisories/new).
-  Only you and the repository's maintainers can see it, and the fix and the
-  advisory can be worked on with you there.
-- **Email:** `[SECURITY CONTACT: to be set by the owner before this file is
-  merged]`
+Open a private report on GitHub at
+[Security › Report a vulnerability](https://github.com/tracking202/prosper202/security/advisories/new).
+Only you and the repository's maintainers can see it, and the fix and the
+advisory can be worked on with you there. This is the only channel for
+vulnerability reports.
 
 Include what you can of:
 
@@ -25,7 +24,7 @@ do not access or keep other people's data beyond what shows the problem.
 
 Questions about using Prosper202 go to support
 ([Help and Support](https://prosper.tracking202.com/documentation/tutorials-and-guides/help-and-support)),
-not here; send vulnerabilities through the channels above rather than the
+not here; send vulnerabilities through GitHub as above rather than the
 support chat.
 
 ## What happens next
