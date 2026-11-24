@@ -1,0 +1,83 @@
+name: Dependency Audit
+
+# Known vulnerabilities in what the release zip ships: the Composer set in
+# composer.lock (`composer audit`, against Packagist's advisory database) and
+# the Go CLI's modules and toolchain (govulncheck, against the Go
+# vulnerability database, reporting only code the CLI can reach).
+#
+# It runs on a pull request or landing that changes a manifest or lock file
+# (every Dependabot bump), weekly, and on demand. Not on every pull request:
+# an advisory published today would otherwise turn unrelated pull requests
+# red until someone bumps the dependency. The weekly run is what notices a
+# new advisory against an unchanged lock.
+
+on:
+  push:
+    branches:
+      - master
+      - '[0-9]+.[0-9]+.[0-9]+'
+    paths:
+      - 'composer.json'
+      - 'composer.lock'
+      - 'go-cli/go.mod'
+      - 'go-cli/go.sum'
+      - '.github/workflows/dependency-audit.yml'
+  pull_request:
+    paths:
+      - 'composer.json'
+      - 'composer.lock'
+      - 'go-cli/go.mod'
+      - 'go-cli/go.sum'
+      - '.github/workflows/dependency-audit.yml'
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  composer:
+    name: composer audit
+    # PHP 8.3 and Composer come with the pinned runner image, as in
+    # pr-checks.yml. The audit reads composer.lock only; nothing is installed.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Dev packages are audited too: they run in CI next to its tokens.
+      # Abandonment is reported, not failed: it is not a vulnerability, and
+      # Composer's default for it differs between releases.
+      - name: No locked package has a known advisory
+        run: |
+          composer --version
+          composer audit --locked --no-interaction --abandoned=report
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go-cli
+    env:
+      # Build govulncheck with the Go set up below, never a downloaded one: a
+      # govulncheck built by an older Go cannot load the CLI's go1.27
+      # packages, and the standard library it checks is the one in use.
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.4'   # matches go-cli/go.mod
+          cache-dependency-path: go-cli/go.sum
+
+      # Exit 3 when a vulnerable symbol is reachable. A finding in the
+      # standard library is fixed by bumping Go (go.mod and every workflow's
+      # go-version), which Dependabot does not propose.
+      - name: No reachable known vulnerability in the CLI or its Go
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
