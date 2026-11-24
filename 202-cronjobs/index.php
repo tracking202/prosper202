@@ -276,9 +276,10 @@ function RunHourlyCronJob()
         // it buys clicks, or one past its daily cost cap with no conversion.
         RunMoneyLossAlerts();
 
-        // LTV subscriptions that stopped renewing: past_due once their period
-        // and grace are over, canceled 30 days later, which MRR, churn and
-        // the customers' rollups read. Last, under its own budget.
+        // LTV subscriptions that stopped renewing (trials and pauses too):
+        // past_due once their period and grace are over, canceled 30 days
+        // later, which MRR, churn and the customers' rollups read. Last,
+        // under its own budget.
         RunLtvMaintenance([\Prosper202\Ltv\LtvMaintenance::SWEEP], \Prosper202\Ltv\LtvMaintenance::HOURLY_SECONDS);
 
         cronQuery($db, $insert_sql, 'the hourly tier\'s record of this hour\'s run');
