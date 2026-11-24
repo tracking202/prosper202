@@ -33,7 +33,7 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
     private const DIRECT_TRACKER = 4133;
     private const FOREIGN_PAGE_TRACKER = 4134;
     private const PUBLIC = 100000;
-    /** A publisher the owner may credit (t202pubid), and the owner's role that grants it. */
+    /** A publisher the owner may credit (t202pubid): the owner's role and grant. */
     private const PUBLISHER = 4103;
     private const PUBLISHER_PUBLIC_ID = 'pt4103pub';
     private const GRANT_ROLE = 4141;
@@ -119,6 +119,7 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
         }
         $users = self::OWNER . ', ' . self::OTHER . ', ' . self::PUBLISHER;
         self::q("DELETE FROM 202_clicks_publisher WHERE publisher_user_id IN ($users)");
+        self::q("DELETE FROM 202_publisher_grants WHERE user_id IN ($users) OR publisher_user_id IN ($users)");
         self::q("DELETE FROM 202_user_role WHERE user_id IN ($users)");
         self::q('DELETE FROM 202_role_permission WHERE role_id = ' . self::GRANT_ROLE);
         self::q('DELETE FROM 202_roles WHERE role_id = ' . self::GRANT_ROLE);
@@ -190,6 +191,8 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
         self::q('UPDATE 202_users SET user_public_publisher_id = ' . self::str(self::PUBLISHER_PUBLIC_ID)
             . ' WHERE user_id = ' . self::PUBLISHER);
         self::row('202_user_role', ['user_id' => self::PUBLISHER, 'role_id' => $publisherRole]);
+        self::q('INSERT INTO 202_publisher_grants (user_id, publisher_user_id, granted_at) VALUES ('
+            . self::OWNER . ', ' . self::PUBLISHER . ', ' . time() . ')');
     }
 
     /**
