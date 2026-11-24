@@ -8,6 +8,7 @@ use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookRefused;
 use Prosper202\Attribution\WebhookTarget;
 use Prosper202\Attribution\WebhookUnresolved;
+use Prosper202\Http\EgressProxy;
 
 /**
  * The one sender of server-to-server traffic-source postbacks: the
@@ -22,7 +23,9 @@ use Prosper202\Attribution\WebhookUnresolved;
  * private, loopback, link-local, metadata and the other non-public
  * addresses (P202_WEBHOOK_ALLOW_NETWORKS admits an operator's own network),
  * and the connection is made to the address it approved, pinned with
- * CURLOPT_RESOLVE, with no proxy (one would resolve the name itself).
+ * CURLOPT_RESOLVE, with no proxy (one would resolve the name itself), or
+ * tunnelled to that address through the operator's egress proxy
+ * (Http\EgressProxy::routeOptions()).
  *
  * Redirects are followed by hand, at most MAX_REDIRECTS, each hop checked
  * and pinned as the first was: curl's own following would resolve each new
@@ -73,6 +76,7 @@ final class PostbackSender
     {
         try {
             $this->guard ??= new WebhookGuard();
+            $proxy = EgressProxy::configured();
         } catch (\UnexpectedValueException $e) {
             // The operator's setting: nothing is sent until it is fixed, and
             // the postback is kept to retry.
@@ -96,13 +100,14 @@ final class PostbackSender
                 return PostbackResult::failed('not delivered: the postback took more than '
                     . self::TIMEOUT . ' seconds over ' . $redirects . ' redirects');
             }
-            $response = ($this->transport)(self::curlOptions($target, $left));
+            $response = ($this->transport)(self::curlOptions($target, $left, $proxy));
             $status = $response['status'];
             $connected = $response['primary_ip'];
+            $peer = EgressProxy::expectedPeer($target, $proxy);
 
-            if ($connected !== null && $connected !== '' && !self::sameAddress($connected, $target->pinned())) {
+            if ($peer !== null && $connected !== null && $connected !== '' && !self::sameAddress($connected, $peer)) {
                 return PostbackResult::refused('the connection to ' . self::origin($hop) . ' went to ' . $connected
-                    . ' instead of the checked address ' . $target->pinned()
+                    . ' instead of ' . (EgressProxy::tunnels($target, $proxy) ? 'the egress proxy ' : 'the checked address ') . $peer
                     . '; the pin did not hold, so it is not tried again');
             }
             if ($status === 0) {
@@ -133,7 +138,7 @@ final class PostbackSender
      *
      * @return array<int, mixed>
      */
-    public static function curlOptions(WebhookTarget $target, int $timeout = self::TIMEOUT): array
+    public static function curlOptions(WebhookTarget $target, int $timeout = self::TIMEOUT, ?EgressProxy $proxy = null): array
     {
         $options = [
             CURLOPT_URL => $target->url,
@@ -144,20 +149,14 @@ final class PostbackSender
             // Each redirect is checked and pinned by send(), never by curl.
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_MAXREDIRS => 0,
-            CURLOPT_PROXY => '',
-            CURLOPT_NOPROXY => '*',
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_CONNECTTIMEOUT => max(1, min(self::CONNECT_TIMEOUT, $timeout)),
             CURLOPT_TIMEOUT => max(1, min(self::TIMEOUT, $timeout)),
             CURLOPT_NOSIGNAL => true,
         ];
-        $resolve = $target->resolveEntry();
-        if ($resolve !== null) {
-            $options[CURLOPT_RESOLVE] = [$resolve];
-        }
 
-        return $options;
+        return array_replace($options, EgressProxy::routeOptions($target, $proxy));
     }
 
     /**

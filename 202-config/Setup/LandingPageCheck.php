@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Setup;
 
 use Prosper202\Attribution\WebhookGuard;
+use Prosper202\Http\EgressProxy;
 use Prosper202\Attribution\WebhookRefused;
 use Prosper202\Notifications\PostbackSender;
 
@@ -75,6 +76,7 @@ final class LandingPageCheck
         }
         try {
             $this->guard ??= new WebhookGuard();
+            $proxy = EgressProxy::configured();
         } catch (\UnexpectedValueException $e) {
             return self::error('Your page was not fetched: ' . $e->getMessage());
         }
@@ -96,7 +98,7 @@ final class LandingPageCheck
                 return self::error('Checking your page took more than ' . self::TIMEOUT . ' seconds (looking up its host'
                     . ($redirects > 0 ? ' and following ' . $redirects . ' redirects' : '') . '), so it was stopped. Try again.');
             }
-            $answer = ($this->transport)(self::curlOptions($target, $left));
+            $answer = ($this->transport)(self::curlOptions($target, $left, $proxy));
 
             $status = $answer['status'];
             if ($status === 0) {
@@ -105,10 +107,12 @@ final class LandingPageCheck
                     : 'Your page at ' . $where . ' could not be fetched: ' . ($answer['error'] ?? 'no answer') . '.');
             }
             // An answer from an address that cannot be confirmed as the checked one is not read.
+            // Through a proxy named by host name, the tunnel's own end is all that is known (EgressProxy::expectedPeer()).
             $connected = $answer['primary_ip'] ?? '';
-            if (!self::sameAddress($connected, $target->pinned())) {
+            $peer = EgressProxy::expectedPeer($target, $proxy);
+            if ($peer !== null && !self::sameAddress($connected, $peer)) {
                 return self::error('The connection to ' . $where . ' went to ' . ($connected === '' ? 'an address curl did not report' : $connected)
-                    . ' instead of the checked address ' . $target->pinned() . ', so the page was not read.');
+                    . ' instead of ' . (EgressProxy::tunnels($target, $proxy) ? 'the egress proxy ' : 'the checked address ') . $peer . ', so the page was not read.');
             }
             if ($status >= 300 && $status < 400) {
                 $location = $answer['redirect_url'];
@@ -288,9 +292,9 @@ final class LandingPageCheck
      *
      * @return array<int, mixed>
      */
-    public static function curlOptions(\Prosper202\Attribution\WebhookTarget $target, int $timeout): array
+    public static function curlOptions(\Prosper202\Attribution\WebhookTarget $target, int $timeout, ?EgressProxy $proxy = null): array
     {
-        $options = PostbackSender::curlOptions($target, min(self::TIMEOUT, $timeout));
+        $options = PostbackSender::curlOptions($target, min(self::TIMEOUT, $timeout), $proxy);
         $options[CURLOPT_USERAGENT] = self::USER_AGENT;
         $options[CURLOPT_HTTPHEADER] = ['Accept: text/html,application/xhtml+xml;q=0.9,*/*;q=0.5'];
         $options[CURLOPT_ENCODING] = '';

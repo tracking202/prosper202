@@ -1653,37 +1653,7 @@ function getFacebookCampaignsAndAdSets($api_key)
 
 function getData($url, int $timeout = 60, int $connectTimeout = 5)
 {
-    $timeout = max(1, $timeout);
-    $connectTimeout = max(1, min($timeout, $connectTimeout));
-
-    if (function_exists('curl_version')) {
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $connectTimeout);
-        curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
-        $result = curl_exec($ch);
-        curl_close($ch);
-        return $result;
-    } else {
-        if (ini_get('allow_url_fopen')) {
-            $context = stream_context_create([
-                'http' => [
-                    'timeout' => $timeout,
-                ],
-                'ssl' => [
-                    'verify_peer' => true,
-                    'verify_peer_name' => true,
-                ],
-            ]);
-            return @file_get_contents($url, false, $context);
-        } else {
-            return false;
-        }
-    }
+    return \Prosper202\Http\VendorFetch::fetch((string) $url, $timeout, $connectTimeout) ?? false;
 }
 
 /**

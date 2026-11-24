@@ -21,7 +21,7 @@ use Prosper202\Database\Connection;
  * writers ask accepted() now, and post() sends through the export and LTV
  * webhooks' sender (WebhookSender): WebhookGuard::check() when it is sent,
  * public addresses only (P202_WEBHOOK_ALLOW_NETWORKS admits an operator's
- * own network), pinned, no proxy, https only, no redirects, and TIMEOUT
+ * own network), pinned (through the egress proxy when one is set), https only, no redirects, and TIMEOUT
  * seconds in all.
  */
 final class SlackWebhook

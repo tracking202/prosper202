@@ -18,7 +18,7 @@ declare(strict_types=1);
  * (Attribution\WebhookSender, WebhookGuard::check()), re-checked at dispatch
  * time (DNS may have changed since registration): https only, no private,
  * loopback, link-local or metadata address in any spelling, pinned to the
- * address checked, no proxy, redirects never followed.
+ * address checked, no proxy but the egress proxy, redirects never followed.
  *
  * Options:
  *   --budget=N    seconds to keep sending (default 50, 1-3600); a delivery

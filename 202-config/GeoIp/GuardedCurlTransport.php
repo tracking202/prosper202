@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\GeoIp;
 
 use Prosper202\Attribution\WebhookGuard;
+use Prosper202\Http\EgressProxy;
 use Prosper202\Attribution\WebhookRefused;
 use Prosper202\Notifications\PostbackSender;
 
@@ -12,8 +13,8 @@ use Prosper202\Notifications\PostbackSender;
  * The GeoIP download's HTTP: every URL, MaxMind's and each one it
  * redirects to, is approved by WebhookGuard::check() (https, port 443, every
  * address it resolves to public) and fetched with PostbackSender::curlOptions(),
- * the set the senders pin a request with: pinned to an approved address, no
- * proxy, no redirects, TLS verified. The values changed are the time limit,
+ * the set the senders pin a request with: pinned to an approved address (or
+ * tunnelled to it through the egress proxy), no redirects, TLS verified. The values changed are the time limit,
  * which the sender sets for a postback and a download of tens of megabytes
  * needs longer, and the protocols (https only); a transfer slower than 1 KB/s
  * for a minute is stopped instead. Given a deadline, every request of a run
@@ -180,7 +181,14 @@ final class GuardedCurlTransport implements HttpTransport
         ];
         $guard = new WebhookGuard();
         $ports = [443];
+        try {
+            $proxy = EgressProxy::configured();
+        } catch (\UnexpectedValueException $e) {
+            throw new RefreshFailed('Nothing was downloaded: ' . $e->getMessage());
+        }
         if ($this->loopbackOrigin !== null) {
+            // The test origin is this machine's own, never behind the egress proxy.
+            $proxy = null;
             if (MaxMindDownload::originOf($url) !== $this->loopbackOrigin) {
                 throw new RefreshFailed('In test mode (' . MaxMindDownload::ENV_ORIGIN . ') only '
                     . $this->loopbackOrigin . ' is fetched, and ' . self::shown($url) . ' is not it.');
@@ -193,7 +201,7 @@ final class GuardedCurlTransport implements HttpTransport
             }
         }
         try {
-            return array_replace(PostbackSender::curlOptions($guard->check($url, $ports), $timeout), $download);
+            return array_replace(PostbackSender::curlOptions($guard->check($url, $ports), $timeout, $proxy), $download);
         } catch (WebhookRefused $e) {
             throw new RefreshFailed('The outbound guard refused ' . self::shown($url) . ': '
                 . str_replace($url, self::shown($url), $e->getMessage()) . '.');

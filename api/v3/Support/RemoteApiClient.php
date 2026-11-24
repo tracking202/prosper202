@@ -11,6 +11,7 @@ use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookRefused;
 use Prosper202\Attribution\WebhookTarget;
 use Prosper202\Attribution\WebhookUnresolved;
+use Prosper202\Http\EgressProxy;
 
 /**
  * Another Prosper202 install's API, as a sync (SyncEngine) reads and writes
@@ -20,7 +21,8 @@ use Prosper202\Attribution\WebhookUnresolved;
  * WebhookGuard::checkSync() (https, public addresses, http:// and private
  * ones only where P202_WEBHOOK_ALLOW_NETWORKS admits them, link-local and
  * metadata never) and made to the address it approved, pinned, with no
- * proxy (one would resolve the name itself) and no redirect followed (the
+ * proxy but the operator's egress proxy (Http\EgressProxy::routeOptions();
+ * another would resolve the name itself) and no redirect followed (the
  * key would go with it).
  *
  * What a remote can make this server read is bounded: MAX_ANSWER_BYTES of
@@ -370,6 +372,7 @@ class RemoteApiClient
         try {
             $this->guard ??= new WebhookGuard();
             $target = $this->guard->checkSync($this->baseUrl, self::operatorHosts());
+            $proxy = EgressProxy::configured();
         } catch (WebhookUnresolved $e) {
             throw SyncException::urlUnresolved('Not sent to ' . $this->remote() . ': ' . $e->getMessage(), $e);
         } catch (WebhookRefused $e) {
@@ -378,12 +381,14 @@ class RemoteApiClient
             throw SyncException::urlRefused('Not sent to ' . $this->remote() . ': ' . $e->getMessage(), $e);
         }
 
-        $answer = ($this->transport)(self::curlOptions($target, $method, $url, $headers, $body, $left));
+        $answer = ($this->transport)(self::curlOptions($target, $method, $url, $headers, $body, $left, $proxy));
 
         $connected = $answer['primary_ip'];
-        if ($connected !== null && $connected !== '' && !self::sameAddress($connected, $target->pinned())) {
-            throw SyncException::urlRefused($what . ': the connection went to ' . $connected . ' instead of the '
-                . 'checked address ' . $target->pinned() . '; the pin did not hold, so nothing it answered is read.');
+        $peer = EgressProxy::expectedPeer($target, $proxy);
+        if ($peer !== null && $connected !== null && $connected !== '' && !self::sameAddress($connected, $peer)) {
+            throw SyncException::urlRefused($what . ': the connection went to ' . $connected . ' instead of '
+                . (EgressProxy::tunnels($target, $proxy) ? 'the egress proxy ' : 'the checked address ') . $peer
+                . '; the pin did not hold, so nothing it answered is read.');
         }
         if ($answer['capped']) {
             throw SyncException::limit($what . ': the answer is larger than ' . self::MAX_ANSWER_BYTES . ' bytes, '
@@ -424,7 +429,8 @@ class RemoteApiClient
         string $url,
         array $headers,
         ?string $body,
-        int $timeout = self::REQUEST_TIMEOUT
+        int $timeout = self::REQUEST_TIMEOUT,
+        ?EgressProxy $proxy = null
     ): array {
         $protocol = str_starts_with(strtolower($target->url), 'https://') ? CURLPROTO_HTTPS : CURLPROTO_HTTP;
         $options = [
@@ -435,8 +441,6 @@ class RemoteApiClient
             CURLOPT_REDIR_PROTOCOLS => $protocol,
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_MAXREDIRS => 0,
-            CURLOPT_PROXY => '',
-            CURLOPT_NOPROXY => '*',
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_CONNECTTIMEOUT => max(1, min(self::CONNECT_TIMEOUT, $timeout)),
@@ -446,12 +450,8 @@ class RemoteApiClient
         if ($body !== null) {
             $options[CURLOPT_POSTFIELDS] = $body;
         }
-        $resolve = $target->resolveEntry();
-        if ($resolve !== null) {
-            $options[CURLOPT_RESOLVE] = [$resolve];
-        }
 
-        return $options;
+        return array_replace($options, EgressProxy::routeOptions($target, $proxy));
     }
 
     /**

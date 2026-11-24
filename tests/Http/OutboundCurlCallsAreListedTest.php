@@ -16,7 +16,8 @@ use Tests\Support\SourceScan;
  * away resolved, refused and pinned: nothing listed where this server makes
  * a request, so nothing asked each site whose URL it is. A request this
  * server makes to a URL a user or a remote party chose goes through
- * WebhookGuard (checkPostback() or check()) and is pinned; one to a fixed
+ * WebhookGuard (checkPostback() or check()) and is pinned, or tunnelled
+ * to the checked address through the egress proxy; one to a fixed
  * host, or to an operator's own constant, says so
  * here. The sweep's last unguarded entry, the Slack notices, sends through
  * WebhookSender now (SlackWebhook), so none is marked UNGUARDED; a new one
@@ -28,26 +29,28 @@ use Tests\Support\SourceScan;
 final class OutboundCurlCallsAreListedTest extends TestCase
 {
     private const FIXED = 'a fixed vendor host (my.tracking202.com) over verified TLS';
+    private const ROUTED = 'pinned or tunnelled to the checked address (EgressProxy::routeOptions())';
 
     /** @var array<string, array{0: int, 1: string}> path => [curl_init() calls, whose URL, what keeps it safe] */
     private const LISTED = [
         '202-config/Notifications/PostbackSender.php' => [
             1,
-            'a traffic source pixel: WebhookGuard::checkPostback() at every hop, pinned, no proxy',
+            'a traffic source pixel: WebhookGuard::checkPostback() at every hop, ' . self::ROUTED . ',',
         ],
         '202-config/Setup/LandingPageCheck.php' => [
             1,
             "a landing page's saved URL (Get LP Code's Check my page): WebhookGuard::checkPage() at every hop,"
-            . " PostbackSender's pin, no proxy, body capped",
+            . " PostbackSender's options (" . self::ROUTED . '), body capped',
         ],
         '202-config/Attribution/WebhookSender.php' => [
             1,
-            'an export webhook, an LTV webhook delivery or a Slack notice (SlackWebhook): WebhookGuard::check(),'
-            . ' pinned, no proxy, no redirects',
+            'an export webhook, an LTV webhook delivery or a Slack notice (SlackWebhook): WebhookGuard::check(), '
+            . self::ROUTED . ', no redirects',
         ],
         '202-config/GeoIp/GuardedCurlTransport.php' => [
             1,
-            "MaxMind's download and each URL it redirects to: WebhookGuard::check() at every hop, PostbackSender's pin, no proxy, no redirects",
+            "MaxMind's download and each URL it redirects to: WebhookGuard::check() at every hop, PostbackSender's"
+            . ' options (' . self::ROUTED . '), no redirects',
         ],
         '202-cronjobs/process_dataengine_job.php' => [2, "this server's own listener: DataEngine\\SelfCall's pin"],
         'tracking202/Apps/StoreListing.php' => [
@@ -81,17 +84,14 @@ final class OutboundCurlCallsAreListedTest extends TestCase
             . ' loopback only',
         ],
         '202-config/License/ClickServerKeyValidator.php' => [1, self::FIXED . ', each redirect held to that host'],
-        '202-config/functions-tracking202.php' => [
-            22,
-            self::FIXED . ', except getData($url): redirects followed, no address check; called with fixed'
-            . " URLs and with the update feed's own link (functions.php's auto-upgrade)",
+        '202-config/functions-tracking202.php' => [21, self::FIXED],
+        '202-config/Http/VendorFetch.php' => [
+            1,
+            'getData() and getUrl(): only https://my.tracking202.com (ReleaseSignature::allowedUrl()), each redirect'
+            . ' followed by hand and held to that host, the answer capped',
         ],
         '202-config/functions.php' => [3, self::FIXED],
         '202-config/clickserver_api_management.php' => [3, self::FIXED],
-        '202-config/functions-tracking202api.php' => [
-            1,
-            'getUrl(): redirects followed, no address check; called only with a fixed my.tracking202.com URL',
-        ],
         '202-appstore/index.php' => [1, self::FIXED],
         '202-resources/index.php' => [1, self::FIXED],
         'api/v3/Support/AiWatchers.php' => [
@@ -101,7 +101,7 @@ final class OutboundCurlCallsAreListedTest extends TestCase
         ],
         'api/v3/Support/RemoteApiClient.php' => [
             1,
-            "a sync profile's url: WebhookGuard::checkSync() at every request, pinned, no proxy, no redirects",
+            "a sync profile's url: WebhookGuard::checkSync() at every request, " . self::ROUTED . ', no redirects',
         ],
     ];
 
@@ -123,6 +123,51 @@ final class OutboundCurlCallsAreListedTest extends TestCase
         ksort($listed);
         ksort($found);
         self::assertSame($listed, $found, 'a listed file gained, lost or no longer has a curl_init(): update the list');
+    }
+
+    /**
+     * An entry that says WebhookGuard keeps its URL safe names the check, and
+     * its file makes that check and takes its route from the one place
+     * (EgressProxy::routeOptions(), directly or through
+     * PostbackSender::curlOptions()); a file that makes a guard check beside
+     * its curl_init() says so. Naming the guard is not being guarded by it
+     * (CLAUDE.md #21).
+     */
+    public function testEveryEntryNamingTheGuardIsGuarded(): void
+    {
+        $files = SourceScan::phpFiles();
+        $guarded = 0;
+        foreach (self::LISTED as $path => [, $why]) {
+            self::assertArrayHasKey($path, $files, $path);
+            $code = self::code($files[$path]);
+            $checks = preg_match_all('/WebhookGuard::(check(?:Postback|Page|Sync)?)\(\)/', $why, $m) ?: 0;
+            $calls = preg_match_all('/->(check(?:Postback|Page|Sync)?)\(/', $code, $c) ?: 0;
+            if ($checks === 0) {
+                self::assertSame(0, $calls, "$path checks a URL with WebhookGuard but its entry does not say so");
+                continue;
+            }
+            $guarded++;
+            foreach ($m[1] as $method) {
+                self::assertContains($method, $c[1], "$path's entry names WebhookGuard::$method(), which it does not call");
+            }
+            self::assertTrue(
+                str_contains($code, 'EgressProxy::routeOptions(') || str_contains($code, 'PostbackSender::curlOptions('),
+                "$path takes its route from neither EgressProxy::routeOptions() nor PostbackSender::curlOptions()"
+            );
+        }
+        self::assertSame(5, $guarded, 'the guarded senders: WebhookSender, PostbackSender, LandingPageCheck, GuardedCurlTransport, RemoteApiClient');
+    }
+
+    private static function code(string $source): string
+    {
+        $code = '';
+        foreach (\PhpToken::tokenize($source) as $t) {
+            if (!$t->is([T_WHITESPACE, T_COMMENT, T_DOC_COMMENT])) {
+                $code .= $t->text;
+            }
+        }
+
+        return $code;
     }
 
     public function testTheScanCountsEverySpellingOfTheCall(): void

@@ -31,6 +31,7 @@ final class OutboundCallsHaveTimeoutsTest extends TestCase
         'api/v3/Support/RemoteApiClient.php' => 'curlOptions(): CONNECT_TIMEOUT and REQUEST_TIMEOUT',
         '202-config/Setup/LandingPageCheck.php' => "curlOptions(): PostbackSender::curlOptions()'s limits, capped at TIMEOUT",
         '202-cronjobs/process_dataengine_job.php' => 'DataEngine\\SelfCall::curlOptions(): CONNECT_TIMEOUT and TIMEOUT',
+        '202-config/Http/VendorFetch.php' => "fetch(): the caller's connect limit and what is left of its total",
     ];
 
     public function testEveryCurlRequestSetsAConnectAndATotalLimit(): void
@@ -71,6 +72,7 @@ final class OutboundCallsHaveTimeoutsTest extends TestCase
             '202-config/Notifications/PostbackSender.php',
             'api/v3/Support/RemoteApiClient.php',
             '202-config/DataEngine/SelfCall.php',
+            '202-config/Http/VendorFetch.php',
         ];
         foreach ($builders as $path) {
             self::assertMatchesRegularExpression('/CURLOPT_CONNECTTIMEOUT\s*=>/', $sources[$path], $path);
