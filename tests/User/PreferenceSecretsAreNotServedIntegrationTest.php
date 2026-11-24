@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\User;
 
+use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
+use Tests\Support\StoredShopifySecret;
 use Api\V3\Controllers\UsersController;
 use Api\V3\Exception\ValidationException;
 use PHPUnit\Framework\TestCase;
@@ -24,7 +26,7 @@ final class PreferenceSecretsAreNotServedIntegrationTest extends TestCase
 {
     private const USER = 5002;
 
-    /** column => the secret stored in it */
+    /** column (or, for the Shopify webhook secret, its name in the sealed store) => the secret stored in it */
     private const SECRETS = [
         'cb_key' => 'it-cb-secret',
         'jvzoo_ipn_secret_key' => 'it-jvzoo-secret',
@@ -84,7 +86,7 @@ final class PreferenceSecretsAreNotServedIntegrationTest extends TestCase
             self::markTestSkipped('No test database configured (P202_TEST_DB_HOST).');
         }
         $u = self::USER;
-        foreach (['202_users', '202_users_pref', '202_charts'] as $table) {
+        foreach (['202_users', '202_users_pref', '202_charts', '202_integration_secrets', '202_integration_secret_events'] as $table) {
             self::$db->query("DELETE FROM $table WHERE user_id = $u");
         }
         self::$db->query("INSERT INTO 202_users SET user_id = $u, user_name = 'secrets$u', user_pass = 'x',"
@@ -92,9 +94,12 @@ final class PreferenceSecretsAreNotServedIntegrationTest extends TestCase
             . " install_hash = '', user_hash = '', user_deleted = 0");
         $sets = ["user_id = $u", "user_account_currency = 'USD'", 'cb_verified = 1', "lpo_status = 'active'"];
         foreach (self::SECRETS as $column => $secret) {
-            $sets[] = "`$column` = '" . self::$db->real_escape_string($secret) . "'";
+            if ($column !== ShopifyWebhookSecret::NAME) {
+                $sets[] = "`$column` = '" . self::$db->real_escape_string($secret) . "'";
+            }
         }
         self::$db->query('INSERT INTO 202_users_pref SET ' . implode(', ', $sets));
+        StoredShopifySecret::set(self::$db, $u, self::SECRETS[ShopifyWebhookSecret::NAME]);
     }
 
     /** @return array<string, mixed> */
@@ -102,8 +107,29 @@ final class PreferenceSecretsAreNotServedIntegrationTest extends TestCase
     {
         $row = self::$db->query('SELECT * FROM 202_users_pref WHERE user_id = ' . self::USER)->fetch_assoc();
         self::assertIsArray($row);
+        self::assertArrayNotHasKey(ShopifyWebhookSecret::NAME, $row, 'the plaintext column is gone');
+        $row[ShopifyWebhookSecret::NAME] = StoredShopifySecret::of(self::$db, self::USER);
 
         return $row;
+    }
+
+    public function testTheShopifySecretIsWrittenSealedAndEachChangeRecorded(): void
+    {
+        $users = new UsersController(self::$db);
+        $answer = $users->updatePreferences(self::USER, ['shopify_webhook_secret' => ' it-shopify-rotated-by-api '], null, 1)['data'];
+
+        self::assertSame(['stored' => true], $answer['shopify_webhook_secret']);
+        self::assertSame('it-shopify-rotated-by-api', StoredShopifySecret::of(self::$db, self::USER), 'trimmed, as the endpoint reads it');
+        $sealed = (string) self::$db->query('SELECT sealed FROM 202_integration_secrets WHERE user_id = ' . self::USER)->fetch_row()[0];
+        self::assertStringNotContainsString('rotated-by-api', $sealed);
+        self::assertSame([['replaced', 'api', '1']], self::$db->query("SELECT action, via, actor_user_id FROM 202_integration_secret_events"
+            . ' WHERE user_id = ' . self::USER . " AND action <> 'set' ORDER BY event_id")->fetch_all(MYSQLI_NUM));
+
+        $cleared = $users->updatePreferences(self::USER, ['shopify_webhook_secret' => ''], null, 1)['data'];
+        self::assertSame(['stored' => false], $cleared['shopify_webhook_secret']);
+        self::assertNull(StoredShopifySecret::of(self::$db, self::USER));
+        self::assertSame('cleared', (string) self::$db->query('SELECT action FROM 202_integration_secret_events WHERE user_id = '
+            . self::USER . ' ORDER BY event_id DESC LIMIT 1')->fetch_row()[0]);
     }
 
     /**
@@ -204,7 +230,8 @@ final class PreferenceSecretsAreNotServedIntegrationTest extends TestCase
             self::assertStringContainsString('No valid fields to update', $e->getMessage());
         }
         self::assertSame($before, $this->stored());
-        self::assertSame(ServedPreferences::SECRET, array_keys(self::SECRETS), 'this test stores every listed secret');
+        self::assertSame([...ServedPreferences::SECRET, ...ServedPreferences::SEALED], array_keys(self::SECRETS),
+            'this test stores every listed secret');
     }
 
     /**

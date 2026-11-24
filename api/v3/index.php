@@ -1436,7 +1436,7 @@ try {
             });
             $r->put('/{id}/preferences', function ($ctx) use ($auth, $make, $payload, $db) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
-                return $make()->updatePreferences(PathId::of($ctx), $payload);
+                return $make()->updatePreferences(PathId::of($ctx), $payload, null, $auth->userId());
             });
 
             // Click filtering (Personal settings' card, asked the same way):

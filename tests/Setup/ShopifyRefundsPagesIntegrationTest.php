@@ -10,7 +10,6 @@ use Prosper202\Click\MysqlClickRepository;
 use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\Receiver;
 use Prosper202\PaymentNotification\Shopify\ShopifyAdapter;
-use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
 use Tests\PaymentNotification\ShopifyAdapterTest;
 
 /**
@@ -120,8 +119,7 @@ final class ShopifyRefundsPagesIntegrationTest extends TestCase
     {
         $db = self::requireScratch();
         self::cleanRows();
-        self::q('UPDATE 202_users_pref SET ' . ShopifyWebhookSecret::COLUMN . ' = ' . self::str(self::SECRET)
-            . ' WHERE user_id = ' . self::USER);
+        \Tests\Support\StoredShopifySecret::set($db, self::USER, self::SECRET);
         (new MysqlClickRepository(new Connection($db)))->recordClick(new ClickRecord(
             clickId: self::CLICK,
             userId: self::USER,
@@ -368,7 +366,7 @@ final class ShopifyRefundsPagesIntegrationTest extends TestCase
         self::assertMatchesRegularExpression('#1 refund is\s+not recorded#', $receiving);
 
         // Without a secret there is nothing to report on.
-        self::q('UPDATE 202_users_pref SET ' . ShopifyWebhookSecret::COLUMN . ' = NULL WHERE user_id = ' . self::USER);
+        \Tests\Support\StoredShopifySecret::set(self::requireScratch(), self::USER, null);
         $off = self::card();
         self::assertStringContainsString('<span class="p202-pill">Not connected</span>', $off);
         self::assertStringNotContainsString('id="shopify-status"', $off);

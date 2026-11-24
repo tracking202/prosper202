@@ -25,6 +25,7 @@ use Prosper202\PaymentNotification\JVZoo\RolelessTraffic;
 use Prosper202\PaymentNotification\Zaxaa\ZaxaaSignature;
 use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
 use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
+use Prosper202\Security\IntegrationSecretStore;
 use Prosper202\User\SignInOutcome;
 
 /**
@@ -102,7 +103,7 @@ final class AdministrationController
         'paykickstart' => [
             'PayKickstart', 'IPN URL', 'tracking202/static/paykickstart.php', 'paykickstart_ipn_secret_keys',
         ],
-        'shopify' => ['Shopify', 'Webhook URL', 'tracking202/static/shopify.php', ShopifyWebhookSecret::COLUMN],
+        'shopify' => ['Shopify', 'Webhook URL', 'tracking202/static/shopify.php', ShopifyWebhookSecret::NAME],
     ];
 
     private readonly Connection $conn;
@@ -698,7 +699,7 @@ final class AdministrationController
             $base = TrackingBaseUrl::buildForResponse((string) ($domain['user_tracking_domain'] ?? ''), $server ?? $_SERVER, dirname(__DIR__, 3));
             $prefs = $this->one(
                 'SELECT cb_key, cb_verified, jvzoo_ipn_secret_key, zaxaa_api_signature, user_slack_incoming_webhook,
-                        paykickstart_ipn_secret_keys, shopify_webhook_secret, user_account_currency,
+                        paykickstart_ipn_secret_keys, user_account_currency,
                         jvzoo_roleless_role
                  FROM 202_users_pref WHERE user_id = ? LIMIT 1',
                 'i',
@@ -746,10 +747,14 @@ final class AdministrationController
                     $jvzooKey = $prefs[$secret] ?? null;
                     $entry['secret_stored'] = JVZooKey::stored(is_string($jvzooKey) ? $jvzooKey : null) !== null;
                 }
-                if ($secret === ShopifyWebhookSecret::COLUMN) {
-                    $shopifySecret = $prefs[$secret] ?? null;
-                    $entry['secret_stored'] = ShopifyWebhookSecret::stored(is_string($shopifySecret) ? $shopifySecret : null)
-                        !== null;
+                if ($secret === ShopifyWebhookSecret::NAME) {
+                    // From the sealed store: opened to ask whether it verifies, served only as when it was set.
+                    $now = time();
+                    $store = new IntegrationSecretStore($this->conn);
+                    $entry['secret_stored'] = ShopifyWebhookSecret::accountStores($this->conn, $this->userId);
+                    $marker = $store->marker($this->userId, ShopifyWebhookSecret::NAME, $now);
+                    $entry['secret_set_at'] = $marker['set_at'] ?? null;
+                    $entry['previous_secret_expires_at'] = $marker['previous_expires_at'] ?? null;
                 }
                 if ($secret === ZaxaaSignature::COLUMN) {
                     $zaxaa = $prefs[$secret] ?? null;

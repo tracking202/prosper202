@@ -20,6 +20,8 @@ use Prosper202\User\CurrencyChange;
 use Prosper202\User\ExchangeRates;
 use Prosper202\User\PreferenceRules;
 use Prosper202\User\ServedPreferences;
+use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
+use Prosper202\Security\IntegrationSecretStore;
 
 class UsersController
 {
@@ -946,7 +948,26 @@ class UsersController
     /** The row as it is served: a secret only as whether one is stored (ServedPreferences). */
     public function getPreferences(int $userId): array
     {
-        return ['data' => ServedPreferences::serve($this->preferencesRow($userId))];
+        return ['data' => $this->servedPreferences($this->preferencesRow($userId), $userId)];
+    }
+
+    /**
+     * ServedPreferences::serve(), with the secrets kept in the sealed store
+     * (the Shopify webhook secret) answered as the row's columns are: only
+     * whether one is stored, read without opening it.
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private function servedPreferences(array $row, int $userId): array
+    {
+        $served = ServedPreferences::serve($row);
+        $store = new IntegrationSecretStore(new Connection($this->db));
+        foreach (ServedPreferences::SEALED as $name) {
+            $served[$name] = ['stored' => $store->marker($userId, $name, time()) !== null];
+        }
+
+        return $served;
     }
 
     /** @return array<string, mixed> the row as stored, secrets included: never served */
@@ -1063,7 +1084,7 @@ class UsersController
      *   answer, the amount in the new account currency; null asks the live
      *   service
      */
-    public function updatePreferences(int $userId, array $payload, ?callable $rate = null): array
+    public function updatePreferences(int $userId, array $payload, ?callable $rate = null, ?int $actorUserId = null): array
     {
         // PreferenceRules::validate() refuses them too; refused here first,
         // before anything is read, like every other body.
@@ -1076,7 +1097,7 @@ class UsersController
         if ($payload === []) {
             throw new ValidationException('No valid fields to update');
         }
-        [$writes, $echoErrors] = ServedPreferences::withoutEchoes($payload, ServedPreferences::serve($current));
+        [$writes, $echoErrors] = ServedPreferences::withoutEchoes($payload, $this->servedPreferences($current, $userId));
         [$clean, $errors] = PreferenceRules::validate($writes, self::SUPPORTED_CURRENCIES);
         $errors += $echoErrors;
         if ($errors !== []) {
@@ -1089,6 +1110,9 @@ class UsersController
         $conn = new Connection($this->db);
         $chartRange = $clean['chart_time_range'] ?? null;
         unset($clean['chart_time_range']);
+        // Not a column: the sealed store's, written in the same transaction ("" removes it).
+        $shopifySecret = array_key_exists(ShopifyWebhookSecret::NAME, $clean) ? (string) $clean[ShopifyWebhookSecret::NAME] : null;
+        unset($clean[ShopifyWebhookSecret::NAME]);
 
         $currencyUpdates = [];
         // The live service, unless a caller passed its own: the rate refresh
@@ -1118,7 +1142,15 @@ class UsersController
         }
 
         $storedCurrency = (string) ($current['user_account_currency'] ?? '');
-        $conn->transaction(function () use ($conn, $userId, $clean, $chartRange, $currencyUpdates, $storedCurrency): void {
+        $conn->transaction(function () use ($conn, $userId, $clean, $chartRange, $currencyUpdates, $storedCurrency, $shopifySecret, $actorUserId): void {
+            if ($shopifySecret !== null) {
+                $secrets = new IntegrationSecretStore($conn);
+                if ($shopifySecret === '') {
+                    $secrets->clear($userId, ShopifyWebhookSecret::NAME, $actorUserId, 'api', time());
+                } else {
+                    $secrets->put($userId, ShopifyWebhookSecret::NAME, $shopifySecret, 0, $actorUserId, 'api', time());
+                }
+            }
             if ($clean !== []) {
                 $sets = [];
                 $types = '';

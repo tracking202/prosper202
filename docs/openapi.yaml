@@ -1033,6 +1033,21 @@ paths:
                             verified:
                               type: boolean
                               description: ClickBank only
+                            secret_set_at:
+                              type: integer
+                              nullable: true
+                              description: >-
+                                Shopify only. When the stored webhook secret was set
+                                (Unix seconds), or null when none is stored. The
+                                secret is kept sealed and never served.
+                            previous_secret_expires_at:
+                              type: integer
+                              nullable: true
+                              description: >-
+                                Shopify only. Until when the secret the current one
+                                replaced keeps verifying webhooks (a rotation on
+                                Account › API integrations keeps it 7 days), or null
+                                when none is.
                             keys_stored:
                               type: integer
                               description: PayKickstart only, how many IPN secret keys are stored
@@ -19180,8 +19195,10 @@ components:
               description: >-
                 The secret Shopify signs the store's webhooks with, which
                 tracking202/static/shopify.php verifies X-Shopify-Hmac-Sha256
-                with, stored trimmed; "" removes it. 16 to 250 letters, digits
-                and punctuation; anything else is a 422.
+                with, stored trimmed and sealed in the integration secrets
+                store; "" removes it. It replaces the stored one at once, with
+                no overlap. 16 to 250 letters, digits and punctuation; anything
+                else is a 422.
             - $ref: "#/components/schemas/StoredSecret"
         user_ltv_customer_cparam: {type: integer, enum: [0, 1, 2, 3, 4], description: "c1-c4 carries a customer id; 0 off."}
         user_ltv_personalization_fields: {type: string, maxLength: 500, description: "Comma list of first_name, last_name, company, city, country, cf:<field_key>, rec:next_offer."}

@@ -263,6 +263,70 @@ if (!function_exists('_upgrade_seed_licence_answers')) {
     }
 }
 
+if (!function_exists('_upgrade_shopify_secret_into_store')) {
+    /**
+     * The Shopify webhook secret leaves 202_users_pref for the sealed
+     * integration secrets store (Prosper202\Security\IntegrationSecretStore):
+     * every account's value moved and read back in one transaction
+     * (PreferenceSecretMigration), then the plaintext column dropped. It
+     * makes the store's tables itself, as it runs before the step's
+     * reconcile, which converges them after. A database that never had the
+     * column (upgraded from a tag before 1.9.80) has nothing to move. Any
+     * failure keeps the column and answers false, so the version stays and
+     * the next run retries; a run after a failed drop moves nothing twice.
+     */
+    function _upgrade_shopify_secret_into_store(): bool
+    {
+        global $db;
+
+        foreach ([
+            \Prosper202\Database\Tables\SecretTables::integrationSecrets(),
+            \Prosper202\Database\Tables\SecretTables::integrationSecretEvents(),
+        ] as $definition) {
+            if (_upgrade_query($definition->createStatement) === false) {
+                _upgrade_note('could not create ' . $definition->tableName . ' for the Shopify webhook secrets; they move on the next run.');
+                return false;
+            }
+        }
+
+        $column = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE 'shopify\\_webhook\\_secret'");
+        if (!$column instanceof \mysqli_result) {
+            _upgrade_note('could not read whether 202_users_pref still holds the Shopify webhook secret; it moves on the next run.');
+            return false;
+        }
+        $present = $column->num_rows > 0;
+        $column->free();
+        if (!$present) {
+            return true;
+        }
+        try {
+            $conn = new \Prosper202\Database\Connection(($db instanceof \mysqli) ? $db : $db->getConnection());
+            $counts = \Prosper202\Security\PreferenceSecretMigration::move(
+                $conn,
+                new \Prosper202\Security\IntegrationSecretStore($conn),
+                'shopify_webhook_secret',
+                \Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret::NAME,
+                time()
+            );
+        } catch (\Throwable $e) {
+            _upgrade_note('the Shopify webhook secrets could not be moved into the encrypted store; none was, and the'
+                . ' next run retries', ': ' . $e->getMessage());
+            return false;
+        }
+        if ($counts['kept'] > 0) {
+            error_log('Prosper202 upgrade: ' . $counts['kept'] . ' account(s) already had a Shopify webhook secret in the'
+                . ' encrypted store, saved after this code was deployed; that one is kept.');
+        }
+        if (_upgrade_query('ALTER TABLE `202_users_pref` DROP COLUMN `shopify_webhook_secret`') === false) {
+            _upgrade_note('the Shopify webhook secrets were moved into the encrypted store, but their plaintext column'
+                . ' could not be dropped; the next run drops it.');
+            return false;
+        }
+
+        return true;
+    }
+}
+
 if (!function_exists('_upgrade_purlink_carryover')) {
     /**
      * Paid 1.9.56's pending PurLink click-outs, carried into the PurLink
@@ -5427,9 +5491,7 @@ class UPGRADE
             $history_ok = _upgrade_currency_history_start();
             $before_ok = $baseline_ok && $carried_ok && $campaigns_ok && $history_ok;
             $step_ok = _upgrade_measurement_tables([
-                // 202_users_pref gains shopify_webhook_secret, which Shopify's
-                // order webhooks are verified with (ShopifyWebhookSecret),
-                // jvzoo_roleless_role, how the 1.9.56 JVZoo URL is read (JVZooRole),
+                // 202_users_pref gains jvzoo_roleless_role, how the 1.9.56 JVZoo URL is read (JVZooRole),
                 // the consent columns (ConsentPolicy; the messaging tables carry them),
                 // and user_pref_click_id_params, the postback parameters an
                 // account's networks send an ad click id back in (ClickIdParameters).
@@ -5567,10 +5629,16 @@ class UPGRADE
             // The Shopify refund tables, which a database upgraded by an
             // early 1.9.80 build can lack (Prosper202\PaymentNotification\
             // Shopify\SettlementSchema), reconciled on the way up.
+            // The Shopify webhook secret moves into the sealed integration
+            // secrets store (0H6C), which this makes, and its plaintext column goes.
+            $secrets_ok = _upgrade_shopify_secret_into_store();
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
-            ]);
+                // The sealed integration secrets store and its record of changes (0H6C).
+                \Prosper202\Database\Tables\SecretTables::integrationSecrets(),
+                \Prosper202\Database\Tables\SecretTables::integrationSecretEvents(),
+            ]) && $secrets_ok;
             if ($step_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.81'") !== false) {
                     $prosper202_version = '1.9.81';
