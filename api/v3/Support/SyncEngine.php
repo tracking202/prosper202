@@ -610,6 +610,9 @@ class SyncEngine
      * rule at a time; so is a source redirector with no rules, which a set
      * cannot be.
      *
+     * The set carries the target's own ids where it keeps a rule or a
+     * destination (withTargetIds()), so the target's clicks keep naming them.
+     *
      * @param array<int, array<string, mixed>> $rules
      */
     private function writeRotatorRules(
@@ -624,8 +627,9 @@ class SyncEngine
             $payloads[] = $this->rotatorRulePayload($rule, $sourceLookups, $targetLookups);
         }
         if ($payloads !== []) {
+            $targetRules = $this->fetchTargetRotatorRules($targetClient, $targetRotatorId);
             try {
-                $targetClient->put('rotators/' . $targetRotatorId . '/rules', ['rules' => $payloads]);
+                $targetClient->put('rotators/' . $targetRotatorId . '/rules', ['rules' => self::withTargetIds($payloads, $targetRules)]);
                 return;
             } catch (RemoteApiException $e) {
                 if ($e->remoteStatus !== 404) {
@@ -634,6 +638,122 @@ class SyncEngine
             }
         }
         $this->replaceRotatorRulesOneByOne($targetClient, $targetRotatorId, $payloads);
+    }
+
+    /**
+     * The target redirector's rules, read before the set is written. An
+     * answer that is not a list of rules with ids is refused: read as no
+     * rules, it would cost every target rule its id.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function fetchTargetRotatorRules(RemoteApiClient $targetClient, string $targetRotatorId): array
+    {
+        $answer = $targetClient->get('rotators/' . $targetRotatorId);
+        $data = $answer['data'] ?? null;
+        $rules = is_array($data) && array_key_exists('rules', $data) ? $data['rules'] : null;
+        if (!is_array($rules) || !array_is_list($rules)) {
+            throw new DatabaseException('The target redirector ' . $targetRotatorId . ' answered no list of rules');
+        }
+        foreach ($rules as $rule) {
+            if (!is_array($rule) || !is_scalar($rule['id'] ?? null)) {
+                throw new DatabaseException('The target redirector ' . $targetRotatorId . ' answered a rule with no id');
+            }
+        }
+
+        return $rules;
+    }
+
+    /**
+     * The set with the target's ids on what it keeps; the source's ids mean
+     * nothing on the target. A source rule is the target's rule of the same
+     * name (the first not yet taken, so repeated names pair in order); a
+     * rule with no namesake is added, and a target rule no source rule
+     * names is removed. Rules are not paired by position: a rule inserted
+     * on the source would hand each target rule's id, and the clicks that
+     * name it, to its neighbour. Within a kept rule a destination is the
+     * target's with the same URL, campaign or landing page, and a criterion
+     * the target's with the same type and statement, each paired in order.
+     * A destination with none of the three (the auto-monetizer) is not
+     * paired. The target refuses an id that is not one of this redirector's.
+     *
+     * @param list<array<string, mixed>> $set the rules rotatorRulePayload() built
+     * @param list<array<string, mixed>> $targetRules
+     * @return list<array<string, mixed>>
+     */
+    private static function withTargetIds(array $set, array $targetRules): array
+    {
+        $text = static fn (mixed $v): string => is_scalar($v) ? trim((string) $v) : '';
+        $number = static fn (mixed $v): string => is_scalar($v) && (string) $v !== '' ? (string) (int) $v : '0';
+        $ruleKey = static fn (array $r): string => $text($r['rule_name'] ?? null);
+        $criterionKey = static fn (array $c): string
+            => json_encode([$text($c['type'] ?? null), $text($c['statement'] ?? null)], JSON_THROW_ON_ERROR);
+        $redirectKey = static function (array $r) use ($text, $number): ?string {
+            $parts = [$text($r['redirect_url'] ?? null), $number($r['redirect_campaign'] ?? null), $number($r['redirect_lp'] ?? null)];
+
+            return $parts === ['', '0', '0'] ? null : json_encode($parts, JSON_THROW_ON_ERROR);
+        };
+
+        $takenRules = [];
+        foreach ($set as $i => $rule) {
+            $held = self::firstUntaken($targetRules, $ruleKey($rule), $ruleKey, $takenRules);
+            if ($held === null) {
+                continue;
+            }
+            $rule = ['id' => $held['id']] + $rule;
+            $rule['criteria'] = self::withHeldIds($rule['criteria'] ?? [], $held['criteria'] ?? null, $criterionKey);
+            if (array_key_exists('redirects', $rule)) {
+                $rule['redirects'] = self::withHeldIds($rule['redirects'], $held['redirects'] ?? null, $redirectKey);
+            }
+            $set[$i] = $rule;
+        }
+
+        return $set;
+    }
+
+    /**
+     * A kept rule's criteria or destinations, each with the id of the held
+     * entry it pairs with (withTargetIds()).
+     *
+     * @param mixed $entries as rotatorRulePayload() built them
+     * @param mixed $held the target rule's, as it answered them
+     * @param callable(array<string, mixed>): ?string $key
+     * @return list<mixed>
+     */
+    private static function withHeldIds(mixed $entries, mixed $held, callable $key): array
+    {
+        $heldEntries = is_array($held) ? array_values(array_filter($held, 'is_array')) : [];
+        $taken = [];
+        $out = [];
+        foreach (is_array($entries) ? array_values($entries) : [] as $entry) {
+            $match = is_array($entry) ? $key($entry) : null;
+            $heldEntry = $match === null ? null : self::firstUntaken($heldEntries, $match, $key, $taken);
+            $out[] = $heldEntry !== null && is_scalar($heldEntry['id'] ?? null) ? ['id' => $heldEntry['id']] + $entry : $entry;
+        }
+
+        return $out;
+    }
+
+    /**
+     * The first of $candidates not yet in $taken whose key is $match, added
+     * to $taken.
+     *
+     * @param list<array<string, mixed>> $candidates
+     * @param callable(array<string, mixed>): ?string $key
+     * @param array<int, true> $taken
+     * @return array<string, mixed>|null
+     */
+    private static function firstUntaken(array $candidates, string $match, callable $key, array &$taken): ?array
+    {
+        foreach ($candidates as $at => $candidate) {
+            if (!isset($taken[$at]) && $key($candidate) === $match) {
+                $taken[$at] = true;
+
+                return $candidate;
+            }
+        }
+
+        return null;
     }
 
     /**
