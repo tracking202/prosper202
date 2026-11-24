@@ -542,22 +542,3 @@ if ($db->query($user_sql) === false) {
         . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']');
     record_mysql_error($db, $user_sql);
 }
-
-function updateBlazerCache(&$mysql, $blazerCacheType = '')
-{
-    global $db;
-
-    if ($blazerCacheType != 'ac') {
-        return;
-    }
-    $bc_results = $db->query("SELECT DISTINCT tracker_id_public from 202_trackers WHERE aff_campaign_id = 1");
-    if ($bc_results === false) {
-        throw new \Prosper202\Database\Exceptions\QueryException('MySQL query failed: '
-            . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']');
-    }
-
-    while ($bc_row = $bc_results->fetch_assoc()) {
-        $bc_key = "td_" . $bc_row['tracker_id_public'];
-        setCache($bc_key, $mysql['aff_campaign_url']);
-    }
-}
