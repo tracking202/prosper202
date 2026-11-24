@@ -53,10 +53,8 @@ final class ClickRollupSql
      * its first visit (MysqlClickRepository::recordReClick(), and
      * ReClickBackfill for the rows written before 1.9.79). A click the
      * backfill has not reached has no record (LatestVisit) and a row at each
-     * visit, each with that row's values.
-     *
-     * null is a UTM value's id, which build() reads from 202_google with
-     * AdClickIdColumns::sql(): a join there counts a click once per row.
+     * visit, each with that row's values. The UTM ids are one 202_google
+     * row's (2gg, AdClickIdColumns::rowJoin()), as every reader of them reads.
      */
     private const COLUMNS = [
         'user_id' => '2c.user_id',
@@ -68,11 +66,11 @@ final class ClickRollupSql
         'aff_campaign_id' => '2ac.aff_campaign_id',
         'landing_page_id' => '2c.landing_page_id',
         'keyword_id' => '2k.keyword_id',
-        'utm_source_id' => null,
-        'utm_medium_id' => null,
-        'utm_campaign_id' => null,
-        'utm_term_id' => null,
-        'utm_content_id' => null,
+        'utm_source_id' => '2gg.utm_source_id',
+        'utm_medium_id' => '2gg.utm_medium_id',
+        'utm_campaign_id' => '2gg.utm_campaign_id',
+        'utm_term_id' => '2gg.utm_term_id',
+        'utm_content_id' => '2gg.utm_content_id',
         'text_ad_id' => '2ta.text_ad_id',
         'click_referer_site_url_id' => '2cs.click_referer_site_url_id',
         'country_id' => '2cy.country_id',
@@ -103,6 +101,9 @@ final class ClickRollupSql
         'cost' => '2c.click_cpc AS cost',
     ];
 
+    /** The line of JOINS that build() makes the click's one 202_google row (AdClickIdColumns::rowJoin()). */
+    private const GOOGLE_ROW = '{GOOGLE_ROW}';
+
     /**
      * Every account-owned lookup is joined within the click's own account
      * (`x.user_id = 2c.user_id`): a click names its campaign, traffic source
@@ -125,6 +126,7 @@ LEFT OUTER JOIN 202_aff_networks AS 2an ON (2ac.aff_network_id = 2an.aff_network
 LEFT OUTER JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id AND 2pa.user_id = 2c.user_id)
 LEFT OUTER JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id AND 2pn.user_id = 2c.user_id)
 LEFT OUTER JOIN 202_keywords AS 2k ON (2ca.keyword_id = 2k.keyword_id)
+{GOOGLE_ROW}
 LEFT OUTER JOIN 202_landing_pages AS 2lp ON (2c.landing_page_id = 2lp.landing_page_id AND 2lp.user_id = 2c.user_id)
 LEFT OUTER JOIN 202_text_ads AS 2ta ON (2ca.text_ad_id = 2ta.text_ad_id AND 2ta.user_id = 2c.user_id)
 LEFT OUTER JOIN 202_clicks_site AS 2cs ON (2c.click_id = 2cs.click_id)
@@ -209,14 +211,11 @@ SQL;
             self::refreshedColumns()
         ));
 
-        $columns = [];
-        foreach (self::COLUMNS as $column => $expression) {
-            $columns[$column] = $expression ?? AdClickIdColumns::sql($column, '2c.click_id') . ' AS ' . $column;
-        }
+        $joins = str_replace(self::GOOGLE_ROW, AdClickIdColumns::rowJoin('2gg', '2c.click_id'), self::JOINS);
 
-        return 'insert into ' . $table . '(' . implode(",\n", array_keys($columns)) . ")\n"
-            . "SELECT\n" . implode(",\n", array_values($columns)) . "\n"
-            . $clicks . substr(self::JOINS, strlen(self::CLICKS)) . "\n"
+        return 'insert into ' . $table . '(' . implode(",\n", array_keys(self::COLUMNS)) . ")\n"
+            . "SELECT\n" . implode(",\n", array_values(self::COLUMNS)) . "\n"
+            . $clicks . substr($joins, strlen(self::CLICKS)) . "\n"
             . 'WHERE (' . $whereClause . ') AND ' . LatestVisit::isLatest('2c') . "\n"
             . "on duplicate key update\n" . $updates;
     }

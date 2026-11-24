@@ -84,62 +84,65 @@ final class AdClickIdColumns
         return $conn->fetchOne($stmt) ?? [];
     }
 
-    /** The ids of the UTM values a click keeps in 202_google, by value: sql() reads them, utm() names the value. */
-    public const UTM_IDS = [
-        'utm_source' => 'utm_source_id',
-        'utm_medium' => 'utm_medium_id',
-        'utm_campaign' => 'utm_campaign_id',
-        'utm_term' => 'utm_term_id',
-        'utm_content' => 'utm_content_id',
-    ];
-
     /**
-     * One of a click's ad click ids (ClickRecord::AD_CLICK_IDS) or UTM_IDS
-     * as a scalar subquery, for a statement that reads clicks: the greatest
-     * of the click's 202_google values, NULL when it has no row (the
-     * redirector writes none). 202_google's key is (click_id, gclid), so a
-     * click can have more than one row, and a join to it repeats the click
-     * once for each (GoogleRowsAreNotJoinedTest refuses one). No row says
-     * which visit wrote it, so none can be read as the latest; and taking
-     * the row with a gclid would drop an id another row holds. Each id is
-     * read across the rows instead: '' sorts below every id (0 below every
-     * UTM value's), so an id any row has is read, and rows that disagree
-     * always give the same one.
+     * One of a click's ad click ids (ClickRecord::AD_CLICK_IDS) as a scalar
+     * subquery, for a statement that reads clicks: the greatest of the
+     * click's 202_google values, NULL when it has no row (the redirector
+     * writes none). 202_google's key is (click_id, gclid), so a click can
+     * have more than one row, and a join to it repeats the click once for
+     * each (GoogleRowsAreNotJoinedTest refuses one; rowJoin() is the join
+     * to one row). No row says which visit wrote it, so none can be read as
+     * the latest; and taking the row with a gclid would drop an id another
+     * row holds. Each id is read across the rows instead: '' sorts below
+     * every id, so an id any row has is read, and rows that disagree always
+     * give the same one.
      *
      * @param string $clickId the statement's click id column, alias.column
      */
     public static function sql(string $id, string $clickId): string
     {
-        if (!array_key_exists($id, ClickRecord::AD_CLICK_IDS) && !in_array($id, self::UTM_IDS, true)) {
-            throw new \InvalidArgumentException("$id is not an ad click id or a UTM value's id a click keeps");
+        if (!array_key_exists($id, ClickRecord::AD_CLICK_IDS)) {
+            throw new \InvalidArgumentException("$id is not an ad click id a click keeps");
         }
-        if (preg_match('/\A[A-Za-z0-9_]+\.[A-Za-z0-9_]+\z/D', $clickId) !== 1) {
-            throw new \InvalidArgumentException("$clickId is not a column");
-        }
+        self::column($clickId);
 
         // FORCE INDEX: MariaDB 11 can pick a full scan per row here (M4R1); PRIMARY (click_id, …) always exists.
         return "(SELECT MAX(g_ids.$id) FROM 202_google AS g_ids FORCE INDEX (PRIMARY) WHERE g_ids.click_id = $clickId)";
     }
 
     /**
-     * One of a click's UTM values (a key of UTM_IDS) as a scalar subquery:
-     * the value of the id sql() reads, NULL when there is none.
+     * The join to one of the click's 202_google rows, as $alias, for the
+     * values that belong together (the UTM values): the row with the
+     * greatest gclid, the last in the table's own key. A click with more
+     * than one row is read once, and its UTM values are one row's, never a
+     * mix. That row's gclid is the greatest, sql('gclid')'s; the other ids
+     * are read with sql(), each the greatest of the rows'. No row (the
+     * redirector writes none) joins NULL.
      *
+     * The key compares gclids in its collation, so no two of a click's rows
+     * have gclids it calls equal, and one row has none greater. Measured on
+     * 500k clicks (MariaDB 10.11): about 12% more handler reads than the
+     * plain join, fewer than an equality with a MAX() subquery.
+     *
+     * @param string $alias   the alias the statement reads the row by
      * @param string $clickId the statement's click id column, alias.column
      */
-    public static function utm(string $name, string $clickId): string
+    public static function rowJoin(string $alias, string $clickId): string
     {
-        // Each table named in full, for the scans that read a statement's tables.
-        $lookup = match ($name) {
-            'utm_source' => '(SELECT utm_v.utm_source FROM 202_utm_source AS utm_v WHERE utm_v.utm_source_id = ',
-            'utm_medium' => '(SELECT utm_v.utm_medium FROM 202_utm_medium AS utm_v WHERE utm_v.utm_medium_id = ',
-            'utm_campaign' => '(SELECT utm_v.utm_campaign FROM 202_utm_campaign AS utm_v WHERE utm_v.utm_campaign_id = ',
-            'utm_term' => '(SELECT utm_v.utm_term FROM 202_utm_term AS utm_v WHERE utm_v.utm_term_id = ',
-            'utm_content' => '(SELECT utm_v.utm_content FROM 202_utm_content AS utm_v WHERE utm_v.utm_content_id = ',
-            default => throw new \InvalidArgumentException("$name is not a UTM value a click keeps"),
-        };
+        if (preg_match('/\A[A-Za-z0-9_]+\z/D', $alias) !== 1 || strtolower($alias) === 'g_row') {
+            throw new \InvalidArgumentException("$alias is not an alias rowJoin() can give");
+        }
+        self::column($clickId);
 
-        return $lookup . self::sql(self::UTM_IDS[$name], $clickId) . ')';
+        return "LEFT JOIN 202_google AS $alias ON ($alias.click_id = $clickId AND NOT EXISTS (SELECT 1 FROM 202_google"
+            . " AS g_row FORCE INDEX (PRIMARY) WHERE g_row.click_id = $alias.click_id AND g_row.gclid > $alias.gclid))";
+    }
+
+    private static function column(string $clickId): void
+    {
+        if (preg_match('/\A[A-Za-z0-9_]+\.[A-Za-z0-9_]+\z/D', $clickId) !== 1) {
+            throw new \InvalidArgumentException("$clickId is not a column");
+        }
     }
 
     /** Whether a URL has a [[token]] for one of them. */

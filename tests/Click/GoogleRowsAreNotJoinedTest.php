@@ -13,8 +13,9 @@ use Tests\Support\SourceScan;
  * 202_google's key is (click_id, gclid), so a click can have more than one
  * row, and a join to it repeats the click once for each: counted twice in
  * the reports, two pixels fired, two lines in the Visitors download, a token
- * filled from whichever row came first. A click's values there are read one
- * per click with AdClickIdColumns::sql() (and utm()).
+ * filled from whichever row came first. A click's values there are read once
+ * per click: its ad ids with AdClickIdColumns::sql(), its UTM values from
+ * its one row, AdClickIdColumns::rowJoin(), the one join this allows.
  *
  * Every place the served tree names the table is one of: a write
  * (INSERT INTO), its definition (CREATE TABLE, ALTER TABLE), or a read of
@@ -37,6 +38,8 @@ final class GoogleRowsAreNotJoinedTest extends TestCase
         '202-config/Database/Tables/TrackingTables.php' => [1, 'google(): the name its definition is registered under'],
         '202-config/Click/ClickRetention.php' => [1, 'TABLES: its rows are deleted with their click'],
         '202-config/Click/MysqlClickRepository.php' => [1, 'the error that names the columns the upgrade has not added'],
+        '202-config/Click/AdClickIdColumns.php' => [1, 'rowJoin(): the join to the click\'s one row, on the whole'
+            . ' key (testRowJoinMatchesOneRowOfTheKey)'],
         '202-config/Click/AdClickIdIndex.php' => [1, 'backfillSql(): one index row for each id of each of a click\'s'
             . ' rows, which INSERT IGNORE folds; a second row\'s ids are meant to be read'],
     ];
@@ -67,7 +70,7 @@ final class GoogleRowsAreNotJoinedTest extends TestCase
             $unlisted,
             'A statement joins 202_google, or names it in a shape that is not a write, its definition or a'
             . ' read of it alone: a click with two rows there is repeated. Read its values with'
-            . ' AdClickIdColumns::sql() or utm(), or list the file in NAMED with why.'
+            . ' AdClickIdColumns::sql() or join its one row with rowJoin(), or list the file in NAMED with why.'
         );
         $listed = array_map(static fn (array $entry): int => $entry[0], self::NAMED);
         ksort($listed);
@@ -127,9 +130,6 @@ final class GoogleRowsAreNotJoinedTest extends TestCase
         foreach (array_keys(ClickRecord::AD_CLICK_IDS) as $id) {
             yield "sql('$id')" => ['<?php $s = ' . var_export('SELECT ' . AdClickIdColumns::sql($id, 'c.click_id') . ' AS x FROM 202_clicks AS c LEFT JOIN 202_clicks_site cs ON 1', true) . ';'];
         }
-        foreach (array_keys(AdClickIdColumns::UTM_IDS) as $name) {
-            yield "utm('$name')" => ['<?php $s = ' . var_export('SELECT ' . AdClickIdColumns::utm($name, 'c.click_id') . ' AS x FROM 202_clicks AS c', true) . ';'];
-        }
     }
 
     /** @dataProvider reads */
@@ -145,14 +145,42 @@ final class GoogleRowsAreNotJoinedTest extends TestCase
         self::assertSame([], self::namings("<?php\n// LEFT JOIN 202_google AS g\n/* JOIN 202_google */\n\$a = 1;"));
     }
 
-    /** sql() and utm() refuse what is not a column of 202_google a click keeps, before it reaches the SQL. */
-    public function testSqlAndUtmNameOnlyTheColumnsAClickKeeps(): void
+    /**
+     * rowJoin()'s join is refused anywhere but in its own file: a copy of it
+     * is not the shared one, and the scan reads it as any other join.
+     */
+    public function testACopyOfRowJoinIsRefused(): void
     {
-        foreach (AdClickIdColumns::UTM_IDS as $name => $id) {
-            self::assertStringContainsString("MAX(g_ids.$id)", AdClickIdColumns::sql($id, 'c.click_id'));
-            self::assertStringContainsString("FROM 202_$name AS utm_v", AdClickIdColumns::utm($name, 'c.click_id'));
+        $namings = self::namings('<?php $s = ' . var_export(
+            'SELECT 1 FROM 202_clicks AS c ' . AdClickIdColumns::rowJoin('g', 'c.click_id'),
+            true
+        ) . ';');
+        self::assertCount(2, $namings);
+        self::assertSame([false, true], array_column($namings, 1), 'the join refused, its subquery a read alone');
+    }
+
+    /**
+     * The join's ON names the whole key, (click_id, gclid): the click's row
+     * with no greater gclid, at most one since the key is unique. (The
+     * integration test runs it on a click with two rows.) Its parts are
+     * refused before they reach the SQL.
+     */
+    public function testRowJoinMatchesOneRowOfTheKey(): void
+    {
+        self::assertSame(
+            'LEFT JOIN 202_google AS 2g ON (2g.click_id = 2c.click_id AND NOT EXISTS (SELECT 1 FROM 202_google'
+                . ' AS g_row FORCE INDEX (PRIMARY) WHERE g_row.click_id = 2g.click_id AND g_row.gclid > 2g.gclid))',
+            AdClickIdColumns::rowJoin('2g', '2c.click_id')
+        );
+        foreach ([['g', 'c.click_id) OR (1'], ['g x', 'c.click_id'], ['g_row', 'c.click_id'], ['', 'c.click_id']] as [$alias, $column]) {
+            try {
+                AdClickIdColumns::rowJoin($alias, $column);
+                self::fail("rowJoin('$alias', '$column') was accepted");
+            } catch (\InvalidArgumentException $e) {
+                self::assertMatchesRegularExpression('/is not (a column|an alias rowJoin\(\) can give)/', $e->getMessage());
+            }
         }
-        foreach ([['click_id', 'c.click_id'], ['utm_source', 'c.click_id'], ['gclid', 'c.click_id) OR (1']] as [$id, $column]) {
+        foreach ([['click_id', 'c.click_id'], ['utm_source_id', 'c.click_id'], ['gclid', 'c.click_id) OR (1']] as [$id, $column]) {
             try {
                 AdClickIdColumns::sql($id, $column);
                 self::fail("sql('$id', '$column') was accepted");
@@ -160,9 +188,6 @@ final class GoogleRowsAreNotJoinedTest extends TestCase
                 self::assertStringContainsString($id === 'gclid' ? 'is not a column' : 'is not an ad click id', $e->getMessage());
             }
         }
-        $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('utm_source_id is not a UTM value a click keeps');
-        AdClickIdColumns::utm('utm_source_id', 'c.click_id');
     }
 
     /**

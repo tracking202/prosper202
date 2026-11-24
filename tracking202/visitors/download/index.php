@@ -21,14 +21,13 @@ $reportView = p202_report_view_begin();
 	
 //get stuff: the Visitors list, as click_history.php reads it (a name only
 //when it is the click's own account's, CLAUDE.md #27)
-// The 202_google values one per click (AdClickIdColumns): a join there lists the click once per row.
+// The 202_google values once per click (AdClickIdColumns): the ad ids as GET /clicks
+// reads them, the UTM values from the click's one row. A plain join lists the click once per row.
 	$googleColumns = [];
 	foreach (array_keys(\Prosper202\Click\ClickRecord::AD_CLICK_IDS) as $adClickId) {
 		$googleColumns[] = \Prosper202\Click\AdClickIdColumns::sql($adClickId, '2c.click_id') . ' AS ' . $adClickId;
 	}
-	foreach (array_keys(\Prosper202\Click\AdClickIdColumns::UTM_IDS) as $utmName) {
-		$googleColumns[] = \Prosper202\Click\AdClickIdColumns::utm($utmName, '2c.click_id') . ' AS ' . $utmName;
-	}
+	$googleColumns[] = '2uca.utm_campaign, 2uco.utm_content, 2um.utm_medium, 2us.utm_source, 2ut.utm_term';
 	$command ="SELECT 2c.click_id, 2c.click_time, 2c.click_alp, text_ad_name, aff_campaign_name, aff_campaign_id_public, landing_page_nickname, ppc_network_name, ppc_account_name, " . \Prosper202\DataEngine\IpAddressSql::address('2i', '2i6') . " AS ip_address, keyword, 2c.click_out, click_lead, click_filtered, click_id_public, click_cloaking, 2c.click_referer_site_url_id, click_landing_site_url_id, click_outbound_site_url_id, click_cloaking_site_url_id, click_redirect_site_url_id,	2b.browser_name, 2p.platform_name, 2d.device_name, 202_device_types.type_name, 2cy.country_name, 2cy.country_code, 2rg.region_name, 202_locations_city.city_name, 2is.isp_name, 
 2su.site_url_address AS referer,2sd.site_domain_host AS referer_host,
 2cl.site_url_address AS landing,2cld.site_domain_host AS landing_host,
@@ -64,7 +63,13 @@ LEFT JOIN 202_site_domains AS 2sd ON (2su.site_domain_id = 2sd.site_domain_id)
 LEFT JOIN 202_site_domains as 2cld ON (2cld.site_domain_id = 2cl.site_domain_id) 
 LEFT JOIN 202_site_domains as 2cod ON (2cod.site_domain_id = 2co.site_domain_id) 
 LEFT JOIN 202_site_domains as 2ccd ON (2ccd.site_domain_id = 2cc.site_domain_id) 
-LEFT JOIN 202_site_domains as 2credird ON (2credird.site_domain_id = 2credir.site_domain_id) ";
+LEFT JOIN 202_site_domains as 2credird ON (2credird.site_domain_id = 2credir.site_domain_id)
+" . \Prosper202\Click\AdClickIdColumns::rowJoin('2g', '2c.click_id') . "
+LEFT JOIN 202_utm_campaign AS 2uca ON (2g.utm_campaign_id = 2uca.utm_campaign_id)
+LEFT JOIN 202_utm_content AS 2uco ON (2g.utm_content_id = 2uco.utm_content_id)
+LEFT JOIN 202_utm_medium AS 2um ON (2g.utm_medium_id = 2um.utm_medium_id)
+LEFT JOIN 202_utm_source AS 2us ON (2g.utm_source_id = 2us.utm_source_id)
+LEFT JOIN 202_utm_term AS 2ut ON (2g.utm_term_id = 2ut.utm_term_id) ";
 	$db_table = "2c";
 	$query = query($command);
 	

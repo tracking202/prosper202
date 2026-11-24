@@ -15,13 +15,16 @@ use Prosper202\Rotator\RecordedLink;
 
 /**
  * 202_google's key is (click_id, gclid), so a click can have two rows. Each
- * reader of a click's gclid and UTM values reads them one per click
- * (AdClickIdColumns::sql() and utm()): the report rollup, the traffic source
- * pixels' tokens, gpb.php's and upx.php's read, the tracker URL's tokens, the
- * rotator's recorded link and parallel tracking's lookup. A click with two
- * rows gives one row and, for each value, the greatest of its rows'; a
- * click with one row gives that row's values, as the joins did.
- * (GoogleRowsAreNotJoinedTest refuses the join.)
+ * reader of a click's gclid and UTM values reads them once per click, from
+ * one row (AdClickIdColumns::rowJoin(): the greatest gclid's): the report
+ * rollup, the traffic source pixels' tokens, gpb.php's and upx.php's read,
+ * the tracker URL's tokens, the rotator's recorded link, the Visitors
+ * download and parallel tracking's lookup. A click with two rows gives one
+ * row and that row's UTM values, never one row's source beside another's
+ * medium, chosen by gclid and not by which ids are greater; a click with one
+ * row gives that row's values, as the joins did. The ad ids beside the gclid
+ * stay each the greatest of the rows' (sql()). (GoogleRowsAreNotJoinedTest
+ * refuses any other join.)
  *
  * @group integration
  */
@@ -32,6 +35,8 @@ final class GoogleRowsReadOncePerClickIntegrationTest extends TestCase
     private const USER = 990551;
     private const ONE = 99055101;
     private const TWO = 99055102;
+    private const THREE = 99055103;
+    private const CLICKS = [self::ONE, self::TWO, self::THREE];
     private const LANDING_PAGE = 990552;
     private const IP = 990553;
 
@@ -72,7 +77,7 @@ final class GoogleRowsReadOncePerClickIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         foreach (self::CLICK_TABLES as $table) {
-            self::q("DELETE FROM $table WHERE click_id IN (" . self::ONE . ', ' . self::TWO . ')');
+            self::q("DELETE FROM $table WHERE click_id IN (" . implode(', ', self::CLICKS) . ')');
         }
         self::q('DELETE FROM 202_utm_source WHERE utm_source_id IN (' . self::SOURCE_ALPHA . ', ' . self::SOURCE_BETA . ')');
         self::q('DELETE FROM 202_utm_medium WHERE utm_medium_id = ' . self::MEDIUM);
@@ -86,7 +91,13 @@ final class GoogleRowsReadOncePerClickIntegrationTest extends TestCase
         self::q('INSERT INTO 202_utm_medium (utm_medium_id, utm_medium) VALUES (' . self::MEDIUM . ", 'cpc')");
         self::q('INSERT INTO 202_utm_campaign (utm_campaign_id, utm_campaign) VALUES (' . self::CAMPAIGN . ", 'spring')");
         $repository = new MysqlClickRepository(new Connection(self::requireScratch()));
-        foreach ([self::ONE => 'G-ONE', self::TWO => 'G-TWO'] as $clickId => $gclid) {
+        // The row the click path writes: [gclid, source, medium, campaign].
+        $written = [
+            self::ONE => ['G-ONE', self::SOURCE_ALPHA, self::MEDIUM, 0],
+            self::TWO => ['G-TWO', self::SOURCE_ALPHA, self::MEDIUM, 0],
+            self::THREE => ['A-LOW', self::SOURCE_BETA, self::MEDIUM, self::CAMPAIGN],
+        ];
+        foreach ($written as $clickId => [$gclid, $source, $medium, $campaign]) {
             $repository->recordClick(ClickRecordBuilder::fromLegacyArray([
                 'user_id' => (string) self::USER,
                 'click_time' => (string) time(),
@@ -95,21 +106,29 @@ final class GoogleRowsReadOncePerClickIntegrationTest extends TestCase
                 'ip_id' => (string) self::IP,
                 'click_id_public' => (string) ($clickId + 1000),
                 'gclid' => $gclid,
-                'utm_source_id' => (string) self::SOURCE_ALPHA,
-                'utm_medium_id' => (string) self::MEDIUM,
+                'utm_source_id' => (string) $source,
+                'utm_medium_id' => (string) $medium,
+                'utm_campaign_id' => (string) $campaign,
             ], $clickId));
         }
-        // No writer makes a second row today; the key allows one.
-        self::q('INSERT INTO 202_google SET click_id = ' . self::TWO . ", gclid = '', gbraid = '', wbraid = '',"
-            . " ttclid = '', msclkid = '', fbclid = '', oppref = '', utm_source_id = " . self::SOURCE_BETA . ','
-            . ' utm_medium_id = 0, utm_campaign_id = ' . self::CAMPAIGN . ', utm_term_id = 0, utm_content_id = 0');
+        // No writer makes a second row today; the key allows one. TWO's has no gclid and
+        // greater UTM ids than its first; THREE's has the greater gclid and the smaller ids.
+        $second = [
+            self::TWO => ['', self::SOURCE_BETA, 0, self::CAMPAIGN, 'GB-TWO'],
+            self::THREE => ['Z-HIGH', self::SOURCE_ALPHA, 0, 0, ''],
+        ];
+        foreach ($second as $clickId => [$gclid, $source, $medium, $campaign, $gbraid]) {
+            self::q("INSERT INTO 202_google SET click_id = $clickId, gclid = '$gclid', gbraid = '$gbraid', wbraid = '',"
+                . " ttclid = '', msclkid = '', fbclid = '', oppref = '', utm_source_id = $source,"
+                . " utm_medium_id = $medium, utm_campaign_id = $campaign, utm_term_id = 0, utm_content_id = 0");
+        }
         $rows = self::$db->query('SELECT click_id, COUNT(*) AS n FROM 202_google WHERE click_id IN ('
-            . self::ONE . ', ' . self::TWO . ') GROUP BY click_id ORDER BY click_id');
+            . implode(', ', self::CLICKS) . ') GROUP BY click_id ORDER BY click_id');
         self::assertInstanceOf(\mysqli_result::class, $rows, self::$db->error);
         self::assertSame(
-            [(string) self::ONE => '1', (string) self::TWO => '2'],
+            [(string) self::ONE => '1', (string) self::TWO => '2', (string) self::THREE => '2'],
             array_column($rows->fetch_all(MYSQLI_ASSOC), 'n', 'click_id'),
-            'the seed: one row, and two'
+            'the seed: one row, two, and two'
         );
     }
 
@@ -119,8 +138,11 @@ final class GoogleRowsReadOncePerClickIntegrationTest extends TestCase
         return [
             self::ONE => ['gclid' => 'G-ONE', 'utm_source' => 'alpha', 'utm_medium' => 'cpc', 'utm_campaign' => '',
                 'utm_term' => '', 'utm_content' => ''],
-            // Each value the greatest of the rows': the second row's source and campaign, the first's medium.
-            self::TWO => ['gclid' => 'G-TWO', 'utm_source' => 'beta', 'utm_medium' => 'cpc', 'utm_campaign' => 'spring',
+            // The row with the gclid: its source and medium, and not the other row's campaign.
+            self::TWO => ['gclid' => 'G-TWO', 'utm_source' => 'alpha', 'utm_medium' => 'cpc', 'utm_campaign' => '',
+                'utm_term' => '', 'utm_content' => ''],
+            // The greater gclid's row, though the other has the greater ids: no medium, no campaign.
+            self::THREE => ['gclid' => 'Z-HIGH', 'utm_source' => 'alpha', 'utm_medium' => '', 'utm_campaign' => '',
                 'utm_term' => '', 'utm_content' => ''],
         ];
     }
@@ -144,7 +166,8 @@ final class GoogleRowsReadOncePerClickIntegrationTest extends TestCase
         $conn = new Connection(self::requireScratch());
         $expected = [
             self::ONE => [(string) self::SOURCE_ALPHA, (string) self::MEDIUM, '0'],
-            self::TWO => [(string) self::SOURCE_BETA, (string) self::MEDIUM, (string) self::CAMPAIGN],
+            self::TWO => [(string) self::SOURCE_ALPHA, (string) self::MEDIUM, '0'],
+            self::THREE => [(string) self::SOURCE_ALPHA, '0', '0'],
         ];
         foreach ($expected as $clickId => $ids) {
             ClickRollupSql::rollUpClick($conn, $clickId);
@@ -154,14 +177,15 @@ final class GoogleRowsReadOncePerClickIntegrationTest extends TestCase
             self::assertSame([[...$ids, '1']], $rows, "click $clickId: one row, one click");
         }
         // The range form, as the hourly job and a rebuild run it.
-        self::q('DELETE FROM 202_dataengine WHERE click_id IN (' . self::ONE . ', ' . self::TWO . ')');
-        $range = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id IN (' . self::ONE . ', ' . self::TWO . ')');
+        $in = implode(', ', self::CLICKS);
+        self::q("DELETE FROM 202_dataengine WHERE click_id IN ($in)");
+        $range = ClickRollupSql::insertSelect('202_dataengine', "2c.click_id IN ($in)");
         self::assertTrue(self::$db->query($range), self::$db->error);
         $rows = self::$db->query('SELECT click_id, utm_source_id, utm_medium_id, utm_campaign_id FROM 202_dataengine'
-            . ' WHERE click_id IN (' . self::ONE . ', ' . self::TWO . ') ORDER BY click_id');
+            . " WHERE click_id IN ($in) ORDER BY click_id");
         self::assertInstanceOf(\mysqli_result::class, $rows, self::$db->error);
         self::assertSame(
-            [[(string) self::ONE, ...$expected[self::ONE]], [(string) self::TWO, ...$expected[self::TWO]]],
+            array_map(static fn (int $id): array => [(string) $id, ...$expected[$id]], self::CLICKS),
             $rows->fetch_all(MYSQLI_NUM)
         );
     }
@@ -172,6 +196,8 @@ final class GoogleRowsReadOncePerClickIntegrationTest extends TestCase
             $click = TrafficSourcePixels::clickTokens(new Connection(self::requireScratch()), self::USER, $clickId);
             self::assertNotNull($click);
             self::assertSame($values, self::values($click['tokens']), "click $clickId");
+            // The ids beside the gclid are each the greatest of the rows' (#263): TWO's gbraid is its second row's.
+            self::assertSame($clickId === self::TWO ? 'GB-TWO' : '', $click['tokens']['gbraid'], "click $clickId");
         }
     }
 
@@ -223,6 +249,13 @@ final class GoogleRowsReadOncePerClickIntegrationTest extends TestCase
             self::ONE,
             ParallelTrackingClick::find($conn, self::USER, self::LANDING_PAGE, 'G-ONE', self::IP, time())?->clickId
         );
+        foreach (['A-LOW', 'Z-HIGH'] as $gclid) {
+            self::assertSame(
+                self::THREE,
+                ParallelTrackingClick::find($conn, self::USER, self::LANDING_PAGE, $gclid, self::IP, time())?->clickId,
+                $gclid
+            );
+        }
         self::assertNull(ParallelTrackingClick::find($conn, self::USER, self::LANDING_PAGE, 'G-NONE', self::IP, time()));
     }
 
@@ -250,8 +283,9 @@ final class GoogleRowsReadOncePerClickIntegrationTest extends TestCase
                 . " user_pref_time_predefined = '', user_pref_time_from = " . (time() - 86400)
                 . ', user_pref_time_to = ' . (time() + 86400));
             $conn = new Connection(self::$db);
-            ClickRollupSql::rollUpClick($conn, self::ONE);
-            ClickRollupSql::rollUpClick($conn, self::TWO);
+            foreach (self::CLICKS as $clickId) {
+                ClickRollupSql::rollUpClick($conn, $clickId);
+            }
 
             $proc = proc_open(
                 [PHP_BINARY, '-d', 'display_errors=stderr', '-d', 'error_reporting=E_ALL & ~E_DEPRECATED',
@@ -289,9 +323,10 @@ final class GoogleRowsReadOncePerClickIntegrationTest extends TestCase
             $listed[] = (int) $cells['Subid'];
             self::assertArrayHasKey((int) $cells['Subid'], self::expected());
             self::assertSame(self::expected()[(int) $cells['Subid']], self::values($cells), 'click ' . $cells['Subid']);
+            self::assertSame((int) $cells['Subid'] === self::TWO ? 'GB-TWO' : '', $cells['gbraid'], 'click ' . $cells['Subid']);
         }
         sort($listed);
-        self::assertSame([self::ONE, self::TWO], $listed, 'each click once');
+        self::assertSame(self::CLICKS, $listed, 'each click once');
     }
 
     /** connect2.php's replaceTrackerPlaceholders() as shipped, lifted out of the bootstrap. */

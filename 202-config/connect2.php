@@ -887,12 +887,12 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
             	2c.click_cpc,
             	2trk.click_cpa,
                 2c.ppc_account_id,
-            	" . \Prosper202\Click\AdClickIdColumns::sql('gclid', '2c.click_id') . " AS gclid,
-            	" . \Prosper202\Click\AdClickIdColumns::utm('utm_source', '2c.click_id') . " AS utm_source,
-            	" . \Prosper202\Click\AdClickIdColumns::utm('utm_medium', '2c.click_id') . " AS utm_medium,
-            	" . \Prosper202\Click\AdClickIdColumns::utm('utm_campaign', '2c.click_id') . " AS utm_campaign,
-            	" . \Prosper202\Click\AdClickIdColumns::utm('utm_term', '2c.click_id') . " AS utm_term,
-            	" . \Prosper202\Click\AdClickIdColumns::utm('utm_content', '2c.click_id') . " AS utm_content,
+            	2g.gclid,
+            	2us.utm_source,
+            	2um.utm_medium,
+            	2uca.utm_campaign,
+            	2ut.utm_term,
+            	2uco.utm_content,
 		        2lc.country_name,
 		        2lc.country_code,
 		        2lr.region_name,
@@ -903,10 +903,16 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
             	LEFT OUTER JOIN 202_tracking_c1 AS 2tc1 ON (2ct.c1_id = 2tc1.c1_id) 
             	LEFT OUTER JOIN 202_tracking_c2 AS 2tc2 ON (2ct.c2_id = 2tc2.c2_id) 
             	LEFT OUTER JOIN 202_tracking_c3 AS 2tc3 ON (2ct.c3_id = 2tc3.c3_id) 
-            	LEFT OUTER JOIN 202_tracking_c4 AS 2tc4 ON (2ct.c4_id = 2tc4.c4_id) 
+            	LEFT OUTER JOIN 202_tracking_c4 AS 2tc4 ON (2ct.c4_id = 2tc4.c4_id)
+            	" . \Prosper202\Click\AdClickIdColumns::rowJoin('2g', '2c.click_id') . "
                 LEFT OUTER JOIN 202_cpa_trackers AS 2cpa ON (2cpa.click_id = 2c.click_id)
                 LEFT OUTER JOIN 202_trackers AS 2trk
                     ON (2trk.tracker_id_public = 2cpa.tracker_id_public AND 2trk.user_id = 2c.user_id)
+                LEFT JOIN `202_utm_source` AS 2us ON (2g.utm_source_id = 2us.utm_source_id)
+                LEFT JOIN `202_utm_medium` AS 2um ON (2g.utm_medium_id = 2um.utm_medium_id)
+                LEFT JOIN `202_utm_campaign` AS 2uca ON (2g.utm_campaign_id = 2uca.utm_campaign_id)
+                LEFT JOIN `202_utm_term` AS 2ut ON (2g.utm_term_id = 2ut.utm_term_id)
+                LEFT JOIN `202_utm_content` AS 2uco ON (2g.utm_content_id = 2uco.utm_content_id)
                 LEFT JOIN `202_keywords` AS 2kw ON (2ca.`keyword_id` = 2kw.`keyword_id`) 
 		        LEFT JOIN `202_locations_country` AS 2lc ON (2ca.`country_id` = 2lc.`country_id`)
 		        LEFT JOIN `202_locations_region` AS 2lr ON (2ca.`region_id` = 2lr.`region_id`)    
