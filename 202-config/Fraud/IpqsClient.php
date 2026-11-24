@@ -110,7 +110,7 @@ final class IpqsClient
         if ($set !== true) {
             throw new IpqsLookupFailed('curl refused an option of the lookup');
         }
-        $ok = curl_exec($ch);
+        $ok = \Prosper202\Http\FixedHostRoute::exec($ch);
         $errno = curl_errno($ch);
         $error = curl_error($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);

@@ -101,7 +101,7 @@ function clickserver_api_domain_act_deact($key, $csid, $method){
 	// Set the url
 	curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/'.$method.'/?apiKey='.rawurlencode($key).'&clickserverId='.rawurlencode($csid));
 	// Execute
-	$result=curl_exec($ch);
+	$result=\Prosper202\Http\FixedHostRoute::exec($ch);
 	if ($result === false) {
 		return false;
 	}
@@ -132,7 +132,7 @@ function clickserver_api_domain_list($key){
 	// Set the url
 	curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/list/?apiKey='.$key);
 	// Execute
-	$result=curl_exec($ch);
+	$result=\Prosper202\Http\FixedHostRoute::exec($ch);
 	if ($result === false) {
 		return null;
 	}
@@ -153,7 +153,7 @@ function clickserver_api_license($key){
 	// Set the url
 	curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/license/?apiKey='.$key);
 	// Execute
-	$result=curl_exec($ch);
+	$result=\Prosper202\Http\FixedHostRoute::exec($ch);
 	if ($result === false) {
 		return null;
 	}

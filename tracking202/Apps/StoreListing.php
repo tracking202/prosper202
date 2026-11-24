@@ -210,7 +210,7 @@ final class StoreListing
                 return strlen($chunk);
             },
         ]);
-        $ok = curl_exec($ch);
+        $ok = \Prosper202\Http\FixedHostRoute::exec($ch);
         $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         curl_close($ch);
 

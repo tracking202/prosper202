@@ -59,7 +59,7 @@ curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
 curl_setopt($ch, CURLOPT_TIMEOUT, 10);
 curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/feed/appstore/');
-$result = curl_exec($ch);
+$result = \Prosper202\Http\FixedHostRoute::exec($ch);
 curl_close($ch);
 $apps = p202_appstore_apps(is_string($result) ? json_decode($result, true) : null, get_absolute_url());
 $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');

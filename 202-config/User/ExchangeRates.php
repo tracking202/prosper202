@@ -77,7 +77,7 @@ final class ExchangeRates
             CURLOPT_CONNECTTIMEOUT => min(10, max(1, $timeout)),
             CURLOPT_TIMEOUT => max(1, $timeout),
         ]);
-        $body = curl_exec($ch);
+        $body = \Prosper202\Http\FixedHostRoute::exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         if (!is_string($body) || $status !== 200) {
             return null;

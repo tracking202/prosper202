@@ -976,7 +976,7 @@ function clickserver_api_upgrade_url($key)
     // Set the url
     curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/auth/?apiKey=' . $key . '&clickserverId=' . base64_encode((string) $_SERVER['HTTP_HOST']));
     // Execute
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
 
     $data = json_decode($result, true);
 
@@ -1013,7 +1013,7 @@ function clickserver_api_key_validate($key): ?bool
         'apiKey' => (string) $key,
         'clickserverId' => base64_encode((string) ($_SERVER['HTTP_HOST'] ?? '')),
     ]));
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
     $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
     return clickserver_auth_answer(is_string($result) ? $result : null, $status);
 }
@@ -1112,7 +1112,7 @@ function getSurveyData($install_hash)
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($ch, CURLOPT_TIMEOUT, 5);
     // Execute
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
     // close connection
     curl_close($ch);
 
@@ -1140,7 +1140,7 @@ function updateSurveyData($install_hash, $post)
     // Set post fields
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     // Execute
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
 
     $data = json_decode($result, true);
 
@@ -1168,7 +1168,7 @@ function rotator_data($query, $type)
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($ch, CURLOPT_TIMEOUT, 5);
     // Execute
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
 
     // close connection
     curl_close($ch);
@@ -1241,7 +1241,7 @@ function changelog_remote(): array
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($ch, CURLOPT_TIMEOUT, 5);
 
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
     $http_code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
@@ -1285,7 +1285,7 @@ function callAutoCron($endpoint)
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
     curl_setopt($ch, CURLOPT_TIMEOUT, 10);
     // Execute
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
 
     // close connection
     curl_close($ch);
@@ -1311,7 +1311,7 @@ function getAllDniNetworks($install_hash)
     // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     // Execute
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
 
     curl_close($ch);
 
@@ -1353,7 +1353,7 @@ function authDniNetworks($hash, $network, $key, $affId)
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
     $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     if ($httpcode !== 200) {
@@ -1390,7 +1390,7 @@ function getDniOffers($hash, $network, $key, $affId, $offset, $limit, $sort_by, 
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
     curl_close($ch);
     return $result;
 }
@@ -1412,7 +1412,7 @@ function getDniOfferById($hash, $network, $key, $affId, $id)
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
     curl_close($ch);
     return $result;
 }
@@ -1434,7 +1434,7 @@ function requestDniOfferAccess($hash, $network, $key, $affId, $id, $type)
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
     curl_close($ch);
     return $result;
 }
@@ -1456,7 +1456,7 @@ function submitDniOfferAnswers($hash, $network, $api_key, $affId, $id, $answers)
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
     curl_close($ch);
     return $result;
 }
@@ -1480,7 +1480,7 @@ function setupDniOffer($hash, $network, $key, $affId, $currency, $id, $ddlci)
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
     curl_close($ch);
     return $result;
 }
@@ -1504,7 +1504,7 @@ function getDNICacheProgress($hash, $data)
     ]);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
-    $results = curl_exec($ch);
+    $results = \Prosper202\Http\FixedHostRoute::exec($ch);
     curl_close($ch);
     return $results;
 }
@@ -1534,7 +1534,7 @@ function setupDniOfferTrack($hash, $network, $key, $affId, $id, $ddlci = false)
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
     curl_close($ch);
     return $result;
 }
@@ -1558,7 +1558,7 @@ function getForeignPayout($currency, $payout_currency, $payout)
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     \Prosper202\Http\OutboundTimeouts::apply($ch, 60);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
     curl_close($ch);
     $result = json_decode($result, true);
     return $result;
@@ -1581,7 +1581,7 @@ function validateRevContentCredentials($id, $secret)
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     \Prosper202\Http\OutboundTimeouts::apply($ch, 60);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
     curl_close($ch);
     $result = json_decode($result, true);
     return $result;
@@ -1607,7 +1607,7 @@ function pushToRevContent($id, $secret, $boost, $boost_id, array $ads)
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     \Prosper202\Http\OutboundTimeouts::apply($ch, 60);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
     curl_close($ch);
     $result = json_decode($result, true);
     return $result;
@@ -1631,7 +1631,7 @@ function pushToFacebook($api_key, $group, $ad_set_id, array $ads)
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
     \Prosper202\Http\OutboundTimeouts::apply($ch, 60);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
     curl_close($ch);
     $result = json_decode($result, true);
     return $result;
@@ -1645,7 +1645,7 @@ function getFacebookCampaignsAndAdSets($api_key)
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     \Prosper202\Http\OutboundTimeouts::apply($ch, 60);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch);
     curl_close($ch);
     $result = json_decode($result, true);
     return $result;

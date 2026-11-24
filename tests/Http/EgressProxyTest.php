@@ -265,6 +265,30 @@ PHP;
         self::assertStringNotContainsString('CONNECT pb.network.example', $seen, 'the proxy is never asked for the name');
     }
 
+    public function testAFixedHostCallGoesThroughTheSavedProxyToTheAddressLookedUpHere(): void
+    {
+        [$port, $log] = $this->proxy();
+        \Prosper202\Http\EgressProxy::readStoredFrom(static fn (): \Prosper202\Http\StoredEgressProxy
+            => new \Prosper202\Http\StoredEgressProxy('http://127.0.0.1:' . $port, '', '', null));
+        \Prosper202\Http\FixedHostRoute::resolveWith(static fn (): array => [self::PUBLIC]);
+        try {
+            $ch = curl_init('http://feeds.vendor.example/api/v2/hostings');
+            self::assertInstanceOf(\CurlHandle::class, $ch);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            \Prosper202\Http\OutboundTimeouts::apply($ch, 5);
+            $body = \Prosper202\Http\FixedHostRoute::exec($ch);
+            $primary = curl_getinfo($ch, CURLINFO_PRIMARY_IP);
+        } finally {
+            \Prosper202\Http\EgressProxy::readStoredFrom(null);
+            \Prosper202\Http\FixedHostRoute::resolveWith(null);
+        }
+        $seen = (string) file_get_contents($log);
+        self::assertSame('ok', $body, $seen);
+        self::assertSame('127.0.0.1', $primary);
+        self::assertStringStartsWith('CONNECT ' . self::PUBLIC . ':80 HTTP/1.1', $seen);
+        self::assertStringContainsString("GET /api/v2/hostings HTTP/1.1\r\nHost: feeds.vendor.example\r\n", $seen);
+    }
+
     /**
      * @runInSeparateProcess
      * @preserveGlobalState disabled

@@ -588,7 +588,7 @@ require_once __DIR__ . '/functions-standalone-ui.php';
 		\Prosper202\Http\OutboundTimeouts::apply($ch);
 		curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/get-ads/' . $user . '/' . $key);
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-		$results = curl_exec($ch);
+		$results = \Prosper202\Http\FixedHostRoute::exec($ch);
 		curl_close($ch);
 		return json_decode($results, true);
 	}
@@ -610,7 +610,7 @@ require_once __DIR__ . '/functions-standalone-ui.php';
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 		curl_setopt($ch, CURLOPT_POST, true);
 		curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-		$results = curl_exec($ch);
+		$results = \Prosper202\Http\FixedHostRoute::exec($ch);
 		curl_close($ch);
 		echo $results;
 	}
@@ -665,7 +665,7 @@ require_once __DIR__ . '/functions-standalone-ui.php';
 		curl_setopt($ch, CURLOPT_POST, true);
 		curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
 		curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-		$result = curl_exec($ch);
+		$result = \Prosper202\Http\FixedHostRoute::exec($ch);
 		curl_close($ch);
 
 		$fallback = [

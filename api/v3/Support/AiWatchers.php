@@ -295,7 +295,7 @@ final class AiWatchers
             $this->unreachable = true;
             return [0, null];
         }
-        $ok = curl_exec($ch);
+        $ok = \Prosper202\Http\FixedHostRoute::exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         $error = curl_error($ch);
         if ($ok === false || $status === 0) {

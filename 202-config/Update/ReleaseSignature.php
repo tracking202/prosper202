@@ -239,7 +239,7 @@ final class ReleaseSignature
         curl_setopt($ch, CURLOPT_NOPROGRESS, false);
         curl_setopt($ch, CURLOPT_XFERINFOFUNCTION, static fn ($ch, int $total, int $received): int
             => $received > self::MAX_BYTES ? 1 : 0);
-        $body = curl_exec($ch);
+        $body = \Prosper202\Http\FixedHostRoute::exec($ch, self::MAX_BYTES);
         if (curl_errno($ch) !== 0 || !is_string($body)) {
             error_log('ReleaseSignature: no answer from ' . $url . ': ' . curl_error($ch));
             return null;

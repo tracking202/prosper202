@@ -258,7 +258,7 @@ final class PairingClient
         }
         curl_setopt_array($ch, $options);
 
-        $responseBody = curl_exec($ch);
+        $responseBody = \Prosper202\Http\FixedHostRoute::exec($ch);
         $statusCode = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         $curlError = curl_error($ch);
         curl_close($ch);

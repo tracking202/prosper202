@@ -176,7 +176,7 @@ class ClickServerKeyValidator
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
         curl_setopt($ch, CURLOPT_HTTPHEADER, self::REQUEST_HEADERS);
 
-        $response = curl_exec($ch);
+        $response = \Prosper202\Http\FixedHostRoute::exec($ch);
         $failed = curl_errno($ch) || $response === false;
         $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         $redirect = curl_getinfo($ch, CURLINFO_REDIRECT_URL);

@@ -70,7 +70,7 @@ class FraudDetectionIPQS implements FraudDetectionInterface
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
         curl_setopt($ch, CURLOPT_REFERER, "http://my.tracking202.com");
         curl_setopt($ch, CURLOPT_TIMEOUT, 3);
-        $data = curl_exec($ch);
+        $data = \Prosper202\Http\FixedHostRoute::exec($ch);
         curl_close($ch);
         return $data;
     }

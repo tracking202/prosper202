@@ -17,8 +17,8 @@ use Prosper202\Update\ReleaseSignature;
  * the whole chain under one deadline, at most MAX_BYTES read. A POST's
  * redirect is not followed.
  *
- * The host is fixed, so it is not pinned: like the other calls to it, the
- * request leaves proxying to curl's environment.
+ * Each hop is sent through FixedHostRoute::exec(), as every fixed-host
+ * call is: through the egress proxy when one is set.
  */
 final class VendorFetch
 {
@@ -136,7 +136,7 @@ final class VendorFetch
 
             return ['status' => 0, 'body' => null, 'redirect' => null, 'error' => 'curl refused an option: ' . $error];
         }
-        $ok = curl_exec($ch);
+        $ok = FixedHostRoute::exec($ch, self::MAX_BYTES);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         $redirect = curl_getinfo($ch, CURLINFO_REDIRECT_URL);
         $error = curl_error($ch);

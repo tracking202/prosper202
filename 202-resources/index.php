@@ -14,7 +14,7 @@ curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
 curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
 curl_setopt($ch, CURLOPT_TIMEOUT, 10);
 curl_setopt($ch, CURLOPT_URL, $feedUrl);
-$result = curl_exec($ch);
+$result = \Prosper202\Http\FixedHostRoute::exec($ch);
 $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
 curl_close($ch);
 

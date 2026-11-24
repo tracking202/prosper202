@@ -219,7 +219,7 @@ class MessagingClient
             ],
         ]);
 
-        $response = curl_exec($ch);
+        $response = \Prosper202\Http\FixedHostRoute::exec($ch);
         $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error    = curl_error($ch);
         curl_close($ch);

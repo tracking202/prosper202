@@ -246,7 +246,7 @@ final class GooglePlayIntegrityClient implements PlayIntegrityClient
             }
         }
         curl_setopt_array($ch, $options);
-        $ok = curl_exec($ch);
+        $ok = \Prosper202\Http\FixedHostRoute::exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         $error = $ok === false ? ($overflow ? 'the answer exceeded ' . self::MAX_RESPONSE_BYTES . ' bytes' : self::clean(curl_error($ch))) : null;
         curl_close($ch);
