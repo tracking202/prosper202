@@ -8,6 +8,7 @@ use Api\V3\Controllers\SyncController;
 use Api\V3\Exception\RemoteApiException;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\SyncProfileKeys;
+use Tests\Support\ScratchDir;
 use Tests\Support\ScriptedRemoteApiClient;
 use Tests\Support\ScriptedTargetSyncEngine;
 use Tests\TestCase;
@@ -48,14 +49,7 @@ final class SyncConflictTest extends TestCase
 
     protected function tearDown(): void
     {
-        $files = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($this->tmpDir, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST
-        );
-        foreach ($files as $file) {
-            $file->isDir() ? rmdir($file->getPathname()) : unlink($file->getPathname());
-        }
-        rmdir($this->tmpDir);
+        ScratchDir::remove($this->tmpDir);
         parent::tearDown();
     }
 

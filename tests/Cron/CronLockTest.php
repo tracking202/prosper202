@@ -7,6 +7,7 @@ namespace Tests\Cron;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Cron\CronLock;
 use Prosper202\Cron\CronLockFailed;
+use Tests\Support\ScratchDir;
 
 /**
  * One run of 202-cronjobs/index.php at a time, for as long as it runs.
@@ -57,10 +58,7 @@ final class CronLockTest extends TestCase
             proc_terminate($proc, 9);
             proc_close($proc);
         }
-        foreach (glob($this->dir . '/*') ?: [] as $file) {
-            is_dir($file) ? rmdir($file) : unlink($file);
-        }
-        rmdir($this->dir);
+        ScratchDir::remove($this->dir);
     }
 
     private function lockPath(): string

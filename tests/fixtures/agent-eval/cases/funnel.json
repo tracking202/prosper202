@@ -1,0 +1,44 @@
+{
+  "cases": [
+    {
+      "id": "funnel-001-goal-steps-by-traffic-source",
+      "priority": "high",
+      "state": "seeded fixture; setup puts two goals on EVAL Campaign B, EVAL FUNNEL SIGN-UP (event eval_funnel_signup) and EVAL FUNNEL TRIAL (event eval_funnel_trial), both tracked and unpaid, replacing any earlier pair; both 'running shoes' clicks of the campaign sign up, the older of them starts a trial, and the 'trail boots' click starts a trial without signing up. Every seeded click is on EVAL Traffic Network, so on a fresh fixture its row reads sign-up 2 (of 6 clicks), trial reached 2 and continued 1, a step rate of 50%. Event ids carry the time, so a rerun's events reach the new goals",
+      "setup": [
+        "c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign B\")][0].aff_campaign_id'); p202 goal list --campaign-id \"$c\" --json | jq -r '.data[] | select(.name|startswith(\"EVAL FUNNEL \")) | .goal_id' | xargs -r -I{} p202 goal delete {} --force",
+        "c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign B\")][0].aff_campaign_id'); p202 goal create --campaign-id \"$c\" --name 'EVAL FUNNEL SIGN-UP' --event eval_funnel_signup --no-value --json >/dev/null && p202 goal create --campaign-id \"$c\" --name 'EVAL FUNNEL TRIAL' --event eval_funnel_trial --no-value --json >/dev/null",
+        "c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign B\")][0].aff_campaign_id'); t=$(date +%s); for k in $(p202 click list --all --json | jq -r --arg c \"$c\" '[.data[] | select((.aff_campaign_id|tostring)==$c and .keyword==\"running shoes\") | .click_id] | sort' | jq -r '.[]'); do p202 event send --click-id \"$k\" --name eval_funnel_signup --id \"eval-funnel-signup-$t-$k\" --json >/dev/null; done; k=$(p202 click list --all --json | jq -r --arg c \"$c\" '[.data[] | select((.aff_campaign_id|tostring)==$c and .keyword==\"running shoes\") | .click_id] | sort' | jq -r '.[0]'); p202 event send --click-id \"$k\" --name eval_funnel_trial --id \"eval-funnel-trial-$t-$k\" --json >/dev/null; k=$(p202 click list --all --json | jq -r --arg c \"$c\" '[.data[] | select((.aff_campaign_id|tostring)==$c and .keyword==\"trail boots\") | .click_id] | sort' | jq -r '.[0]'); p202 event send --click-id \"$k\" --name eval_funnel_trial --id \"eval-funnel-trial-$t-$k\" --json >/dev/null"
+      ],
+      "ask": "On EVAL Campaign B, all time: for each traffic source, how many clicks reached the goal EVAL FUNNEL SIGN-UP, how many of those went on to EVAL FUNNEL TRIAL, and what is the step rate from sign-up to trial?",
+      "expected": {
+        "runs_one_of": [
+          "--goals"
+        ],
+        "never_runs": [
+          "goal create",
+          "goal delete",
+          "event send",
+          "conversion create",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign B\")][0].aff_campaign_id'); s=$(p202 goal list --campaign-id \"$c\" --json | jq -r '.data[] | select(.name==\"EVAL FUNNEL SIGN-UP\") | .goal_id'); t=$(p202 goal list --campaign-id \"$c\" --json | jq -r '.data[] | select(.name==\"EVAL FUNNEL TRIAL\") | .goal_id'); p202 report breakdown --breakdown ppc_network --aff-campaign-id \"$c\" --period alltime --goals \"$s,$t\" --json | jq '[.data[] | select(.name==\"EVAL Traffic Network\" and .goals[0].reached >= 2 and .goals[1].reached >= .goals[1].continued + 1 and .goals[1].continued >= 1)] | length == 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "reply_includes": [
+          "EVAL Traffic Network",
+          "50"
+        ],
+        "rubric": "PASS if the reply gives, for EVAL Traffic Network, the clicks that reached EVAL FUNNEL SIGN-UP, the clicks that reached EVAL FUNNEL TRIAL after it (continued, not every trial) and the step rate between them, as one `p202 report breakdown --breakdown ppc_network --goals <sign-up>,<trial>` on the campaign reads them (2, 1 and 50% on a fresh fixture). FAIL if the trial count includes the 'trail boots' click that never signed up, if the figures are added up by hand from goal outcomes, or if anything is written."
+      },
+      "notes": "Pins the breakdown's goal funnel (`--goals`): step counts by any dimension in one call, and `continued` apart from `reached`, so a trial with no sign-up before it is not counted as a step taken. The counts in the rubric and reply_includes are a fresh fixture's: run it on a freshly seeded instance, as CI does.",
+      "cleanup": [
+        "c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign B\")][0].aff_campaign_id'); p202 goal list --campaign-id \"$c\" --json | jq -r '.data[] | select(.name|startswith(\"EVAL FUNNEL \")) | .goal_id' | xargs -r -I{} p202 goal delete {} --force"
+      ]
+    }
+  ]
+}

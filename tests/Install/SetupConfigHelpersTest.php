@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Install;
 
 use PHPUnit\Framework\TestCase;
+use Tests\Support\ScratchDir;
 
 /**
  * The setup wizard's config helpers (202-config/functions-setup-config.php).
@@ -132,10 +133,7 @@ final class SetupConfigHelpersTest extends TestCase
                 self::assertSame("<?php\n\$dbname = 'new';\n", file_get_contents($path), 'and the old file is untouched');
             }
         } finally {
-            foreach (array_merge(glob($dir . '/*') ?: [], glob($dir . '/.[!.]*') ?: []) as $leftover) {
-                unlink($leftover);
-            }
-            rmdir($dir);
+            ScratchDir::remove($dir);
         }
     }
 }

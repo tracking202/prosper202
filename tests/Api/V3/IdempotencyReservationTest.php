@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Api\V3;
 
 use Api\V3\Support\ServerStateStore;
+use Tests\Support\ScratchDir;
 use Tests\TestCase;
 
 /**
@@ -28,14 +29,7 @@ final class IdempotencyReservationTest extends TestCase
 
     protected function tearDown(): void
     {
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($this->tmpDir, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST
-        );
-        foreach ($iterator as $file) {
-            $file->isDir() ? rmdir($file->getPathname()) : unlink($file->getPathname());
-        }
-        rmdir($this->tmpDir);
+        ScratchDir::remove($this->tmpDir);
         parent::tearDown();
     }
 

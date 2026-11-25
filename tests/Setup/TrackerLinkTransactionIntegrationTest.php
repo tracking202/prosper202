@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Setup;
 
 use PHPUnit\Framework\TestCase;
+use Tests\Support\ScratchDir;
 
 /**
  * Get Links' save (tracking202/ajax/generate_tracking_link.php) writes a
@@ -85,10 +86,7 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
                 }
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     protected function setUp(): void

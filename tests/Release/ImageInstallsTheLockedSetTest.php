@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Release;
 
+use Tests\Support\ScratchDir;
 use Tests\TestCase;
 
 /**
@@ -617,16 +618,6 @@ final class ImageInstallsTheLockedSetTest extends TestCase
 
     private static function removeTree(string $path): void
     {
-        if (is_link($path) || is_file($path)) {
-            unlink($path);
-            return;
-        }
-        if (!is_dir($path)) {
-            return;
-        }
-        foreach (array_diff(scandir($path) ?: [], ['.', '..']) as $child) {
-            self::removeTree("{$path}/{$child}");
-        }
-        rmdir($path);
+        ScratchDir::remove($path);
     }
 }

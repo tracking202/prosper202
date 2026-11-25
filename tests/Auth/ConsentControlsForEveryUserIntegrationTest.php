@@ -6,6 +6,7 @@ namespace Tests\Auth;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\DataSeeder;
+use Tests\Support\ScratchDir;
 
 /**
  * Personal settings shows the Data & communication choices to every signed-in
@@ -65,10 +66,7 @@ final class ConsentControlsForEveryUserIntegrationTest extends TestCase
                 }
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     protected function setUp(): void

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Ltv;
 
 use Prosper202\Ltv\WebhookDispatcher;
+use Tests\Support\ScratchDir;
 
 /**
  * A webhook receiver on a free loopback port (`php -S`, four workers): it
@@ -192,9 +193,6 @@ final class LocalWebhookReceiver
     {
         proc_terminate($this->process);
         proc_close($this->process);
-        foreach (glob($this->dir . '/*') ?: [] as $file) {
-            unlink($file);
-        }
-        rmdir($this->dir);
+        ScratchDir::remove($this->dir);
     }
 }

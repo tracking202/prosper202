@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Apps\Android\Integrity;
 
 use Api\V3\Apps\Android\Integrity\ServiceAccountCredential;
+use Tests\Support\ScratchDir;
 
 /**
  * Runs tests/fixtures/play-integrity/fake_google.py — Google's token and
@@ -70,10 +71,7 @@ final class FakeGoogle
 
     public static function remove(string $dir): void
     {
-        foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS), \RecursiveIteratorIterator::CHILD_FIRST) as $f) {
-            $f->isDir() ? rmdir($f->getPathname()) : unlink($f->getPathname());
-        }
-        rmdir($dir);
+        ScratchDir::remove($dir);
     }
 
     /** A service account signed with a key the fake does NOT trust. */

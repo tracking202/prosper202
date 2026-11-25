@@ -796,7 +796,7 @@ final class WebhookGuard
             }
         }
         if (count($labels) < 2) {
-            throw new WebhookRefused($host . ' is a single-label name, which only resolves inside a local network. Use the receiver\'s public host name.');
+            throw new WebhookRefused($host . ' is a single-label name, which only resolves inside a local network. Use the server\'s public host name instead.');
         }
         $last = $labels[count($labels) - 1];
         if (preg_match('/^[a-z]/', $last) !== 1) {

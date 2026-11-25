@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Api\V3;
 
+use Tests\Support\ScratchDir;
 use Tests\TestCase;
 
 /**
@@ -129,10 +130,7 @@ final class VacuousAssertionRuleTest extends TestCase
         $this->scratchFiles = [];
 
         foreach ($this->scratchDirs as $dir) {
-            foreach ((array)glob($dir . '/*') as $file) {
-                @unlink((string)$file);
-            }
-            @rmdir($dir);
+            ScratchDir::remove($dir);
         }
         $this->scratchDirs = [];
 

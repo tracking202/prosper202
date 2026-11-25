@@ -48,8 +48,9 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 	// paid for by a shorter help line on the link-token flags; get_more_tools
 	// and its sentence in the instructions about 700 (every later tool is
 	// listed on request, mcpDeferredToolSpecs), paid for by the click
-	// filter tools' user_id, which their Omit meant to leave out.
-	const budget = 100500
+	// filter tools' user_id, which their Omit meant to leave out; the
+	// breakdown's goal funnel (goals) about 160.
+	const budget = 100700
 	if len(body) > budget {
 		t.Fatalf("the tool list is %d characters, over its %d budget; trim notes or omit flags", len(body), budget)
 	}
@@ -393,6 +394,8 @@ var mcpDeferredAnswerSources = map[string]string{
 	"ad-connection": "AdConnectionsController.php",
 	"ad-campaign":   "AdCampaignsController.php",
 	"spend":         "SpendLedgerController.php",
+	"goal":          "GoalsController.php",
+	"user":          "UsersController.php",
 }
 
 // A deferred tool's Note names only keys its answer carries: the answer is
@@ -452,14 +455,17 @@ func TestMCPToolsListsTheDeferredOnes(t *testing.T) {
 		return out
 	}
 	if got := strings.Join(names("mcp", "tools", "--deferred"), ","); got != "destination_list,destination_deliveries,destination_test,ad_connection_list,ad_connection_check,"+
-		"ad_campaign_list,ad_campaign_pause,ad_campaign_activate,ad_campaign_spend,ad_spend,ad_spend_sync_status" {
+		"ad_campaign_list,ad_campaign_pause,ad_campaign_activate,ad_campaign_spend,ad_spend,ad_spend_sync_status,"+
+		"goal_list,goal_get,goal_create,goal_update,goal_outcomes,api_key_create,identity_key_get" {
 		t.Errorf("--deferred lists %s", got)
 	}
-	if got := strings.Join(names("mcp", "tools", "--deferred", "--read-only"), ","); got != "destination_list,destination_deliveries,ad_connection_list,ad_campaign_list,ad_campaign_spend,ad_spend,ad_spend_sync_status" {
+	if got := strings.Join(names("mcp", "tools", "--deferred", "--read-only"), ","); got != "destination_list,destination_deliveries,ad_connection_list,ad_campaign_list,ad_campaign_spend,ad_spend,ad_spend_sync_status,"+
+		"goal_list,goal_get,goal_outcomes" {
 		t.Errorf("--deferred --read-only lists %s", got)
 	}
 	if got := strings.Join(names("--staged", "mcp", "tools", "--deferred"), ","); got != "destination_list,destination_deliveries,ad_connection_list,"+
-		"ad_campaign_list,ad_campaign_pause,ad_campaign_activate,ad_campaign_spend,ad_spend,ad_spend_sync_status" {
+		"ad_campaign_list,ad_campaign_pause,ad_campaign_activate,ad_campaign_spend,ad_spend,ad_spend_sync_status,"+
+		"goal_list,goal_get,goal_create,goal_update,goal_outcomes" {
 		t.Errorf("--staged --deferred lists %s", got)
 	}
 	for _, name := range names("mcp", "tools") {
@@ -496,8 +502,9 @@ func TestMCPDeferredToolsDoNothingAPersonWasNotAsked(t *testing.T) {
 	seen := map[string]bool{}
 	for _, tool := range tools {
 		seen[tool.Name] = true
-		// A pause or an activate changes what OpenAI serves at once: a client should ask first.
-		if want := tool.Name == "ad_campaign_pause" || tool.Name == "ad_campaign_activate"; tool.Annotations.DestructiveHint != want {
+		// A pause or an activate changes what OpenAI serves at once, and a goal edit replaces its definition
+		// for the events still to come: a client should ask first.
+		if want := tool.Name == "ad_campaign_pause" || tool.Name == "ad_campaign_activate" || tool.Name == "goal_update"; tool.Annotations.DestructiveHint != want {
 			t.Errorf("%s destructiveHint %v, want %v", tool.Name, tool.Annotations.DestructiveHint, want)
 		}
 		if tool.Name == "ad_connection_check" && tool.Annotations.ReadOnlyHint {

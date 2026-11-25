@@ -122,6 +122,10 @@ var reportBreakdownCmd = &cobra.Command{
 		if _, _, _, _, err := havingFilter(having); err != nil {
 			return err
 		}
+		goals, err := goalsParam(cmd)
+		if err != nil {
+			return err
+		}
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
@@ -165,6 +169,9 @@ var reportBreakdownCmd = &cobra.Command{
 				params[f] = v
 			}
 		}
+		if goals != "" {
+			params["goals"] = goals
+		}
 		data, err := c.Get("reports/breakdown", params)
 		if err != nil {
 			return err
@@ -173,7 +180,14 @@ var reportBreakdownCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		funnelNote := ""
+		if !jsonOutput && !ndjsonOutput {
+			if filtered, funnelNote, err = flattenGoalFunnel(filtered); err != nil {
+				return err
+			}
+		}
 		render(filtered)
+		noteForPeople(cmd, funnelNote)
 		note := breakdownMoreRowsNote(data, params, "")
 		if note != "" && breakdownFiltersSet(cmd) {
 			note += " --min-clicks, --min-cost, --zero-leads and --having filter only the rows read."
@@ -389,6 +403,7 @@ func init() {
 	reportBreakdownCmd.Flags().Float64("min-clicks", 0, "Only rows with at least N clicks")
 	reportBreakdownCmd.Flags().Float64("min-cost", 0, "Only rows with at least $N cost")
 	reportBreakdownCmd.Flags().Bool("zero-leads", false, "Only rows with cost > 0 and zero conversions (pure waste)")
+	reportBreakdownCmd.Flags().String("goals", "", "Goal ids, first step first, comma separated (max 10): each row gets each step's reached, rate, step_rate, drop_off")
 	reportBreakdownCmd.Flags().String("having", "", "Post-filter rows: FIELD OP NUMBER, FIELD a metric column or its alias, OP one of >= <= != = > < (e.g. 'total_leads=0', 'roi<0')")
 
 	addReportFilters(reportTimeseriesCmd)

@@ -92,19 +92,19 @@ $relayHost = (string) parse_url(AiConnect::relayOrigin(), PHP_URL_HOST);
 $accessChoices = [
     'read' => [
         $e(AiConnect::ACCESS_LABELS['read']) . ' <span class="text-secondary">(recommended)</span>',
-        'It reads your campaigns, trackers, landing pages, text ads, traffic sources, rotators, reports, clicks '
+        'It reads your campaigns, trackers, landing pages, text ads, traffic sources, rotators, goals, reports, clicks '
             . 'and conversions, as far as your role can, and changes nothing.',
     ],
     'propose' => [
         $e(AiConnect::ACCESS_LABELS['propose']),
         'It reads the same. A change it makes to campaigns, trackers, landing pages, text ads, traffic sources, '
-            . 'categories or redirectors waits as a proposal until you apply it with the p202 command line '
+            . 'categories, redirectors or goals waits as a proposal until you apply it with the p202 command line '
             . '(<code>p202 change apply</code>).',
     ],
     'write' => [
         $e(AiConnect::ACCESS_LABELS['write']),
         'It reads the same, and can change and delete campaigns, trackers, landing pages, text ads, traffic '
-            . 'sources, categories and redirectors; deleting a tracker stops its links. Your AI app\'s approval prompt is '
+            . 'sources, categories and redirectors, and create and edit goals; deleting a tracker stops its links. Your AI app\'s approval prompt is '
             . 'then the only check, so do not set it to always allow deletes.',
     ],
 ];

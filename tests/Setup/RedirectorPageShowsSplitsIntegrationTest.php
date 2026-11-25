@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Setup;
 
 use PHPUnit\Framework\TestCase;
+use Tests\Support\ScratchDir;
 
 /**
  * Setup › Redirector shows a rule with more than one destination as a split
@@ -78,10 +79,7 @@ final class RedirectorPageShowsSplitsIntegrationTest extends TestCase
                 }
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     private static function cleanUp(): void

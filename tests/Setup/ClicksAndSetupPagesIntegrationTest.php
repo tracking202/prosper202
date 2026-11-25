@@ -7,6 +7,7 @@ namespace Tests\Setup;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Connection;
 use Prosper202\DataEngine\ClickRollupSql;
+use Tests\Support\ScratchDir;
 
 /**
  * The pages, run as a signed-in account (fixtures/page-runner.php):
@@ -73,10 +74,7 @@ final class ClicksAndSetupPagesIntegrationTest extends TestCase
                 }
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     private static function cleanUp(): void

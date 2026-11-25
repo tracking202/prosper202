@@ -12,6 +12,7 @@ use Api\V3\Support\RemoteApiClient;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\SyncEngine;
 use Api\V3\Support\SyncProfileKeys;
+use Tests\Support\ScratchDir;
 use Tests\TestCase;
 
 class FakeSyncEngine extends SyncEngine
@@ -940,24 +941,6 @@ final class SyncFeaturesTest extends TestCase
 
     private function removeDir(string $path): void
     {
-        if (!is_dir($path)) {
-            return;
-        }
-        $items = scandir($path);
-        if ($items === false) {
-            return;
-        }
-        foreach ($items as $item) {
-            if ($item === '.' || $item === '..') {
-                continue;
-            }
-            $full = $path . '/' . $item;
-            if (is_dir($full)) {
-                $this->removeDir($full);
-                continue;
-            }
-            @unlink($full);
-        }
-        @rmdir($path);
+        ScratchDir::remove($path);
     }
 }

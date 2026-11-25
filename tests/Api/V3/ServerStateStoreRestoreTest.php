@@ -8,6 +8,7 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\StateEpoch;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\ScratchDir;
 
 /**
  * The epoch the database's 202_deployment_secrets holds, without a database:
@@ -63,14 +64,7 @@ final class ServerStateStoreRestoreTest extends TestCase
     protected function tearDown(): void
     {
         if (is_dir($this->dir)) {
-            $files = new \RecursiveIteratorIterator(
-                new \RecursiveDirectoryIterator($this->dir, \FilesystemIterator::SKIP_DOTS),
-                \RecursiveIteratorIterator::CHILD_FIRST
-            );
-            foreach ($files as $file) {
-                $file->isDir() ? rmdir($file->getPathname()) : unlink($file->getPathname());
-            }
-            rmdir($this->dir);
+            ScratchDir::remove($this->dir);
         }
     }
 

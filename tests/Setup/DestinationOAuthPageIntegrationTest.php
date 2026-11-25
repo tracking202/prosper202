@@ -9,6 +9,7 @@ use Prosper202\Database\Connection;
 use Prosper202\Destinations\DestinationStore;
 use Prosper202\Destinations\GoogleAdsDestination;
 use Prosper202\Destinations\GoogleAdsOAuth;
+use Tests\Support\ScratchDir;
 
 /**
  * tracking202/setup/destination-oauth.php as the web server runs it, signed
@@ -79,10 +80,7 @@ final class DestinationOAuthPageIntegrationTest extends TestCase
         if (self::$db !== null) {
             self::cleanUp();
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     private static function cleanUp(): void
@@ -114,7 +112,7 @@ final class DestinationOAuthPageIntegrationTest extends TestCase
     private static function runCallbackPage(array $get): string
     {
         self::requireScratch();
-        array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
+        ScratchDir::clear(self::$sessions, 'sess_*');
         $env = [
             'P202_TEST_REPORT_USER' => (string) self::USER,
             'P202_TEST_SESSION_DIR' => self::$sessions,

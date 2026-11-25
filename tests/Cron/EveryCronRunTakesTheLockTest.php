@@ -43,6 +43,15 @@ final class EveryCronRunTakesTheLockTest extends TestCase
     private const INDEX = '202-cronjobs/index.php';
     private const BOOTSTRAP = "require_once__DIR__.'/../202-config/connect.php';"
         . "require_once__DIR__.'/../202-config/class-dataengine.php';";
+    /**
+     * The one statement allowed between the bootstrap and the lock: a run
+     * before the install has made its tables stops there, takes nothing and
+     * runs nothing (it logged a missing-table error per job, every minute).
+     * It names its own text, so nothing else can slip in beside it.
+     */
+    private const NOT_INSTALLED = "if(!is_installed()){p202_cli_fail('Prosper202 is not installed yet:"
+        . " no cron job was run. Finish the install first.');http_response_code(503);"
+        . 'exit("Prosper202 is not installed yet: no cron job was run.\\n");}';
     private const TAKE = '$cronLock=\Prosper202\Cron\CronLock::take(\Prosper202\Cron\CronLock::path());';
     private const BUSY = 'if($cronLock===null){';
     private const TIERS = ['RunSecondsCronjob(', 'RunHourlyCronJob(', 'RunDailyCronjob(', 'AutoOptimizeDatabase(',
@@ -99,10 +108,10 @@ final class EveryCronRunTakesTheLockTest extends TestCase
         $code = self::index();
         self::assertSame(1, substr_count($code, 'CronLock::take('), 'index.php takes the cron lock, once');
         self::assertStringContainsString(
-            'try{' . self::BOOTSTRAP . self::TAKE . self::BUSY,
+            'try{' . self::BOOTSTRAP . self::NOT_INSTALLED . self::TAKE . self::BUSY,
             $code,
-            'the lock is the first thing the run does after its bootstrap, in the try every run goes through,'
-                . ' and the next statement asks whether it was held'
+            'the lock is the first thing the run does after its bootstrap and its check that the install exists,'
+                . ' in the try every run goes through, and the next statement asks whether it was held'
         );
         $take = (int) strpos($code, self::TAKE);
         foreach (self::TIERS as $tier) {

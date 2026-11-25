@@ -34,6 +34,8 @@
  *   form[data-p202-ajax-target="#out"]  posts through jQuery (so the session
  *                                       token rides along) and puts the
  *                                       answer in #out
+ *   [id][data-p202-refresh-after="#out"] read again from the page once #out
+ *                                       has an answer
  *   [data-p202-lp-check-pill="id"]      a landing page's code check; with
  *     [data-p202-lp-check-due]          it is asked for as the list loads,
  *     [data-p202-lp-check-now="id"]     and again on this link, from
@@ -355,6 +357,48 @@
                 }
             });
     }
+
+    // A panel the answer changes (Get Links' list of saved links) is read
+    // again from the page once the answer is in; it showed the links as
+    // they were when the page loaded, 0 for a first link, until a reload.
+    document.addEventListener('p202:answered', function (event) {
+        var answered = event.target;
+        $$('[data-p202-refresh-after]').forEach(function (panel) {
+            var source = document.querySelector(panel.getAttribute('data-p202-refresh-after'));
+            if (!panel.id || source !== answered || !window.fetch || !window.DOMParser) {
+                return;
+            }
+            window.fetch(window.location.href, { credentials: 'same-origin', headers: { Accept: 'text/html' } })
+                .then(function (response) {
+                    if (!response.ok) {
+                        throw new Error('HTTP ' + response.status);
+                    }
+                    return response.text();
+                })
+                .then(function (html) {
+                    var fresh = new window.DOMParser().parseFromString(html, 'text/html').getElementById(panel.id);
+                    var current = document.getElementById(panel.id);
+                    if (!fresh || !current) {
+                        return;
+                    }
+                    var filter = current.querySelector('[data-p202-filter-list]');
+                    var query = filter ? filter.value : '';
+                    var adopted = document.importNode(fresh, true);
+                    current.replaceWith(adopted);
+                    var newFilter = adopted.querySelector('[data-p202-filter-list]');
+                    if (newFilter && query !== '') {
+                        newFilter.value = query;
+                        filterList(newFilter);
+                    }
+                    if (window.p202ui) {
+                        window.p202ui.init(adopted);
+                    }
+                })
+                .catch(function () {
+                    // The list stays as it was; a reload shows the new link.
+                });
+        });
+    });
 
     document.addEventListener('submit', function (event) {
         var form = event.target;

@@ -1345,6 +1345,7 @@ p202 report groups --by ppc_network,campaign,keyword --period last7   # the Grou
 | `--sort-dir`       | DESC          | Sort direction: ASC or DESC |
 | `-l, --limit`      | 50            | Maximum results (1–500)    |
 | `-o, --offset`     | 0             | Pagination offset          |
+| `--goals`          |               | Goal ids in funnel order, comma separated (up to 10): each row's goal funnel |
 
 **Breakdown dimensions:** campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, region, browser, platform, device, isp, text_ad, ip, referer (the referring domain), referer_url (the whole URL), device_type (Desktop/Mobile/Tablet/Bot), c1, c2, c3, c4, utm_source, utm_medium, utm_campaign, utm_term, utm_content, rotator, rotator_rule, publisher (the publisher a publisher link credited the click to), publisher_link (the link such a click came on, by its t202id) (aliases: lp, source, network, offer, geo, referrer, referrer_url, rule). The server advertises its own list as `features.report_breakdowns` in `/capabilities`; a value missing from the CLI's list is sent when the server lists it.
 
@@ -1355,6 +1356,12 @@ A row is one stored value; clicks with no value for the dimension (no referer, n
 Rows tied on the sort column come back in id order, so paging with `--offset` neither skips nor repeats a row.
 
 A page with rows after it says so: `--json` carries the server's `"truncated": true` with the page's `limit` and `offset`, each `--ndjson` line carries `"truncated": true`, and a table (or `--csv`, `--quiet`) gets one line on stderr naming the next page, e.g. `Note: more rows remain after rows 1-50; --offset 50 reads the next page (--limit takes up to 500).` Don't total the rows of a truncated page as the dimension's figures: read on with `--offset` until `truncated` is false, or use `report summary` for the totals. `--min-clicks`, `--min-cost`, `--zero-leads` and `--having` filter only the page read, and the note says so. A server from before the flag says nothing; a page it filled to `--limit` gets the note as "does not say whether rows remain".
+
+`--goals 12,13,14` adds a goal funnel, first step first (`p202 goal list` gives the ids): for each step, the row's clicks that reached the goal (`reached`), that reached it and every step before it (`continued`), `rate` (per 100 clicks), `step_rate` (per 100 of the step before) and `drop_off`. `--json` carries the server's nested `goals` per row, the steps' names and `goal_totals` (every click the filters select); a table or `--csv` shows the steps as `goal_01_reached`, `goal_01_rate`, `goal_01_step_rate`, `goal_01_drop_off`, ... and says on stderr which goal each step is and the totals. A list that is not distinct goal ids, or more than 10, is refused before any request.
+
+```bash
+p202 report breakdown --breakdown ppc_network --aff-campaign-id 316 --period last30 --goals 12,13,14
+```
 
 The commands built on a breakdown say the same:
 

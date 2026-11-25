@@ -7,6 +7,7 @@ namespace Tests\Api\V3;
 use Api\V3\Controllers\SystemController;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Support\ServerStateStore;
+use Tests\Support\ScratchDir;
 use Tests\TestCase;
 
 /**
@@ -213,24 +214,6 @@ final class SystemControllerBehaviorTest extends TestCase
 
     private function removeDir(string $path): void
     {
-        if (!is_dir($path)) {
-            return;
-        }
-        $items = scandir($path);
-        if ($items === false) {
-            return;
-        }
-        foreach ($items as $item) {
-            if ($item === '.' || $item === '..') {
-                continue;
-            }
-            $full = $path . '/' . $item;
-            if (is_dir($full)) {
-                $this->removeDir($full);
-                continue;
-            }
-            @unlink($full);
-        }
-        @rmdir($path);
+        ScratchDir::remove($path);
     }
 }

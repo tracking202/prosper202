@@ -12,6 +12,7 @@ use Prosper202\OfflineConversion\ConversionNames;
 use Prosper202\OfflineConversion\FeedStore;
 use Prosper202\OfflineConversion\Format;
 use Prosper202\OfflineConversion\LegacyGoogleFeedFetches;
+use Tests\Support\ScratchDir;
 
 /**
  * Setup › Offline Conversions and Setup › Destinations as the web server
@@ -87,10 +88,7 @@ final class GoogleAdsSetupPagesIntegrationTest extends TestCase
         if (self::$db !== null) {
             self::cleanUp();
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     private static function cleanUp(): void
@@ -126,7 +124,7 @@ final class GoogleAdsSetupPagesIntegrationTest extends TestCase
     private static function page(string $page, array $get = [], array $post = []): array
     {
         self::requireScratch();
-        array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
+        ScratchDir::clear(self::$sessions, 'sess_*');
         $env = [
             'P202_TEST_REPORT_USER' => (string) self::USER,
             'P202_TEST_SESSION_DIR' => self::$sessions,

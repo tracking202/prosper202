@@ -10,6 +10,7 @@ use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\SyncEngine;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\LandingPageControllerRemoteApiClient;
+use Tests\Support\ScratchDir;
 
 /**
  * A landing page whose source stores its URL without a scheme (an install
@@ -59,14 +60,7 @@ final class SyncLandingPageUrlsIntegrationTest extends TestCase
     protected function tearDown(): void
     {
         if ($this->stateDir !== '' && is_dir($this->stateDir)) {
-            $files = new \RecursiveIteratorIterator(
-                new \RecursiveDirectoryIterator($this->stateDir, \FilesystemIterator::SKIP_DOTS),
-                \RecursiveIteratorIterator::CHILD_FIRST
-            );
-            foreach ($files as $file) {
-                $file->isDir() ? rmdir($file->getPathname()) : unlink($file->getPathname());
-            }
-            rmdir($this->stateDir);
+            ScratchDir::remove($this->stateDir);
         }
     }
 

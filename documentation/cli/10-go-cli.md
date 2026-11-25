@@ -162,7 +162,7 @@ still needs the browser, see [UI parity](12-ui-parity.md).
 | `p202 rotator stats <id>` | A rotator's totals, each rule (the rule a click matched) and its default (clicks no rule matched) over the report window and filters (`GET /rotators/{id}/stats`); rules plus default add up to the totals, and a rule deleted since is listed with `deleted: true` |
 | `p202 report summary` | Performance summary |
 | `p202 report groups` | The Group Overview: traffic grouped by up to four dimensions (`--by ppc_network,campaign,keyword`), nested, every group with its totals; the clicks a level has no value for are its `[no …]` row, so a group is the sum of its rows. `--json` is the tree; the table, CSV and `--ndjson` are one row per group, marked by level, then a Total row |
-| `p202 report breakdown` | Performance by dimension, including the Analyze pages' `ip`, `referer` (domain), `referer_url`, `device_type`, `c1`-`c4`, `utm_*`, `rotator`, `rotator_rule` and `publisher` (the publisher a publisher link credited the click to); rows tied on `--sort` come in id order, so `--offset` paging neither skips nor repeats a row. Every report command takes the Analyze pages' filters: `--text-ad-id`, `--region-id`, `--isp-id`, `--browser-id`, `--platform-id`, `--device-type`, `--method-of-promotion`, `--show all\|real\|filtered\|filtered_bot\|leads`, `--keyword` (contains), `--ip` (exact), `--referer` (contains), and the periods `last14`, `thismonth`, `lastmonth`, `thisyear`, `lastyear`, `alltime` beside `today`, `yesterday`, `last7`, `last30`, `last90` (calendar periods start at the account's midnight). An unknown filter, value or `--sort` is a validation error naming it. One answer is one page (`--limit`, default 50, at most 500): `--json` carries the server's `truncated`, `limit` and `offset`, each `--ndjson` line `truncated: true`, and a table a stderr note naming the next `--offset` when rows remain; `analytics` answers the same way |
+| `p202 report breakdown` | Performance by dimension, including the Analyze pages' `ip`, `referer` (domain), `referer_url`, `device_type`, `c1`-`c4`, `utm_*`, `rotator`, `rotator_rule` and `publisher` (the publisher a publisher link credited the click to); rows tied on `--sort` come in id order, so `--offset` paging neither skips nor repeats a row. Every report command takes the Analyze pages' filters: `--text-ad-id`, `--region-id`, `--isp-id`, `--browser-id`, `--platform-id`, `--device-type`, `--method-of-promotion`, `--show all\|real\|filtered\|filtered_bot\|leads`, `--keyword` (contains), `--ip` (exact), `--referer` (contains), and the periods `last14`, `thismonth`, `lastmonth`, `thisyear`, `lastyear`, `alltime` beside `today`, `yesterday`, `last7`, `last30`, `last90` (calendar periods start at the account's midnight). An unknown filter, value or `--sort` is a validation error naming it. One answer is one page (`--limit`, default 50, at most 500): `--json` carries the server's `truncated`, `limit` and `offset`, each `--ndjson` line `truncated: true`, and a table a stderr note naming the next `--offset` when rows remain; `analytics` answers the same way. `--goals 12,13,14` adds each row's goal funnel (reached, rate, step rate and drop-off per step) |
 | `p202 report breakeven` | Break-even CPC per row of one breakdown page (`--limit`, `--offset`, most clicks first), ranked by margin within the page; `truncated` and the note as `report breakdown` |
 | `p202 report losers` / `report winners` | Breakdown rows to cut (`CUT`: spend with no conversion, or a CPC above break-even) or to scale (`SCALE`: profitable and converting), checked against the attribution report: every row is classified, read 500 a request up to the 5000 with the most clicks. `total_clicks`, `total_leads`, `total_cost`, `total_net` and `avg_cpc` are the breakdown's, as `report breakdown` shows them (only the table rounds); `--payout` adds `payout` and `payout_net` (sales × payout − `total_cost`, what the rows are classified and sorted on) and leaves `total_net` the breakdown's. `--json` always has `truncated`, `true` when the answer covers only those 5000 (a table's note says so) |
 | `p202 report crosstab` | One `--metric` across two dimensions (`--rows`, `--cols`): the `--limit-rows` (default 20) row values with the highest `--metric`, ranked by the server over every row, each with every column value up to 5000. Each cell is the breakdown's figure for that row and column, as the server sent it; `truncated: true` (and a note) when rows or columns were left out |
@@ -656,10 +656,21 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   `ad_spend` (`p202 spend list`: what ad platforms billed per ad per day or
   hour, your clicks that carried each ad, the spend no click carried, and
   `reaches`) and `ad_spend_sync_status` (`p202 spend sync list`: each
-  ChatGPT Ads connection's spend sync, on or off, its last run and error).
-  The destination tools, `ad_connection_check` and the two spend tools are
-  local only; the four campaign tools and `ad_connection_list` are offered
-  by the hosted server too. `p202 mcp tools --deferred`
+  ChatGPT Ads connection's spend sync, on or off, its last run and error),
+  the goal tools (`p202 goal`): `goal_list`, `goal_get`, `goal_create`,
+  `goal_update` and `goal_outcomes`, where a create or an edit takes the
+  whole definition as a JSON object (`documentation/api/22-goals.md`), an
+  edit replaces it, and a funnel is made in order, each step's `after`
+  naming the `goal_id` an earlier create answered (with `--staged` a create
+  is a proposal with no id yet, so a step after it waits until it is
+  applied), and `api_key_create` (`p202 user apikey create`, which takes a
+  `scope`) and `identity_key_get` (`p202 user identity-key get`, whose first
+  read makes the key), whose answers hold a secret for the person; neither
+  is offered with `--read-only` or `--staged`.
+  The destination tools, `ad_connection_check`, the two spend tools,
+  `api_key_create` and `identity_key_get` are local only; the four campaign
+  tools, `ad_connection_list` and the goal tools are offered by the hosted
+  server too. `p202 mcp tools --deferred`
   answers `tools`, `hosted_excludes` (the local-only ones),
   `staged_excludes` (the ones `--staged` does not offer), `hosted_omits`
   (arguments the hosted server leaves out) and `words` (the words each tool
@@ -696,7 +707,8 @@ when an answer was refused says so instead: the install may have made the
 change, so look with the matching get or list tool before calling again.
 A connection keeps the access it was approved with: one approved before the install ran
 1.9.79, to propose or make changes, reads text ads but cannot change them (text_ad_create, text_ad_update and
-text_ad_delete answer 403); connect again for that.
+text_ad_delete answer 403); connect again for that. So does one approved before the install ran 1.9.80 for
+the goal tools (they answer 403 until it is approved again).
 
 To improve the connector, the hosted server records which tools the app calls, the names (not the
 values) of their arguments, whether they work, with the error when one fails (quoted values taken

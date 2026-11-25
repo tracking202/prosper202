@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Api\V3;
 
 use Api\V3\Support\ServerStateStore;
+use Tests\Support\ScratchDir;
 use Tests\TestCase;
 
 /**
@@ -27,14 +28,7 @@ final class ServerStateStoreQuotaTest extends TestCase
     protected function tearDown(): void
     {
         if (is_dir($this->dir)) {
-            $items = new \RecursiveIteratorIterator(
-                new \RecursiveDirectoryIterator($this->dir, \FilesystemIterator::SKIP_DOTS),
-                \RecursiveIteratorIterator::CHILD_FIRST
-            );
-            foreach ($items as $item) {
-                $item->isDir() ? rmdir($item->getPathname()) : unlink($item->getPathname());
-            }
-            rmdir($this->dir);
+            ScratchDir::remove($this->dir);
         }
         parent::tearDown();
     }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Lpo;
 
 use PHPUnit\Framework\TestCase;
+use Tests\Support\ScratchDir;
 
 /**
  * My Account › API Integrations' Landing Page Optimizer card says whether the
@@ -111,10 +112,7 @@ final class PairingCardWebhookStatusIntegrationTest extends TestCase
                 }
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     protected function setUp(): void

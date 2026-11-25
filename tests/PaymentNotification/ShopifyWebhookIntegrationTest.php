@@ -21,6 +21,7 @@ use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
 use Prosper202\PaymentNotification\Shopify\RefundSettlementStore;
 use Prosper202\PaymentNotification\Shopify\SettlementCoordinator;
 use Prosper202\PaymentNotification\Verification;
+use Tests\Support\ScratchDir;
 
 /**
  * Shopify's order webhooks end to end on a real server: the secret read
@@ -905,8 +906,7 @@ final class ShopifyWebhookIntegrationTest extends TestCase
         fclose($pipes[1]);
         fclose($pipes[2]);
         self::assertNotSame(2, proc_close($proc), 'the runner could not set up: ' . self::$runnerErr);
-        array_map('unlink', glob($sessions . '/*') ?: []);
-        @rmdir($sessions);
+        ScratchDir::remove($sessions);
 
         return $out;
     }

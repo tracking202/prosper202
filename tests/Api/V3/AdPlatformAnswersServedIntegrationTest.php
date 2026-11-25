@@ -6,6 +6,7 @@ namespace Tests\Api\V3;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\DataSeeder;
+use Tests\Support\ScratchDir;
 
 /**
  * An ad platform that could not be asked, as api/v3/index.php serves it: `php -S` over the scratch database, with
@@ -108,14 +109,16 @@ final class AdPlatformAnswersServedIntegrationTest extends TestCase
             }
         }
         self::$server = self::$openAi = null;
-        foreach (['cert.pem', 'key.pem'] as $file) {
-            @unlink(self::$tls . '/' . $file);
+        // Only the directories setUpBeforeClass made: one that stopped before
+        // making them left '' here, and '/{,.}[!.]*' unlinked the /bin, /lib,
+        // /sbin and /.dockerenv of a container this ran in as root.
+        if (self::$tls !== '' && str_starts_with(self::$tls, sys_get_temp_dir() . '/p202-')) {
+            foreach (['cert.pem', 'key.pem'] as $file) {
+                @unlink(self::$tls . '/' . $file);
+            }
+            @rmdir(self::$tls);
         }
-        @rmdir(self::$tls);
-        foreach (glob(self::$state . '/{,.}[!.]*', GLOB_BRACE) ?: [] as $file) {
-            @unlink($file);
-        }
-        @rmdir(self::$state);
+        ScratchDir::remove(self::$state);
         @unlink(self::$log);
         if (self::$db !== null) {
             self::q(self::$stored !== null

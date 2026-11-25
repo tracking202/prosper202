@@ -39,12 +39,15 @@ final class PrivacyBootstrapTest extends TestCase
     public function testTheInstallsSettingIsInForce(bool $memcacheWorking, array $query): void
     {
         $GLOBALS['p202TestSql'] = [];
+        $GLOBALS['p202TestCaching'] = [];
         $GLOBALS['p202TestStored'] = 'all';
         self::stubs();
         $_SESSION = [];
         $_GET = $query;
         self::assertSame('all', self::bootstrap($memcacheWorking));
         self::assertCount(1, $GLOBALS['p202TestSql'], 'the setting is read from the database');
+        // A kept answer made a change reach the click path minutes late.
+        self::assertSame([false], $GLOBALS['p202TestCaching'], 'the read is not cached');
         self::assertMatchesRegularExpression(
             "/`user_id`='1'/",
             $GLOBALS['p202TestSql'][0],
@@ -105,8 +108,9 @@ final class PrivacyBootstrapTest extends TestCase
         eval(<<<'PHP'
             function systemHash(): string { return 'test'; }
             function getCache(string $key, $default = false) { return false; }
-            function memcache_mysql_fetch_assoc($sql) {
+            function memcache_mysql_fetch_assoc($sql, $allowCaching = true) {
                 $GLOBALS['p202TestSql'][] = $sql;
+                $GLOBALS['p202TestCaching'][] = $allowCaching;
                 $stored = array_key_exists('p202TestStored', $GLOBALS) ? $GLOBALS['p202TestStored'] : 'all';
                 if ($stored === false) {
                     throw new \Prosper202\Database\Exceptions\QueryException('MySQL query failed: gone [errno 2006]');

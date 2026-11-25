@@ -106,6 +106,7 @@ try {
 	p202RespondJsonError(404, 'Unknown subid for this campaign');
 } catch (\Prosper202\Conversion\Ledger\AmountOutOfRange $amountError) {
 	// Not a failure to retry: the same amount would be refused again (Y5N2).
+    \Prosper202\InboundLog\RequestLog::current()?->refuse('amount_out_of_range', $amountError->getMessage(), 422);
 	p202RespondJsonError(422, $amountError->getMessage());
 } catch (\Prosper202\Conversion\Ledger\ReversalException $reversalError) {
 	// Said to the sender in its own words: which transaction, and for a

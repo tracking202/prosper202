@@ -8,6 +8,7 @@ use Api\V3\Support\AiConnect;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\DataSeeder;
 use Prosper202\Setup\ChatGptAdsSource;
+use Tests\Support\ScratchDir;
 
 /**
  * ChatGPT Ads connections and campaigns as api/v3/index.php serves them, to the keys an AI connection holds:
@@ -116,14 +117,16 @@ final class AdCampaignsServedIntegrationTest extends TestCase
             }
         }
         self::$server = self::$openAi = null;
-        foreach (['cert.pem', 'key.pem'] as $file) {
-            @unlink(self::$tls . '/' . $file);
+        // Only the directories setUpBeforeClass made: one that stopped before
+        // making them left '' here, and '/{,.}[!.]*' unlinked the /bin, /lib,
+        // /sbin and /.dockerenv of a container this ran in as root.
+        if (self::$tls !== '' && str_starts_with(self::$tls, sys_get_temp_dir() . '/p202-')) {
+            foreach (['cert.pem', 'key.pem'] as $file) {
+                @unlink(self::$tls . '/' . $file);
+            }
+            @rmdir(self::$tls);
         }
-        @rmdir(self::$tls);
-        foreach (glob(self::$state . '/{,.}[!.]*', GLOB_BRACE) ?: [] as $file) {
-            @unlink($file);
-        }
-        @rmdir(self::$state);
+        ScratchDir::remove(self::$state);
         @unlink(self::$log);
         if (self::$db !== null) {
             self::q(self::$stored !== null

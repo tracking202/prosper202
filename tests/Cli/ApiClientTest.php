@@ -7,6 +7,7 @@ namespace Tests\Cli;
 use P202Cli\ApiClient;
 use P202Cli\ApiException;
 use P202Cli\Config;
+use Tests\Support\ScratchDir;
 use Tests\TestCase;
 
 class ApiClientTest extends TestCase
@@ -99,12 +100,7 @@ class ApiClientTest extends TestCase
             $this->assertSame(45, $timeout->getValue($client));
         } finally {
             putenv("HOME={$origHome}");
-            // Cleanup
-            array_map('unlink', glob($tmpDir . '/.p202/*') ?: []);
-            if (is_dir($tmpDir . '/.p202')) {
-                rmdir($tmpDir . '/.p202');
-            }
-            rmdir($tmpDir);
+            ScratchDir::remove($tmpDir);
         }
     }
 
