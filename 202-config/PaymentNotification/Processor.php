@@ -832,10 +832,10 @@ final class Processor
         $stmt = $conn->prepareWrite(
             'SELECT earlier.click_payout FROM 202_conversion_logs current'
             . ' JOIN 202_conversion_logs earlier ON earlier.reverses_conv_id = current.reverses_conv_id'
-            . ' AND earlier.user_id = current.user_id' . ($before ? ' AND earlier.conv_id < current.conv_id' : '')
+            . ' AND earlier.user_id = current.user_id AND (? = 0 OR earlier.conv_id < current.conv_id)'
             . ' AND earlier.deleted = 0 WHERE current.conv_id = ? AND current.user_id = ?'
         );
-        $conn->bind($stmt, 'ii', [$reversalId, $owner]);
+        $conn->bind($stmt, 'iii', [$before ? 1 : 0, $reversalId, $owner]);
         foreach ($conn->fetchAll($stmt) as $row) {
             $sale -= abs(Amount::toUnits((string) $row['click_payout']));
         }
