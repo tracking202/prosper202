@@ -116,7 +116,7 @@ final class AccountPixelsIntegrationTest extends TestCase
 
     private function fired(int $account): string
     {
-        return TrafficSourcePixels::fire(new Connection(self::$db), $account, [], static fn (): bool => true)['markup'];
+        return TrafficSourcePixels::fire(new Connection(self::$db), $account, [], static fn (): bool => true, consent: \Prosper202\Conversion\AdPlatformConsent::given())['markup'];
     }
 
     public function testClearingTheOnlyPixelRemovesIt(): void

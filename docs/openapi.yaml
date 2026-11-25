@@ -1719,10 +1719,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
-        - name: filter[aff_network_id]
+        - $ref: "#/components/parameters/listFilter"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
           in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
           schema:
-            type: integer
+            type: string
+            enum: [aff_campaign_id, aff_campaign_name, aff_campaign_payout, aff_network_id]
+        - $ref: "#/components/parameters/listSortDir"
       responses:
         "200":
           description: Paginated campaign list
@@ -1814,6 +1822,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [aff_network_id, aff_network_name]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated affiliate network list
@@ -1904,6 +1924,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [ppc_network_id, ppc_network_name]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated PPC network list
@@ -1994,6 +2026,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [ppc_account_id, ppc_account_name, ppc_network_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated PPC account list
@@ -2084,6 +2128,25 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - name: q
+          in: query
+          description: >-
+            Only trackers whose campaign's name contains this text, in any
+            case. % and _ are matched as themselves. At most 255 characters.
+          schema:
+            type: string
+            maxLength: 255
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [tracker_id, aff_campaign_id, ppc_account_id, landing_page_id, text_ad_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated tracker list
@@ -2314,6 +2377,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [landing_page_id, landing_page_nickname, landing_page_url, aff_campaign_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated landing page list
@@ -2409,6 +2484,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [text_ad_id, text_ad_name, aff_campaign_id, landing_page_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated text ad list
@@ -4693,6 +4780,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [id, name, public_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated rotator list
@@ -7633,6 +7732,27 @@ paths:
       summary: List users
       description: Admin only.
       operationId: listUsers
+      parameters:
+        - name: q
+          in: query
+          description: >-
+            Only users whose user name, first name, last name or email
+            contains this text, in any case. % and _ are matched as
+            themselves. At most 255 characters.
+          schema:
+            type: string
+            maxLength: 255
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [user_id, user_name, user_fname, user_lname, user_email, user_time_register]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: User list
@@ -8991,15 +9111,17 @@ paths:
         failed attempt), `sent`, `failed` (attempts ran out, or the sender
         refused the URL, or a redirect it answered with, as an address it
         never calls: a refusal is final, sent no further, and `last_error`
-        says why in either case), `cancelled` (replaced before it went out) or
+        says why in either case), `cancelled` (replaced before it went out),
         `suppressed` (a correction or retraction for a pixel with no
-        correction URL). `meta.summary` counts every status under the same
+        correction URL) or `withheld` (the visitor refused consent, so
+        nothing is sent about the install; `last_error` says where).
+        `meta.summary` counts every status under the same
         filters except `status`. Web clicks' postbacks go through the same
         outbox and are not listed here.
       operationId: listAppNotifications
       parameters:
         - {name: registration_id, in: query, schema: {type: integer}}
-        - {name: status, in: query, schema: {type: string, enum: [pending, sent, failed, cancelled, suppressed]}}
+        - {name: status, in: query, schema: {type: string, enum: [pending, sent, failed, cancelled, suppressed, withheld]}}
         - {name: kind, in: query, schema: {type: string, enum: [reached, correction, retraction]}}
         - $ref: "#/components/parameters/timeFrom"
         - $ref: "#/components/parameters/timeTo"
@@ -9032,6 +9154,7 @@ paths:
                           failed: {type: integer}
                           cancelled: {type: integer}
                           suppressed: {type: integer}
+                          withheld: {type: integer}
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -10700,6 +10823,18 @@ paths:
         schema:
           type: string
         description: Events carrying this tag in their comma-separated list
+      - $ref: "#/components/parameters/listQ"
+      - name: sort
+        in: query
+        description: >-
+          A field to order the list by, ascending unless sort_dir says
+          otherwise; ties are ordered by the key. Any other value is a 422.
+          Without it the list keeps its own order.
+        schema:
+          type: string
+          enum: [event_id, event_date, event_name]
+      - $ref: "#/components/parameters/listSortDir"
+      - $ref: "#/components/parameters/listFilter"
       responses:
         '200':
           description: Events ordered by `event_date`
@@ -12964,8 +13099,10 @@ paths:
       description: |
         Needs the `ltv:read` scope. Newest first, as the LTV Settings tab's Log shows it, with the last
         attempt's response body or error (`last_response_body`, e.g. "curl: …" or "blocked: …", stored cut to 1,000
-        bytes). `next_attempt_at` is set while a delivery is pending. The minutely cron job sends what is due; a
-        delivery is retried with backoff and fails after `meta.max_attempts`, which marks the webhook dead. One
+        bytes, with the webhook's secret and any credential-shaped value, such as an Authorization or Cookie header,
+        shown as "[removed]"). `next_attempt_at` is set while a delivery is pending. The minutely cron job sends
+        what is due; a delivery is retried with backoff and fails after `meta.max_attempts`, which marks the
+        webhook dead. One
         still unsent 7 days after it was queued is not sent: it is `failed` with 0 attempts and a
         `last_response_body` of "expired: …". One due while its webhook is dead is held, never tried: `failed`, its
         attempts as they were, "held: …"; `PUT /ltv/webhooks/{id}` sends it again. Never the webhook's secret, and
@@ -14664,6 +14801,40 @@ components:
         type: integer
         default: 50
         maximum: 500
+    listQ:
+      name: q
+      in: query
+      description: >-
+        Only records whose name contains this text, in any case. % and _ are
+        matched as themselves. At most 255 characters. A list with no name
+        to search answers a 422.
+      schema:
+        type: string
+        maxLength: 255
+    listSortDir:
+      name: sort_dir
+      in: query
+      description: >-
+        asc (the default once sort is given) or desc, in either case. It
+        needs sort; given alone it is a 422.
+      schema:
+        type: string
+        enum: [asc, desc, ASC, DESC]
+    listFilter:
+      name: filter
+      in: query
+      style: deepObject
+      explode: true
+      description: >-
+        filter[<field>]=<value> keeps the records whose field holds the
+        value; a field the list does not hold, or a value its type cannot,
+        is a 422. A whole-number field takes up to 100 values separated by
+        commas (filter[aff_network_id]=1,4) and keeps a record holding any
+        of them; any other field's value is one value, commas included.
+      schema:
+        type: object
+        additionalProperties:
+          type: string
     offset:
       name: offset
       in: query
@@ -20265,7 +20436,7 @@ components:
                   conversion_id: {type: integer, nullable: true}
                   payable: {type: boolean}
                   amount: {type: string, nullable: true}
-                  notify: {type: string, enum: [reached, suppressed, "off", none], description: "reached: announced to the traffic source (its server postbacks queued in the notification outbox); suppressed: a replacement of an outcome already announced, never announced twice; off: the campaign does not notify for this goal; none: not payable"}
+                  notify: {type: string, enum: [reached, suppressed, "off", none], description: "reached: announced to the traffic source (its server postbacks queued in the notification outbox); suppressed: not announced, either a replacement of an outcome already announced (never announced twice) or an outcome whose visitor refused consent (reason consent_withheld in notifications); off: the campaign does not notify for this goal; none: not payable"}
             notifications:
               type: array
               items:
@@ -20276,7 +20447,7 @@ components:
                   outcome_id: {type: integer}
                   kind: {type: string}
                   status: {type: string, enum: [queued, rendered, failed, not_sent, no_pixels, browser_only], description: "queued: the server-to-server postbacks are in the notification outbox, which the worker sends with retries; rendered: browser pixels were returned to the browser that asked"}
-                  reason: {type: string, nullable: true}
+                  reason: {type: string, nullable: true, description: "Why a notice was not_sent: replacement, no_click, no_traffic_source, or consent_withheld (the visitor refused consent, so no pixel or postback goes)"}
                   queued: {type: integer, description: "Server-to-server postbacks waiting in the notification outbox"}
                   browser_pixels: {type: integer}
                   browser_skipped: {type: integer}
@@ -21422,7 +21593,7 @@ components:
           enum: [reached, correction, retraction]
         status:
           type: string
-          enum: [pending, sent, failed, cancelled, suppressed]
+          enum: [pending, sent, failed, cancelled, suppressed, withheld]
         url:
           type: string
           description: The URL as filled when queued (empty for a suppressed correction)

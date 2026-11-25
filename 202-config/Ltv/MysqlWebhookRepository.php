@@ -404,14 +404,15 @@ final class MysqlWebhookRepository
     /**
      * Delivery history for one endpoint, newest first — the operator-facing
      * log behind the settings UI (attempt counts, last status codes, backoff
-     * schedule). Response bodies are already stored truncated.
+     * schedule, the last response or error). Response bodies are stored
+     * truncated, and served with credentials removed.
      *
      * @return list<array<string, mixed>>
      */
     public function recentDeliveries(int $userId, int $webhookId, int $limit = 25): array
     {
         $stmt = $this->conn->prepareRead(
-            'SELECT delivery_id, event_name, status, attempts, last_status_code,
+            'SELECT delivery_id, event_name, status, attempts, last_status_code, last_response_body,
                     next_attempt_at, created_at, updated_at
              FROM 202_ltv_webhook_deliveries
              WHERE webhook_id = ? AND user_id = ?
@@ -420,7 +421,25 @@ final class MysqlWebhookRepository
         );
         $this->conn->bind($stmt, 'iii', [$webhookId, $userId, max(1, $limit)]);
 
-        return $this->conn->fetchAll($stmt);
+        return self::redactedLog($this->conn->fetchAll($stmt));
+    }
+
+    /**
+     * A log's rows with each last response put through DeliveryReason::redact():
+     * a row stored before the dispatcher redacted it can hold a credential.
+     *
+     * @param list<array<string, mixed>> $rows
+     * @return list<array<string, mixed>>
+     */
+    private static function redactedLog(array $rows): array
+    {
+        foreach ($rows as $i => $row) {
+            if (isset($row['last_response_body'])) {
+                $rows[$i]['last_response_body'] = DeliveryReason::redactSafely((string) $row['last_response_body']);
+            }
+        }
+
+        return $rows;
     }
 
     /** The states a delivery is in (the column's enum). */
@@ -429,8 +448,9 @@ final class MysqlWebhookRepository
     /**
      * The delivery log the API serves: recentDeliveries()'s columns plus
      * the last attempt's response body or error ("curl: …", "blocked: …",
-     * stored truncated to 1,000 bytes), optionally one status only, newest
-     * first. Never the payload, never the endpoint's secret.
+     * stored truncated to 1,000 bytes, credentials removed), optionally one
+     * status only, newest first. Never the payload, never the endpoint's
+     * secret.
      *
      * @return list<array<string, mixed>>
      */
@@ -455,7 +475,7 @@ final class MysqlWebhookRepository
             $this->conn->bind($stmt, 'iii', [$webhookId, $userId, max(1, $limit)]);
         }
 
-        return $this->conn->fetchAll($stmt);
+        return self::redactedLog($this->conn->fetchAll($stmt));
     }
 
     /**

@@ -8,6 +8,7 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\ListQuery;
 use Api\V3\Support\PageRows;
 use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\StatementHelpers;
@@ -80,19 +81,55 @@ class RotatorsController
         return NeverMatches::account(new \Prosper202\Database\Connection($this->db), $this->userId);
     }
 
+    /** What a rotator list may be filtered by, as Controller::list() reads filters. */
+    private const array LIST_FIELDS = [
+        'id'               => ['type' => 'i'],
+        'public_id'        => ['type' => 'i'],
+        'name'             => ['type' => 's'],
+        'default_url'      => ['type' => 's'],
+        'default_campaign' => ['type' => 'i'],
+        'default_lp'       => ['type' => 'i'],
+        'auto_monetizer'   => ['type' => 's'],
+    ];
+
+    /** What `sort=` may name, each its own column. */
+    private const array LIST_SORTS = ['id' => 'id', 'name' => 'name', 'public_id' => 'public_id'];
+
     public function list(array $params): array
     {
         $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
         $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
 
-        $stmt = $this->prepare('SELECT COUNT(*) as total FROM 202_rotators WHERE user_id = ?');
-        $this->bind($stmt, 'i', $this->userId);
+        $where = ['user_id = ?'];
+        $binds = [$this->userId];
+        $types = 'i';
+        foreach (ListQuery::filters($params, self::LIST_FIELDS) as $field => $values) {
+            [$sql, $filterBinds, $filterTypes] = ListQuery::anyOf($field, $values, self::LIST_FIELDS[$field]['type']);
+            $where[] = $sql;
+            array_push($binds, ...$filterBinds);
+            $types .= $filterTypes;
+        }
+        $search = ListQuery::searchPattern($params);
+        if ($search !== null) {
+            [$sql, $searchBinds, $searchTypes] = ListQuery::searchCondition(['name'], $search);
+            $where[] = $sql;
+            array_push($binds, ...$searchBinds);
+            $types .= $searchTypes;
+        }
+        $orderBy = ListQuery::orderBy($params, self::LIST_SORTS, 'id') ?? 'id DESC';
+        $whereClause = implode(' AND ', $where);
+
+        $stmt = $this->prepare("SELECT COUNT(*) as total FROM 202_rotators WHERE $whereClause");
+        $this->bind($stmt, $types, ...$binds);
         $this->execute($stmt, 'Count query failed');
         $total = (int)$this->resultOf($stmt, 'Count query failed')->fetch_assoc()['total'];
         $stmt->close();
 
-        $stmt = $this->prepare('SELECT id, public_id, user_id, name, default_url, default_campaign, default_lp, auto_monetizer FROM 202_rotators WHERE user_id = ? ORDER BY id DESC LIMIT ? OFFSET ?');
-        $this->bind($stmt, 'iii', $this->userId, PageRows::fetchLimit($limit), $offset);
+        $stmt = $this->prepare(
+            'SELECT id, public_id, user_id, name, default_url, default_campaign, default_lp, auto_monetizer'
+            . " FROM 202_rotators WHERE $whereClause ORDER BY $orderBy LIMIT ? OFFSET ?"
+        );
+        $this->bind($stmt, $types . 'ii', ...[...$binds, PageRows::fetchLimit($limit), $offset]);
         $this->execute($stmt, 'List query failed');
         $result = $this->resultOf($stmt, 'List query failed');
         $rows = [];
