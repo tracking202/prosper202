@@ -30,18 +30,39 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $userObj->hasPermission("remove_trac
 	if (!isset($_POST['tracker_id'])) {
 		die("Error: No tracker ID provided");
 	}
-	$mysql['tracker_id'] = $db->real_escape_string((string)$_POST['tracker_id']);
-	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
+	// An id read exactly, and deleted only when the tracker is the account's:
+	// the list removes the row on a 200, so a delete that matched nothing
+	// (another account's tracker, one already gone, `12abc` read as 12)
+	// must not answer like one that removed it.
+	$trackerId = \Prosper202\Http\PostedId::read($_POST['tracker_id']);
+	$trackerUserId = (int) $_SESSION['user_id'];
+	$row = null;
+	$deleted = 0;
+	if ($trackerId !== null) {
+		try {
+			$trackerConn = new \Prosper202\Database\Connection($db);
+			if ($slack) {
+				$read = $trackerConn->prepareRead('SELECT landing_page_id, rotator_id, aff_campaign_id FROM 202_trackers WHERE tracker_id = ? AND user_id = ?');
+				$trackerConn->bind($read, 'ii', [$trackerId, $trackerUserId]);
+				$row = $trackerConn->fetchOne($read);
+			}
+			$delete = $trackerConn->prepareWrite('DELETE FROM 202_trackers WHERE tracker_id = ? AND user_id = ?');
+			$trackerConn->bind($delete, 'ii', [$trackerId, $trackerUserId]);
+			$deleted = $trackerConn->executeUpdate($delete);
+		} catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+			// The list removes the row when this answers 200; a delete that did
+			// not happen must not look like one that did (#173, #1).
+			error_log('delete_tracker.php: the tracker was not deleted: ' . $e->getMessage());
+			http_response_code(500);
+			die('The tracker could not be deleted. Reload the page and try again.');
+		}
+	}
+	if ($deleted !== 1) {
+		http_response_code(404);
+		die('it was not found on this account');
+	}
 
 	if ($slack) {
-
-		$sql = "SELECT * FROM 202_trackers WHERE tracker_id = '".$mysql['tracker_id']."' AND user_id = '".$mysql['user_id']."'";
-		$result = $db->query($sql);
-        if ($result === false) {
-            record_mysql_error($sql);
-        }
-        $row = p202FetchRow($result, $sql);
-
 		$type = 'Unknown';
 		if ($row && !$row['landing_page_id'] && !$row['rotator_id'] && $row['aff_campaign_id']) {
 			$type = 'Direct Link';
@@ -53,17 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $userObj->hasPermission("remove_trac
 			$type = 'Smart Redirector';
 		}
 
-		$slack->push('tracking_link_deleted', ['type' => $type, 'id' => $mysql['tracker_id'], 'user' => $user_row['username']]);
-	}
-
-	$sql = "DELETE FROM 202_trackers WHERE tracker_id = '".$mysql['tracker_id']."' AND user_id = '".$mysql['user_id']."'";
-	$result = $db->query($sql);
-	if (!$result) {
-		// The list removes the row when this answers 200; a delete that did
-		// not happen must not look like one that did (#173, #1).
-		error_log('delete_tracker.php: the tracker was not deleted: ' . $db->error);
-		http_response_code(500);
-		die('The tracker could not be deleted. Reload the page and try again.');
+		$slack->push('tracking_link_deleted', ['type' => $type, 'id' => (string) $trackerId, 'user' => $user_row['username']]);
 	}
 
 }
