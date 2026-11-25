@@ -918,6 +918,19 @@ EOF
         ;;
     # Traffic sources (setup-traffic-sources.json): a rename is an update of
     # the source that is there, so its accounts and their trackers keep it.
+    # An account's postback (setup-traffic-sources.json): a Postback pixel of
+    # that account, with the URL as given, its id read by name.
+    *"EVAL Account traffic source account"*"server-to-server pixel"*)
+        code=$(printf '%s' "$ask" | grep -oE 'https://[^ ]+' | head -1)
+        account=$(p202 ppc-account list --all --json | jq -r '[.data[] | select(.ppc_account_name=="EVAL Account")][0].ppc_account_id // empty')
+        if [ -z "$account" ] || [ -z "$code" ]; then
+            printf 'I found no traffic source account named "EVAL Account" (`p202 ppc-account list`), or no URL in the ask, so nothing was added.\n'
+        else
+            made=$(p202 ppc-account pixel create "$account" --type-id 4 --code "$code" --json)
+            printf 'Added a Postback (server to server) pixel to EVAL Account (account %s, pixel %s) with `p202 ppc-account pixel create`: %s. It fires when one of the account'"'"'s clicks converts.\n' \
+                "$account" "$(printf '%s' "$made" | jq -r '.data.pixel_id')" "$code"
+        fi
+        ;;
     # ChatGPT Ads (setup-traffic-sources.json): the one-step setup, never a
     # hand-built source with variables of the agent's own choosing.
     *"ads in ChatGPT"*)
