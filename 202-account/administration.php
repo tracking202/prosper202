@@ -646,6 +646,7 @@ if ($tsOwners['error'] !== null) {
 }
 echo p202_postback_queue_notice($db, (int) ($_SESSION['user_own_id'] ?? $_SESSION['user_id'] ?? 0), get_absolute_url());
 echo p202_restore_notice(p202_restore_notices($db), $self, (string) ($_SESSION['token'] ?? ''));
+echo p202_reclick_backfill_notice($db);
 $unsavedWarning = \Prosper202\Click\UnsavedClickRedirects::warning($unsavedClicks);
 if ($unsavedWarning !== null) {
     echo p202_flash('warn', $unsavedWarning);
