@@ -304,6 +304,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$userSet['user_pass'] = (string) $hasher($mysql['user_password']);
 		}
 		if ($editing !== true) {
+			// NOT NULL with no default, as POST /users and the installer write it.
+			$userSet['user_dash_email'] = $userSet['user_email'];
 			$userSet['install_hash'] = (string) $user_row2['install_hash'];
 			$userSet['user_hash'] = '';
 			// Integer columns that may hold NULL: copied as they are.
