@@ -487,6 +487,42 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
         }
     }
 
+    /** A Shopify save from a page that showed an older sealed secret than the store's saves nothing (ShownSettings). */
+    public function testAShopifySaveOverANewerSecretIsRefused(): void
+    {
+        $store = new \Prosper202\Security\IntegrationSecretStore(new \Prosper202\Database\Connection(self::requireScratch()));
+        try {
+            $_SESSION['p202_shown_secret'] = self::SHOWN_SECRET;
+            $shown = \Prosper202\User\ShownSettings::version('shopify', [
+                'version' => $store->version(self::USER, 'shopify_webhook_secret'),
+            ]);
+            unset($_SESSION['p202_shown_secret']);
+            // Saved from another session after this page opened: the same value again still moves the version.
+            $store->put(self::USER, 'shopify_webhook_secret', self::SECRETS['shopify_webhook_secret'], 0, self::USER, 'page', time());
+
+            $stale = self::save('change_shopify_webhook_secret', 'shopify_webhook_secret', 'it-shopify-stale-tab-SH09')
+                + ['p202_shown' => ['shopify' => $shown]];
+            // The refusal is the guard's own: its flash, queued in the session the save ran in.
+            $staleFlashes = static fn (): int => count(array_filter(
+                glob(self::$sessions . '/sess_*') ?: [],
+                static fn (string $f): bool => str_contains((string) file_get_contents($f), 'changed in another window or session after this page')
+            ));
+            $before = $staleFlashes();
+            $out = self::page(self::PAGE, [], $stale);
+            self::assertStringNotContainsString('it-shopify-stale-tab', $out);
+            self::assertSame(self::SECRETS['shopify_webhook_secret'], self::secrets()['shopify_webhook_secret'],
+                'the newer secret is kept');
+            self::assertSame($before + 1, $staleFlashes(), 'refused as a save over a newer version');
+
+            $fresh = self::save('change_shopify_webhook_secret', 'shopify_webhook_secret', 'it-shopify-fresh-tab-SH10');
+            self::assertRedirected(self::page(self::PAGE, [], $fresh), 'a save from the page as it is now is made');
+            self::assertSame('it-shopify-fresh-tab-SH10', self::secrets()['shopify_webhook_secret']);
+        } finally {
+            unset($_SESSION['p202_shown_secret']);
+            self::seedSecrets();
+        }
+    }
+
     /** The JVZoo card's choice for the 1.9.56 URL: affiliate unless saved, saved per account, anything else refused. */
     public function testTheJvzooChoiceForTheUrlWithNoRoleIsSaved(): void
     {
