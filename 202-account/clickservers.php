@@ -167,7 +167,14 @@ template_top('ClickServer Management');
 								return;
 							}
 							if (domain === host) {
-								window.location.href = <?php echo json_encode(get_absolute_url() . '202-account/signout.php'); ?>;
+                                // The chrome's Sign Out form: switching off this host's
+                                // own ClickServer signs this browser out, by POST.
+                                var signOut = document.querySelector('form[data-p202-signout]');
+                                if (signOut) {
+                                    signOut.submit();
+                                } else {
+                                    window.location.reload();
+                                }
 								return;
 							}
 							if (used !== null && avail) {

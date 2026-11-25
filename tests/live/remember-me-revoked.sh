@@ -130,7 +130,11 @@ COPIED=$(remember "$OUT/one.jar")
 OTHER=$(remember "$OUT/two.jar")
 eq "$(keys)" "2" "two remembered browsers, two stored keys"
 eq "$(cookie "$COPIED")" "in" "the copied cookie signs a browser in"
-eq "$(get "$OUT/one.jar" 202-account/signout.php "$OUT/signout.html")" "302 $BASE/" "its browser signs out"
+eq "$(get "$OUT/one.jar" 202-account/signout.php "$OUT/signout.html" | cut -d' ' -f1)" "200" "a GET of the sign-out page draws its button"
+eq "$(keys)" "2" "and signs nobody out"
+eq "$(curl -sS -b "$OUT/one.jar" -c "$OUT/one.jar" -o "$OUT/refused.html" -w '%{http_code}' --data 'token=forged' "$BASE/202-account/signout.php")" "403" "a POST with another token is refused"
+eq "$(keys)" "2" "and signs nobody out"
+eq "$(submit "$OUT/one.jar" "$OUT/signout.html" token 202-account/signout.php "$OUT/signed-out.html")" "302 $BASE/" "its browser signs out by the page's form"
 eq "$(remembered "$OUT/one.jar")" "" "and its cookie is cleared"
 eq "$(keys)" "1" "its stored key is gone"
 eq "$(cookie "$COPIED")" "refused" "the copied cookie signs nobody in"

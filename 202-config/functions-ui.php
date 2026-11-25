@@ -206,6 +206,39 @@ function p202_flash(string $kind, string $text): string
 }
 
 /**
+ * The one way a page offers to sign out: a form that POSTs the session's
+ * token to 202-account/signout.php, which signs out on nothing else. A GET
+ * signed out, so a link or an image on any other site could sign a person
+ * out (SignOutIsPostedTest holds every reference to the page to this).
+ *
+ * $base is get_absolute_url() and $token the session's ($_SESSION['token']);
+ * a token that is not a string posts as none, which the page refuses with
+ * the button again. $icon is a p202_chrome_icon() name drawn beside the
+ * label.
+ */
+function p202_signout_form(
+    string $base,
+    mixed $token,
+    string $label,
+    string $buttonClass,
+    string $formClass = '',
+    string $buttonId = '',
+    string $icon = ''
+): string {
+    $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
+    $inner = $icon !== ''
+        ? p202_chrome_icon($icon) . '<span>' . $e($label) . '</span>'
+        : $e($label);
+
+    return '<form method="post" action="' . $e($base . '202-account/signout.php') . '"'
+        . ($formClass !== '' ? ' class="' . $e($formClass) . '"' : '') . ' data-p202-signout>'
+        . '<input type="hidden" name="token" value="' . $e(is_string($token) ? $token : '') . '">'
+        . '<button type="submit" class="' . $e($buttonClass) . '"'
+        . ($buttonId !== '' ? ' id="' . $e($buttonId) . '"' : '') . '>'
+        . $inner . '</button></form>';
+}
+
+/**
  * What a report page says beside figures costed from the spend ledger
  * (DataEngine::spendLedger(), ReportSummaryForm::getSpendLedger(), a REST
  * report's spend_ledger): how far the spend data reaches, and the spend in
