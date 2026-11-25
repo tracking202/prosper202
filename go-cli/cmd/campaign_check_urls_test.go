@@ -362,7 +362,7 @@ func TestCheckURLsHTTPConfirmedReportsStatusOncePerURL(t *testing.T) {
 		t.Fatalf("check-urls --http: %v", err)
 	}
 	reqs := tlsSrv.requestLog()
-	if len(reqs) != 2 || !contains(reqs, "HEAD /click?sub1=p202check") || !contains(reqs, "HEAD /other") {
+	if len(reqs) != 2 || !containsString(reqs, "HEAD /click?sub1=p202check") || !containsString(reqs, "HEAD /other") {
 		t.Errorf("requests = %v, want one HEAD per unique URL with tokens filled", reqs)
 	}
 	for _, ch := range decodeChecks(t, stdout) {
@@ -399,7 +399,7 @@ func TestCheckURLsHTTPFallsBackToGETOnlyOn405(t *testing.T) {
 		t.Fatalf("check-urls --http --force: %v", err)
 	}
 	reqs := tlsSrv.requestLog()
-	if len(reqs) != 3 || !contains(reqs, "HEAD /no-head") || !contains(reqs, "GET /no-head") || !contains(reqs, "HEAD /gone") {
+	if len(reqs) != 3 || !containsString(reqs, "HEAD /no-head") || !containsString(reqs, "GET /no-head") || !containsString(reqs, "HEAD /gone") {
 		t.Errorf("requests = %v, want HEAD+GET for /no-head and HEAD only for /gone", reqs)
 	}
 	got := checksByKey(decodeChecks(t, stdout))
