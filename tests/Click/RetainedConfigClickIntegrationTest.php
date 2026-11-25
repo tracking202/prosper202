@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Click;
 
 use PHPUnit\Framework\TestCase;
+use Tests\Support\ScratchDir;
 
 /**
  * A dl.php click through the real connect2.php, on the 202-config.php of
@@ -187,18 +188,7 @@ final class RetainedConfigClickIntegrationTest extends TestCase
 
     private static function removeTree(string $dir): void
     {
-        foreach (new \DirectoryIterator($dir) as $entry) {
-            if ($entry->isDot()) {
-                continue;
-            }
-            $path = $entry->getPathname();
-            if ($entry->isLink() || !$entry->isDir()) {
-                unlink($path);
-            } else {
-                self::removeTree($path);
-            }
-        }
-        rmdir($dir);
+        ScratchDir::remove($dir);
     }
 
     /** Connection attempts the server has had, refused ones included. */

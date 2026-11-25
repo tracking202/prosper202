@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Report;
 
 use PHPUnit\Framework\TestCase;
+use Tests\Support\ScratchDir;
 
 /**
  * The cron job's rebuild of 202_dataengine from 202_dataengine_job windows
@@ -144,8 +145,7 @@ final class ClickUpgradeIntegrationTest extends TestCase
         $err = (string) stream_get_contents($pipes[2]);
         fclose($pipes[1]);
         fclose($pipes[2]);
-        array_map('unlink', glob($scan . '/*') ?: []);
-        rmdir($scan);
+        ScratchDir::remove($scan);
         self::assertNotSame(2, proc_close($proc), "the runner could not set up: $err");
         self::assertSame('RETURNED {"curl":false}', trim($out), 'the job ran, without curl: ' . $out . $err);
     }

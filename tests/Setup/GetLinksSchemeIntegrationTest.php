@@ -8,6 +8,7 @@ use Api\V3\Controllers\SetupCodeController;
 use Api\V3\Controllers\TrackersController;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Conversion\PostbackAuth\PostbackToken;
+use Tests\Support\ScratchDir;
 
 /**
  * Get Links and Setup › Postback / Pixel hand out the URLs the API hands out
@@ -79,10 +80,7 @@ final class GetLinksSchemeIntegrationTest extends TestCase
                 }
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     private static function cleanUp(): void

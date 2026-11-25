@@ -7,6 +7,7 @@ namespace Tests\Apps;
 use Api\V3\Auth;
 use Api\V3\Controllers\StagedChangesController;
 use Api\V3\Support\ServerStateStore;
+use Tests\Support\ScratchDir;
 use Tests\TestCase;
 
 /**
@@ -232,13 +233,6 @@ final class AppTokenHygieneTest extends TestCase
         if (!is_dir($dir)) {
             return;
         }
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST
-        );
-        foreach ($iterator as $file) {
-            $file->isDir() ? rmdir($file->getPathname()) : unlink($file->getPathname());
-        }
-        rmdir($dir);
+        ScratchDir::remove($dir);
     }
 }

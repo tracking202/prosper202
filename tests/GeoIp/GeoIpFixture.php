@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\GeoIp;
 
+use Tests\Support\ScratchDir;
+
 /**
  * Databases and archives for the GeoIP refresh's tests, made from
  * tests/fixtures/geoip/GeoLite2-City-Test.mmdb (MaxMind's test database,
@@ -111,14 +113,7 @@ final class GeoIpFixture
         if (!is_dir($dir)) {
             return;
         }
-        $walk = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST
-        );
-        foreach ($walk as $f) {
-            $f->isDir() ? rmdir($f->getPathname()) : unlink($f->getPathname());
-        }
-        rmdir($dir);
+        ScratchDir::remove($dir);
     }
 
     /** The build epoch the file at $path carries, read with the reader the lookups use. */

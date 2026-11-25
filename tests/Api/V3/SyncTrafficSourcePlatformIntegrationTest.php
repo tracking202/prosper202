@@ -13,6 +13,7 @@ use Api\V3\Support\SyncEngine;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Connection;
 use Prosper202\Setup\ChatGptAdsSource;
+use Tests\Support\ScratchDir;
 
 /**
  * p202 sync carries a traffic source's ad platform (ppc_network_platform):
@@ -72,14 +73,7 @@ final class SyncTrafficSourcePlatformIntegrationTest extends TestCase
     protected function tearDown(): void
     {
         if ($this->stateDir !== '' && is_dir($this->stateDir)) {
-            $files = new \RecursiveIteratorIterator(
-                new \RecursiveDirectoryIterator($this->stateDir, \FilesystemIterator::SKIP_DOTS),
-                \RecursiveIteratorIterator::CHILD_FIRST
-            );
-            foreach ($files as $file) {
-                $file->isDir() ? rmdir($file->getPathname()) : unlink($file->getPathname());
-            }
-            rmdir($this->stateDir);
+            ScratchDir::remove($this->stateDir);
         }
     }
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Setup;
 
 use PHPUnit\Framework\TestCase;
+use Tests\Support\ScratchDir;
 
 /**
  * The Setup and Get Links pages name a campaign, category, traffic source and
@@ -93,10 +94,7 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
                 }
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     private static function cleanUp(): void

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\User;
 
+use Tests\Support\ScratchDir;
+
 /**
  * A stand-in for the hosted exchange-rate service under `php -S` on a free
  * loopback port, for one test class (as Tests\Fraud\IpqsStub is for
@@ -153,9 +155,6 @@ PHP;
             proc_close($this->proc);
             $this->proc = null;
         }
-        foreach (glob($this->dir . '/*') ?: [] as $file) {
-            @unlink($file);
-        }
-        @rmdir($this->dir);
+        ScratchDir::remove($this->dir);
     }
 }

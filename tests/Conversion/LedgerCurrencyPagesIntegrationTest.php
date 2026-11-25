@@ -6,6 +6,7 @@ namespace Tests\Conversion;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\DataSeeder;
+use Tests\Support\ScratchDir;
 
 /**
  * The pages show each conversion in the currency it recorded, say when a
@@ -65,10 +66,7 @@ final class LedgerCurrencyPagesIntegrationTest extends TestCase
                 }
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     protected function setUp(): void

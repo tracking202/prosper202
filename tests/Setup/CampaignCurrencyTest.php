@@ -50,7 +50,28 @@ final class CampaignCurrencyTest extends TestCase
         yield 'no answer' => [null];
         yield 'zero' => ['0'];
         yield 'not a number' => ['n/a'];
-        yield 'too large for the column' => ['1000000'];
+    }
+
+    /** @return iterable<string, array{string, string}> payout typed, the rate's answer */
+    public static function tooLarge(): iterable
+    {
+        yield 'converted to the limit' => ['10', '1000000'];
+        yield 'converted to what rounds to the limit' => ['10', '999999.995'];
+        yield 'typed past the limit' => ['1000000', '10.00'];
+        yield 'typed to what rounds to the limit' => ['999999.995', '10.00'];
+    }
+
+    /**
+     * Too large for the decimal(8,2) columns, said as that and not as a
+     * missing rate; MySQL would have stored 999999.99.
+     *
+     * @dataProvider tooLarge
+     */
+    public function testAPayoutTooLargeForTheColumnIsRefusedAsSuch(string $payout, string $converted): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/1,000,000/');
+        CampaignCurrency::store('USD', 'EUR', $payout, static fn (): ?string => $converted);
     }
 
     /** @dataProvider unusableRates */

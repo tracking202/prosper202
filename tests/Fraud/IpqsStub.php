@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Fraud;
 
+use Tests\Support\ScratchDir;
+
 /**
  * A stand-in for IPQualityScore's IP lookup under `php -S` on a free loopback
  * port, for one test class. The router is written to a temporary directory,
@@ -155,9 +157,6 @@ PHP;
             proc_close($this->proc);
             $this->proc = null;
         }
-        foreach (glob($this->dir . '/*') ?: [] as $file) {
-            @unlink($file);
-        }
-        @rmdir($this->dir);
+        ScratchDir::remove($this->dir);
     }
 }

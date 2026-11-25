@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Release;
 
+use Tests\Support\ScratchDir;
 use Tests\TestCase;
 
 /**
@@ -184,14 +185,7 @@ final class ChangelogEntriesAreUniqueTest extends TestCase
 
     private static function removeTree(string $dir): void
     {
-        foreach (scandir($dir) ?: [] as $item) {
-            if ($item === '.' || $item === '..') {
-                continue;
-            }
-            $path = $dir . '/' . $item;
-            is_dir($path) ? self::removeTree($path) : unlink($path);
-        }
-        rmdir($dir);
+        ScratchDir::remove($dir);
     }
 
     /** @return array<string, true> */

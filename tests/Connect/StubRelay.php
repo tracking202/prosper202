@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Connect;
 
+use Tests\Support\ScratchDir;
+
 /**
  * Tracking202's MCP server as the install sees it, on a free loopback port
  * (`php -S`): it records every request (method, URI, Authorization,
@@ -143,10 +145,7 @@ final class StubRelay
     {
         proc_terminate($this->process);
         proc_close($this->process);
-        foreach (glob($this->dir . '/*') ?: [] as $file) {
-            unlink($file);
-        }
-        rmdir($this->dir);
+        ScratchDir::remove($this->dir);
     }
 
     /**

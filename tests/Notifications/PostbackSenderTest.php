@@ -8,6 +8,7 @@ use PHPUnit\Framework\TestCase;
 use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Notifications\PostbackResult;
 use Prosper202\Notifications\PostbackSender;
+use Tests\Support\ScratchDir;
 
 /**
  * The postback sender: what it lets curl do (the address pinned, no proxy,
@@ -67,10 +68,7 @@ PHP;
             proc_close($process);
         }
         $this->servers = [];
-        if ($this->dir !== '') {
-            array_map('unlink', glob($this->dir . '/*') ?: []);
-            rmdir($this->dir);
-        }
+        ScratchDir::remove($this->dir);
     }
 
     /** @param array<string, list<string>> $dns */

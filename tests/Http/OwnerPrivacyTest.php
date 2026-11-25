@@ -97,9 +97,9 @@ final class OwnerPrivacyTest extends TestCase
         yield 'the install holds back, the owner tracks' => ['all', [1 => 'all', 2 => 'disabled'], 2, false];
         yield 'both track' => ['disabled', [1 => 'disabled', 2 => 'disabled'], 2, true];
         yield 'the first account is the install' => ['disabled', [1 => 'disabled'], 1, true];
-        // The bootstrap's read is cached for three minutes; the owner's is
-        // not. A stricter cached install setting still holds.
-        yield 'a cached stricter install setting' => ['all', [1 => 'disabled', 2 => 'disabled'], 2, false];
+        // The bootstrap's read and the owner's are two reads: a stricter
+        // install setting from the first still holds.
+        yield 'a stricter install setting from the bootstrap' => ['all', [1 => 'disabled', 2 => 'disabled'], 2, false];
         // PrivacySetting holds back for a stored value that is not a setting.
         yield 'the owner\'s value is not a setting' => ['disabled', [1 => 'disabled', 2 => 'EU'], 2, false];
         // No preferences row for the owner: the column's default, 'disabled'.

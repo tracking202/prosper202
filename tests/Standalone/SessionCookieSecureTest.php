@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Standalone;
 
 use PHPUnit\Framework\TestCase;
+use Tests\Support\ScratchDir;
 
 /**
  * Every session cookie of the install decides its Secure flag from one
@@ -87,8 +88,7 @@ final class SessionCookieSecureTest extends TestCase
                 self::assertSame($secure === '1', $result['secure'], 'X-Forwarded-Proto: ' . $proto);
             }
         } finally {
-            array_map('unlink', glob($saved . '/*') ?: []);
-            rmdir($saved);
+            ScratchDir::remove($saved);
         }
     }
 

@@ -9,6 +9,7 @@ use Api\V3\Controllers\CampaignsController;
 use Api\V3\Support\ServerStateStore;
 use PHPUnit\Framework\TestCase;
 use Prosper202\User\UserDataPurge;
+use Tests\Support\ScratchDir;
 
 /**
  * Every write of a campaign's app_registration_id reaches the change feed
@@ -47,13 +48,7 @@ final class CampaignLinkChangeFeedTest extends TestCase
     protected function tearDown(): void
     {
         putenv($this->previousStateDir === false ? 'P202_SERVER_STATE_DIR' : 'P202_SERVER_STATE_DIR=' . $this->previousStateDir);
-        if ($this->stateDir !== '' && is_dir($this->stateDir)) {
-            $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($this->stateDir, \FilesystemIterator::SKIP_DOTS), \RecursiveIteratorIterator::CHILD_FIRST);
-            foreach ($it as $f) {
-                $f->isDir() ? rmdir((string) $f) : unlink((string) $f);
-            }
-            rmdir($this->stateDir);
-        }
+        ScratchDir::remove($this->stateDir);
     }
 
     /** @return list<array<string, mixed>> the feed's campaign records for campaign 30, oldest first */

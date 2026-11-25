@@ -10,6 +10,7 @@ use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\SyncEngine;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Attribution\WebhookGuard;
+use Tests\Support\ScratchDir;
 
 /**
  * The client a sync calls its two remotes with: each request checked by the
@@ -80,10 +81,7 @@ PHP;
             proc_close($process);
         }
         $this->servers = [];
-        if ($this->dir !== '') {
-            array_map('unlink', glob($this->dir . '/*') ?: []);
-            rmdir($this->dir);
-        }
+        ScratchDir::remove($this->dir);
     }
 
     /** @param array<string, list<string>> $dns */

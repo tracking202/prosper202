@@ -12,6 +12,7 @@ use Prosper202\InboundLog\Entry;
 use Prosper202\InboundLog\InboundLog;
 use Prosper202\InboundLog\Redactor;
 use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
+use Tests\Support\ScratchDir;
 
 /**
  * Setup › Inbound Log, Conversion Logs' download and the cron health
@@ -115,10 +116,7 @@ final class InboundLogPagesIntegrationTest extends TestCase
                 }
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        ScratchDir::remove(self::$sessions);
     }
 
     protected function setUp(): void

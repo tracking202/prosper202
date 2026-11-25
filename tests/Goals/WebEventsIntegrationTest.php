@@ -12,6 +12,7 @@ use Prosper202\Goals\GoalEvent;
 use Prosper202\Goals\GoalSubject;
 use Prosper202\Goals\OutcomeNotifier;
 use Prosper202\Goals\TrafficSourceNotifier;
+use Prosper202\Click\LandingPageVisitorClick;
 use Prosper202\Goals\WebEvents;
 use Prosper202\Identity\IdentityGraph;
 use Prosper202\Identity\IdentityKeys;
@@ -548,5 +549,41 @@ final class WebEventsIntegrationTest extends TestCase
 
         self::fixture("INSERT INTO 202_identity_signals SET user_id=1, signal_type='lpid', signal_hash='$hash', visitor_key=1, merges=21, quarantined_at=1, created_at=1");
         self::assertNull($events->clickForVisitor('555', $lpid, $now), 'a quarantined id names nothing');
+    }
+
+    /**
+     * The landing page's redirect link (lp.php, lpc.php) finds the click the
+     * page's visitor id names when no cookie does: under 'eu' a held-back
+     * visitor has none, and the offer was sent an empty subid.
+     */
+    public function testTheRedirectLinkFindsTheClickByThePagesVisitorId(): void
+    {
+        $this->campaign(7, 'accumulate');
+        $now = self::T + 1000;
+        $this->click(101, 7, $now - 100);
+        self::fixture("INSERT INTO 202_landing_pages SET landing_page_id=5, user_id=1, landing_page_id_public=555,
+            aff_campaign_id=7, landing_page_nickname='lp', landing_page_url='http://lp', landing_page_deleted=0,
+            landing_page_time=1, landing_page_type=0");
+        $lpid = str_repeat('ab', 16);
+        $key = (new IdentityKeys($this->conn))->forUser(1)['hash'];
+        $hash = IdentityGraph::hash($key, new IdentitySignal(SignalType::LANDING_PAGE, $lpid));
+        self::fixture("INSERT INTO 202_identity_observations SET click_id=101, signal_type='lpid',
+            signal_hash='$hash', observed_at=1");
+        $page = ['user_id' => '1', 'aff_campaign_id' => '7', 'identity_signals' => '1'];
+        $find = fn (array $request, array $row = []): ?int
+            => LandingPageVisitorClick::find($this->conn, '555', $request, $row + $page, $now);
+
+        self::assertSame(101, $find(['p202lpid' => $lpid]), 'the click the id was seen on');
+        self::assertSame(101, $find(['p202lpid' => $lpid, 'p202_consent' => '1']), 'consent given');
+        self::assertNull($find([]), 'no id: no click');
+        self::assertNull($find(['p202lpid' => $lpid, 'p202_consent' => '0']), 'the link carries a refusal');
+        self::assertNull($find(['p202lpid' => $lpid, 'p202_consent' => 'no']), 'anything but 1 refuses');
+        self::assertNull($find(['p202lpid' => $lpid], ['identity_signals' => '0']), 'the campaign\'s capture is off');
+        self::assertNull($find(['p202lpid' => $lpid], ['user_id' => '2']), 'the page names another account');
+        self::assertNull(
+            $find(['p202lpid' => $lpid], ['aff_campaign_id' => '8']),
+            'the click is on another campaign than the page\'s'
+        );
+        self::assertNull($find(['p202lpid' => str_repeat('cd', 16)]), 'an id never seen on a click');
     }
 }

@@ -12,6 +12,7 @@ use Api\V3\Support\ServerStateStore;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\LatestVisit;
 use Tests\Support\FakeMysqliConnection;
+use Tests\Support\ScratchDir;
 
 /**
  * POST /conversions when the click's ledger already holds the request's key
@@ -59,14 +60,7 @@ final class ConversionCreateDuplicateTest extends TestCase
     protected function tearDown(): void
     {
         RequestContext::reset();
-        $it = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($this->stateDir, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST
-        );
-        foreach ($it as $file) {
-            $file->isDir() ? rmdir($file->getPathname()) : unlink($file->getPathname());
-        }
-        rmdir($this->stateDir);
+        ScratchDir::remove($this->stateDir);
     }
 
     /** A connection whose click 10 already has conversion 41 under the request's key. */

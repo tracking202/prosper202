@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Release;
 
 use P202Build\ReleaseTree;
+use Tests\Support\ScratchDir;
 use Tests\TestCase;
 
 /**
@@ -686,17 +687,7 @@ final class ReleaseTreeTest extends TestCase
 
     private function removeTree(string $path): void
     {
-        if (is_link($path) || is_file($path)) {
-            unlink($path);
-            return;
-        }
-        if (!is_dir($path)) {
-            return;
-        }
-        foreach (array_diff(scandir($path) ?: [], ['.', '..']) as $child) {
-            $this->removeTree("{$path}/{$child}");
-        }
-        rmdir($path);
+        ScratchDir::remove($path);
     }
 
     /**

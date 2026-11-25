@@ -16,6 +16,16 @@ try {
     require_once __DIR__ . '/../202-config/connect.php';
     require_once __DIR__ . '/../202-config/class-dataengine.php';
 
+    // Before the install has made its tables there is nothing to run: a
+    // scheduler that starts with the server (the Docker stack's cron
+    // service) logged a missing-table error for every job, every minute.
+    // A run that cannot start says so in its status (CronEntryPointsFailLoudlyTest).
+    if (!is_installed()) {
+        p202_cli_fail('Prosper202 is not installed yet: no cron job was run. Finish the install first.');
+        http_response_code(503);
+        exit("Prosper202 is not installed yet: no cron job was run.\n");
+    }
+
     // One run at a time, for as long as it runs (Prosper202\Cron\CronLock):
     // every way in (a page's ping, a scheduler, AutoCron) comes through here.
     // A run that finds it held does nothing and records nothing.

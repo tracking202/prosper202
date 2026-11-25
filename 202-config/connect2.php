@@ -249,7 +249,10 @@ if (!isset($_SESSION['privacy'])) {
 
     try {
         // No connection (an outage): nothing to read, and no second attempt.
-        $privacy = $db instanceof \mysqli ? memcache_mysql_fetch_assoc($user_sql) : false;
+        // Not cached: a kept answer made a change on Personal settings reach
+        // the click path up to 3 minutes late, and no writer can clear it,
+        // since the key names the request's host (systemHash()).
+        $privacy = $db instanceof \mysqli ? memcache_mysql_fetch_assoc($user_sql, false, 0) : false;
     } catch (\Prosper202\Database\Exceptions\QueryException $privacyReadError) {
         $privacy = false;
     }

@@ -6,6 +6,7 @@ namespace Tests\Api\V3;
 
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Support\ServerStateStore;
+use Tests\Support\ScratchDir;
 use Tests\TestCase;
 
 final class ServerStateStoreDefaultDirTest extends TestCase
@@ -56,17 +57,7 @@ final class ServerStateStoreDefaultDirTest extends TestCase
 
     private function removeDir(string $dir): void
     {
-        if (!is_dir($dir)) {
-            return;
-        }
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST
-        );
-        foreach ($iterator as $file) {
-            $file->isDir() && !$file->isLink() ? rmdir($file->getPathname()) : unlink($file->getPathname());
-        }
-        rmdir($dir);
+        ScratchDir::remove($dir);
     }
 
     /** The directory the store names for an install of $name on $host in the temp dir $tmp. */

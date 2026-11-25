@@ -433,7 +433,7 @@ $nothingToLink = $campaignOptions === [] && $advancedPageOptions === [] && $rota
 	</div>
 
 	<div class="col-12 col-lg-6">
-		<section class="p202-panel">
+		<section class="p202-panel" id="tracker-list-panel" data-p202-refresh-after="#tracking-links">
 			<div class="p202-panel__head">
 				<h2 class="p202-panel__title">Your tracking links</h2>
 				<span class="p202-pill p202-pill--accent"><?php echo count($trackers); ?></span>

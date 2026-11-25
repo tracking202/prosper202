@@ -6,6 +6,7 @@ namespace Tests\Messaging;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Cron\CronLock;
+use Tests\Support\ScratchDir;
 
 require_once __DIR__ . '/../../202-config/Messaging/MessagingService.class.php';
 
@@ -39,10 +40,7 @@ final class PageDeliveryLockTest extends TestCase
             proc_terminate($proc, 9);
             proc_close($proc);
         }
-        foreach (glob($this->dir . '/*') ?: [] as $file) {
-            unlink($file);
-        }
-        rmdir($this->dir);
+        ScratchDir::remove($this->dir);
     }
 
     private function deliveryLock(): string

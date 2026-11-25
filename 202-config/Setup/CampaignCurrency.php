@@ -73,7 +73,7 @@ final class CampaignCurrency
         if ((float) $payout == 0.0) {
             return ['currency' => $campaignCurrency, 'payout' => '0', 'foreign_payout' => '0'];
         }
-        if ((float) $payout < 0 || (float) $payout >= self::PAYOUT_LIMIT) {
+        if ((float) $payout < 0 || round((float) $payout, 2) >= self::PAYOUT_LIMIT) {
             throw new \RuntimeException('A payout in another currency must be more than 0 and less than 1,000,000.');
         }
         $payout = number_format((float) $payout, 2, '.', '');
@@ -83,8 +83,11 @@ final class CampaignCurrency
             return ['currency' => $campaignCurrency, 'payout' => number_format((float) $stored['aff_campaign_payout'], 2, '.', ''), 'foreign_payout' => $payout];
         }
         $converted = $convert($campaignCurrency, $accountCurrency, $payout);
-        if ($converted === null || !is_numeric($converted) || (float) $converted <= 0 || (float) $converted >= self::PAYOUT_LIMIT) {
+        if ($converted === null || !is_numeric($converted) || (float) $converted <= 0) {
             throw new \RuntimeException('No exchange rate from ' . $campaignCurrency . ' to ' . $accountCurrency . ' could be had just now.');
+        }
+        if (round((float) $converted, 2) >= self::PAYOUT_LIMIT) {
+            throw new \RuntimeException('The payout is 1,000,000 ' . $accountCurrency . ' or more once converted, more than a campaign can hold.');
         }
 
         return ['currency' => $campaignCurrency, 'payout' => number_format((float) $converted, 2, '.', ''), 'foreign_payout' => $payout];
