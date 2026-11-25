@@ -429,7 +429,10 @@ final class SettingsFormsCarryTheirVersionTest extends TestCase
 
         self::assertNotSame([], $calls, 'api-integrations.php no longer renders the roleless notice here.');
         foreach ($calls as $fields) {
-            self::assertStringContainsString("p202_account_shown_field('jvzoo_roleless_role'", $fields);
+            self::assertStringContainsString(
+                "p202_account_shown_field('jvzoo_roleless_role',\$apiintShown('jvzoo_roleless_role',",
+                (string) preg_replace('/\s+/', '', $fields)
+            );
         }
     }
 }

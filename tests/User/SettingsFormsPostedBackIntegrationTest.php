@@ -385,7 +385,7 @@ final class SettingsFormsPostedBackIntegrationTest extends TestCase
         $files = [...glob($root . '/202-account/*.php') ?: [], ...glob($root . '/202-config/functions-*.php') ?: []];
         foreach ($files as $file) {
             $source = (string) file_get_contents($file);
-            preg_match_all("/p202_account_shown_field\\('([a-z0-9_]+)'/", $source, $m);
+            preg_match_all("/p202_account_shown_field\\(\\s*'([a-z0-9_]+)'/", $source, $m);
             $names = array_merge($names, $m[1]);
             if (str_ends_with($file, '/api-integrations.php')) {
                 preg_match_all("/'field' => '([a-z0-9_]+)'/", $source, $m);
