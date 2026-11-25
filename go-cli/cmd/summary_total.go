@@ -41,6 +41,21 @@ var summaryRatios = []summaryRatio{
 	{"cpa", "total_cost", "total_leads", false},
 }
 
+// summaryNotTotalled are summary fields the TOTAL leaves out on purpose,
+// with why. 1.9.81 added the people and refund figures; the TOTAL does not
+// add them yet (#563 left that out), so each profile's row shows them and
+// the TOTAL names them rather than calling them a newer server's.
+var summaryNotTotalled = map[string]string{
+	"unique_visitors":     "one person can be a visitor in more than one profile, so the profiles' visitor counts do not add up to the people across them; each profile's row has it",
+	"unidentified_clicks": summaryPeopleRefundsReason,
+	"total_conversions":   summaryPeopleRefundsReason,
+	"total_refunds":       summaryPeopleRefundsReason,
+	"total_refund_amount": summaryPeopleRefundsReason,
+	"refund_rate":         summaryPeopleRefundsReason,
+}
+
+const summaryPeopleRefundsReason = "this p202 does not total the summary's people and refund figures yet; each profile's row has it"
+
 // summaryMoneyScale is the decimals of a sum of 202_dataengine's income or
 // cost (DECIMAL(n,5)); its counts are whole numbers.
 const summaryMoneyScale = 5
@@ -367,6 +382,10 @@ func totalSummaries(rows map[string]map[string]interface{}) (summaryTotal, error
 		known[r.field] = true
 	}
 	for field := range carried {
+		if reason, ok := summaryNotTotalled[field]; ok {
+			out.notTotalled[field] = reason
+			continue
+		}
 		if !known[field] {
 			out.notTotalled[field] = "this p202 does not know whether it adds up across profiles (the server is newer); each profile's row has it"
 		}

@@ -297,11 +297,11 @@ func TestSummaryTotalNeverAddsDifferentCurrencies(t *testing.T) {
 // out of the TOTAL, named: it may be a ratio, and summing one is the defect.
 func TestSummaryTotalLeavesOutAFieldItDoesNotKnow(t *testing.T) {
 	summaryServers(t, map[string]string{
-		"a": `{"data":{"total_clicks":10,"total_refunds":2,"refund_rate":20.0,"timezone":"UTC","currency":"USD"}}`,
-		"b": `{"data":{"total_clicks":5,"total_refunds":1,"refund_rate":20.0,"timezone":"UTC","currency":"USD"}}`,
+		"a": `{"data":{"total_clicks":10,"total_widgets":2,"widget_rate":20.0,"timezone":"UTC","currency":"USD"}}`,
+		"b": `{"data":{"total_clicks":5,"total_widgets":1,"widget_rate":20.0,"timezone":"UTC","currency":"USD"}}`,
 	})
 	got, _ := runMultiSummary(t, "report", "summary", "--profiles", "a,b", "--json")
-	for _, field := range []string{"total_refunds", "refund_rate", "timezone"} {
+	for _, field := range []string{"total_widgets", "widget_rate", "timezone"} {
 		if _, ok := got.Aggregated[field]; ok {
 			t.Errorf("TOTAL has %s, which this p202 cannot know adds up", field)
 		}
@@ -625,11 +625,24 @@ func TestSummaryTotalIsWhatTheServerAnswersForTheUnion(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", c.Name, err)
 		}
-		if len(got.notTotalled) != 0 {
-			t.Errorf("%s: left out %v", c.Name, got.notTotalled)
+		for field, reason := range got.notTotalled {
+			if summaryNotTotalled[field] != reason {
+				t.Errorf("%s: left out %s: %s", c.Name, field, reason)
+			}
 		}
+		listed := 0
 		for field, want := range c.Union {
 			have := got.row[field]
+			if _, ok := summaryNotTotalled[field]; ok {
+				listed++
+				if _, inTotal := got.row[field]; inTotal {
+					t.Errorf("%s: TOTAL has %s, which it leaves out on purpose", c.Name, field)
+				}
+				if got.notTotalled[field] == "" {
+					t.Errorf("%s: TOTAL does not name %s as left out", c.Name, field)
+				}
+				continue
+			}
 			if field == summaryCurrencyField {
 				if have != want {
 					t.Errorf("%s: currency %v, want %v", c.Name, have, want)
@@ -654,8 +667,8 @@ func TestSummaryTotalIsWhatTheServerAnswersForTheUnion(t *testing.T) {
 				t.Errorf("%s: TOTAL %s = %v, the server answers %v for the union", c.Name, field, h, w)
 			}
 		}
-		if len(got.row) != len(c.Union) {
-			t.Errorf("%s: TOTAL has %d fields, the server's answer %d", c.Name, len(got.row), len(c.Union))
+		if len(got.row) != len(c.Union)-listed {
+			t.Errorf("%s: TOTAL has %d fields, the server's answer %d less %d left out on purpose", c.Name, len(got.row), len(c.Union), listed)
 		}
 	}
 }
