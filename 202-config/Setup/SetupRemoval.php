@@ -14,14 +14,25 @@ use Prosper202\Http\PostedId;
  */
 final class SetupRemoval
 {
-    /** @var array<string, array{0: string, 1: string}> kind => [table, column prefix] */
-    private const KINDS = [
-        'campaign_category' => ['202_aff_networks', 'aff_network'],
-        'campaign' => ['202_aff_campaigns', 'aff_campaign'],
-        'landing_page' => ['202_landing_pages', 'landing_page'],
-        'text_ad' => ['202_text_ads', 'text_ad'],
-        'traffic_source' => ['202_ppc_networks', 'ppc_network'],
-        'traffic_source_account' => ['202_ppc_accounts', 'ppc_account'],
+    /**
+     * kind => its statement, written out so the scans that read a write's
+     * table can read it.
+     *
+     * @var array<string, string>
+     */
+    private const STATEMENTS = [
+        'campaign_category' => 'UPDATE 202_aff_networks SET aff_network_deleted = 1, aff_network_time = ?'
+            . ' WHERE aff_network_id = ? AND user_id = ? AND aff_network_deleted = 0',
+        'campaign' => 'UPDATE 202_aff_campaigns SET aff_campaign_deleted = 1, aff_campaign_time = ?'
+            . ' WHERE aff_campaign_id = ? AND user_id = ? AND aff_campaign_deleted = 0',
+        'landing_page' => 'UPDATE 202_landing_pages SET landing_page_deleted = 1, landing_page_time = ?'
+            . ' WHERE landing_page_id = ? AND user_id = ? AND landing_page_deleted = 0',
+        'text_ad' => 'UPDATE 202_text_ads SET text_ad_deleted = 1, text_ad_time = ?'
+            . ' WHERE text_ad_id = ? AND user_id = ? AND text_ad_deleted = 0',
+        'traffic_source' => 'UPDATE 202_ppc_networks SET ppc_network_deleted = 1, ppc_network_time = ?'
+            . ' WHERE ppc_network_id = ? AND user_id = ? AND ppc_network_deleted = 0',
+        'traffic_source_account' => 'UPDATE 202_ppc_accounts SET ppc_account_deleted = 1, ppc_account_time = ?'
+            . ' WHERE ppc_account_id = ? AND user_id = ? AND ppc_account_deleted = 0',
     ];
 
     /**
@@ -32,22 +43,14 @@ final class SetupRemoval
      */
     public static function mark(Connection $conn, string $kind, mixed $rawId, int $userId, int $time): bool
     {
-        if (!isset(self::KINDS[$kind])) {
+        if (!isset(self::STATEMENTS[$kind])) {
             throw new \InvalidArgumentException('Unknown setup record kind: ' . $kind);
         }
         $id = PostedId::read($rawId);
         if ($id === null || $userId < 1) {
             return false;
         }
-        [$table, $prefix] = self::KINDS[$kind];
-        $stmt = $conn->prepareWrite(sprintf(
-            'UPDATE %s SET %s_deleted = 1, %s_time = ? WHERE %s_id = ? AND user_id = ? AND %s_deleted = 0',
-            $table,
-            $prefix,
-            $prefix,
-            $prefix,
-            $prefix
-        ));
+        $stmt = $conn->prepareWrite(self::STATEMENTS[$kind]);
         $conn->bind($stmt, 'iii', [$time, $id, $userId]);
 
         return $conn->executeUpdate($stmt) === 1;
