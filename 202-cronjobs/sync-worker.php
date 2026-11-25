@@ -6,6 +6,7 @@ require_once dirname(__DIR__) . '/vendor/autoload.php';
 require_once dirname(__DIR__) . '/202-config.php';
 require_once dirname(__DIR__) . '/202-config/version.php';
 // For p202UncaughtLogLine(): a run's internal failure is logged as the API logs its 500s.
+require_once dirname(__DIR__) . '/202-config/mysql-error-args.php';
 require_once dirname(__DIR__) . '/202-config/functions-shared.php';
 
 use Api\V3\Bootstrap;

@@ -28,7 +28,8 @@ final class SyncFailure
     {
         if (self::isInternal($error)) {
             $tag = self::tag($where);
-            error_log(function_exists('p202UncaughtLogLine')
+            // Both helpers or neither: a worker that lacks one must still record its job's end.
+            error_log(function_exists('p202UncaughtLogLine') && function_exists('p202FailedQueryMessage')
                 ? p202UncaughtLogLine($tag, $error)
                 : self::logLine($tag, $error));
         }

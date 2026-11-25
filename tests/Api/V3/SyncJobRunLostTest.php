@@ -296,6 +296,62 @@ final class SyncJobRunLostTest extends TestCase
         self::assertStringContainsString('secret detail', $log);
     }
 
+    /** The worker's own process: its run of jobs, with the error page's helpers loaded or not. */
+    private function runWorkerOnDatabaseError(bool $withErrorArgs): array
+    {
+        $command = [PHP_BINARY, dirname(__DIR__, 2) . '/fixtures/sync-job/run-worker-engine-fails.php', $this->dir];
+        if ($withErrorArgs) {
+            $command[] = 'with-error-args';
+        }
+        $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        self::assertIsResource($process);
+        $stdout = (string) stream_get_contents($pipes[1]);
+        $stderr = (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+
+        return [proc_close($process), $stdout, $stderr];
+    }
+
+    /** @return iterable<string, array{bool}> */
+    public static function errorHelperLoads(): iterable
+    {
+        yield 'with the error page helpers' => [true];
+        yield 'without the error page helpers' => [false];
+    }
+
+    /** @dataProvider errorHelperLoads */
+    public function testAJobThatStopsOnADatabaseErrorIsFailedWithItsOwnCauseAndTheWorkerGoesOn(bool $withErrorArgs): void
+    {
+        $first = $this->queue(['max_attempts' => 1]);
+        $second = $this->queue([
+            'max_attempts' => 1,
+            'target' => ['name' => 'other', 'url' => 'https://other.example.com', 'api_key' => self::TARGET_KEY],
+        ]);
+
+        [$status, $stdout, $stderr] = $this->runWorkerOnDatabaseError($withErrorArgs);
+
+        self::assertSame(0, $status, 'the worker is alive: ' . $stderr);
+        self::assertSame(2, json_decode($stdout, true)['data']['processed'], 'the rest of the batch ran');
+        foreach ([$first, $second] as $id) {
+            $job = $this->jobFile($id);
+            self::assertSame('failed', $job['status']);
+            self::assertSame(SyncException::INTERNAL, $job['error_code']);
+            self::assertStringContainsString('an error inside this server (mysqli_sql_exception)', (string) $job['error']);
+            self::assertStringNotContainsString('Duplicate entry', $this->stored(), 'a quoted value is not kept');
+        }
+    }
+
+    public function testTheWorkerLoadsTheHelpersThatItsFailureLogLineNeeds(): void
+    {
+        $worker = (string) file_get_contents(dirname(__DIR__, 3) . '/202-cronjobs/sync-worker.php');
+        $args = strpos($worker, "/202-config/mysql-error-args.php'");
+        $shared = strpos($worker, "/202-config/functions-shared.php'");
+        self::assertIsInt($args);
+        self::assertIsInt($shared);
+        self::assertLessThan($shared, $args, 'functions-shared.php expects its loader to have loaded this');
+    }
+
     public function testABusyPairIsSaidAndTheJobWaitsItsTurn(): void
     {
         $id = $this->queue();
