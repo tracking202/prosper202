@@ -55,11 +55,12 @@ $savedKey = (string) ($user_row['clickserver_api_key'] ?? '');
 $maskedKey = $savedKey === '' ? '' : str_repeat('*', 22) . substr($savedKey, 22);
 
 $ch = curl_init();
-curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/feed/appstore/');
-$result = \Prosper202\Http\FixedHostRoute::exec($ch);
+$result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_CONNECTTIMEOUT => 5,
+    CURLOPT_TIMEOUT => 10,
+    CURLOPT_URL => 'https://my.tracking202.com/feed/appstore/',
+]);
 curl_close($ch);
 $apps = p202_appstore_apps(is_string($result) ? json_decode($result, true) : null, get_absolute_url());
 $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');

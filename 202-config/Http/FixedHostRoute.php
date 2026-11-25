@@ -44,17 +44,26 @@ final class FixedHostRoute
         self::$resolver = $resolver;
     }
 
-    /** curl_exec() of a request whose options are all set, routed and capped. */
-    public static function exec(\CurlHandle $ch, int $maxBytes = self::MAX_BYTES): string|bool
+    /**
+     * curl_exec() of the request, its options set here (CurlOptions::set()),
+     * then routed and capped. An option curl refuses sends nothing (false,
+     * the option logged), as a route that cannot be taken does.
+     *
+     * @param array<int, mixed> $options the request's own options, URL included
+     */
+    public static function exec(\CurlHandle $ch, array $options = [], int $maxBytes = self::MAX_BYTES): string|bool
     {
-        $options = self::options((string) curl_getinfo($ch, CURLINFO_EFFECTIVE_URL), $maxBytes);
-        if (is_string($options)) {
-            error_log('FixedHostRoute: not sent: ' . $options);
+        try {
+            CurlOptions::set($ch, $options);
+            $route = self::options((string) curl_getinfo($ch, CURLINFO_EFFECTIVE_URL), $maxBytes);
+            if (is_string($route)) {
+                error_log('FixedHostRoute: not sent: ' . $route);
 
-            return false;
-        }
-        if (!curl_setopt_array($ch, $options)) {
-            error_log('FixedHostRoute: not sent: curl refused an option: ' . curl_error($ch));
+                return false;
+            }
+            CurlOptions::set($ch, $route);
+        } catch (CurlOptionRefused $e) {
+            error_log('FixedHostRoute: not sent: ' . $e->getMessage());
 
             return false;
         }

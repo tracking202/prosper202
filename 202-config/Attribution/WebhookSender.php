@@ -319,11 +319,12 @@ final class WebhookSender
 
             return strlen($line);
         };
-        if (!curl_setopt_array($ch, $options)) {
-            $error = curl_error($ch);
+        try {
+            \Prosper202\Http\CurlOptions::set($ch, $options);
+        } catch (\Prosper202\Http\CurlOptionRefused $e) {
             curl_close($ch);
 
-            return ['status' => 0, 'error' => 'curl refused an option: ' . $error, 'primary_ip' => null, 'location' => null, 'body' => ''];
+            return ['status' => 0, 'error' => $e->getMessage(), 'primary_ip' => null, 'location' => null, 'body' => ''];
         }
         $ok = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);

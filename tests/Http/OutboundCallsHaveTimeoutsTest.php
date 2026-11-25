@@ -16,7 +16,7 @@ use Tests\Support\SourceScan;
  * page that made them for as long as my.tracking202.com took.
  *
  * Read per function: the function that calls curl_init() sets both limits
- * (or calls OutboundTimeouts::apply()), unless it is listed below with the
+ * (or takes OutboundTimeouts::options() or apply()), unless it is listed below with the
  * method of its class that builds its options. A literal 0 for either limit
  * is no limit and is refused.
  */
@@ -59,8 +59,9 @@ final class OutboundCallsHaveTimeoutsTest extends TestCase
         }
 
         self::assertGreaterThan(40, $seen, 'the scan read the tree');
-        self::assertSame([], $missing, 'a request here sets no connect or no total time limit: call'
-            . ' \Prosper202\Http\OutboundTimeouts::apply($ch) or set both CURLOPT_CONNECTTIMEOUT and CURLOPT_TIMEOUT');
+        self::assertSame([], $missing, 'a request here sets no connect or no total time limit: add'
+            . ' \Prosper202\Http\OutboundTimeouts::options() to its options'
+            . ' or set both CURLOPT_CONNECTTIMEOUT and CURLOPT_TIMEOUT');
         self::assertSame([], $zero, 'a time limit of 0 is no limit');
     }
 
@@ -88,8 +89,9 @@ final class OutboundCallsHaveTimeoutsTest extends TestCase
         $tokens = self::significant('<?php function a() { $ch = curl_init(); curl_exec($ch); }'
             . ' function b() { $ch = curl_init(); \Prosper202\Http\OutboundTimeouts::apply($ch); }'
             . ' function c() { curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0); }'
-            . ' function d() { $a = curl_init(); \Prosper202\Http\OutboundTimeouts::apply($a); $b = curl_init(); }');
-        self::assertCount(4, self::curlInits($tokens));
+            . ' function d() { $a = curl_init(); \Prosper202\Http\OutboundTimeouts::apply($a); $b = curl_init(); }'
+            . ' function e() { $ch = curl_init(); FixedHostRoute::exec($ch, [] + OutboundTimeouts::options(5)); }');
+        self::assertCount(5, self::curlInits($tokens));
         // a()'s request, and both of d()'s, which set one pair of limits for two.
         self::assertSame([1, 1, 1], self::unbounded($tokens));
         self::assertCount(1, self::zeroLimits($tokens));
@@ -134,7 +136,8 @@ final class OutboundCallsHaveTimeoutsTest extends TestCase
             }
             // Counted, so a function with two requests needs two sets of limits.
             $requests = count(array_filter($calls, static fn (int $c): bool => $c > $from && $c < $to));
-            $applied = substr_count($text, 'OutboundTimeouts::apply(');
+            $applied = substr_count($text, 'OutboundTimeouts::apply(')
+                + substr_count($text, 'OutboundTimeouts::options(');
             $connect = preg_match_all('/\bCURLOPT_CONNECTTIMEOUT(_MS)?\b/', $text);
             $total = preg_match_all('/\bCURLOPT_TIMEOUT(_MS)?\b/', $text);
             if ($requests > $applied + min($connect, $total)) {
