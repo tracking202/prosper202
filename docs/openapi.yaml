@@ -4084,6 +4084,77 @@ paths:
           description: The body is over 8 MB.
         "422":
           $ref: "#/components/responses/ValidationError"
+    get:
+      tags: [Update]
+      summary: List the account's revenue uploads, newest first
+      description: >-
+        Each upload batch with its file name, when it was uploaded, its line
+        counts, and when it was last undone (`undone_at`, `undone_rows`,
+        null until then). The batch id is what the undo takes. Page with
+        `before`, the previous page's `next_before`. Needs
+        `access_to_update_section` and `conversions:read`.
+      operationId: listRevenueUploads
+      parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 500, default: 50}
+        - name: before
+          in: query
+          description: List the batches whose id is below this one.
+          schema: {type: integer, minimum: 1}
+      responses:
+        "200":
+          description: The batches, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevenueUploadList"
+        "403":
+          description: The role lacks `access_to_update_section`, or the key lacks `conversions:read`.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /conversions/uploads/{id}/undo:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    post:
+      tags: [Update]
+      summary: Undo a revenue upload by its batch id
+      description: |
+        Deletes every live conversion the batch recorded, on the account's
+        own clicks, and recomputes each of those clicks from what is left,
+        so a click goes back to the earlier upload or the postback that the
+        batch replaced. A reversal of a removed row stays and stops netting;
+        a postback queued for a removed row is cancelled, and one already
+        delivered is retracted. Another account's batch is a `404`, as one
+        that never existed is. The body must be empty.
+
+        `dry_run=1` lists the rows it would delete (`rows`, with the
+        report's line numbers) and each click's value before and after
+        (`click_values`), the first 1,000 of each; the counts and `amount`
+        are exact. Each click is undone in its own transaction: if one
+        fails, the clicks before it stay undone, the answer is a `500` that
+        says how many, and undoing the batch again deletes what is left. A
+        batch already undone answers `removed` 0.
+
+        Needs `access_to_update_section` and `conversions:write`. Not
+        stageable.
+      operationId: undoRevenueUpload
+      parameters:
+        - $ref: "#/components/parameters/writeDryRun"
+      responses:
+        "200":
+          description: What was (or would be) removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevenueUploadUndoResponse"
+        "403":
+          description: The role lacks `access_to_update_section`, or the key lacks `conversions:write`.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   # ─── Reports ─────────────────────────────────────────────────────────
 
@@ -17184,6 +17255,85 @@ components:
                   status: {type: string, enum: [skipped, header]}
                   reason: {type: string, description: "Why a line was skipped (or read as the header)."}
             lines_unlisted: {type: integer, description: "Lines not recorded beyond those in lines."}
+
+    RevenueUploadBatch:
+      type: object
+      properties:
+        batch_id: {type: integer}
+        file_name: {type: string}
+        uploaded_at: {type: integer, description: "Unix time"}
+        line_count: {type: integer}
+        recorded_count: {type: integer}
+        skipped_count: {type: integer}
+        undone_at: {type: integer, nullable: true, description: "Unix time of the last undo; a record, not a gate."}
+        undone_rows: {type: integer, nullable: true, description: "Rows the undo that removed any deleted."}
+
+    RevenueUploadList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/RevenueUploadBatch"
+        next_before: {type: integer, nullable: true}
+
+    RevenueUploadClickValue:
+      type: object
+      properties:
+        lead: {type: boolean}
+        value: {type: string, nullable: true, description: "The click's value as reports count it, decimal string; null when it is no lead"}
+
+    RevenueUploadUndoResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            dry_run: {type: boolean}
+            batch:
+              $ref: "#/components/schemas/RevenueUploadBatch"
+            would_remove: {type: integer, description: "Dry run only."}
+            removed: {type: integer, description: "The write only."}
+            clicks: {type: integer}
+            amounts:
+              type: array
+              description: Dry run only. The payouts of the rows it would delete, summed per currency (a row's amount is in the currency it recorded).
+              items:
+                type: object
+                properties:
+                  currency: {type: string, nullable: true, description: "Null where the rows' currency was not recorded"}
+                  amount: {type: string}
+            reversals_stop_netting: {type: integer, description: "Dry run only."}
+            postbacks_cancelled: {type: integer, description: "Dry run only."}
+            postbacks_retracted: {type: integer, description: "Dry run only."}
+            rows:
+              type: array
+              description: Dry run only. The first 1,000 rows it would delete.
+              items:
+                type: object
+                properties:
+                  conv_id: {type: integer}
+                  click_id: {type: integer}
+                  line: {type: integer, nullable: true}
+                  payout: {type: string}
+                  currency: {type: string, nullable: true}
+            rows_unlisted: {type: integer}
+            click_values:
+              type: array
+              description: Dry run only. The first 1,000 clicks, with their value now and after the undo.
+              items:
+                type: object
+                properties:
+                  click_id: {type: integer}
+                  before:
+                    allOf: [{$ref: "#/components/schemas/RevenueUploadClickValue"}]
+                    nullable: true
+                    description: Null when the click itself is no longer stored (click retention keeps conversions).
+                  after:
+                    allOf: [{$ref: "#/components/schemas/RevenueUploadClickValue"}]
+                    nullable: true
+            click_values_unlisted: {type: integer}
+            message: {type: string, description: "The write only."}
 
     LtvCustomerCrm:
       type: object

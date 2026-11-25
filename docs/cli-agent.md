@@ -493,6 +493,14 @@ p202 conversion upload-revenue march.csv --dry-run --json
 #             "skipped_reasons":[{"reason":"the commission is not a number","lines":1}],
 #             "clicks":1,"total":"3.75000","totals":[{"click_id":940001,"total":"3.75000"}],"totals_unlisted":0,
 #             "lines":[...the lines not recorded...],"lines_unlisted":0}}
+
+# Take an upload back by its batch id (the dry run lists exactly the rows it removes).
+p202 conversion uploads --json                     # => {"data":[{"batch_id":7,"file_name":"march.csv",...,"undone_at":null}],"next_before":null}
+p202 conversion undo-upload 7 --dry-run --json
+# => {"data":{"dry_run":true,"would_remove":2,"amounts":[{"currency":"USD","amount":"11.00000"}],"clicks":2,
+#             "rows":[{"conv_id":31,"click_id":940001,"line":2,"payout":"5.00000","currency":"USD"},...],
+#             "click_values":[{"click_id":940001,"before":{"lead":true,"value":"5.00000"},"after":{"lead":true,"value":"9.00000"}}],...}}
+p202 conversion undo-upload 7 --force --json       # => {"data":{"dry_run":false,"removed":2,"clicks":2,...}}
 # lines and totals list at most 1,000 entries; clicks, total, skipped_reasons and the *_unlisted
 # counts are exact, so read them, not the length of a list.
 ```
@@ -946,6 +954,8 @@ p202 conversion delete-subids <file|-> [--dry-run] [--force] [--json]     # Dele
 p202 conversion reset-subids --aff-network-id N [--aff-campaign-id N] [--dry-run] [--force] [--json]
 p202 conversion upload-revenue <file.csv> [--subid-column H|N] [--amount-column H|N]
                        [--file-name S] [--dry-run] [--force] [--json]     # Upload Revenue Reports
+p202 conversion uploads [--limit N] [--before N] [--json]                 # the account's upload batches
+p202 conversion undo-upload <batch-id> [--dry-run] [--force] [--json]     # undo an upload by its batch id
 p202 conversion postback-url [--type simple|advanced] [--campaign N] [--amount S] [--subid S]
                        [--scheme http|https] [--json]                     # Postback / Pixel: the URL
 p202 conversion pixel  [--type simple|advanced|universal] [--iframe] [--campaign N]
@@ -1623,6 +1633,7 @@ Rules:
 | click update-cpc | Yes | Sets the same CPC on the clicks counted; a moved count writes nothing (exit 1) |
 | conversion mark-subids / delete-subids / reset-subids | Yes | A marked subid is answered `already_converted`; a cleared one clears nothing more |
 | conversion upload-revenue | Yes (same file) | Each upload is a new batch whose values replace the earlier batch's for its clicks |
+| conversion undo-upload | Yes | A batch already undone removes nothing more (`removed: 0`); after a failure part way, it deletes what is left |
 | --dry-run on the Update commands | Yes | None (the endpoint's own `?dry_run=1`) |
 | landing-page code, conversion postback-url / pixel | Yes | None (reads) |
 | landing-page check | Yes | The answer kept beside the page is replaced by the newer one |

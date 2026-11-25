@@ -22,13 +22,16 @@ import (
 
 // The UI's Update section (tracking202/update/) as commands, over the Update
 // API (POST /clicks/cpc, /conversions/subids, /conversions/subids/delete,
-// /conversions/subids/reset, /conversions/uploads):
+// /conversions/subids/reset, /conversions/uploads, GET /conversions/uploads,
+// POST /conversions/uploads/{id}/undo):
 //
 //	p202 click update-cpc         Update CPC
 //	p202 conversion mark-subids   Update Subids
 //	p202 conversion delete-subids Delete Subids
 //	p202 conversion reset-subids  Reset Campaign Subids
 //	p202 conversion upload-revenue Upload Revenue Reports
+//	p202 conversion uploads       the uploads, with their batch ids
+//	p202 conversion undo-upload   undo one upload by its batch id
 //
 // Every write is checked first with the endpoint's own `?dry_run=1` (the same
 // request, writing nothing), and the ones that change or remove what is
@@ -341,7 +344,7 @@ func runClickUpdateCPC(cmd *cobra.Command, _ []string) error {
 func newClickUpdateCPCCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update-cpc",
-		Short: "Set what a set of past clicks cost (the UI's Update CPC), after counting them",
+		Short: "Set what a set of past clicks cost, after counting them",
 		Long: "Sets the cost (CPC) of the account's clicks between --from 00:00:00 and --to 23:59:59 in\n" +
 			"the account's time zone, narrowed by any of the id filters and --method-of-promotion.\n\n" +
 			"It counts the clicks first (POST /clicks/cpc?dry_run=1) and says how many, then asks\n" +
@@ -699,7 +702,7 @@ func subidFileArgs(name string) cobra.PositionalArgs {
 func newConversionMarkSubidsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mark-subids <file|->",
-		Short: "Mark clicks converted from a list of subids, one per line (the UI's Update Subids)",
+		Short: "Mark clicks converted from a list of subids, one per line",
 		Long: "Records each subid's click as converted, at its campaign's payout, through the conversion\n" +
 			"ledger (source subid_upload) — once per click: a click that is already a lead is answered\n" +
 			"already_converted and nothing is added, so running the same list twice is safe.\n\n" +
@@ -722,7 +725,7 @@ func newConversionMarkSubidsCmd() *cobra.Command {
 func newConversionDeleteSubidsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "delete-subids <file|->",
-		Short: "Delete the conversions of a list of subids, one per line (the UI's Delete Subids)",
+		Short: "Delete the conversions of a list of subids, one per line",
 		Long: "The reverse of mark-subids: every live conversion of each subid's click is cleared through\n" +
 			"the ledger (soft-deleted, its revenue voided, the click's value recomputed), so the click\n" +
 			"is no longer a lead; the click itself stays. A subid of another account is left alone.\n\n" +
@@ -879,7 +882,7 @@ func runConversionResetSubids(cmd *cobra.Command, _ []string) error {
 func newConversionResetSubidsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reset-subids",
-		Short: "Clear every conversion of a category or one of its campaigns (the UI's Reset Campaign Subids)",
+		Short: "Clear every conversion of a category or one of its campaigns",
 		Long: "Clears every conversion of the category (--aff-network-id), or of one campaign in it\n" +
 			"(--aff-campaign-id), so a report uploaded by mistake can be uploaded again: each converted\n" +
 			"click is cleared through the ledger and the data engine rebuilds the hours. Clicks stay.\n\n" +
@@ -1112,7 +1115,7 @@ func runConversionUploadRevenue(cmd *cobra.Command, args []string) error {
 func newConversionUploadRevenueCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "upload-revenue <file.csv>",
-		Short: "Record a network's revenue report, a CSV of subid and commission (the UI's Upload Revenue Reports)",
+		Short: "Record a network's revenue report, a CSV of subid and commission",
 		Long: "Records each line of the report as a conversion of a new upload batch on its subid's\n" +
 			"click (source revenue_upload), at the line's commission. A click's lines in one report are\n" +
 			"summed, and the newest report replaces what earlier reports and conversions set for that\n" +
@@ -1149,7 +1152,296 @@ func newConversionUploadRevenueCmd() *cobra.Command {
 	return cmd
 }
 
+// ─── p202 conversion uploads / undo-upload ──────────────────────────────
+
+func runConversionUploads(cmd *cobra.Command, _ []string) error {
+	params := map[string]string{}
+	if v, _ := cmd.Flags().GetString("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err != nil || n < 1 || n > 500 || strconv.Itoa(n) != v {
+			return validationError("--limit must be a whole number from 1 to 500, got %q", v).
+				WithHint("Omit --limit for the newest 50 uploads, or page with --before.")
+		}
+		params["limit"] = v
+	}
+	if v, _ := cmd.Flags().GetString("before"); v != "" {
+		if !positiveIDPattern.MatchString(v) {
+			return validationError("--before must be a positive integer, got %q", v).
+				WithHint("Pass the next_before value of the previous page (`p202 conversion uploads --json`).")
+		}
+		params["before"] = v
+	}
+	c, err := api.NewFromConfig()
+	if err != nil {
+		return err
+	}
+	data, err := c.Get("conversions/uploads", params)
+	if err != nil {
+		return updateRequestError(err, "")
+	}
+	render(data)
+	return nil
+}
+
+func newConversionUploadsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "uploads",
+		Short: "Revenue uploads, newest first, with their batch ids",
+		Long: "Lists the account's revenue uploads (`conversion upload-revenue`, the UI's Upload Revenue\n" +
+			"Reports), newest first: the batch id, the file name, when it was uploaded, how many lines it\n" +
+			"recorded and skipped, and when it was last undone (undone_at, undone_rows). The batch id is\n" +
+			"what `p202 conversion undo-upload` takes. Page with --before <next_before>.\n\n" +
+			"Needs a role with access_to_update_section.",
+		Example: "  p202 conversion uploads\n" +
+			"  p202 conversion uploads --limit 10 --json",
+		Args: cobra.NoArgs,
+		RunE: runConversionUploads,
+	}
+	cmd.Flags().String("limit", "", "Uploads to list, 1 to 500 (default 50)")
+	cmd.Flags().String("before", "", "List the uploads before this batch id (the previous page's next_before)")
+	emptyHint(cmd, "limit", "Omit --limit for the newest 50 uploads.")
+	emptyHint(cmd, "before", "Omit --before for the newest uploads.")
+	return cmd
+}
+
+// undoUploadAnswer is what POST /conversions/uploads/{id}/undo answers, read
+// strictly: a count that is missing is a malformed answer, never 0.
+type undoUploadAnswer struct {
+	Data struct {
+		DryRun      bool   `json:"dry_run"`
+		WouldRemove *int64 `json:"would_remove"`
+		Removed     *int64 `json:"removed"`
+		Clicks      *int64 `json:"clicks"`
+		Amounts     []struct {
+			Currency *string     `json:"currency"`
+			Amount   json.Number `json:"amount"`
+		} `json:"amounts"`
+		ReversalsStopNetting *int64 `json:"reversals_stop_netting"`
+		PostbacksCancelled   *int64 `json:"postbacks_cancelled"`
+		PostbacksRetracted   *int64 `json:"postbacks_retracted"`
+		Rows                 []struct {
+			ConvID   json.Number `json:"conv_id"`
+			ClickID  json.Number `json:"click_id"`
+			Line     *int64      `json:"line"`
+			Payout   json.Number `json:"payout"`
+			Currency *string     `json:"currency"`
+		} `json:"rows"`
+		RowsUnlisted *int64 `json:"rows_unlisted"`
+		Batch        *struct {
+			BatchID    json.Number `json:"batch_id"`
+			FileName   string      `json:"file_name"`
+			UndoneRows *int64      `json:"undone_rows"`
+		} `json:"batch"`
+		Message string `json:"message"`
+	} `json:"data"`
+}
+
+func readUndoUploadAnswer(data []byte, what string, dryRun bool) (undoUploadAnswer, error) {
+	var a undoUploadAnswer
+	if err := json.Unmarshal(data, &a); err != nil {
+		return a, updateMalformed(what, err)
+	}
+	if a.Data.Batch == nil || a.Data.Clicks == nil {
+		return a, updateMalformed(what, errors.New("the batch or the click count is missing"))
+	}
+	if dryRun {
+		if a.Data.WouldRemove == nil || a.Data.Rows == nil || a.Data.RowsUnlisted == nil || a.Data.ReversalsStopNetting == nil ||
+			a.Data.PostbacksCancelled == nil || a.Data.PostbacksRetracted == nil {
+			return a, updateMalformed(what, errors.New("a count or the rows are missing"))
+		}
+		if a.Data.Amounts == nil {
+			return a, updateMalformed(what, errors.New("the amounts are missing"))
+		}
+		for _, m := range a.Data.Amounts {
+			if _, ok := new(big.Rat).SetString(m.Amount.String()); !ok {
+				return a, updateMalformed(what, fmt.Errorf("the amount %q is not a number", m.Amount.String()))
+			}
+		}
+	} else if a.Data.Removed == nil {
+		return a, updateMalformed(what, errors.New("the count of conversions removed is missing"))
+	}
+	return a, nil
+}
+
+// amount is the rows' sums, one per currency they recorded (a row's amount
+// is in its own currency, so sums across currencies are never added).
+func (a undoUploadAnswer) amount() string {
+	if len(a.Data.Amounts) == 0 {
+		return "0"
+	}
+	parts := make([]string, 0, len(a.Data.Amounts))
+	for _, m := range a.Data.Amounts {
+		sum, _ := new(big.Rat).SetString(m.Amount.String())
+		n := strings.TrimRight(strings.TrimRight(sum.FloatString(5), "0"), ".")
+		if m.Currency == nil {
+			parts = append(parts, n+" (currency not recorded)")
+		} else {
+			parts = append(parts, n+" "+*m.Currency)
+		}
+	}
+	return strings.Join(parts, " and ")
+}
+
+// settles is what the undo does besides removing the rows, "" when nothing.
+func (a undoUploadAnswer) settles() string {
+	parts := []string{}
+	if n := *a.Data.ReversalsStopNetting; n > 0 {
+		parts = append(parts, fmt.Sprintf("%d reversal(s) of these rows stop netting", n))
+	}
+	if n := *a.Data.PostbacksCancelled; n > 0 {
+		parts = append(parts, fmt.Sprintf("%d postback(s) not yet sent are cancelled", n))
+	}
+	if n := *a.Data.PostbacksRetracted; n > 0 {
+		parts = append(parts, fmt.Sprintf("%d postback(s) that may have gone out get a retraction", n))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " " + strings.Join(parts, "; ") + "."
+}
+
+// renderUndoPreview lists the rows the undo removes: under --json the API's shape.
+func renderUndoPreview(data []byte, a undoUploadAnswer) error {
+	if jsonOutput {
+		render(data)
+		return nil
+	}
+	rows := make([]map[string]interface{}, 0, len(a.Data.Rows))
+	for _, r := range a.Data.Rows {
+		line := interface{}(nil)
+		if r.Line != nil {
+			line = *r.Line
+		}
+		currency := interface{}(nil)
+		if r.Currency != nil {
+			currency = *r.Currency
+		}
+		rows = append(rows, map[string]interface{}{"conv_id": r.ConvID, "click_id": r.ClickID, "line": line, "payout": r.Payout, "currency": currency})
+	}
+	encoded, err := json.Marshal(map[string]interface{}{"data": rows})
+	if err != nil {
+		return fmt.Errorf("encoding the rows: %w", err)
+	}
+	opts := renderOpts()
+	if len(opts.Fields) == 0 {
+		opts.Fields = []string{"conv_id", "click_id", "line", "payout", "currency"}
+	}
+	output.RenderWith(encoded, opts)
+	return nil
+}
+
+func runConversionUndoUpload(cmd *cobra.Command, args []string) error {
+	if err := refuseStagedUpdate(cmd); err != nil {
+		return err
+	}
+	id := strings.TrimSpace(args[0])
+	if !positiveIDPattern.MatchString(id) {
+		return validationError("the batch id must be a positive integer, got %q", args[0]).
+			WithHint("`p202 conversion uploads` lists the batch ids; `conversion upload-revenue` printed the one it made.")
+	}
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	force, _ := cmd.Flags().GetBool("force")
+	c, err := api.NewFromConfig()
+	if err != nil {
+		return err
+	}
+	path := "conversions/uploads/" + id + "/undo"
+
+	data, err := c.PostUpdate(path, map[string]string{"dry_run": "1"}, map[string]interface{}{})
+	if err != nil {
+		return undoUploadError(err, id, "")
+	}
+	check, err := readUndoUploadAnswer(data, "reading the batch", true)
+	if err != nil {
+		return err
+	}
+	listed := ""
+	if *check.Data.RowsUnlisted > 0 {
+		listed = fmt.Sprintf(" (listing the first %d)", len(check.Data.Rows))
+	}
+	if dryRun {
+		if err := renderUndoPreview(data, check); err != nil {
+			return err
+		}
+		output.Success("Dry run: undoing batch %s (%s) would delete %d conversion(s)%s on %d click(s), %s in all, and recompute each click from what is left.%s Nothing was written; drop --dry-run to undo it (it asks first).",
+			id, check.Data.Batch.FileName, *check.Data.WouldRemove, listed, *check.Data.Clicks, check.amount(), check.settles())
+		return nil
+	}
+	if *check.Data.WouldRemove == 0 {
+		if jsonOutput {
+			render(data)
+		}
+		output.Success("Batch %s (%s) has no conversions left to delete: nothing to undo.", id, check.Data.Batch.FileName)
+		return nil
+	}
+	if !force {
+		fmt.Fprintf(os.Stderr, "Undoing batch %s (%s) deletes its %d conversion(s) on %d click(s), %s in all; each click's value goes back to what the upload replaced.%s\n",
+			id, check.Data.Batch.FileName, *check.Data.WouldRemove, *check.Data.Clicks, check.amount(), check.settles())
+		ok, err := confirmAction(cmd, "Undo batch %s?", id)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			fmt.Fprintln(os.Stderr, "Cancelled.")
+			return nil
+		}
+	}
+	data, err = c.PostUpdate(path, nil, map[string]interface{}{})
+	if err != nil {
+		return undoUploadError(err, id, "Undoing the batch again is safe: it deletes only what is left of it.")
+	}
+	done, err := readUndoUploadAnswer(data, "undoing the batch", false)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		render(data)
+		return nil
+	}
+	output.Success("Undid batch %s (%s): %d conversion(s) deleted on %d click(s); each click's value is what it was before the upload.",
+		id, done.Data.Batch.FileName, *done.Data.Removed, *done.Data.Clicks)
+	return nil
+}
+
+func undoUploadError(err error, id, retrySafe string) error {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) && apiErr.Status == 404 {
+		return withHint(err, "Batch %s is not one of this account's uploads (`p202 conversion uploads` lists them), or this server cannot undo an upload yet: upgrade Prosper202.", id)
+	}
+	return updateRequestError(err, retrySafe)
+}
+
+func newConversionUndoUploadCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "undo-upload <batch-id>",
+		Short: "Undo a revenue upload by its batch id",
+		Long: "Deletes every conversion one revenue upload recorded (its batch, from `conversion uploads`\n" +
+			"or the batch id `conversion upload-revenue` printed) and recomputes each click from what is\n" +
+			"left, so the value the upload replaced (an earlier upload's, or a conversion's) counts again\n" +
+			"and the reports read as they did before it. Reversals of those rows stop netting, and their\n" +
+			"postbacks are cancelled or retracted, as a conversion's delete does.\n\n" +
+			"The undo is previewed on the server first (--dry-run stops there: it lists the rows and each\n" +
+			"click's value before and after), then you confirm (--force skips). Running it again deletes\n" +
+			"only what is left of the batch.\n\n" +
+			"Needs a role with access_to_update_section and a key with conversions:write. Cannot be staged.",
+		Example: "  p202 conversion undo-upload 42 --dry-run\n" +
+			"  p202 conversion undo-upload 42\n" +
+			"  p202 conversion undo-upload 42 --force --json",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 1 {
+				return validationError("conversion undo-upload takes one batch id, got %d argument(s)", len(args)).
+					WithHint("`p202 conversion uploads` lists the batch ids: `p202 conversion undo-upload <batch-id> --dry-run`.")
+			}
+			return nil
+		},
+		RunE: runConversionUndoUpload,
+	}
+	cmd.Flags().Bool("dry-run", false, "List what the undo would delete and write nothing")
+	cmd.Flags().BoolP("force", "f", false, "Undo without asking")
+	return cmd
+}
+
 func init() {
 	clickCmd.AddCommand(newClickUpdateCPCCmd())
-	conversionCmd.AddCommand(newConversionMarkSubidsCmd(), newConversionDeleteSubidsCmd(), newConversionResetSubidsCmd(), newConversionUploadRevenueCmd())
+	conversionCmd.AddCommand(newConversionMarkSubidsCmd(), newConversionDeleteSubidsCmd(), newConversionResetSubidsCmd(), newConversionUploadRevenueCmd(),
+		newConversionUploadsCmd(), newConversionUndoUploadCmd())
 }

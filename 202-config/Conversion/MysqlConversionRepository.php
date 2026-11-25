@@ -1612,6 +1612,98 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     }
 
     /**
+     * Undo one revenue upload batch on one click: the batch's live rows on it
+     * are soft-deleted as softDeleteLocked() deletes a row (postbacks settled,
+     * revenue events voided with those of the reversals that stop netting),
+     * and the click is recomputed from what is left, so the value an earlier
+     * batch or conversion gave it, which the batch had superseded, counts
+     * again (ClickValueCalculator, rule 2). UploadBatchUndo runs it per click.
+     *
+     * One transaction, the click's lock first; a lock error is retried once.
+     * The report row is refreshed after the commit.
+     *
+     * @return int the rows removed: 0 when the click holds no live row of
+     *             the account's batch
+     */
+    public function undoUploadBatchOnClick(int $userId, int $batchId, int $clickId): int
+    {
+        $ledger = new MysqlConversionLedger($this->conn);
+        $sourceRef = SourceRef::uploadBatch($batchId);
+        // A click that is gone (click retention keeps its conversions) has no
+        // value to recompute or report row to refresh, and its rows of the
+        // batch are still removed.
+        $work = function (?array $click) use ($clickId, $userId, $ledger, $sourceRef): int {
+            $rowsStmt = $this->conn->prepareWrite(
+                'SELECT conv_id, customer_id, reverses_conv_id FROM 202_conversion_logs
+                 WHERE click_id = ? AND user_id = ? AND source = ? AND source_ref = ? AND deleted = 0
+                 ORDER BY conv_id FOR UPDATE'
+            );
+            $this->conn->bind($rowsStmt, 'iiss', [$clickId, $userId, ConversionSource::REVENUE_UPLOAD->value, $sourceRef]);
+            $rows = $this->conn->fetchAll($rowsStmt);
+            if ($rows === []) {
+                return 0;
+            }
+
+            if ($click !== null) {
+                $ledger->ensureManaged($clickId, $userId);
+            }
+
+            $affected = [];
+            foreach ($rows as $row) {
+                $convId = (int) $row['conv_id'];
+                $del = $this->conn->prepareWrite(
+                    'UPDATE 202_conversion_logs SET deleted = 1 WHERE conv_id = ? AND user_id = ? AND deleted = 0'
+                );
+                $this->conn->bind($del, 'ii', [$convId, $userId]);
+                if ($this->conn->executeUpdate($del) !== 1) {
+                    throw new LedgerIntegrityException('upload row ' . $convId . ' was locked live and not deleted');
+                }
+                $this->outbox()->onReplaced($userId, $convId, null);
+                $affected[] = $convId;
+                if ($row['reverses_conv_id'] !== null) {
+                    $affected[] = (int) $row['reverses_conv_id'];
+                }
+                $revStmt = $this->conn->prepareWrite(
+                    'SELECT conv_id FROM 202_conversion_logs WHERE click_id = ? AND reverses_conv_id = ?'
+                );
+                $this->conn->bind($revStmt, 'ii', [$clickId, $convId]);
+                foreach ($this->conn->fetchAll($revStmt) as $rev) {
+                    $affected[] = (int) $rev['conv_id'];
+                }
+            }
+
+            if ($click !== null) {
+                $ledger->recompute($clickId, (int) $click['aff_campaign_id'], $userId);
+            }
+            $ledger->enqueue(array_values(array_unique($affected)), 'counted_state');
+
+            foreach ($rows as $row) {
+                $convId = (int) $row['conv_id'];
+                $this->voidRevenueEvent($convId, $row['customer_id'] !== null ? (int) $row['customer_id'] : 0, $userId);
+                foreach ($this->liveReversalsOf($convId, $userId) as $reversal) {
+                    $this->voidRevenueEvent($reversal['conv_id'], $reversal['customer_id'], $userId);
+                }
+            }
+
+            return count($rows);
+        };
+
+        try {
+            $removed = $ledger->clickTransaction($clickId, $userId, $work);
+        } catch (Throwable $e) {
+            if (!self::isRetryableLockError($e)) {
+                throw $e;
+            }
+            $removed = $ledger->clickTransaction($clickId, $userId, $work);
+        }
+        if ($removed > 0) {
+            $this->refreshReportRollup($clickId);
+        }
+
+        return $removed;
+    }
+
+    /**
      * Clear the conversions of the given clicks: the "delete subids" and
      * "clear subids" pages.
      *

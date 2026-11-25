@@ -668,6 +668,12 @@ try {
             $r->post('/shopify-refunds/{id}/close', fn($ctx) => (new $cls($db, $actorUserId))
                 ->close(PathId::of($ctx), $payload));
         }, [$shopifyRefundsSettled]);
+        // The revenue uploads, a page of the Update section like the upload
+        // itself (below); before /{id}, which would read the segment as an id.
+        $router->group('/conversions', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\UpdateController::class;
+            $r->get('/uploads', fn() => $crud($cls)->listUploads($queryParams));
+        }, [$updateSection]);
         $router->group('/conversions', function (Router $r) use ($crud, $queryParams, $campaignFigures, $recordMoney, $matchFigures) {
             $cls = \Api\V3\Controllers\ConversionsController::class;
             $r->get('',        fn() => $campaignFigures($crud($cls)->list($queryParams), $recordMoney));
@@ -728,6 +734,8 @@ try {
             });
             $r->post('/subids/reset',  fn() => $crud($cls)->resetSubids($payload, writeDryRunRequested($queryParams)));
             $r->post('/uploads',       fn() => $crud($cls)->uploadRevenue($payload, writeDryRunRequested($queryParams)));
+            // The upload's inverse, asked as the upload is.
+            $r->post('/uploads/{id}/undo', fn($ctx) => $crud($cls)->undoUpload(PathId::of($ctx), $payload, writeDryRunRequested($queryParams)));
         }, [$updateSection]);
 
         // ── Reports ──────────────────────────────────────────────────────
@@ -1694,6 +1702,7 @@ try {
         $r->post('/subids/delete', $writePreview);
         $r->post('/subids/reset', $writePreview);
         $r->post('/uploads', $writePreview);
+        $r->post('/uploads/{id}/undo', $writePreview);
     });
     $writePreviewRouter->post('/system/retention/delete-before', $writePreview);
     $writePreviewRouter->put('/rotators/{id}/rules', $writePreview);
