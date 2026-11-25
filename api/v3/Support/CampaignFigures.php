@@ -25,6 +25,15 @@ final class CampaignFigures
     ];
 
     /**
+     * The summary's own counts and money beside the report's: its people,
+     * its conversions and refunds. refund_rate, a ratio, stays. Its
+     * `unmatched_conversions` is hidden as `conversions`, in OTHER_CURRENCIES.
+     */
+    public const array SUMMARY = [
+        'unique_visitors', 'unidentified_clicks', 'total_conversions', 'total_refunds', 'total_refund_amount',
+    ];
+
+    /**
      * The figures of an answer's `other_currencies` (the revenue recorded in
      * another currency than the account's: how many conversions, and how
      * much), hidden with the report's or the breakdown's own.

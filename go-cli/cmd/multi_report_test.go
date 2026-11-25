@@ -787,6 +787,33 @@ func TestOtherCurrenciesNote(t *testing.T) {
 	}
 }
 
+// A table says, under a summary whose window holds conversions that named no
+// click, how many, as a floor when the inbound log may have dropped some; a
+// masked, zero or absent count says nothing.
+func TestUnmatchedConversionsNote(t *testing.T) {
+	cases := []struct{ answer, want string }{
+		{`{"data":{},"unmatched_conversions":{"conversions":3,"complete":true}}`, "3 conversions received in this period named no click here"},
+		{`{"data":{},"unmatched_conversions":{"conversions":1,"complete":true}}`, "1 conversion received"},
+		{`{"data":{},"unmatched_conversions":{"conversions":1,"complete":false}}`, "at least 1 conversions received"},
+		{`{"data":{},"unmatched_conversions":{"conversions":21,"complete":false}}`, "at least 21 conversions"},
+	}
+	for _, c := range cases {
+		note := unmatchedConversionsNote([]byte(c.answer))
+		if !strings.Contains(note, c.want) || !strings.Contains(note, "p202 conversion inbound-log --outcome refused") {
+			t.Errorf("%s: note %q does not say %q and the command", c.answer, note, c.want)
+		}
+	}
+	for _, none := range []string{
+		`{"data":{},"unmatched_conversions":{"conversions":0,"complete":true}}`,
+		`{"data":{},"unmatched_conversions":{"conversions":null,"complete":true}}`,
+		`{"data":{"total_clicks":4}}`, `{"data":[]}`, `not json`,
+	} {
+		if note := unmatchedConversionsNote([]byte(none)); note != "" {
+			t.Errorf("%s: want no note, got %q", none, note)
+		}
+	}
+}
+
 // A profile whose own revenue is in more than one currency (the server
 // lists the others beside its summary) has its money added to no other's,
 // though both state the same account currency.

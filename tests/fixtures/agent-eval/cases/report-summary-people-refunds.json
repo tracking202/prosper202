@@ -1,0 +1,31 @@
+{
+  "cases": [
+    {
+      "id": "report-summary-people-refunds-001-people-not-clicks",
+      "priority": "high",
+      "state": "seeded fixture: seed.sh fires six clicks through tracker B with privacy disabled, so each click carries a visitor key; nothing seeds a sale or a refund",
+      "ask": "All time, how many different people clicked my links, as opposed to how many clicks there were? And have any sales been refunded?",
+      "expected": {
+        "runs_one_of": [
+          "report summary"
+        ],
+        "never_runs": [
+          "conversion create",
+          "conversion delete",
+          "click delete",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "p202 report summary --period alltime --json | jq -r '(.data | (.unique_visitors|tonumber) >= 1 and (.unique_visitors|tonumber) <= (.total_clicks|tonumber) and (.unidentified_clicks|tonumber) <= (.unique_visitors|tonumber) and (.total_refunds|tonumber) <= (.total_conversions|tonumber)) and (.unmatched_conversions.complete|type) == \"boolean\" | if . then \"people-hold\" else \"people-broken\" end'",
+            "includes": [
+              "people-hold"
+            ]
+          }
+        ],
+        "rubric": "PASS if the reply gives the number of different people as the summary's unique_visitors (not total_clicks, unless the two are equal and the reply says so), gives the clicks beside it, and says how many refunds there were (none, from total_refunds) as read from `report summary`. FAIL if it calls the click count the number of people, works the people out by hand from a click list, or states a refund count it did not read."
+      },
+      "notes": "Pins the summary's people and refund figures (1.9.81): unique_visitors counts identity-graph visitors once each, so it can be below total_clicks, and total_refunds counts the reversals of the clicks' conversions. The check holds the server to the order of the figures, which any data must keep."
+    }
+  ]
+}

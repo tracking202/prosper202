@@ -57,6 +57,11 @@ final class LedgerRowsCarryTheirCurrencyTest extends TestCase
         '202-config/Attribution/CountedAmount.php' => [self::NETS, 'a sale less its own reversals, which take the sale\'s currency'],
         '202-config/Notifications/NotificationOutbox.php' => [self::NETS, 'the traffic source\'s postback URL has a payout token and none for a currency: the number is sent as recorded'],
         '202-config/Conversion/Ledger/LedgerReportSql.php' => [self::TOTALS, 'the reports\' counted parts, added per click and group; RevenueCurrencies says what the period holds in other currencies'],
+        'api/v3/Controllers/ReportsController.php' => [
+            self::TOTALS,
+            'the summary adds its refunds\' amounts across clicks as total_income adds sales; a reversal takes'
+                . ' its sale\'s currency, and other_currencies, net of refunds, says what the period holds in others',
+        ],
         '202-config/Attribution/AttributionReports.php' => [self::TOTALS, 'multi-touch credit adds conversions\' amounts across clicks, in the account\'s currency as its reports label them'],
         '202-config/Attribution/AttributionWorker.php' => [self::TOTALS, 'splits one conversion\'s amount into credits, which the attribution reports add'],
         '202-config/Ltv/MysqlRecommendationRepository.php' => [self::TOTALS, 'reads whether a customer bought (an amount of 0 or more), not how much'],

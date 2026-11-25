@@ -49,6 +49,13 @@ final class InboundLog
      */
     public const BACKED_OUTCOMES = ['recorded', 'reversed', 'event_recorded'];
 
+    /**
+     * Refusals of a conversion that named no click of the account: an unknown
+     * subid, none at all, or one that is not a click id. A report's unmatched
+     * conversions (unmatched()).
+     */
+    public const UNMATCHED_OUTCOMES = ['unknown_click', 'no_click', 'malformed_click'];
+
     /** The classic postbacks and pixels, which the account's postback authentication decides. */
     public const POSTBACK_ENDPOINTS = ['pb', 'gpb', 'px', 'gpx', 'upx'];
 
@@ -111,6 +118,81 @@ final class InboundLog
 
             return false;
         }
+    }
+
+    /**
+     * The account's conversions refused for naming no click
+     * (UNMATCHED_OUTCOMES) received from $from to $to, both included (null:
+     * unbounded), and whether that count is every one of them. The log keeps
+     * KEEP_REFUSED unbacked rows and writes at most UNBACKED_PER_MINUTE a
+     * minute, and neither leaves a trace of what it did not keep, so
+     * `complete` is false wherever either could have dropped one in the
+     * window: the bucket has been pruned to a row inside it, or 60 unbacked
+     * rows fell within one minute of it. The count is then a floor.
+     *
+     * @return array{conversions: int, complete: bool}
+     */
+    public function unmatched(int $userId, ?int $from, ?int $to): array
+    {
+        $conn = new Connection($this->db);
+        $outcomes = implode(', ', array_fill(0, count(self::UNMATCHED_OUTCOMES), '?'));
+        $stmt = $conn->prepareRead(
+            'SELECT COUNT(*) AS n FROM ' . TableRegistry::INBOUND_LOG
+            . " WHERE user_id = ? AND accepted = 0 AND outcome IN ($outcomes)"
+            . ' AND received_at >= ? AND received_at <= ?'
+        );
+        $conn->bind($stmt, 'i' . str_repeat('s', count(self::UNMATCHED_OUTCOMES)) . 'ii', [
+            $userId,
+            ...self::UNMATCHED_OUTCOMES,
+            $from ?? 0,
+            $to ?? PHP_INT_MAX,
+        ]);
+        $row = $conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new \RuntimeException('Inbound log: the count of unmatched conversions answered no row');
+        }
+
+        return ['conversions' => (int) $row['n'], 'complete' => $this->keptEveryUnbacked($conn, $userId, $from, $to)];
+    }
+
+    /** Whether neither the prune nor the per-minute cap can have dropped an unbacked row from $from to $to. */
+    private function keptEveryUnbacked(Connection $conn, int $userId, ?int $from, ?int $to): bool
+    {
+        $bucket = $conn->prepareRead(
+            'SELECT COUNT(*) AS n, MIN(received_at) AS oldest FROM ' . TableRegistry::INBOUND_LOG
+            . ' WHERE user_id = ? AND accepted = 0'
+        );
+        $conn->bind($bucket, 'i', [$userId]);
+        $kept = $conn->fetchOne($bucket);
+        if ($kept === null) {
+            throw new \RuntimeException('Inbound log: the unbacked rows could not be counted');
+        }
+        // The prune keeps the newest KEEP_REFUSED: once the bucket is that
+        // full, only a window starting after the oldest kept row is whole.
+        if ((int) $kept['n'] >= self::KEEP_REFUSED && ($from === null || (int) $kept['oldest'] >= $from)) {
+            return false;
+        }
+
+        // The cap refused a row whenever the UNBACKED_PER_MINUTE before it
+        // arrived within 60 seconds: look for such a run among the rows that
+        // could have refused one in the window.
+        $times = $conn->prepareRead(
+            'SELECT received_at FROM ' . TableRegistry::INBOUND_LOG
+            . ' WHERE user_id = ? AND accepted = 0 AND received_at >= ? AND received_at <= ? ORDER BY inbound_id'
+        );
+        $conn->bind($times, 'iii', [$userId, $from === null ? 0 : max(0, $from - 60), $to ?? PHP_INT_MAX]);
+        $run = [];
+        foreach ($conn->fetchAll($times) as $r) {
+            $run[] = (int) $r['received_at'];
+            if (count($run) > self::UNBACKED_PER_MINUTE) {
+                array_shift($run);
+            }
+            if (count($run) === self::UNBACKED_PER_MINUTE && $run[count($run) - 1] - $run[0] <= 60) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /** UNBACKED_PER_MINUTE of the account's unbacked rows (accepted = 0) arrived in the last minute. */
