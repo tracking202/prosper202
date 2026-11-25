@@ -96,34 +96,69 @@ final class SlackWebhook
      */
     public function post(string $url, string $body): ?string
     {
+        $result = $this->deliver($url, $body);
+
+        return $result->isDelivered() ? null : $result->reason;
+    }
+
+    /**
+     * POST a notice's body and say what became of it, as the Slack notice
+     * queue (SlackNoticeQueue) reads it: delivered (2xx); failed, worth
+     * another try (no answer, a 408, 429 or 5xx, a host that did not resolve
+     * or was not looked up in time); or refused, which a later try would
+     * meet the same way (an address the guard does not call, a redirect,
+     * any other answer: Slack answers a removed webhook 404 and a revoked
+     * one 403). The reason, as post()'s, never names the URL's path. Never
+     * throws.
+     *
+     * @param int $timeout seconds the notice may take in all, the lookup included,
+     *        at most WebhookSender::TIMEOUT; TIMEOUT where someone waits on it
+     */
+    public function deliver(string $url, string $body, int $timeout = self::TIMEOUT): PostbackResult
+    {
         try {
             $this->sender ??= new WebhookSender();
             $sent = $this->sender->post($url, $body, [
                 'Content-Type: application/x-www-form-urlencoded',
                 'User-Agent: Prosper202-Slack/1',
                 'Expect:',
-            ], [], self::TIMEOUT);
+            ], [], $timeout);
         } catch (\Throwable $e) {
-            return self::withoutPath('it could not be sent: ' . get_class($e) . ': ' . $e->getMessage(), $url);
+            return PostbackResult::failed(
+                self::withoutPath('it could not be sent: ' . get_class($e) . ': ' . $e->getMessage(), $url)
+            );
         }
 
         if ($sent['refused'] !== null) {
-            $why = 'refused: ' . $sent['refused'];
-        } elseif ($sent['strayed'] !== null) {
-            $why = 'not delivered: the connection went to ' . $sent['strayed']
-                . ' instead of the checked address ' . $sent['pinned'];
-        } elseif ($sent['status'] === 0) {
-            $why = 'no answer: ' . ($sent['error'] ?? 'the connection failed');
-        } elseif ($sent['status'] >= 200 && $sent['status'] < 300) {
-            return null;
-        } elseif ($sent['status'] >= 300 && $sent['status'] < 400) {
-            $why = 'the webhook answered ' . $sent['status'] . ', a redirect, which is not followed';
-        } else {
-            $answer = trim(mb_substr((string) preg_replace('/\s+/', ' ', $sent['body']), 0, self::ANSWER_CHARS));
-            $why = 'the webhook answered ' . $sent['status'] . ($answer !== '' ? ': ' . $answer : '');
-        }
+            $why = self::withoutPath('refused: ' . $sent['refused'], $url);
 
-        return self::withoutPath($why, $url);
+            return $sent['retryable'] ? PostbackResult::failed($why) : PostbackResult::refused($why);
+        }
+        $status = $sent['status'];
+        if ($sent['strayed'] !== null) {
+            return PostbackResult::refused(self::withoutPath('not delivered: the connection went to ' . $sent['strayed']
+                . ' instead of the checked address ' . $sent['pinned'], $url));
+        }
+        if ($status === 0) {
+            return PostbackResult::failed(
+                self::withoutPath('no answer: ' . ($sent['error'] ?? 'the connection failed'), $url)
+            );
+        }
+        if ($status >= 200 && $status < 300) {
+            return PostbackResult::delivered($status);
+        }
+        if ($status >= 300 && $status < 400) {
+            return PostbackResult::refused(self::withoutPath(
+                'the webhook answered ' . $status . ', a redirect, which is not followed',
+                $url
+            ));
+        }
+        $answer = trim(mb_substr((string) preg_replace('/\s+/', ' ', $sent['body']), 0, self::ANSWER_CHARS));
+        $why = self::withoutPath('the webhook answered ' . $status . ($answer !== '' ? ': ' . $answer : ''), $url);
+
+        return $status >= 500 || $status === 408 || $status === 429
+            ? PostbackResult::failed($why, $status)
+            : PostbackResult::refused($why);
     }
 
     /**

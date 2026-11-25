@@ -66,7 +66,7 @@ final class ExchangeRates
         // The request holds the two currencies and the amount and nothing
         // else: no key, no cookie, no install or account. A redirect is not
         // followed, so they go to this host only.
-        curl_setopt_array($ch, [
+        $body = \Prosper202\Http\FixedHostRoute::exec($ch, [
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => http_build_query(self::requestFields($from, $to, $amount)),
             CURLOPT_RETURNTRANSFER => true,
@@ -77,7 +77,6 @@ final class ExchangeRates
             CURLOPT_CONNECTTIMEOUT => min(10, max(1, $timeout)),
             CURLOPT_TIMEOUT => max(1, $timeout),
         ]);
-        $body = \Prosper202\Http\FixedHostRoute::exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         if (!is_string($body) || $status !== 200) {
             return null;

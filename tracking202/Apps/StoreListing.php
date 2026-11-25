@@ -194,7 +194,7 @@ final class StoreListing
             return null;
         }
         $body = '';
-        curl_setopt_array($ch, [
+        $ok = \Prosper202\Http\FixedHostRoute::exec($ch, [
             CURLOPT_CONNECTTIMEOUT => 2,
             CURLOPT_TIMEOUT => 4,
             CURLOPT_FOLLOWLOCATION => false,
@@ -210,7 +210,6 @@ final class StoreListing
                 return strlen($chunk);
             },
         ]);
-        $ok = \Prosper202\Http\FixedHostRoute::exec($ch);
         $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         curl_close($ch);
 

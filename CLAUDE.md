@@ -42,7 +42,8 @@ entry are in this file's git history.
 ### 1. Unchecked return values after fallible calls
 - Check every call that signals failure by its return value:
   `$stmt->execute()`, `prepare()`, `get_result()`, `store_result()`,
-  `$db->query()`, `_mysqli_query()`, `json_encode()`, Go's `json.Marshal`.
+  `$db->query()`, `_mysqli_query()`, `json_encode()`, `curl_setopt()`,
+  Go's `json.Marshal`.
   `if (!$stmt->execute()) { $stmt->close(); throw ...; }`. Inside a
   transaction an unchecked failure commits a partial operation.
 - The tell is a false that is indistinguishable from a legitimate empty
@@ -71,7 +72,8 @@ entry are in this file's git history.
   since a limit is no verdict on the code.
 - Checks: `UncheckedGetResultTest` (`StatementHelpers::resultOf()`),
   `MysqliQueryResultIsNotDiscardedTest`, `MysqliQueryResultIsTestedTest`
-  (every `_mysqli_query()` and `->query(` on `$db`, `$this->db`, `$db?->`).
+  (every `_mysqli_query()` and `->query(` on `$db`, `$this->db`, `$db?->`),
+  `CurlOptionsAreCheckedTest` (options only through `CurlOptions::set()`).
   The v3 API logs every 500 with `p202UncaughtLogLine()`.
 
 ### 2. Dead code referencing nonexistent schema

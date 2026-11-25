@@ -844,6 +844,19 @@ function RunSecondsCronjob()
             error_log('Notification outbox failed: ' . $e->getMessage());
         }
 
+        // Slack notices the pages queued (Prosper202\Notifications\SlackNoticeQueue),
+        // claimed as the outbox's rows are and retried with its backoff.
+        try {
+            $slackQueue = new \Prosper202\Notifications\SlackNoticeQueue(new \Prosper202\Database\Connection($db));
+            $slackNotices = $slackQueue->sendDue(200);
+            if ($slackNotices['sent'] + $slackNotices['failed'] + $slackNotices['retrying'] > 0) {
+                echo 'Slack notices: ' . (int) $slackNotices['sent'] . ' sent, '
+                    . (int) $slackNotices['retrying'] . ' retrying, ' . (int) $slackNotices['failed'] . ' dropped<br>';
+            }
+        } catch (\Throwable $e) {
+            error_log('Slack notice queue failed: ' . $e->getMessage());
+        }
+
         // IPQualityScore fraud scoring for the accounts that saved a key
         // (Prosper202\Fraud\IpqsScoring): the minute's new clicks, under its
         // own budget and lookup cap. A failed lookup is recorded on the
@@ -989,8 +1002,9 @@ function ClearOldClicks()
                 }
                 $date = is_array($dayRow) ? date('Y-m-d', (int) $dayRow['click_time']) : 'click ' . (int) $report['marker'];
             }
-            $slack = new Slack($slack_row['user_slack_incoming_webhook']);
-            $slack->push('click_data_deleted', [
+            // Account 1's, as the setting is: queued, and sent by the minute's tier.
+            $slack = Slack::forAccount($db, 1);
+            $slack?->push('click_data_deleted', [
                 'user' => 'cron',
                 'date' => $date,
             ]);

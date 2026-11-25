@@ -143,13 +143,14 @@ final class GuardedCurlTransportTest extends TestCase
         $source = (string) file_get_contents(\Tests\Support\SourceScan::repoRoot()
             . '/202-config/GeoIp/GuardedCurlTransport.php');
         $calls = [];
-        foreach (\PhpToken::tokenize($source) as $token) {
-            $name = ltrim(strtolower($token->text), '\\');
-            $setsOptions = in_array($name, ['curl_setopt', 'curl_setopt_array'], true);
-            if ($token->is([T_STRING, T_NAME_FULLY_QUALIFIED]) && $setsOptions) {
+        $tokens = \PhpToken::tokenize($source);
+        foreach ($tokens as $i => $token) {
+            $class = $token->is(T_NAME_FULLY_QUALIFIED) && $token->text === '\\Prosper202\\Http\\CurlOptions';
+            if ($class && ($tokens[$i + 1] ?? null)?->text === '::' && ($tokens[$i + 2] ?? null)?->text === 'set') {
                 $calls[] = $token->line;
             }
         }
+        // No file but CurlOptions sets an option itself (CurlOptionsAreCheckedTest).
         self::assertCount(1, $calls, 'one call sets curl options, the one apply() checks');
         $apply = strpos($source, 'public static function apply(');
         self::assertNotFalse($apply);

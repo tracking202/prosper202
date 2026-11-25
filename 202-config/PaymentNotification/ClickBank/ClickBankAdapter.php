@@ -287,12 +287,6 @@ final class ClickBankAdapter implements
         return $value;
     }
 
-    /** The account's own Slack webhook, or null when it has none. */
-    public static function slackWebhook(Connection $conn, int $accountId): ?string
-    {
-        return \Prosper202\Notifications\SlackWebhook::ofAccount($conn, $accountId);
-    }
-
     /**
      * The ciphertext and IV the body carries. Each check reads only the
      * envelope, never a key, so what it says is the same whoever sent it.

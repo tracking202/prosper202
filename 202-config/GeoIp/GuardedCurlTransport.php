@@ -214,9 +214,11 @@ final class GuardedCurlTransport implements HttpTransport
      */
     public static function apply(\CurlHandle $ch, array $options, string $which): void
     {
-        if (!@curl_setopt_array($ch, $options)) {
-            throw new RefreshFailed('curl would not take one of the download\'s ' . $which . ' options, so nothing'
-                . ' was sent.');
+        try {
+            \Prosper202\Http\CurlOptions::set($ch, $options);
+        } catch (\Prosper202\Http\CurlOptionRefused $e) {
+            throw new RefreshFailed('curl would not take one of the download\'s ' . $which . ' options ('
+                . \Prosper202\Http\CurlOptions::name($e->option) . '), so nothing was sent.', 0, $e);
         }
     }
 

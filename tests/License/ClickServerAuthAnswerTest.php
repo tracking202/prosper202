@@ -146,9 +146,9 @@ final class ClickServerAuthAnswerTest extends TestCase
         self::assertSame(1, preg_match($pattern, $src, $m));
         foreach (
             [
-                'curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);',
-                'curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);',
-                'curl_setopt($ch, CURLOPT_TIMEOUT, 10);',
+                'CURLOPT_FOLLOWLOCATION => false,',
+                'CURLOPT_CONNECTTIMEOUT => 5,',
+                'CURLOPT_TIMEOUT => 10,',
                 "'https://my.tracking202.com/api/v1/auth/?' . http_build_query([",
                 '$status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);',
                 'return clickserver_auth_answer(is_string($result) ? $result : null, $status);',
