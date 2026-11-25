@@ -469,7 +469,9 @@ try {
         // Reads too: the Setup pages are the only place these records are
         // shown, and every one of them asks for access_to_setup_section first
         // (SetupController). The reports name a campaign or a source to any
-        // role; the record itself -- its URL, payout, cost -- only Setup does.
+        // role; the record itself -- its URL, payout, cost -- only Setup does
+        // (the payout alone is also GET /reports/payout's, masked as the
+        // reports' money, for the rankings a Campaign optimizer runs).
         // A Campaign viewer's key listed every campaign the page hid from it.
         foreach ($crudMap as $resource => $class) {
             $router->group("/$resource", function (Router $r) use ($class, $crud, $queryParams) {
@@ -733,7 +735,8 @@ try {
         // ── Reports ──────────────────────────────────────────────────────
         // Overview and Analyze ask for no permission; a role without
         // access_to_campaign_data gets them masked ($campaignFigures).
-        $router->group('/reports', function (Router $r) use ($crud, $queryParams, $campaignFigures, $reportFigures) {
+        $payoutFigures = \Api\V3\Support\CampaignFigures::PAYOUT;
+        $router->group('/reports', function (Router $r) use ($crud, $queryParams, $campaignFigures, $reportFigures, $payoutFigures) {
             $cls = \Api\V3\Controllers\ReportsController::class;
             $r->get('/summary',    fn() => $campaignFigures($crud($cls)->summary($queryParams), $reportFigures));
             $r->get('/breakdown',  fn() => $campaignFigures($crud($cls)->breakdown($queryParams), $reportFigures));
@@ -741,6 +744,9 @@ try {
             $r->get('/daypart',    fn() => $campaignFigures($crud($cls)->daypart($queryParams), $reportFigures));
             $r->get('/weekpart',   fn() => $campaignFigures($crud($cls)->weekpart($queryParams), $reportFigures));
             $r->get('/groups',     fn() => $campaignFigures($crud($cls)->groups($queryParams), $reportFigures));
+            // A campaign's payout, which the rankings price clicks with: the
+            // reports' to read, since GET /campaigns/{id} is Setup's.
+            $r->get('/payout',     fn() => $campaignFigures($crud($cls)->payout($queryParams), $payoutFigures));
         });
 
         // ── LTV: reads (ltv:read) ───────────────────────────────────────
@@ -748,19 +754,19 @@ try {
             $cls = \Api\V3\Controllers\LtvController::class;
             $r->get('/summary',        fn() => $crud($cls)->summary($queryParams));
             $r->get('/customers',      fn() => $crud($cls)->customers($queryParams));
-            $r->get('/customers/{id}', fn($ctx) => $crud($cls)->customerDetail(PathId::of($ctx)));
+            $r->get('/customers/{id}', fn($ctx) => $crud($cls)->customerDetail(PathId::of($ctx), $queryParams));
             $r->get('/customers/{id}/engagement', fn($ctx) => $crud($cls)->customerEngagement(PathId::of($ctx), $queryParams));
-            $r->get('/customers/{id}/next-offer', fn($ctx) => $crud($cls)->customerNextOffer(PathId::of($ctx)));
+            $r->get('/customers/{id}/next-offer', fn($ctx) => $crud($cls)->customerNextOffer(PathId::of($ctx), $queryParams));
             $r->get('/abm',            fn() => $crud($cls)->abm($queryParams));
             $r->get('/abm/company',    fn() => $crud($cls)->abmCompany($queryParams));
             $r->get('/breakdown',      fn() => $crud($cls)->breakdown($queryParams));
             $r->get('/cohorts',        fn() => $crud($cls)->cohorts($queryParams));
-            $r->get('/mrr',            fn() => $crud($cls)->mrr());
+            $r->get('/mrr',            fn() => $crud($cls)->mrr($queryParams));
             $r->get('/predict',        fn() => $crud($cls)->predict($queryParams));
             $r->get('/products',       fn() => $crud($cls)->products($queryParams));
             $r->get('/companies',      fn() => $crud($cls)->listCompanies($queryParams));
             $r->get('/subscriptions',  fn() => $crud($cls)->listSubscriptions($queryParams));
-            $r->get('/fields',         fn() => $crud($cls)->fieldsList());
+            $r->get('/fields',         fn() => $crud($cls)->fieldsList($queryParams));
         }, [
             static function () use ($auth): void {
                 $auth->requireScope('ltv:read');
@@ -775,9 +781,9 @@ try {
         // as they are to change.
         $router->group('/ltv', function (Router $r) use ($crud, $queryParams) {
             $cls = \Api\V3\Controllers\LtvController::class;
-            $r->get('/webhooks',       fn() => $crud($cls)->listWebhooks());
+            $r->get('/webhooks',       fn() => $crud($cls)->listWebhooks($queryParams));
             $r->get('/webhooks/{id}/deliveries', fn($ctx) => $crud($cls)->webhookDeliveries(PathId::of($ctx), $queryParams));
-            $r->get('/integrations',   fn() => $crud($cls)->listIntegrations());
+            $r->get('/integrations',   fn() => $crud($cls)->listIntegrations($queryParams));
         }, [
             static function () use ($auth): void {
                 $auth->requireScope('ltv:read');
@@ -951,6 +957,10 @@ try {
                 'user_id' => $auth->userId(),
                 'roles' => $auth->roles(),
                 'scopes' => $auth->scopes(),
+                // Customer LTV, part by part: whether this key's scope and its
+                // user's role let it use each (LtvAccess::PARTS), so a client
+                // does not offer what the role would be refused.
+                'ltv' => \Api\V3\Support\LtvAccess::of($auth, $db),
             ];
 
             return $answer;
@@ -1436,7 +1446,13 @@ try {
             });
             $r->put('/{id}/preferences', function ($ctx) use ($auth, $make, $payload, $db) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
-                return $make()->updatePreferences(PathId::of($ctx), $payload);
+                // The LTV › Settings values ask what the LTV Settings writes ask.
+                return $make()->updatePreferences(
+                    PathId::of($ctx),
+                    $payload,
+                    null,
+                    static fn () => \Api\V3\Support\LtvAccess::require($auth, $db, 'settings_write')
+                );
             });
 
             // Click filtering (Personal settings' card, asked the same way):
@@ -1549,7 +1565,7 @@ try {
                 'clicks'        => '/clicks',
                 'conversions'   => '/conversions',
                 'update'        => '/clicks/cpc, /conversions/{subids|subids/delete|subids/reset|uploads}',
-                'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart|groups}',
+                'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart|groups|payout}',
                 'spend_ledger'  => '/spend-ledger[/conversions|/sync[/{id}[/run]]]',
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}[/{id}][/deliveries]',
                 'rotators'      => '/rotators[/{id}/rules|/{id}/stats]',

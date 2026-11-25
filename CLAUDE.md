@@ -563,6 +563,11 @@ unconfirmed commit is `unconfirmed`, never `retryable` (#13).
   in their order (`TrafficSourceOwnersIntegrationTest`).
 - A confirmation carries what the operator was shown, and the server
   compares with that (`owner_user_id`, `repair_to_user_id`).
+- A read made before the lock decides nothing the lock protects. The
+  payment refunds capped at a sale read before the writer locked the click,
+  so a sale still committing read as none and its refund took the click
+  below 0 (R4CE). The writer applies the cap under the lock (`cap_at_sale`;
+  `ClickBankInsIntegrationTest` holds the lock while the refund waits).
 - Not seen: statements on the raw handle (`writeConnection()`), reads
   `isPlainRead()` does not recognise, and locks other than a click's.
 

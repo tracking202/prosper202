@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Setup;
 
+use Api\V3\Controllers\RotatorsController;
+use Api\V3\Exception\ValidationException;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Rotator\IpCriterion;
 
@@ -181,6 +183,133 @@ final class RedirectorRulesSaveIntegrationTest extends TestCase
 
         self::assertSame('ERROR: Rule 1, destination 2, weight: A whole number from 0 to 100.', trim($out));
         self::assertSame($before, self::snapshot());
+    }
+
+    /**
+     * 6CRO: a destination weighted 0 (one the API wrote, pausing it in a
+     * split) is shown in the editor as 0, with 0 a weight the field takes,
+     * and the rule posted back as shown is saved with it. The field's
+     * min="1" refused the form, and the save's array_filter() read "0" as a
+     * missing field and answered ERROR, so the rule could not be saved from
+     * the page at all.
+     */
+    public function testADestinationWeighted0IsShownAndSavedAsTheApiStoresIt(): void
+    {
+        self::q('UPDATE 202_rotator_rules SET splittest = 1 WHERE id = ' . self::KEPT);
+        $paused = self::insert('INSERT INTO 202_rotator_rules_redirects SET rule_id = ' . self::KEPT
+            . ", redirect_url = 'https://paused.example/', weight = '0', name = 'URL: <a href=https://paused.example/>link</a>'");
+
+        $page = self::page('tracking202/setup/rotator.php', ['rotator_id' => (string) self::ROTATOR]);
+        self::assertMatchesRegularExpression('/data-redirect-id="' . $paused . '".*?<input type="number" min="0"[^>]*value="0"/s', $page,
+            'the paused destination is shown weighted 0, in a field that takes 0');
+        self::assertStringContainsString('https://paused.example/ (weight 0)', html_entity_decode($page), 'and listed with it');
+
+        $post = self::post();
+        $post['data'][0]['redirects'] = [
+            ['id' => (string) self::KEPT, 'type' => 'campaign', 'value' => (string) self::OFFER, 'weight' => '100'],
+            ['id' => (string) $paused, 'type' => 'url', 'value' => 'https://paused.example/', 'weight' => '0'],
+        ];
+        self::assertSame('DONE', trim(self::save($post)));
+        $weights = self::requireScratch()->query('SELECT id, weight FROM 202_rotator_rules_redirects WHERE rule_id = ' . self::KEPT . ' ORDER BY id');
+        self::assertInstanceOf(\mysqli_result::class, $weights);
+        self::assertSame([[(string) self::KEPT, '100'], [(string) $paused, '0']], $weights->fetch_all(), 'both kept by id, the paused one at 0');
+    }
+
+    /**
+     * E8TS: the page and the API give one answer for a split test's
+     * weights, because one rule decides (RotatorsController::planRule(),
+     * which the page's save calls): a destination weighted 0 is taken
+     * beside one weighted above 0, every weight 0 is refused, and a weight
+     * is a whole number from 0 to 100. The page refused any destination
+     * weighted 0, so a rule the API saved could not be saved again from it.
+     *
+     * @dataProvider splitWeights
+     */
+    public function testThePageAndTheApiGiveOneAnswerForASplitTestsWeights(string $first, string $second, bool $taken, string $reason = ''): void
+    {
+        $post = self::post();
+        $post['data'] = [self::kept(), self::gone(), [
+            'rule_id' => 'none', 'rule_name' => 'Split', 'status' => 'active', 'split' => 'true',
+            'criteria' => [['criteria_id' => 'none', 'type' => 'device', 'statement' => 'is', 'value' => 'mobile']],
+            'redirects' => [
+                ['id' => 'none', 'type' => 'url', 'value' => 'https://first.example/', 'weight' => $first],
+                ['id' => 'none', 'type' => 'url', 'value' => 'https://second.example/', 'weight' => $second],
+            ],
+        ]];
+        $out = trim(self::save($post));
+        $page = $out === 'DONE' ? self::splitWeightsStored() : 'refused';
+
+        self::seedRedirectors();
+        $api = 'refused';
+        try {
+            (new RotatorsController(self::requireScratch(), self::USER))->createRule(self::ROTATOR, [
+                'rule_name' => 'Split', 'splittest' => 1,
+                'criteria' => [['type' => 'device', 'statement' => 'is', 'value' => 'mobile']],
+                'redirects' => [
+                    ['redirect_url' => 'https://first.example/', 'weight' => $first, 'name' => 'first'],
+                    ['redirect_url' => 'https://second.example/', 'weight' => $second, 'name' => 'second'],
+                ],
+            ]);
+            $api = self::splitWeightsStored();
+        } catch (ValidationException) {
+        }
+
+        self::assertSame($taken ? [$first, $second] : 'refused', $api, 'the API');
+        self::assertSame($api, $page, 'the page gives the API\'s answer (it answered ' . $out . ')');
+        if (!$taken) {
+            self::assertStringStartsWith($reason, $out, 'and says why in the API\'s words');
+        }
+    }
+
+    /** @return array<string, array{0: string, 1: string, 2: bool, 3?: string}> */
+    public static function splitWeights(): array
+    {
+        return [
+            'one paused' => ['0', '100', true],
+            'the first paused' => ['100', '0', true],
+            'both above 0' => ['30', '70', true],
+            'the range ends' => ['100', '100', true],
+            'every weight 0' => ['0', '0', false, 'ERROR: Rule 3: Every weight is 0, which sends every visitor to the first destination'],
+            'above 100' => ['101', '0', false, 'ERROR: Rule 3, destination 1, weight: A whole number from 0 to 100.'],
+            'below 0' => ['-1', '100', false, 'ERROR: Rule 3, destination 1, weight: A whole number from 0 to 100.'],
+            'not whole' => ['1.5', '50', false, 'ERROR: Rule 3, destination 1, weight: A whole number from 0 to 100.'],
+            // The editor's own check: the field is required, and a post without it is refused before the API.
+            'left empty' => ['', '100', false, 'ERROR'],
+        ];
+    }
+
+    /**
+     * NN65: a weight field takes what the API takes, 0 to 100, so the form
+     * no longer sends a weight the save then refuses. A weight an older
+     * page stored above 100 is the exception the API makes too: it is
+     * shown in a field that takes it, and posted back unchanged it is kept;
+     * changed to another above 100, it is refused.
+     */
+    public function testAWeightFieldTakesTheApisRangeAndAHeldWeightAbove100IsKept(): void
+    {
+        self::q('UPDATE 202_rotator_rules SET splittest = 1 WHERE id = ' . self::KEPT);
+        $old = self::insert('INSERT INTO 202_rotator_rules_redirects SET rule_id = ' . self::KEPT
+            . ", redirect_url = 'https://old.example/', weight = '150', name = 'URL: <a href=https://old.example/>link</a>'");
+
+        $page = self::page('tracking202/setup/rotator.php', ['rotator_id' => (string) self::ROTATOR]);
+        preg_match('~<template id="redirect-template">.*?</template>~s', $page, $template);
+        self::assertNotSame([], $template, 'the page carries the new destination\'s template');
+        self::assertStringContainsString('<input type="number" min="0" max="100" ', $template[0], 'a new destination takes 0 to 100');
+        self::assertMatchesRegularExpression('/data-redirect-id="' . self::KEPT . '".*?min="0" max="100" [^>]*value="100"/s', $page);
+        self::assertMatchesRegularExpression('/data-redirect-id="' . $old . '".*?min="0" max="150" [^>]*value="150"/s', $page,
+            'the weight stored above 100 is in a field that takes it');
+
+        $post = self::post();
+        $post['data'][0]['redirects'] = [
+            ['id' => (string) self::KEPT, 'type' => 'campaign', 'value' => (string) self::OFFER, 'weight' => '100'],
+            ['id' => (string) $old, 'type' => 'url', 'value' => 'https://old.example/', 'weight' => '150'],
+        ];
+        self::assertSame('DONE', trim(self::save($post)), 'posted back unchanged, it is kept');
+        $post['data'][0]['redirects'][1]['weight'] = '140';
+        self::assertSame('ERROR: Rule 1, destination 2, weight: A whole number from 0 to 100.', trim(self::save($post)));
+        $weights = self::requireScratch()->query('SELECT weight FROM 202_rotator_rules_redirects WHERE rule_id = ' . self::KEPT . ' ORDER BY id');
+        self::assertInstanceOf(\mysqli_result::class, $weights);
+        self::assertSame([['100'], ['150']], $weights->fetch_all());
     }
 
     /** JK3D: a default_type the page does not know is refused before any write (it ran `UPDATE 202_rotators SET `). */
@@ -431,6 +560,27 @@ final class RedirectorRulesSaveIntegrationTest extends TestCase
                 ],
             ],
         ];
+    }
+
+    /** @return array<string, mixed> rule KEPT posted back as it is seeded */
+    private static function kept(): array
+    {
+        return [
+            'rule_id' => (string) self::KEPT, 'rule_name' => 'Kept', 'status' => 'active', 'split' => 'false',
+            'criteria' => [['criteria_id' => (string) self::KEPT, 'type' => 'country', 'statement' => 'is', 'value' => 'United States(US)']],
+            'redirects' => [['id' => (string) self::KEPT, 'type' => 'campaign', 'value' => (string) self::OFFER]],
+        ];
+    }
+
+    /** @return list<string> the weights rule "Split" was stored with, in id order */
+    private static function splitWeightsStored(): array
+    {
+        $found = self::requireScratch()->query('SELECT rr.weight FROM 202_rotator_rules_redirects AS rr'
+            . ' INNER JOIN 202_rotator_rules AS r ON (r.id = rr.rule_id)'
+            . " WHERE r.rotator_id = " . self::ROTATOR . " AND r.rule_name = 'Split' ORDER BY rr.id");
+        self::assertInstanceOf(\mysqli_result::class, $found);
+
+        return array_column($found->fetch_all(MYSQLI_ASSOC), 'weight');
     }
 
     /** @return array<string, mixed> rule GONE posted back as it is */

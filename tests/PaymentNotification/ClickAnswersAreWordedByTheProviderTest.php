@@ -7,6 +7,7 @@ namespace Tests\PaymentNotification;
 use PHPUnit\Framework\TestCase;
 use Prosper202\PaymentNotification\ClickBank\ClickBankAdapter;
 use Prosper202\PaymentNotification\ClickField;
+use Prosper202\PaymentNotification\FindsReversedSalesByTransactionId;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\JVZoo\JVZooAdapter;
 use Prosper202\PaymentNotification\JVZoo\JVZooRole;
@@ -83,7 +84,11 @@ final class ClickAnswersAreWordedByTheProviderTest extends TestCase
         ];
     }
 
-    /** The real Processor's answer; one about a notification that names no click reads no database. */
+    /**
+     * The real Processor's answer; one about a notification that names no
+     * click reads no database, but for a reversal from a provider that looks
+     * its sale up (FindsReversedSalesByTransactionId: ClickBankInsIntegrationTest).
+     */
     public static function answer(ProviderAdapter $adapter, Notification $notification): Outcome
     {
         $request = new InboundRequest('POST', 'application/x-www-form-urlencoded', [], '203.0.113.9');
@@ -167,6 +172,9 @@ final class ClickAnswersAreWordedByTheProviderTest extends TestCase
                 'chargeback' => new Notification(NotificationKind::CHARGEBACK, 'CGBK', 'TX-0001', 'TX-0001'),
             ];
             foreach ($notifications as $what => $notification) {
+                if ($adapter instanceof FindsReversedSalesByTransactionId && $notification->kind->reverses()) {
+                    continue;
+                }
                 $outcome = self::answer($adapter, $notification);
 
                 $case = $label . ' ' . $what . ': ' . $outcome->message;

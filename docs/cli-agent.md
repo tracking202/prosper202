@@ -1070,6 +1070,8 @@ p202 analytics         --group-by DIM [--period P | --days N]
                        [--sort METRIC] [--sort-dir ASC|DESC] [-l limit] [-o offset] [filters...] [--json]
 p202 report breakeven  --aff-campaign-id ID [-b dimension] [--max-cpc N]
                        [-l limit] [-o offset] [-p period] [filters...] [--json]
+                       # the payout is the reports' (GET /reports/payout): a Campaign
+                       # optimizer runs it, and the id is in report breakdown -b campaign
 p202 analytics         --group-by DIM --split-at YYYY-MM-DD|UNIX
                        [--days N | --time-from UNIX [--time-to UNIX]]
                        [--sort clicks|conversions|revenue[_per_day]] [--sort-dir ASC|DESC]
