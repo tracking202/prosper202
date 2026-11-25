@@ -506,6 +506,20 @@ case "$ask" in
                 jq -r '.data[] | "t202id \(.name): \(.total_clicks) clicks"'
         fi
         ;;
+    *"today's clicks and conversions so far compare with yesterday's"*)
+        # One compared summary: both windows, with the bounds each covers.
+        out=$(p202 report summary --period today --compare previous --json)
+        printf '%s' "$out" | jq -r '
+            def at(t): t | strftime("%Y-%m-%d %H:%M UTC");
+            "Today so far (\(at(.window.time_from)) to \(at(.window.time_to))): \(.data.total_clicks) clicks, \(.data.total_leads) conversions.",
+            "Yesterday to the same time (\(at(.previous.time_from)) to \(at(.previous.time_to))): \(.previous.data.total_clicks) clicks, \(.previous.data.total_leads) conversions."'
+        ;;
+    *"clicks per day over the last 7 days, with one series for each campaign"*)
+        # One grouped timeseries; clicks on no campaign are the null group.
+        rows=$(p202 report timeseries --period last7 --group-by campaign --json)
+        printf 'Clicks per day for the last 7 days, by campaign:\n'
+        printf '%s' "$rows" | jq -r '.data[] | "\(.period) \(.group_name // "no campaign"): \(.total_clicks) clicks"'
+        ;;
     *"Which IP addresses clicked on my keyword"*)
         # The ip breakdown narrowed to the keyword; every click, so no --show.
         kw=$(printf '%s' "$ask" | grep -oE "keyword '[^']+'" | sed "s/keyword '//; s/'\$//")
