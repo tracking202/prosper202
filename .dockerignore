@@ -11,7 +11,6 @@
 202-config.php
 202-config*.php
 !202-config-sample.php
-build/staging-config.php
 # This machine's count of clicks redirected unsaved (Prosper202\Click\UnsavedClickRedirects).
 202-config/temp/unsaved-click-redirects.json*
 
@@ -25,6 +24,13 @@ build/staging-config.php
 # image serves whatever it holds (TestScriptsAreNotServedTest).
 tests
 
+# build/ holds release tools and stack configs, none of them the app's. Only
+# the two files the Dockerfile copies out of the docroot by name are sent, and
+# the app stage removes build/ after its COPY . (TestScriptsAreNotServedTest).
+build
+!build/scripts/docker-entrypoint.sh
+!build/scripts/write-config.php
+
 # Dependencies are installed during the image build (composer) or not needed
 # at runtime (node).
 vendor
@@ -35,8 +41,6 @@ mysql_data
 mysql_data_staging
 mysql_data_test_install
 dist
-build/debug
-build/logs
 docs
 .ax-session
 202-cronjobs/cron.lock
