@@ -87,6 +87,19 @@ final class LedgerEndpointHelpersTest extends TestCase
         yield 'general cookie' => [[], ['tracking202subid' => '9'], 0, ['click_id' => 9, 'malformed' => null]];
         yield 'nothing names a click' => [[], [], 0, $none];
         yield 'an unfilled template value is absent' => [['subid' => ''], ['tracking202subid' => '9'], 0, ['click_id' => 9, 'malformed' => null]];
+        // V4KD: the network's macro left in place names nothing, as an empty value; a cookie may still name it.
+        $cookie = ['tracking202subid' => '9'];
+        $malformed = static fn (string $name): array => ['click_id' => null, 'malformed' => $name];
+        yield 'an unfilled [[subid]] is absent' => [['subid' => '[[subid]]'], $cookie, 0, ['click_id' => 9] + $none];
+        yield 'an unfilled network macro is absent' => [['subid' => '{aff_sub}', 'sid' => '%25s2%25'], [], 0, $none];
+        yield 'a blank subid is absent' => [['subid' => '  ', 'sid' => '7'], [], 0, ['click_id' => 7] + $none];
+        yield 'a macro with text beside it is refused' => [['subid' => '{aff_sub}x'], $cookie, 0, $malformed('subid')];
+        yield 'a cookie holding a macro is refused' => [
+            [],
+            ['tracking202subid' => '[[subid]]'],
+            0,
+            $malformed('tracking202subid'),
+        ];
         yield 'a fractional subid is refused, not cast' => [['subid' => '123.9'], ['tracking202subid' => '9'], 0, ['click_id' => null, 'malformed' => 'subid']];
         yield 'a malformed cookie is refused, not skipped' => [[], ['tracking202subid' => 'abc'], 0, ['click_id' => null, 'malformed' => 'tracking202subid']];
         yield 'zero is not a click' => [['subid' => '0'], [], 0, ['click_id' => null, 'malformed' => 'subid']];
