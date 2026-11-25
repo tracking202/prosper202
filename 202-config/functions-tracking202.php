@@ -589,25 +589,13 @@ function query(
 }
 
 /**
- * Validates a URL for safe use in href attributes.
- * Blocks dangerous schemes (javascript:, data:, vbscript:, etc.)
- * while allowing http, https, scheme-relative, and relative URLs.
+ * A URL for an href attribute: http, https, scheme-relative and relative
+ * URLs, or '' for any other scheme, read as a browser reads it
+ * (Prosper202\Http\LinkScheme).
  */
 function safe_url(string $url): string
 {
-    $url = trim($url);
-    if ($url === '') {
-        return '';
-    }
-    $scheme = parse_url($url, PHP_URL_SCHEME);
-    if ($scheme !== null && !in_array(strtolower($scheme), ['http', 'https'], true)) {
-        return '';
-    }
-    // Catch obfuscated schemes that parse_url misses (e.g. tab/newline inside scheme)
-    if (preg_match('/^(javascript|data|vbscript)\s*:/i', $url) === 1) {
-        return '';
-    }
-    return $url;
+    return \Prosper202\Http\LinkScheme::forLink($url);
 }
 
 function pcc_network_icon($ppc_network_name, $ppc_account_name)

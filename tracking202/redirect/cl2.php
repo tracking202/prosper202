@@ -7,7 +7,11 @@ use Tracking202\Redirect\RedirectHelper;
 $p202OutageFallback = true;
 require_once substr(__DIR__, 0, -21) . '/202-config/connect2.php';
 
+// q is sent on to the visitor as a script's location, a refresh and a link,
+// so anything but an absolute http(s) URL (a javascript: URL above all)
+// goes to the 404 page.
 $url = RedirectHelper::getStringParam('q');
+$url = $url === null ? null : \Prosper202\Http\LinkScheme::forRedirect($url);
 if ($url === null) {
     RedirectHelper::redirect(p202InstallPath('202-404.php'));
 }
