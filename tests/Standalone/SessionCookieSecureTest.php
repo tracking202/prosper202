@@ -34,20 +34,33 @@ final class SessionCookieSecureTest extends TestCase
     /** @return array<string, array{array<string, mixed>, bool}> */
     public static function requests(): array
     {
+        $proxy = ['REMOTE_ADDR' => '10.0.0.1'];
+        $stranger = ['REMOTE_ADDR' => '198.51.100.7'];
+
         return [
             'plain http' => [['SERVER_PORT' => '80'], false],
             'nothing at all' => [[], false],
             'direct TLS' => [['HTTPS' => 'on'], true],
             'direct TLS, upper case off' => [['HTTPS' => 'OFF'], false],
             'HTTPS empty' => [['HTTPS' => ''], false],
-            'proxy: X-Forwarded-Proto' => [['HTTP_X_FORWARDED_PROTO' => 'https', 'SERVER_PORT' => '80'], true],
-            'proxy: X-Forwarded-Proto upper case' => [['HTTP_X_FORWARDED_PROTO' => 'HTTPS'], true],
-            'proxy: X-Forwarded-Proto http' => [['HTTP_X_FORWARDED_PROTO' => 'http'], false],
-            'proxy: X-Forwarded-SSL' => [['HTTP_X_FORWARDED_SSL' => 'on'], true],
-            'proxy: X-Forwarded-Port' => [['HTTP_X_FORWARDED_PORT' => '443'], true],
+            'proxy: X-Forwarded-Proto' => [['HTTP_X_FORWARDED_PROTO' => 'https', 'SERVER_PORT' => '80'] + $proxy, true],
+            'proxy: X-Forwarded-Proto upper case' => [['HTTP_X_FORWARDED_PROTO' => 'HTTPS'] + $proxy, true],
+            'proxy: X-Forwarded-Proto http' => [['HTTP_X_FORWARDED_PROTO' => 'http'] + $proxy, false],
+            'proxy: X-Forwarded-SSL' => [['HTTP_X_FORWARDED_SSL' => 'on'] + $proxy, true],
+            'proxy: X-Forwarded-Port' => [['HTTP_X_FORWARDED_PORT' => '443'] + $proxy, true],
+            'unlisted peer: X-Forwarded-Proto' => [['HTTP_X_FORWARDED_PROTO' => 'https', 'SERVER_PORT' => '80'] + $stranger, false],
+            'unlisted peer: X-Forwarded-SSL' => [['HTTP_X_FORWARDED_SSL' => 'on'] + $stranger, false],
+            'unlisted peer: X-Forwarded-Port' => [['HTTP_X_FORWARDED_PORT' => '443'] + $stranger, false],
+            'no peer: X-Forwarded-Proto' => [['HTTP_X_FORWARDED_PROTO' => 'https'], false],
+            'proxy: Forwarded proto=https' => [['HTTP_FORWARDED' => 'for=198.51.100.7;proto=https'] + $proxy, true],
+            'proxy: Forwarded proto=http' => [['HTTP_FORWARDED' => 'for=198.51.100.7;proto=http'] + $proxy, false],
+            'proxy: Forwarded, a forged https to the left' => [
+                ['HTTP_FORWARDED' => 'for=203.0.113.6;proto=https, for=198.51.100.7;proto=http'] + $proxy, false,
+            ],
+            'unlisted peer: Forwarded proto=https' => [['HTTP_FORWARDED' => 'for=198.51.100.7;proto=https'] + $stranger, false],
             'port 443' => [['SERVER_PORT' => '443'], true],
             'request scheme' => [['REQUEST_SCHEME' => 'https'], true],
-            'a header sent as an array' => [['HTTP_X_FORWARDED_PROTO' => ['https']], false],
+            'a header sent as an array' => [['HTTP_X_FORWARDED_PROTO' => ['https']] + $proxy, false],
         ];
     }
 
@@ -57,21 +70,33 @@ final class SessionCookieSecureTest extends TestCase
      */
     public function testTheAnswer(array $server, bool $https): void
     {
-        self::assertSame($https, p202_request_is_https($server));
+        self::assertSame($https, p202_request_is_https($server, \Prosper202\Http\TrustedProxies::parse('10.0.0.0/8')));
+    }
+
+    /** With no setting, no forwarded scheme is believed from anyone. */
+    public function testNoSettingBelievesNoForwardedScheme(): void
+    {
+        $server = ['REMOTE_ADDR' => '10.0.0.1', 'HTTP_X_FORWARDED_PROTO' => 'https', 'HTTP_X_FORWARDED_SSL' => 'on', 'HTTP_X_FORWARDED_PORT' => '443'];
+        self::assertFalse(p202_request_is_https($server, \Prosper202\Http\TrustedProxies::none()));
+        self::assertFalse(p202_request_is_https($server, \Prosper202\Http\TrustedProxies::parse('10.0.0.0/33')), 'malformed: nothing');
+        self::assertTrue(p202_request_is_https(['HTTPS' => 'on'] + $server, \Prosper202\Http\TrustedProxies::none()));
     }
 
     /**
      * The wizard's own session start, executed: a fresh PHP process (no
-     * output yet, so the session can start) behind a proxy that terminated
-     * TLS. The cookie it would send carries Secure.
+     * output yet, so the session can start, and no autoloader) behind a
+     * listed proxy that terminated TLS. The cookie it would send carries
+     * Secure; from a peer nobody listed it does not.
      */
     public function testTheWizardsCookieIsSecureBehindAProxy(): void
     {
         $saved = sys_get_temp_dir() . '/p202-wizard-session-' . bin2hex(random_bytes(4));
         self::assertTrue(mkdir($saved), 'a session directory for the probe');
         try {
-            foreach (['https' => '1', 'http' => '0'] as $proto => $secure) {
-                $script = '$_SERVER["HTTP_X_FORWARDED_PROTO"] = ' . var_export($proto, true) . ';'
+            foreach ([['https', '10.0.0.1', '1'], ['http', '10.0.0.1', '0'], ['https', '198.51.100.7', '0']] as [$proto, $peer, $secure]) {
+                $script = 'putenv("P202_TRUSTED_PROXIES=10.0.0.0/8");'
+                    . '$_SERVER["HTTP_X_FORWARDED_PROTO"] = ' . var_export($proto, true) . ';'
+                    . '$_SERVER["REMOTE_ADDR"] = ' . var_export($peer, true) . ';'
                     . '$_SERVER["SERVER_PORT"] = "80";'
                     . 'require ' . var_export(self::root() . '/202-config/functions-standalone-ui.php', true) . ';'
                     . '$t = p202_standalone_wizard_token();'
@@ -84,7 +109,7 @@ final class SessionCookieSecureTest extends TestCase
                 $result = json_decode((string) end($out), true);
                 self::assertIsArray($result, 'the probe answered: ' . implode("\n", $out));
                 self::assertTrue($result['token'], 'the session started and minted a token (' . $proto . ')');
-                self::assertSame($secure === '1', $result['secure'], 'X-Forwarded-Proto: ' . $proto);
+                self::assertSame($secure === '1', $result['secure'], 'X-Forwarded-Proto: ' . $proto . ' from ' . $peer);
             }
         } finally {
             array_map('unlink', glob($saved . '/*') ?: []);

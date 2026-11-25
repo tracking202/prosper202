@@ -73,7 +73,13 @@ ROUTER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/router.php"
 # More than one worker: the cron's report rebuild calls this server back
 # (202-cronjobs/process_dataengine_job.php fetches dej.php), and a single
 # worker busy with the cron request can never answer it.
+#
+# The cases and tests/live/ stand in for visitors from many addresses by
+# sending X-Forwarded-For from this machine, which the install believes only
+# from a proxy it lists (TrustedProxies): loopback is that proxy here. Set
+# P202_TRUSTED_PROXIES (empty for none) to serve as an install with another.
 PHP_CLI_SERVER_WORKERS=${PHP_CLI_SERVER_WORKERS:-4} \
+P202_TRUSTED_PROXIES=${P202_TRUSTED_PROXIES-127.0.0.1,::1} \
     php -S "$HTTP_HOST:$HTTP_PORT" "$ROUTER" >"$RUNTIME_DIR/php-server.log" 2>&1 &
 echo $! > "$RUNTIME_DIR/php-server.pid"
 

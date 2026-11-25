@@ -100,7 +100,7 @@ if ($path === '/apps/installs' || preg_match('#^/apps/installs/([^/]+)/events$#D
             // An install stores the device's address as every row stores a
             // visitor's — VisitorIp's, masked under privacy inside the intake
             // (StoredVisitorIp::forAccount()) — as the Apple receiver does.
-            // The rate limit above keyed on REMOTE_ADDR and never reads it.
+            // The rate limit above keyed on the same address (VisitorIp).
             $androidResult = $androidEvents
                 ? (new \Api\V3\Apps\Android\InstallEventsIntake($db))->receive($androidToken, $androidEventsMatch[1], $androidBody)
                 : (new \Api\V3\Apps\Android\InstallIntake($db))->receive($androidToken, $androidBody, \AUTH::client_ip());
