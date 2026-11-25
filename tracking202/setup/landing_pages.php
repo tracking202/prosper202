@@ -160,6 +160,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		($_POST['landing_page_type'] ?? '') === '0' ? $_POST : [],
 		$error
 	);
+	// The page's split test, refused here too, and saved with the page.
+	$splitTest = \Prosper202\Setup\LandingPageSplitTest::fromForm($_POST, $error);
 
 	$savedId = 0;
 	$saveCampaignId = 0;
@@ -183,11 +185,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$saveTypes .= 'ii';
 		$saveConn = new \Prosper202\Database\Connection($db);
 		try {
-			$savedId = $saveConn->transaction(static function () use ($saveConn, $editing, $postedPageId, $saveUserId, $saveSet, $saveTypes, $saveValues): int {
+			$savedId = $saveConn->transaction(static function () use ($saveConn, $editing, $postedPageId, $saveUserId, $saveSet, $saveTypes, $saveValues, $splitTest): int {
+				$splitStore = new \Prosper202\Setup\LandingPageSplitTest($saveConn);
 				if ($editing) {
 					$stmt = $saveConn->prepareWrite('UPDATE `202_landing_pages` SET ' . $saveSet . ' WHERE `landing_page_id` = ? AND `user_id` = ?');
 					$saveConn->bind($stmt, $saveTypes . 'ii', [...$saveValues, (int) $postedPageId, $saveUserId]);
 					$saveConn->executeUpdate($stmt);
+					$splitStore->save($saveUserId, (int) $postedPageId, $splitTest);
 
 					return (int) $postedPageId;
 				}
@@ -198,6 +202,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$public = $saveConn->prepareWrite('UPDATE `202_landing_pages` SET `landing_page_id_public` = ? WHERE `landing_page_id` = ? AND `user_id` = ?');
 				$saveConn->bind($public, 'iii', [(int) (random_int(1, 9) . $newId . random_int(1, 9)), $newId, $saveUserId]);
 				$saveConn->executeUpdate($public);
+				$splitStore->save($saveUserId, $newId, $splitTest);
 
 				return $newId;
 			});
@@ -402,6 +407,28 @@ if ($posted) {
 	$fbpaForm = (new \Prosper202\Setup\FacebookPixelAssistantSettings(new \Prosper202\Database\Connection($db)))
 		->load((int) $_SESSION['user_id'], (int) ($row['landing_page_id'] ?? 0)) ?? $fbpaForm;
 }
+// The split test: as posted (its lines as typed), or the edited or copied page's.
+$splitForm = \Prosper202\Setup\LandingPageSplitTest::defaults();
+$splitText = '';
+if ($posted) {
+	$splitIgnored = [];
+	$splitForm = \Prosper202\Setup\LandingPageSplitTest::fromForm($_POST, $splitIgnored);
+	$splitText = is_string($_POST['split_variants'] ?? null) ? $_POST['split_variants'] : '';
+} elseif ($row !== []) {
+	try {
+		$splitLoaded = (new \Prosper202\Setup\LandingPageSplitTest(new \Prosper202\Database\Connection($db)))
+			->load((int) $_SESSION['user_id'], (int) ($row['landing_page_id'] ?? 0));
+	} catch (\Throwable $splitLoadError) {
+		error_log('landing_pages.php: the split test of landing page ' . (int) ($row['landing_page_id'] ?? 0)
+			. ' could not be read: ' . $splitLoadError->getMessage());
+		$splitLoaded = null;
+		$error['split_load'] = 'This page\'s split test could not be read, so its fields below show none. Saving the page replaces it with what they hold.';
+	}
+	if ($splitLoaded !== null) {
+		$splitForm = $splitLoaded;
+		$splitText = \Prosper202\Setup\LandingPageSplitTest::formText($splitLoaded['variants']);
+	}
+}
 $fbpaOptions = static function (array $lookup): array {
 	$options = [];
 	foreach ($lookup as $id => [, $description]) {
@@ -484,7 +511,7 @@ if (isset($_GET['https']) && (string) $_GET['https'] === '1') {
 	echo p202_flash('info', 'The URL was typed without http:// or https://, so it was saved with https://. If the page is served over plain http, edit it and write http://.');
 }
 if ($error) {
-	echo p202_setup_error_flashes($error, ['landing_page_type', 'aff_campaign_id', 'landing_page_nickname', 'landing_page_url', 'leave_behind_page_url', 'fbpa_content_name', 'fbpa_content_type', 'fbpa_outbound_clicks']);
+	echo p202_setup_error_flashes($error, ['landing_page_type', 'aff_campaign_id', 'landing_page_nickname', 'landing_page_url', 'leave_behind_page_url', 'fbpa_content_name', 'fbpa_content_type', 'fbpa_outbound_clicks', 'split_status', 'split_overwrite_c4', 'split_variants']);
 }
 ?>
 
@@ -567,6 +594,29 @@ if ($error) {
 								<?php echo p202_setup_options($fbpaOptions(\Prosper202\Setup\FacebookPixelAssistantSettings::CLICK_EVENTS), (string) $fbpaForm['outbound_clicks'], 'Not tracked', '0'); ?>
 							</select>
 							<?php echo p202_setup_feedback($error, 'fbpa_outbound_clicks'); ?>
+						</div>
+					</details>
+
+					<details class="p202-disclosure mb-3"<?php echo $splitForm['status'] === 1 || isset($error['split_status']) || isset($error['split_overwrite_c4']) || isset($error['split_variants']) || isset($error['split_load']) ? ' open' : ''; ?>>
+						<summary>Split test <span class="p202-disclosure__hint">a variant per visitor, reported as C4</span></summary>
+						<div class="p202-disclosure__body">
+							<div class="form-text mb-2">Shows each visitor one variant, picked by weight and kept for their next visits, and records it as the click's C4, so any report grouped by C4 compares the variants. Your page reads it as <code>window.t202Variant</code>, as <code>&lt;html data-p202-variant&gt;</code>, or in an element with <code>t202attribute="t202Variant"</code>.</div>
+							<input type="hidden" name="split_status" value="0">
+							<div class="form-check form-switch mb-2">
+								<input class="form-check-input<?php echo p202_setup_invalid($error, 'split_status'); ?>" type="checkbox" role="switch" id="split_status" name="split_status" value="1"<?php echo $splitForm['status'] === 1 ? ' checked' : ''; ?>>
+								<label class="form-check-label" for="split_status">Run the split test on this page</label>
+							</div>
+							<?php echo p202_setup_feedback($error, 'split_status'); ?>
+							<label class="form-label" for="split_variants">Variants</label>
+							<textarea class="form-control font-monospace<?php echo p202_setup_invalid($error, 'split_variants'); ?>" id="split_variants" name="split_variants" rows="3" placeholder="headline-a 50&#10;headline-b 50"><?php echo p202_setup_e($splitText); ?></textarea>
+							<?php echo p202_setup_feedback($error, 'split_variants'); ?>
+							<div class="form-text mb-3">One a line: a name (letters, digits, dots, dashes or underscores), then its weight. A weight left out is 1; a weight of 0 shows the variant to no one.</div>
+							<input type="hidden" name="split_overwrite_c4" value="0">
+							<div class="form-check form-switch">
+								<input class="form-check-input<?php echo p202_setup_invalid($error, 'split_overwrite_c4'); ?>" type="checkbox" role="switch" id="split_overwrite_c4" name="split_overwrite_c4" value="1"<?php echo $splitForm['overwrite_c4'] === 1 ? ' checked' : ''; ?>>
+								<label class="form-check-label" for="split_overwrite_c4">Replace a C4 the visit already has (from the traffic source's link or the page)</label>
+							</div>
+							<?php echo p202_setup_feedback($error, 'split_overwrite_c4'); ?>
 						</div>
 					</details>
 

@@ -5570,6 +5570,10 @@ class UPGRADE
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
+                // Each landing page's split test, whose variant the page's
+                // script writes into the click's C4 (Prosper202\Setup\
+                // LandingPageSplitTest).
+                \Prosper202\Database\Tables\CampaignTables::landingPageSplitTests(),
             ]);
             if ($step_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.81'") !== false) {
