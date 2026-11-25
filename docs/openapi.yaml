@@ -9945,6 +9945,22 @@ paths:
                             items:
                               type: string
                             description: '"*" is full access; read, write, stage and <area>:<action> narrow it.'
+                          ltv:
+                            type: object
+                            description: >-
+                              Which parts of Customer LTV this key's scope and its user's role let it
+                              use, as the /ltv routes would answer. See documentation/api/17-capabilities.md.
+                            properties:
+                              read:
+                                type: boolean
+                              settings_read:
+                                type: boolean
+                              crm_write:
+                                type: boolean
+                              incoming:
+                                type: boolean
+                              settings_write:
+                                type: boolean
                       server:
                         type: object
                         additionalProperties: true
