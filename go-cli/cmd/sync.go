@@ -828,7 +828,9 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 				"Warning: the request to run sync job %s failed (%v), but the server is running the job. "+
 					"The output below is the job as it stood, not its result — `p202 sync status` shows how it ended.",
 				jobID, kickErr)
-			render(lastJobResp)
+			if err := render(lastJobResp); err != nil {
+				return true, err
+			}
 			return true, nil // the job is running server-side; falling back would run the sync twice
 		}
 		return true, withHint(
