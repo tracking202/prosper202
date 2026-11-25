@@ -26,7 +26,7 @@ class AppNotificationsCommand extends BaseCommand
     protected function configure(): void
     {
         parent::configure();
-        $this->setDescription('List the traffic-source postbacks app installs\' goals queued: sent, failed, pending, cancelled, suppressed')
+        $this->setDescription('List the traffic-source postbacks app installs\' goals queued: sent, failed, pending, cancelled, suppressed, withheld')
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Max results', '50')
             ->addOption('offset', 'o', InputOption::VALUE_REQUIRED, 'Offset', '0')
             ->addOption('registration-id', null, InputOption::VALUE_REQUIRED, 'Only this app\'s postbacks')
