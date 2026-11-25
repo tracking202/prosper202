@@ -222,6 +222,30 @@ if (!function_exists('_upgrade_complete_landing_page_urls')) {
     }
 }
 
+if (!function_exists('_upgrade_trim_rotator_criteria')) {
+    /**
+     * Redirector criterion values stored untrimmed, or with `all` in another
+     * case, rewritten as the writers store them (Prosper202\Rotator\
+     * CriterionRepair), for the 1.9.81 rung. Each rewrite is logged by the
+     * repair. Best effort: the redirects already read such a value as meant,
+     * so a failure is noted and never stops the upgrade.
+     */
+    function _upgrade_trim_rotator_criteria(): void
+    {
+        global $db;
+
+        try {
+            $conn = ($db instanceof \mysqli) ? $db : $db->getConnection();
+            \Prosper202\Rotator\CriterionRepair::run(new \Prosper202\Database\Connection($conn));
+        } catch (\Throwable $e) {
+            _upgrade_note(
+                'redirector criterion values stored untrimmed could not be rewritten',
+                ': ' . $e->getMessage()
+            );
+        }
+    }
+}
+
 if (!function_exists('_upgrade_seed_licence_answers')) {
     /**
      * Copy the licence answers cached on disk within the grace period into
@@ -5571,6 +5595,11 @@ class UPGRADE
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
             ]);
+            if ($step_ok) {
+                // Redirector criterion values the API stored untrimmed before
+                // 1.9.79, stored as the writers store them now.
+                _upgrade_trim_rotator_criteria();
+            }
             if ($step_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.81'") !== false) {
                     $prosper202_version = '1.9.81';
