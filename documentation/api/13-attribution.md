@@ -206,10 +206,17 @@ the same address rules, govern the LTV webhooks ([20-ltv.md](20-ltv.md#webhooks)
 and, with http:// allowed, the traffic sources' server-to-server postbacks
 ([27-setup.md](27-setup.md#an-accounts-pixels--ppc-accountsidpixels)).
 
-Each delivery carries `X-P202-Export-Id`, `X-P202-Delivery-Attempt`,
+Each delivery is signed the [Standard Webhooks](https://www.standardwebhooks.com/)
+way, as an LTV webhook's is ([Verifying a delivery](20-ltv.md#verifying-a-delivery)):
+`webhook-id` (the same on every attempt at one export), `webhook-timestamp`
+and `webhook-signature`, which a Standard Webhooks library verifies with the
+export's secret. The secret generated for an export is a `whsec_` one; one you
+choose is used as its own bytes (a library takes it as `whsec_` followed by its
+base64), and one starting `whsec_` must be base64 after the prefix. It also
+carries `X-P202-Export-Id` and `X-P202-Delivery-Attempt`, and, through 1.9.82,
 `X-P202-Timestamp` and `X-P202-Signature: sha256=<hex>`, the HMAC-SHA256 of
-`<timestamp>.<body>` under the export's secret. Verify it with a constant-time
-comparison and refuse a timestamp more than a few minutes old. A 2xx answer
+`<timestamp>.<body>` under the export's secret, which 1.9.83 stops sending. A
+2xx answer
 completes the export; no connection, a timeout, 5xx, 408 or 429 is retried
 after one minute and then two (three runs in all); a redirect, another 4xx or
 a refused address fails the export at once. The file stays downloadable

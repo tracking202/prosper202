@@ -8,8 +8,8 @@ use Prosper202\Ltv\WebhookDispatcher;
 
 /**
  * A webhook receiver on a free loopback port (`php -S`, four workers): it
- * records every request it gets (path, the X-P202-* headers, body) and
- * answers as its path says, /hook/{status}/{milliseconds to wait first}
+ * records every request it gets (path, the X-P202-* and webhook-* headers,
+ * body) and answers as its path says, /hook/{status}/{milliseconds to wait first}
  * (with /bytes after it, a body that is not UTF-8), or 503 to everything
  * while down() holds.
  *
@@ -48,6 +48,9 @@ final class LocalWebhookReceiver
                 'delivery' => $_SERVER['HTTP_X_P202_DELIVERY'] ?? null,
                 'event' => $_SERVER['HTTP_X_P202_EVENT'] ?? null,
                 'signature' => $_SERVER['HTTP_X_P202_SIGNATURE'] ?? null,
+                'webhook_id' => $_SERVER['HTTP_WEBHOOK_ID'] ?? null,
+                'webhook_timestamp' => $_SERVER['HTTP_WEBHOOK_TIMESTAMP'] ?? null,
+                'webhook_signature' => $_SERVER['HTTP_WEBHOOK_SIGNATURE'] ?? null,
                 'body' => (string) file_get_contents('php://input'),
                 'at' => microtime(true),
             ]);
@@ -163,7 +166,8 @@ final class LocalWebhookReceiver
 
     /**
      * @return list<array{
-     *     path: string, delivery: ?string, event: ?string, signature: ?string, body: string, at: float
+     *     path: string, delivery: ?string, event: ?string, signature: ?string, webhook_id: ?string,
+     *     webhook_timestamp: ?string, webhook_signature: ?string, body: string, at: float
      * }>
      */
     public function requests(): array

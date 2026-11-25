@@ -339,12 +339,64 @@ p202 ltv company create --name Acme --domain acme.com
 ## Webhooks
 
 `POST /ltv/webhooks` registers an https endpoint (`url`, on port 443 or
-8443) for signed events. The response holds the webhook's `secret` once; it
-is never shown again. Each delivery is `POST {event, occurred_at, data}`
-with `X-P202-Signature: sha256=<HMAC-SHA256 of the body with the secret>`
-(and `X-P202-Event`, `X-P202-Delivery`), retried with backoff and failed
-after 6 attempts, which marks the webhook dead until it is revived
-([A dead webhook](#a-dead-webhook)).
+8443) for signed events. The response holds the webhook's `secret` once (a
+`whsec_` secret); it is never shown again, and
+[rotating it](#rotating-a-webhooks-secret) gives a new one. Each delivery is
+retried with backoff and failed after 6 attempts, which marks the webhook
+dead until it is revived ([A dead webhook](#a-dead-webhook)).
+
+### Verifying a delivery
+
+Deliveries are signed the [Standard Webhooks](https://www.standardwebhooks.com/)
+way, so a receiver verifies one with that project's library (or Svix's) and
+the secret:
+
+| Header | Value |
+|---|---|
+| `webhook-id` | The event's message id (`msg_…`): the same on every retry, and for every webhook of the account the event went to. De-duplicate by it |
+| `webhook-timestamp` | When this attempt was sent, Unix seconds. A library refuses one more than 5 minutes from its clock, which stops a captured request being replayed |
+| `webhook-signature` | `v1,` and the base64 HMAC-SHA256 of `<webhook-id>.<webhook-timestamp>.<body>`. Two, space-separated, while a rotation's overlap runs; either verifying is enough |
+
+The HMAC key is the secret after `whsec_`, base64-decoded. A webhook created
+before 1.9.81 has a hex secret, which is used as its own bytes: give a
+library `whsec_` followed by the base64 of the secret
+(`"whsec_" + base64(secret)`), or rotate it for a `whsec_` one.
+
+The body is the envelope
+
+```json
+{"type": "revenue.recorded.v1", "timestamp": "2026-11-25T14:03:07Z", "data": {…},
+ "id": "msg_…", "event": "revenue.recorded", "occurred_at": 1795615387}
+```
+
+`type` is the event's name and the version of its `data`: a change to
+`data` that a receiver could misread takes a new version. `timestamp` is
+when the event was queued (ISO 8601, UTC), and `id` is the `webhook-id`.
+
+Through 1.9.82 each delivery also carries the headers it carried before
+1.9.81: `X-P202-Signature: sha256=<hex HMAC-SHA256 of the body alone, keyed
+by the secret's text>`, `X-P202-Event` and `X-P202-Delivery` (one id per
+webhook and event), and the body keeps `event` and `occurred_at`. **1.9.83
+stops sending them**: move a receiver that checks `X-P202-Signature` to
+`webhook-signature` before then. `X-P202-Signature` carries no timestamp,
+so a captured delivery verifies whenever it is replayed.
+
+### Rotating a webhook's secret
+
+`POST /ltv/webhooks/{id}/rotate-secret` gives the webhook a new `whsec_`
+secret, in the answer once. For `overlap_hours` (default 24, 0 to 168) each
+delivery is signed by the old secret too, so the receiver can change over
+without one failing; `0` stops the old one at once, and a second rotation
+inside an overlap stops the secret it replaced. `previous_secret_expires_at`
+says when the old one stops. `X-P202-Signature` uses the new secret from the
+start. The Landing Page Optimizer's webhook is refused (a `422` naming
+`webhook_id`): the optimizer holds its secret, and connecting it again
+gives a new one. The LTV Settings tab's Rotate secret button does the same
+with the 24-hour overlap, and is not shown on the optimizer's webhook.
+
+```bash
+p202 ltv webhooks rotate-secret 3 --overlap-hours 48
+```
 
 The URL is held to the export webhooks' rules
 ([13-attribution.md](13-attribution.md#exports)): spelled plainly (no user

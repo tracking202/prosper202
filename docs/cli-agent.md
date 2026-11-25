@@ -1308,8 +1308,12 @@ p202 ltv integrations list | create --provider P [--name S] [--config JSON | --c
   and `held`. A 409 means a cron run was still sending after 20 seconds and
   nothing changed: run it again in a minute. The Landing Page Optimizer's
   pairing webhook needs no pairing again.
-- `ltv webhooks create` prints the signing secret once (`X-P202-Signature:
-  sha256=HMAC(body, secret)`); `webhooks list` never shows it. `--events`
+- `ltv webhooks create` prints the signing secret once (a `whsec_` secret a
+  Standard Webhooks library verifies `webhook-signature` with; through 1.9.82
+  also `X-P202-Signature: sha256=HMAC(body, secret)`); `webhooks list` never
+  shows it. `ltv webhooks rotate-secret <id> [--overlap-hours N]` prints a new
+  one once, and the old one still signs for N hours (default 24, 0 to 168);
+  the Landing Page Optimizer's webhook is refused (a 422 on `webhook_id`). `--events`
   takes the known names or `*` (every event, including future ones), and is
   always sent as a list. The server holds the same list: a name it never
   sends is a 422 naming `events.<i>` with the names, never a webhook that

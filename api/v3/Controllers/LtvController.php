@@ -1243,6 +1243,49 @@ class LtvController
         });
     }
 
+    /**
+     * Give a webhook a new secret, returned once. `overlap_hours` (a whole
+     * number from 0 to 168, default 24) is how long deliveries are also
+     * signed by the secret it replaces, so the receiver can change over
+     * without a delivery failing (MysqlWebhookRepository::rotateSecret()).
+     * The Landing Page Optimizer's webhook is refused, naming webhook_id.
+     *
+     * @param array<string, mixed> $payload
+     */
+    public function rotateWebhookSecret(int $webhookId, array $payload): array
+    {
+        PayloadKeys::refuseUnknown($payload, ['overlap_hours'], 'a secret rotation');
+        $maxHours = intdiv(MysqlWebhookRepository::ROTATION_OVERLAP_MAX_SECONDS, 3600);
+        $hours = intdiv(MysqlWebhookRepository::ROTATION_OVERLAP_DEFAULT_SECONDS, 3600);
+        if (array_key_exists('overlap_hours', $payload)) {
+            $raw = $payload['overlap_hours'];
+            if (!is_int($raw) || $raw < 0 || $raw > $maxHours) {
+                throw new ValidationException('Invalid overlap_hours', [
+                    'overlap_hours' => 'must be a whole number from 0 to ' . $maxHours
+                        . ' (a JSON number): the hours the old secret still signs; 0 stops it at once',
+                ]);
+            }
+            $hours = $raw;
+        }
+
+        return $this->wrap(function () use ($webhookId, $hours): array {
+            $now = time();
+            try {
+                $rotated = $this->webhooks->rotateSecret($this->userId, $webhookId, $hours * 3600, $now);
+            } catch (RecordNotFoundException) {
+                throw new NotFoundException('Webhook not found');
+            }
+
+            // The new secret is returned exactly once, here.
+            return ['data' => [
+                'webhook_id' => $webhookId,
+                'secret' => $rotated['secret'],
+                'overlap_hours' => $hours,
+                'previous_secret_expires_at' => $rotated['previous_secret_expires_at'],
+            ]];
+        });
+    }
+
     public function deleteWebhook(int $webhookId): void
     {
         $this->wrap(function () use ($webhookId): void {

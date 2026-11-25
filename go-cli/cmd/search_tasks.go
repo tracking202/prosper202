@@ -192,6 +192,8 @@ var searchTasks = []searchTask{
 		Phrases: []string{"customer lifetime value"}},
 	{Run: "p202 ltv webhooks revive",
 		Phrases: []string{"revive webhook", "reactivate webhook", "webhook stopped sending", "resend missed webhook deliveries"}},
+	{Run: "p202 ltv webhooks rotate-secret",
+		Phrases: []string{"rotate webhook secret", "new webhook signing secret", "webhook secret leaked", "change webhook secret"}},
 	{Run: "p202 app report", Pages: []string{"Analyze › Mobile Apps"},
 		Phrases: []string{"app installs report", "skadnetwork postbacks"}},
 

@@ -485,8 +485,11 @@ final class LtvTables
 
     /**
      * Outbound webhook endpoints. Payloads are signed HMAC-SHA256 with
-     * webhook_secret; URLs are validated against SSRF (https only, no
+     * webhook_secret (Prosper202\Webhooks\StandardWebhook, and the older
+     * X-P202-Signature); URLs are validated against SSRF (https only, no
      * private/loopback/link-local hosts) at registration and dispatch.
+     * previous_secret is the one a rotation replaced, which also signs every
+     * delivery until previous_secret_expires_at (1.9.81).
      */
     public static function ltvWebhooks(): SchemaDefinition
     {
@@ -497,6 +500,8 @@ final class LtvTables
                 `user_id` mediumint(8) unsigned NOT NULL,
                 `webhook_url` varchar(500) NOT NULL,
                 `webhook_secret` varchar(255) NOT NULL,
+                `previous_secret` varchar(255) DEFAULT NULL,
+                `previous_secret_expires_at` int(10) unsigned DEFAULT NULL,
                 `webhook_headers` text DEFAULT NULL,
                 `subscribed_events` varchar(500) NOT NULL DEFAULT '',
                 `status` enum('active','disabled','dead') NOT NULL DEFAULT 'active',

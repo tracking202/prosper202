@@ -97,7 +97,7 @@ final class LtvSettingsPostedValuesIntegrationTest extends TestCase
         foreach (self::LTV_TABLES as $table) {
             self::q("DELETE FROM $table WHERE user_id = $u");
         }
-        self::q("UPDATE 202_users_pref SET user_ltv_customer_cparam = 0 WHERE user_id = $u");
+        self::q("UPDATE 202_users_pref SET user_ltv_customer_cparam = 0, lpo_bridge_config = NULL WHERE user_id = $u");
         $t = time();
         foreach ([self::HOOK => 'active', self::DEAD_HOOK => 'dead'] as $id => $status) {
             self::row('202_ltv_webhooks', [
@@ -145,6 +145,52 @@ final class LtvSettingsPostedValuesIntegrationTest extends TestCase
         $page = self::post(['action' => 'revive_webhook', 'webhook_id' => (string) self::DEAD_HOOK]);
         self::assertStringContainsString('Webhook #' . self::DEAD_HOOK . ' is active again', $page);
         self::assertSame(1, self::rows('202_ltv_webhooks', self::DEAD_HOOK_IS . "'active'"), $page);
+    }
+
+    public function testRotateReadsTheWebhookIdAsDeleteDoesAndShowsTheNewSecretOnce(): void
+    {
+        $secretOf = static function (): string {
+            $result = self::$db?->query('SELECT webhook_secret FROM 202_ltv_webhooks WHERE webhook_id = ' . self::HOOK);
+            self::assertInstanceOf(\mysqli_result::class, $result);
+
+            return (string) ($result->fetch_row()[0] ?? '');
+        };
+        $before = $secretOf();
+        $this->assertEachNotIdIsRefused(
+            'rotate_webhook',
+            'webhook_id',
+            self::HOOK,
+            'Pick the webhook whose secret to rotate from the list.',
+            fn (): bool => $secretOf() === $before
+        );
+
+        $page = self::post(['action' => 'rotate_webhook', 'webhook_id' => (string) self::HOOK]);
+        self::assertStringContainsString('Webhook #' . self::HOOK . ' has a new secret.', $page);
+        $after = $secretOf();
+        self::assertNotSame($before, $after);
+        self::assertStringStartsWith('whsec_', $after);
+        self::assertStringContainsString('<code>' . htmlspecialchars($after, ENT_QUOTES) . '</code>', $page);
+        self::assertSame(1, self::rows('202_ltv_webhooks', 'webhook_id = ' . self::HOOK
+            . " AND previous_secret = '" . self::$db?->real_escape_string($before) . "'"), 'the old one still signs');
+    }
+
+    /**
+     * The Landing Page Optimizer's webhook has no Rotate button, and a post
+     * that rotates it anyway is refused in the repository's words, its
+     * secret untouched; the other webhook keeps its button.
+     */
+    public function testTheOptimizersWebhookIsNotOfferedARotation(): void
+    {
+        self::q("UPDATE 202_users_pref SET lpo_bridge_config = '{\"webhook_id\":" . self::DEAD_HOOK
+            . "}' WHERE user_id = " . self::USER);
+        $button = static fn (int $id): string => "'rotate_webhook', 'webhook_id', " . $id . ',';
+
+        $page = self::post(['action' => 'rotate_webhook', 'webhook_id' => (string) self::DEAD_HOOK]);
+        self::assertStringContainsString('This is the Landing Page Optimizer\'s webhook', $page);
+        self::assertStringNotContainsString($button(self::DEAD_HOOK), $page);
+        self::assertStringContainsString($button(self::HOOK), $page);
+        self::assertSame(1, self::rows('202_ltv_webhooks', 'webhook_id = ' . self::DEAD_HOOK
+            . " AND webhook_secret = 's" . self::DEAD_HOOK . "' AND previous_secret IS NULL"), 'not rotated');
     }
 
     /**

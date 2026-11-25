@@ -223,6 +223,25 @@ try {
                             : 'Webhook #' . $reviveId . ' was already active.';
                         break;
 
+                    case 'rotate_webhook':
+                        $rotateId = ltv_settings_posted_id('webhook_id', 'Pick the webhook whose secret to rotate from the list.');
+                        try {
+                            $rotated = $webhooksRepo->rotateSecret(
+                                $userId,
+                                $rotateId,
+                                \Prosper202\Ltv\MysqlWebhookRepository::ROTATION_OVERLAP_DEFAULT_SECONDS,
+                                time()
+                            );
+                        } catch (\Prosper202\Ltv\RecordNotFoundException) {
+                            throw new \RuntimeException('That webhook is not one of this account\'s.');
+                        }
+                        $newWebhookSecret = $rotated['secret'];
+                        $notice = 'Webhook #' . $rotateId . ' has a new secret. For the next '
+                            . intdiv(\Prosper202\Ltv\MysqlWebhookRepository::ROTATION_OVERLAP_DEFAULT_SECONDS, 3600)
+                            . ' hours its deliveries are signed by the old secret too, so give the receiver the new one'
+                            . ' before then.';
+                        break;
+
                     case 'add_integration':
                         $integrationsRepo->create(
                             $userId,
@@ -270,6 +289,9 @@ try {
 
     $fieldDefinitions = $fieldsRepo->list($userId);
     $webhooks = $webhooksRepo->list($userId);
+    // The optimizer's webhook is not rotated here (rotateSecret() refuses it).
+    $optimizerWebhookId = $webhooks === [] ? null : $webhooksRepo->pairingWebhookOf($userId);
+    $rotateHours = intdiv(\Prosper202\Ltv\MysqlWebhookRepository::ROTATION_OVERLAP_DEFAULT_SECONDS, 3600);
     $missedDeliveries = in_array('dead', array_column($webhooks, 'status'), true)
         ? $webhooksRepo->missedCounts($userId, time())
         : [];
@@ -307,7 +329,9 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
     <?php echo p202_ltv_flash('warn',
         '<strong>Webhook signing secret (shown once — store it now):</strong> '
         . '<code>' . $esc($newWebhookSecret) . '</code><br>'
-        . '<small>Deliveries are signed with <code>X-P202-Signature: sha256=HMAC-SHA256(body, secret)</code>.</small>'); ?>
+        . '<small>Deliveries are signed the Standard Webhooks way (<code>webhook-id</code>, <code>webhook-timestamp</code>,'
+        . ' <code>webhook-signature</code>): give this secret to a Standard Webhooks library to verify them. Through'
+        . ' 1.9.82 they also carry <code>X-P202-Signature: sha256=HMAC-SHA256(body, secret)</code>.</small>'); ?>
 <?php } ?>
 <?php if ($error !== null) { ?>
     <?php echo p202_ltv_flash('error', $esc($error)); ?>
@@ -447,6 +471,8 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
                     $reviveConfirm = 'Revive webhook #' . $hookId . '? It is sent new events again, and '
                         . ($missedDeliveries[$hookId] ?? 0) . ' delivery(ies) from the last 7 days'
                         . ' that it did not get are sent again, oldest first.';
+                    $rotateConfirm = 'Give webhook #' . $hookId . ' a new signing secret? The old one still signs'
+                        . ' its deliveries for ' . $rotateHours . ' hours, then stops.';
                 ?>
                     <tr>
                         <td class="text-secondary">#<?php echo (int) $webhook['webhook_id']; ?></td>
@@ -469,6 +495,12 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
                             <?php } ?>
                             <button type="button" class="btn btn-secondary btn-sm"
                                 onclick="ltvWebhookLog(<?php echo (int) $webhook['webhook_id']; ?>);"><i class="bi bi-list-ul"></i> Log</button>
+                            <?php if ($optimizerWebhookId !== $hookId) { ?>
+                                <button type="button" class="btn btn-secondary btn-sm" onclick="ltvSettingsAction(
+                                    'rotate_webhook', 'webhook_id', <?php echo $hookId; ?>,
+                                    <?php echo $esc(json_encode($rotateConfirm)); ?>);">
+                                    <i class="bi bi-key"></i> Rotate secret</button>
+                            <?php } ?>
                             <button type="button" class="btn btn-sm btn-outline-danger"
                                 onclick="ltvSettingsDelete('delete_webhook', 'webhook_id', <?php echo (int) $webhook['webhook_id']; ?>, 'Delete this webhook and its delivery history?');">Delete</button>
                         </td>

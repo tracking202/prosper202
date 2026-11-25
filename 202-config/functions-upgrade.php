@@ -5570,6 +5570,9 @@ class UPGRADE
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
+                // A rotated LTV webhook secret signs alongside the new one
+                // until it expires (previous_secret, previous_secret_expires_at).
+                \Prosper202\Database\Tables\LtvTables::ltvWebhooks(),
             ]);
             if ($step_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.81'") !== false) {
