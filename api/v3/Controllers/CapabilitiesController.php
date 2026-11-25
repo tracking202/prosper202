@@ -199,6 +199,12 @@ class CapabilitiesController
                     // together. A sync writes a redirector this way when
                     // the target advertises it.
                     'rotator_with_rules' => true,
+                    // GET /reports/payout?aff_campaign_id=: a campaign's
+                    // default payout under the reports' rules (reports:read,
+                    // masked for a role without access_to_campaign_data), so
+                    // `report losers|winners|breakeven` and `campaign
+                    // optimize` run for a role without Setup.
+                    'report_payout' => true,
                     // App measurement. `app_platforms` is what the registry
                     // (/apps) accepts a registration for. `app_postbacks` is
                     // one entry per platform-signed postback protocol the
@@ -447,6 +453,12 @@ class CapabilitiesController
             return $this->withinGrace($customerKey);
         }
         return $verdict;
+    }
+
+    /** Whether the last cliAccess() refused for want of an answer from Tracking202 (cliRefusal()'s first case). */
+    public function licenceWasUnconfirmed(): bool
+    {
+        return $this->licenceUnconfirmed;
     }
 
     /** The CLI gate's refusal: the licence could not be checked, or the key is not an active licence. */

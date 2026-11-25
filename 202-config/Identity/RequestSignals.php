@@ -194,12 +194,18 @@ final class RequestSignals
             : null;
     }
 
-    public static function requestIsHttps(array $server): bool
+    /**
+     * The p202vid cookie's Secure flag: p202_request_is_https(), the answer
+     * every other cookie takes, which believes a forwarded scheme only from
+     * a proxy listed in P202_TRUSTED_PROXIES.
+     *
+     * @param array<string, mixed> $server
+     */
+    public static function requestIsHttps(array $server, ?\Prosper202\Http\TrustedProxies $trusted = null): bool
     {
-        $https = $server['HTTPS'] ?? '';
+        require_once dirname(__DIR__) . '/request-https.php';
 
-        return (is_string($https) && $https !== '' && strtolower($https) !== 'off')
-            || (($server['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+        return p202_request_is_https($server, $trusted);
     }
 
     private static function browserId(mixed $value): ?string

@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Controller;
+use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
+use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
+use Prosper202\Setup\AdvancedPageTextAds;
 
 class LandingPagesController extends Controller
 {
@@ -98,6 +102,45 @@ class LandingPagesController extends Controller
         $type = array_key_exists('landing_page_type', $clean) ? $clean['landing_page_type'] : ($current['landing_page_type'] ?? 0);
 
         return $field === 'aff_campaign_id' && (int) $type === 1;
+    }
+
+    /**
+     * An advanced page is not made simple while text ads of type 1 name it:
+     * Get Links offers those only on an advanced page's links, so the change
+     * left each one offered nowhere and answered 200 (AdvancedPageTextAds).
+     * Setup › Landing Pages refuses the same change. A page already simple
+     * is not refused for ads stored on it before #260 checked them.
+     */
+    #[\Override]
+    protected function assertLinksOwned(array $clean, ?array $current = null): void
+    {
+        parent::assertLinksOwned($clean, $current);
+
+        $madeSimple = $current !== null && array_key_exists('landing_page_type', $clean)
+            && (int) $clean['landing_page_type'] === 0 && (int) ($current['landing_page_type'] ?? 0) === 1;
+        if (!$madeSimple) {
+            return;
+        }
+        $pageId = (int) $current['landing_page_id'];
+        try {
+            $ads = (new AdvancedPageTextAds(new Connection($this->db)))->naming($this->userId, $pageId);
+        } catch (QueryException $e) {
+            throw new DatabaseException('Text ad lookup failed', $e);
+        }
+        if ($ads === []) {
+            return;
+        }
+        $count = count($ads);
+        throw new ValidationException('Validation failed', [
+            'landing_page_type' => "landing page $pageId is advanced and $count text "
+                . ($count === 1 ? 'ad' : 'ads') . ' of text_ad_type 1 name it (text_ad_id '
+                . AdvancedPageTextAds::ids($ads) . '). '
+                . 'Get Links offers those ads only on an advanced page, '
+                . 'so making it simple would leave them offered nowhere. '
+                . 'Point each at another advanced page (PUT /text-ads/{id} with its landing_page_id) '
+                . 'or make it a campaign ad (text_ad_type 0 with aff_campaign_id), then change the type. '
+                . "GET /text-ads?filter[landing_page_id]=$pageId&filter[text_ad_type]=1 lists them.",
+        ]);
     }
 
     #[\Override]

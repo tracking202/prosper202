@@ -15,6 +15,19 @@ use Prosper202\Click\TrackingLinkVariables;
  */
 final class TrackingLinkPartsTest extends TestCase
 {
+    /** The TLS-terminating proxy, listed in P202_TRUSTED_PROXIES (the child process inherits it). */
+    private const PROXY = '10.0.0.1';
+
+    protected function setUp(): void
+    {
+        putenv('P202_TRUSTED_PROXIES=' . self::PROXY);
+    }
+
+    protected function tearDown(): void
+    {
+        putenv('P202_TRUSTED_PROXIES');
+    }
+
     private static function root(): string
     {
         return dirname(__DIR__, 2);
@@ -39,7 +52,7 @@ final class TrackingLinkPartsTest extends TestCase
     {
         $server = [
             'SERVER_NAME' => 'internal', 'SERVER_PORT' => '8080', 'DOCUMENT_ROOT' => self::root(),
-            'HTTP_HOST' => 'proxy.example:9443', 'HTTP_X_FORWARDED_PROTO' => 'https',
+            'HTTP_HOST' => 'proxy.example:9443', 'HTTP_X_FORWARDED_PROTO' => 'https', 'REMOTE_ADDR' => self::PROXY,
         ];
         self::assertSame('proxy.example:9443', TrackingBaseUrl::domainForResponse('', $server));
         self::assertSame('https://proxy.example:9443/', TrackingBaseUrl::buildForResponse('', $server, self::root()));
@@ -98,7 +111,7 @@ final class TrackingLinkPartsTest extends TestCase
      */
     public function testTheSavedSchemeIsTheOneTheLinksTake(string $stored): void
     {
-        $plain = ['HTTP_HOST' => 'p202.example', 'SERVER_PORT' => '80', 'DOCUMENT_ROOT' => self::root()];
+        $plain = ['HTTP_HOST' => 'p202.example', 'SERVER_PORT' => '80', 'DOCUMENT_ROOT' => self::root(), 'REMOTE_ADDR' => self::PROXY];
         foreach ([$plain, ['HTTP_X_FORWARDED_PROTO' => 'https'] + $plain] as $server) {
             $base = TrackingBaseUrl::buildForResponse($stored, $server, self::root());
             $request = isset($server['HTTP_X_FORWARDED_PROTO']) ? 'https' : 'http';
@@ -136,7 +149,7 @@ final class TrackingLinkPartsTest extends TestCase
         $docRoot = dirname(self::root());
         $plain = [
             'HTTP_HOST' => 'proxy.example:9443', 'SERVER_NAME' => 'internal', 'SERVER_PORT' => '8080',
-            'DOCUMENT_ROOT' => $docRoot,
+            'DOCUMENT_ROOT' => $docRoot, 'REMOTE_ADDR' => self::PROXY,
         ];
         $cases = [
             'nothing saved, plain' => ['', $plain],

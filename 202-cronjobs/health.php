@@ -169,7 +169,18 @@ try {
     if ($unsavedWarning !== null) {
         $response['recommendations'][] = $unsavedWarning;
     }
-    
+
+    // A proxy nobody listed in P202_TRUSTED_PROXIES: its address, for the
+    // roles that manage the install (any signed-in user reads this page).
+    if ($seesEveryAccount) {
+        $proxyWarning = \Prosper202\Http\UnlistedProxySighting::warning(
+            \Prosper202\Http\UnlistedProxySighting::read(ROOT_PATH)
+        );
+        if ($proxyWarning !== null) {
+            $response['recommendations'][] = $proxyWarning;
+        }
+    }
+
     echo json_encode($response, JSON_PRETTY_PRINT);
     
 } catch (Exception $e) {
