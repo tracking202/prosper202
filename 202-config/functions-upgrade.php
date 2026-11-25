@@ -5629,12 +5629,17 @@ class UPGRADE
             // The Shopify refund tables, which a database upgraded by an
             // early 1.9.80 build can lack (Prosper202\PaymentNotification\
             // Shopify\SettlementSchema), reconciled on the way up.
+            //
+            // The re-click backfill's stopped_at, when a stop began, which
+            // Settings and the cron output show (Prosper202\Click\ReClickBackfill).
+            //
             // The Shopify webhook secret moves into the sealed integration
             // secrets store (0H6C), which this makes, and its plaintext column goes.
             $secrets_ok = _upgrade_shopify_secret_into_store();
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
+                \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
                 // The sealed integration secrets store and its record of changes (0H6C).
                 \Prosper202\Database\Tables\SecretTables::integrationSecrets(),
                 \Prosper202\Database\Tables\SecretTables::integrationSecretEvents(),

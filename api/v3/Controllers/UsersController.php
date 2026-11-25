@@ -1083,8 +1083,17 @@ class UsersController
      *   (from currency, to currency, amount) => the exchange service's
      *   answer, the amount in the new account currency; null asks the live
      *   service
+     * @param (callable(): void)|null $ltvSettingsGate refuses a caller who may
+     *   not change LTV › Settings (LtvAccess's settings_write); a change to one
+     *   of its values without a gate is refused, never let through
      */
-    public function updatePreferences(int $userId, array $payload, ?callable $rate = null, ?int $actorUserId = null): array
+    public function updatePreferences(
+        int $userId,
+        array $payload,
+        ?callable $rate = null,
+        ?callable $ltvSettingsGate = null,
+        ?int $actorUserId = null
+    ): array
     {
         // PreferenceRules::validate() refuses them too; refused here first,
         // before anything is read, like every other body.
@@ -1097,7 +1106,22 @@ class UsersController
         if ($payload === []) {
             throw new ValidationException('No valid fields to update');
         }
-        [$writes, $echoErrors] = ServedPreferences::withoutEchoes($payload, $this->servedPreferences($current, $userId));
+        $served = $this->servedPreferences($current, $userId);
+        [$writes, $echoErrors] = ServedPreferences::withoutEchoes($payload, $served);
+        // Asked of a value that would change, so a GET body sent back whole
+        // still passes for a role LTV › Settings refuses.
+        foreach (\Api\V3\Support\LtvAccess::PREFERENCES as $key) {
+            if (
+                array_key_exists($key, $writes)
+                && !\Api\V3\Support\PayloadKeys::same($writes[$key], $served[$key] ?? null)
+            ) {
+                if ($ltvSettingsGate === null) {
+                    throw new \LogicException('A change to the LTV › Settings preferences needs its permission check');
+                }
+                $ltvSettingsGate();
+                break;
+            }
+        }
         [$clean, $errors] = PreferenceRules::validate($writes, self::SUPPORTED_CURRENCIES);
         $errors += $echoErrors;
         if ($errors !== []) {

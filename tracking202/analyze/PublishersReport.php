@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tracking202\Analyze;
 
 use Api\V3\Controllers\ReportsController;
+use Prosper202\Report\TsvCell;
 
 /**
  * Analyze › Publishers' figures, for the page and its download: GET
@@ -106,7 +107,7 @@ final class PublishersReport
     public static function exportLines(array $report): array
     {
         $money = $report['money'] ?? ['currency' => '', 'others' => ''];
-        $lines = [implode("\t", ['Publisher', 'Link', 'Campaign', ...array_keys(self::METRICS), 'Currency', 'Other currencies in period'])];
+        $lines = [TsvCell::line(['Publisher', 'Link', 'Campaign', ...array_keys(self::METRICS), 'Currency', 'Other currencies in period'])];
         $line = static function (string $publisher, string $link, string $campaign, array $row) use ($money): string {
             $cells = [self::cell($publisher), self::cell($link), self::cell($campaign)];
             foreach (self::METRICS as $key) {
@@ -117,7 +118,7 @@ final class PublishersReport
             $cells[] = self::cell($money['currency']);
             $cells[] = self::cell($money['others']);
 
-            return implode("\t", $cells);
+            return TsvCell::line($cells);
         };
         foreach ($report['publishers'] as $publisher) {
             foreach ($publisher['rows'] as $row) {
@@ -136,14 +137,9 @@ final class PublishersReport
         return $lines;
     }
 
-    /** A text cell: one line, no tab, and never read by a spreadsheet as a formula. */
+    /** A text cell: one line, no tab, never read by a spreadsheet as a formula, and no space at either end. */
     private static function cell(string $text): string
     {
-        $text = trim((string) preg_replace('/[\t\r\n]+/', ' ', $text));
-        if ($text !== '' && str_contains('=+-@', $text[0])) {
-            $text = "'" . $text;
-        }
-
-        return $text;
+        return TsvCell::text(trim($text));
     }
 }

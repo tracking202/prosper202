@@ -682,12 +682,13 @@ final class AdministrationController
 
     /**
      * The URLs the Integrations page tells you to paste into each network,
-     * on this install's tracking base (TrackingBaseUrl::buildForResponse():
-     * user 1's tracking domain, or the host this request used, and the
-     * install's path — the base the page and the API's tracker links use;
-     * the server's own name and port, which this used, are an address no
-     * network reaches behind a proxy), and whether the caller has stored the
-     * secret each one is checked with. Never the secret.
+     * on the caller's tracking base (TrackingBaseUrl::buildForResponse():
+     * the caller's own tracking domain, as the page reads the signed-in
+     * user's, or the host this request used, and the install's path — the
+     * base the page and the API's tracker links use; the server's own name
+     * and port are an address no network reaches behind a proxy), and
+     * whether the caller has stored the secret each one is checked with.
+     * Never the secret.
      *
      * @param array<string, mixed>|null $server the request ($_SERVER)
      * @return array{data: array<string, mixed>}
@@ -695,7 +696,7 @@ final class AdministrationController
     public function integrations(?array $server = null): array
     {
         return ['data' => $this->guard(function () use ($server): array {
-            $domain = $this->one('SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = ? LIMIT 1', 'i', [self::INSTALL_OWNER]);
+            $domain = $this->one('SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = ? LIMIT 1', 'i', [$this->userId]);
             $base = TrackingBaseUrl::buildForResponse((string) ($domain['user_tracking_domain'] ?? ''), $server ?? $_SERVER, dirname(__DIR__, 3));
             $prefs = $this->one(
                 'SELECT cb_key, cb_verified, jvzoo_ipn_secret_key, zaxaa_api_signature, user_slack_incoming_webhook,

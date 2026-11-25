@@ -167,6 +167,19 @@ final class IntegrationSecretStore
     }
 
     /**
+     * A digest of the row as stored, read without opening it; null when none
+     * is stored. Every write changes it (each seals under a fresh data key),
+     * so a settings form can carry it as the version of what it showed.
+     */
+    public function version(int $userId, string $name): ?string
+    {
+        self::checkName($name);
+        $row = $this->row($userId, $name, false);
+
+        return $row === null ? null : hash('sha256', serialize(array_values($row)));
+    }
+
+    /**
      * The account's $name, opened; null when none is stored.
      *
      * @throws UnreadableSecret when one is stored and cannot be opened

@@ -116,7 +116,7 @@ final class PreferenceSecretsAreNotServedIntegrationTest extends TestCase
     public function testTheShopifySecretIsWrittenSealedAndEachChangeRecorded(): void
     {
         $users = new UsersController(self::$db);
-        $answer = $users->updatePreferences(self::USER, ['shopify_webhook_secret' => ' it-shopify-rotated-by-api '], null, 1)['data'];
+        $answer = $users->updatePreferences(self::USER, ['shopify_webhook_secret' => ' it-shopify-rotated-by-api '], actorUserId: 1)['data'];
 
         self::assertSame(['stored' => true], $answer['shopify_webhook_secret']);
         self::assertSame('it-shopify-rotated-by-api', StoredShopifySecret::of(self::$db, self::USER), 'trimmed, as the endpoint reads it');
@@ -125,7 +125,7 @@ final class PreferenceSecretsAreNotServedIntegrationTest extends TestCase
         self::assertSame([['replaced', 'api', '1']], self::$db->query("SELECT action, via, actor_user_id FROM 202_integration_secret_events"
             . ' WHERE user_id = ' . self::USER . " AND action <> 'set' ORDER BY event_id")->fetch_all(MYSQLI_NUM));
 
-        $cleared = $users->updatePreferences(self::USER, ['shopify_webhook_secret' => ''], null, 1)['data'];
+        $cleared = $users->updatePreferences(self::USER, ['shopify_webhook_secret' => ''], actorUserId: 1)['data'];
         self::assertSame(['stored' => false], $cleared['shopify_webhook_secret']);
         self::assertNull(StoredShopifySecret::of(self::$db, self::USER));
         self::assertSame('cleared', (string) self::$db->query('SELECT action FROM 202_integration_secret_events WHERE user_id = '

@@ -50,6 +50,9 @@ final class AccountAdministrationIntegrationTest extends TestCase
     /** @var array<string, mixed>|null user 1's retention settings before the test */
     private ?array $ownerBefore = null;
 
+    /** The admin's tracking domain before the test. */
+    private ?string $adminDomainBefore = null;
+
     /** @var array<string, list<int>> table => the user rows this class inserted, removed afterwards */
     private static array $created = ['202_users' => [], '202_users_pref' => []];
 
@@ -129,6 +132,8 @@ final class AccountAdministrationIntegrationTest extends TestCase
         }
         self::q("UPDATE 202_users SET user_timezone = 'UTC' WHERE user_id = " . self::ADMIN);
         $this->ownerBefore = self::row('SELECT user_auto_database_optimization_days, user_delete_data_before, user_delete_data_clickid, maxmind_isp, user_tracking_domain FROM 202_users_pref WHERE user_id = 1');
+        $admin = self::row('SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = ' . self::ADMIN);
+        $this->adminDomainBefore = (string) ($admin['user_tracking_domain'] ?? '');
 
         foreach (AdministrationController::CLICK_DATA_TABLES as $table) {
             self::q("DELETE FROM `$table` WHERE click_id < 1000");
@@ -169,6 +174,13 @@ final class AccountAdministrationIntegrationTest extends TestCase
             $isp = (int) $this->ownerBefore['maxmind_isp'];
             $domain = (string) $this->ownerBefore['user_tracking_domain'];
             $stmt->bind_param('iiiis', $days, $cutoff, $marker, $isp, $domain);
+            self::assertTrue($stmt->execute());
+            $stmt->close();
+        }
+        if ($this->adminDomainBefore !== null) {
+            $stmt = self::$db->prepare('UPDATE 202_users_pref SET user_tracking_domain = ? WHERE user_id = ?');
+            $admin = self::ADMIN;
+            $stmt->bind_param('si', $this->adminDomainBefore, $admin);
             self::assertTrue($stmt->execute());
             $stmt->close();
         }
@@ -451,9 +463,16 @@ final class AccountAdministrationIntegrationTest extends TestCase
         }
     }
 
+    /**
+     * The URLs are on the caller's own tracking domain, as the Integrations
+     * page builds them on the signed-in user's: user 1 holds another domain
+     * here, which the URLs were built on before.
+     */
     public function testIntegrationsServeTheirUrlsOnTheTrackingBaseAndNeverTheSecrets(): void
     {
-        self::q("UPDATE 202_users_pref SET user_tracking_domain = 'track.example.com' WHERE user_id = 1");
+        $domain = 'UPDATE 202_users_pref SET user_tracking_domain = ';
+        self::q($domain . "'owner.example.net' WHERE user_id = 1");
+        self::q($domain . "'track.example.com' WHERE user_id = " . self::ADMIN);
         self::q("UPDATE 202_users_pref SET cb_key = 'cb-secret-xyz', cb_verified = 1, jvzoo_ipn_secret_key = '', zaxaa_api_signature = NULL WHERE user_id = " . self::ADMIN);
         $answer = $this->admin()->integrations(['HTTPS' => 'on', 'SERVER_NAME' => 'ignored.example', 'SERVER_PORT' => 443, 'DOCUMENT_ROOT' => dirname(__DIR__, 3)])['data'];
         self::assertSame('https://track.example.com/', $answer['base_url']);
@@ -527,11 +546,12 @@ final class AccountAdministrationIntegrationTest extends TestCase
             'DOCUMENT_ROOT' => dirname(__DIR__, 3)])['data']['integrations'], null, 'integration')['shopify'];
         self::assertSame([false, null, null], [$none['secret_stored'], $none['secret_set_at'], $none['previous_secret_expires_at']]);
 
-        // With no domain stored, the URLs go back to the caller to paste, as
-        // the Integrations page shows them: on the host the request used, not
-        // the server's own name and port (behind a proxy, an address no
-        // network reaches; TrackingBaseUrl::domainForResponse()).
-        self::q("UPDATE 202_users_pref SET user_tracking_domain = '' WHERE user_id = 1");
+        // With no domain stored by the caller, the URLs go back to the caller
+        // to paste, as the Integrations page shows them: on the host the
+        // request used, not user 1's domain and not the server's own name and
+        // port (behind a proxy, an address no network reaches;
+        // TrackingBaseUrl::domainForResponse()).
+        self::q($domain . "'' WHERE user_id = " . self::ADMIN);
         try {
             $answer = $this->admin()->integrations([
                 'HTTP_HOST' => 'proxy.example:9443', 'HTTPS' => 'on', 'SERVER_NAME' => 'internal', 'SERVER_PORT' => 8080,
@@ -541,7 +561,7 @@ final class AccountAdministrationIntegrationTest extends TestCase
             $byKey = array_column($answer['integrations'], null, 'integration');
             self::assertSame('https://proxy.example:9443/tracking202/static/cb202.php', $byKey['clickbank']['url']);
         } finally {
-            self::q("UPDATE 202_users_pref SET user_tracking_domain = 'track.example.com' WHERE user_id = 1");
+            self::q($domain . "'track.example.com' WHERE user_id = " . self::ADMIN);
         }
     }
 

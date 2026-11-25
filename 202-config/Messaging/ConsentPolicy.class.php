@@ -6,7 +6,9 @@
 // Every consent change (and a sign-in that first places the account in the
 // EU/UK) moves 202_users_pref.consent_version up in the same statement, to
 // at least the current Unix time, so a database restored from a backup never
-// reuses a version the receiver already holds:
+// reuses a version the receiver already holds once the clock has passed it
+// (CENTRAL-API.md says what the receiver does with a lower one;
+// ConsentVersionWritersTest keeps this the one writer):
 //  - the change is undelivered while consent_version > consent_acked_version,
 //    and only the receiver's acknowledgement of a version moves the latter;
 //  - analytics_revoked_version is the version at which analytics last
