@@ -6,10 +6,20 @@ namespace Prosper202\Click;
 
 /**
  * A click id read from untrusted input: a cookie, a query parameter, a
- * network's tracking code, a line of an uploaded report.
+ * network's tracking code, a line of an uploaded report; and where a click id
+ * came from.
  */
 final class ClickId
 {
+    /**
+     * The first id the hosted edge hands out. Every id from here up is the
+     * edge's (its allocators from here, their fallback from 90,000,000,000),
+     * so a click's origin is read from its id alone, and the install's own
+     * counter never issues one (MysqlClickRepository::allocateClickId()).
+     * Eleven digits, thirteen as a public id, well under 2^53.
+     */
+    public const int EDGE_FIRST = 10_000_000_000;
+
     private function __construct()
     {
     }
@@ -35,5 +45,14 @@ final class ClickId
         $id = (int) $value;
 
         return $id > 0 && (string) $id === $value ? $id : null;
+    }
+
+    /**
+     * Whether the click id is one the edge handed out. The one place the
+     * boundary is tested (ClickIdBoundaryIsOneFunctionTest).
+     */
+    public static function isEdge(int $clickId): bool
+    {
+        return $clickId >= self::EDGE_FIRST;
     }
 }

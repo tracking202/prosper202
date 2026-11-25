@@ -300,11 +300,8 @@ $mysql['city_id'] = $db->real_escape_string((string) $city_id);
 
 
 if ($user_row['maxmind_isp'] == '1') {
-	$IspData = getIspData($ip_address);
-	if (is_string($IspData)) {
-		$IspDataParts = explode(',', $IspData);
-		$IspData = $IspDataParts[0];
-	}
+	// Recorded as a redirector's ISP rule reads it (Criterion::visitorIsp()).
+	$IspData = \Prosper202\Rotator\Criterion::visitorIsp((string) getIspData($ip_address));
 	$isp_id = $locationRepo->findOrCreateIsp($IspData);
 	$mysql['isp_id'] = $db->real_escape_string((string) $isp_id);
 } else {

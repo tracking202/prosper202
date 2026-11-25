@@ -232,13 +232,15 @@ function wpUpdateLp($db, $user): array {
         // A page of another account, or none: the update of nothing answered
         // saved. Its affected rows cannot say so, since an unchanged page
         // answers 0 as well.
-        $pageSql = "SELECT 1 FROM 202_landing_pages WHERE landing_page_id_public = " . $landingPageIdPublic
+        $pageSql = "SELECT landing_page_id, landing_page_type FROM 202_landing_pages"
+            . " WHERE landing_page_id_public = " . $landingPageIdPublic
             . " AND user_id = '" . $mysql['user_id'] . "'";
         $pageResult = $db->query($pageSql);
         if ($pageResult === false) {
             return legacy_api_database_error($db);
         }
-        if ($pageResult->num_rows === 0) {
+        $pageRows = $pageResult->fetch_all(MYSQLI_ASSOC);
+        if ($pageRows === []) {
             return ['error' => '1'];
         }
 
@@ -276,6 +278,25 @@ function wpUpdateLp($db, $user): array {
                 $aff_campaign_id = $result->fetch_assoc();
                 if (!is_array($aff_campaign_id)) {
                     return legacy_api_database_error($db);
+                }
+                // An advanced page is not made simple while text ads of type 1 name it:
+                // Get Links offers those only on an advanced page (AdvancedPageTextAds).
+                $pageAds = new \Prosper202\Setup\AdvancedPageTextAds(new \Prosper202\Database\Connection($db));
+                foreach ($pageRows as $pageRow) {
+                    if ((int) $pageRow['landing_page_type'] !== 1) {
+                        continue;
+                    }
+                    try {
+                        $ads = $pageAds->naming((int) $user, (int) $pageRow['landing_page_id']);
+                    } catch (\Prosper202\Database\Exceptions\QueryException) {
+                        return legacy_api_database_error($db);
+                    }
+                    if ($ads !== []) {
+                        return ['error' => '1', 'msg' => 'This is an advanced landing page whose links offer text ads ('
+                            . \Prosper202\Setup\AdvancedPageTextAds::names($ads) . '); a simple page offers none. '
+                            . 'In Prosper202, Setup > Text Ads, point them at another advanced page '
+                            . 'or at a campaign first.'];
+                    }
                 }
                 $sql = "UPDATE `202_landing_pages` 
 					SET 

@@ -45,14 +45,13 @@ use Prosper202\Http\RequestHost;
  * The host is the Host header, validated (RequestHost); when it is not a
  * host, the server's own name, as build() falls back to it. The scheme is
  * p202_request_is_https(), the answer the session cookie's Secure flag and
- * build() already take, which believes X-Forwarded-Proto from any peer —
- * the stance VisitorIp takes on the forwarding headers, for the same
- * reason: an install behind a TLS-terminating proxy or CDN sees plain HTTP,
- * and not believing the proxy would hand every HTTPS visitor an http://
- * redirect (rtr.php's cloaked redirect already read X-Forwarded-Proto for
- * that reason). A false claim chooses only the scheme of the claimant's own
- * response, on the host it asked for; the host is never taken from a
- * forwarded header (no X-Forwarded-Host).
+ * build() already take, which believes X-Forwarded-Proto from a proxy
+ * listed in P202_TRUSTED_PROXIES: an install behind a TLS-terminating proxy
+ * or CDN sees plain HTTP, and not believing the proxy would hand every HTTPS
+ * visitor an http:// redirect. Behind a proxy nobody listed the scheme is
+ * the web server's own (the Docker image maps the proxy's header to HTTPS
+ * itself). The host is never taken from a forwarded header (no
+ * X-Forwarded-Host).
  */
 final class TrackingBaseUrl
 {
