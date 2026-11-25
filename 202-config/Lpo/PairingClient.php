@@ -256,9 +256,7 @@ final class PairingClient
         if ($jsonBody !== null) {
             $options[CURLOPT_POSTFIELDS] = $jsonBody;
         }
-        curl_setopt_array($ch, $options);
-
-        $responseBody = \Prosper202\Http\FixedHostRoute::exec($ch);
+        $responseBody = \Prosper202\Http\FixedHostRoute::exec($ch, $options);
         $statusCode = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         $curlError = curl_error($ch);
         curl_close($ch);

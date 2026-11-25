@@ -290,8 +290,10 @@ final class AiWatchers
             $raw .= $chunk;
             return strlen($chunk);
         };
-        if (!curl_setopt_array($ch, $options)) {
-            error_log('p202: AI watchers: curl refused an option: ' . curl_error($ch));
+        try {
+            \Prosper202\Http\CurlOptions::set($ch, $options);
+        } catch (\Prosper202\Http\CurlOptionRefused $e) {
+            error_log('p202: AI watchers: ' . $e->getMessage());
             $this->unreachable = true;
             return [0, null];
         }

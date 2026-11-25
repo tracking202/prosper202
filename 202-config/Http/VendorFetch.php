@@ -130,13 +130,14 @@ final class VendorFetch
 
             return strlen($chunk);
         };
-        if (!curl_setopt_array($ch, $options)) {
-            $error = curl_error($ch);
+        try {
+            CurlOptions::set($ch, $options);
+        } catch (CurlOptionRefused $e) {
             curl_close($ch);
 
-            return ['status' => 0, 'body' => null, 'redirect' => null, 'error' => 'curl refused an option: ' . $error];
+            return ['status' => 0, 'body' => null, 'redirect' => null, 'error' => $e->getMessage()];
         }
-        $ok = FixedHostRoute::exec($ch, self::MAX_BYTES);
+        $ok = FixedHostRoute::exec($ch, [], self::MAX_BYTES);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         $redirect = curl_getinfo($ch, CURLINFO_REDIRECT_URL);
         $error = curl_error($ch);

@@ -334,10 +334,10 @@ final class LandingPageCheck
 
             return strlen($chunk);
         };
-        if (!curl_setopt_array($ch, $options)) {
-            $error = curl_error($ch);
-
-            return ['error' => 'curl refused an option: ' . $error] + $none;
+        try {
+            \Prosper202\Http\CurlOptions::set($ch, $options);
+        } catch (\Prosper202\Http\CurlOptionRefused $e) {
+            return ['error' => $e->getMessage()] + $none;
         }
         $ok = curl_exec($ch);
         $errno = curl_errno($ch);

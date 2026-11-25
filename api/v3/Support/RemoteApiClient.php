@@ -486,11 +486,12 @@ class RemoteApiClient
 
             return strlen($chunk);
         };
-        if (!curl_setopt_array($ch, $options)) {
-            $error = curl_error($ch);
+        try {
+            \Prosper202\Http\CurlOptions::set($ch, $options);
+        } catch (\Prosper202\Http\CurlOptionRefused $e) {
             curl_close($ch);
 
-            return self::noAnswer('curl refused an option' . ($error !== '' ? ': ' . $error : ''));
+            return self::noAnswer($e->getMessage());
         }
         $ok = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);

@@ -81,7 +81,7 @@ final class IpqsClient
         $body = '';
         $tooLong = false;
         $protocols = str_starts_with($url, 'http://') ? CURLPROTO_HTTP : CURLPROTO_HTTPS;
-        $set = curl_setopt_array($ch, [
+        $options = [
             CURLOPT_URL => $url,
             CURLOPT_HTTPGET => true,
             CURLOPT_PROTOCOLS => $protocols,
@@ -106,9 +106,12 @@ final class IpqsClient
 
                 return strlen($chunk);
             },
-        ]);
-        if ($set !== true) {
-            throw new IpqsLookupFailed('curl refused an option of the lookup');
+        ];
+        try {
+            \Prosper202\Http\CurlOptions::set($ch, $options);
+        } catch (\Prosper202\Http\CurlOptionRefused $e) {
+            throw new IpqsLookupFailed('curl refused an option of the lookup: '
+                . \Prosper202\Http\CurlOptions::name($e->option), 0, $e);
         }
         $ok = \Prosper202\Http\FixedHostRoute::exec($ch);
         $errno = curl_errno($ch);
