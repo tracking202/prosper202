@@ -175,7 +175,9 @@ final class AttributionExportsIntegrationTest extends TestCase
         $this->scenario();
         $a = $this->api()->createExport(['webhook_url' => 'https://8.8.8.8/hook'])['data']['webhook_secret'];
         $b = $this->api()->createExport(['webhook_url' => 'https://8.8.8.8/hook'])['data']['webhook_secret'];
-        self::assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $a);
+        // A Standard Webhooks secret: whsec_ and the base64 of 32 random bytes.
+        self::assertMatchesRegularExpression('/^whsec_[A-Za-z0-9+\/]{43}=$/D', $a);
+        self::assertSame(32, strlen(\Prosper202\Webhooks\StandardWebhook::keyFor($a)));
         self::assertNotSame($a, $b);
     }
 
@@ -446,6 +448,7 @@ final class AttributionExportsIntegrationTest extends TestCase
         yield 'decimal-spelled webhook' => [['webhook_url' => 'https://2130706433/h'], 'webhook_url'];
         yield 'secret without webhook' => [['webhook_secret' => 'abcdefghijklmnopqrstuvwxyz'], 'webhook_secret'];
         yield 'short secret' => [['webhook_url' => 'https://8.8.8.8/h', 'webhook_secret' => 'short'], 'webhook_secret'];
+        yield 'whsec_ secret that is not base64' => [['webhook_url' => 'https://8.8.8.8/h', 'webhook_secret' => 'whsec_not-base64-at-all!!'], 'webhook_secret'];
         yield 'run_at as a string' => [['run_at' => '1790000000'], 'run_at'];
         yield 'run_at years ahead' => [['run_at' => PHP_INT_MAX], 'run_at'];
         yield 'time as a string' => [['time_from' => '0'], 'time_from'];
