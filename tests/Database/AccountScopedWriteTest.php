@@ -313,7 +313,9 @@ final class AccountScopedWriteTest extends TestCase
             'owned through its parent | 202_identity_observations | click_id = ? AND signal_type IN ( ? , ? )' => 'a click its caller has shown is the account\'s (MysqlClickRepository under the click lock, ClickIdentity on the click path)',
         ],
         '202-config/Ltv/MysqlCompanyRepository.php' => [
-            'OR in the WHERE | 202_customers | c.company IS NULL OR c.company <> co.name' => 'LtvMaintenance (cron): every account\'s customers, each from its own company (`co.user_id = c.user_id` in the join)',
+            'no user_id tie | 202_customers | {$changes}' => 'the rename\'s WHERE is the local $changes, `company_id = ? AND user_id = ? AND …`, shared with the FOR UPDATE that locks the same rows; the scanner reads literals and class constants, not a variable\'s value',
+            'no user_id tie | 202_customers | {$still}' => 'the blank clear\'s WHERE is the local $still, `user_id = ? AND company_id IS NULL AND customer_id IN (…)`, shared with the FOR UPDATE that locks the same rows; the scanner reads literals and class constants, not a variable\'s value',
+            'no user_id tie | 202_customers | {$drift}' => 'LtvMaintenance (cron): every account\'s customers, each from its own company (`co.user_id = c.user_id` in the join); the WHERE is the local $drift, `c.company IS NULL OR c.company <> co.name`, shared with the FOR UPDATE',
         ],
         '202-config/Ltv/MysqlCustomerCrmRepository.php' => [
             'table built at runtime | {{$table}} | UPDATE {{$table}} SET {{$column}} = ? WHERE {{$column}} = ? {($hasUserId ? \' AND user_id = ?\' : \'\')}' => 'tied where the table has user_id; 202_clicks_tracking by the merge\'s source customer, which the merge locked first `WHERE customer_id IN (?, ?) AND user_id = ?`',
@@ -435,7 +437,7 @@ final class AccountScopedWriteTest extends TestCase
         ],
     ];
 
-    private const REVIEWED_CEILING = 135;
+    private const REVIEWED_CEILING = 137;
 
     private const STATEMENT_ENDS = ['ORDER', 'LIMIT'];
 
