@@ -24,9 +24,24 @@ use RuntimeException;
  *    matches and who has never been attached joins it automatically. An
  *    explicitly detached customer (company = '' marker) is never re-attached,
  *    nor is one whose company string named nothing (the sweep stores '').
+ *  - Every write here that changes customers' company (a rename, a merge,
+ *    the maintenance sweep's link, blank clear and string repair) queues
+ *    customer.updated for each customer it changed, in the write's
+ *    transaction, as a write of the customer through the API does: a
+ *    subscriber's copy of those customers otherwise kept the old company.
+ *    The sweep's writes announce only customers last written within
+ *    EVENT_WINDOW_SECONDS, as its subscription changes do: a sweep that had
+ *    always run would have caught each then, and an upgraded install's
+ *    first run would otherwise announce every customer it ever stored.
  */
 final class MysqlCompanyRepository
 {
+    /** The event a change of a customer's company queues. */
+    public const CUSTOMER_EVENT = 'customer.updated';
+
+    /** The sweep announces a customer it changes only when it was last written this recently. */
+    public const EVENT_WINDOW_SECONDS = WebhookDispatcher::MAX_AGE_SECONDS;
+
     public function __construct(private Connection $conn)
     {
     }
@@ -471,12 +486,24 @@ final class MysqlCompanyRepository
                 $this->conn->executeUpdate($stmt);
 
                 if ($newName !== null) {
-                    $stmt = $this->conn->prepareWrite(
-                        'UPDATE 202_customers SET company = ?, updated_at = ?
-                         WHERE company_id = ? AND user_id = ?'
+                    // The attached customers whose string the rename changes, byte for byte
+                    // (the column folds case, and a case-only rename is a change).
+                    $changes = 'company_id = ? AND user_id = ?
+                         AND (company IS NULL OR CAST(company AS BINARY) <> CAST(? AS BINARY))';
+                    $customerIds = $this->lockCustomers(
+                        'SELECT customer_id, updated_at FROM 202_customers WHERE ' . $changes
+                            . ' ORDER BY customer_id FOR UPDATE',
+                        'iis',
+                        [$companyId, $userId, $newName]
                     );
-                    $this->conn->bind($stmt, 'siii', [$newName, $now, $companyId, $userId]);
-                    $this->conn->executeUpdate($stmt);
+                    if ($customerIds !== []) {
+                        $stmt = $this->conn->prepareWrite(
+                            'UPDATE 202_customers SET company = ?, updated_at = ? WHERE ' . $changes
+                        );
+                        $this->conn->bind($stmt, 'siiis', [$newName, $now, $companyId, $userId, $newName]);
+                        self::assertWritten($this->conn->executeUpdate($stmt), count($customerIds), 'the rename');
+                        $this->announce($userId, array_keys($customerIds));
+                    }
                 }
             });
         } catch (RuntimeException $e) {
@@ -542,12 +569,19 @@ final class MysqlCompanyRepository
             }
             $targetName = (string) $locked[$targetCompanyId]['name'];
 
+            $customerIds = $this->lockCustomers(
+                'SELECT customer_id, updated_at FROM 202_customers WHERE company_id = ? AND user_id = ?
+                 ORDER BY customer_id FOR UPDATE',
+                'ii',
+                [$sourceCompanyId, $userId]
+            );
             $stmt = $this->conn->prepareWrite(
                 'UPDATE 202_customers SET company_id = ?, company = ?, updated_at = ?
                  WHERE company_id = ? AND user_id = ?'
             );
             $this->conn->bind($stmt, 'isiii', [$targetCompanyId, $targetName, $now, $sourceCompanyId, $userId]);
-            $this->conn->executeUpdate($stmt);
+            self::assertWritten($this->conn->executeUpdate($stmt), count($customerIds), 'the merge');
+            $this->announce($userId, array_keys($customerIds));
 
             // Delete the source BEFORE the target inherits its domain: the
             // unique (user_id, domain) key would otherwise fire while both
@@ -689,6 +723,13 @@ final class MysqlCompanyRepository
      * clearing an unlinked string writes, and still not the NULL that domain
      * auto-attach reads as eligible — and is never taken again.
      *
+     * Each page's companies are resolved first, each in its own statement,
+     * and then its customers written in one transaction that queues their
+     * customer.updated events (only for customers last written within
+     * EVENT_WINDOW_SECONDS): the transaction locks customers alone, so it
+     * waits on no company row a CRM save holds while it waits on one of
+     * these customers.
+     *
      * @return int customers linked this pass
      */
     public function linkUnlinkedCustomers(int $userId, int $limit = 500): int
@@ -711,8 +752,15 @@ final class MysqlCompanyRepository
             $this->conn->bind($stmt, 'iii', [$userId, $after, $limit]);
             $pending = $this->conn->fetchAll($stmt);
 
+            // customer_id => [company id, the entity's name]; no more than the pass may still link.
+            $links = [];
             $blank = [];
+            $stoppedShort = false;
             foreach ($pending as $row) {
+                if ($linked + count($links) >= $limit) {
+                    $stoppedShort = true;
+                    break;
+                }
                 $after = (int) $row['customer_id'];
                 $canonical = self::canonicalName((string) $row['company']);
                 if ($canonical === '') {
@@ -737,54 +785,142 @@ final class MysqlCompanyRepository
                         ];
                     }
                 }
-                $companyId = self::companyIdOrFail($entities[$normalized]['id'], $userId, $canonical);
-                $update = $this->conn->prepareWrite(
-                    'UPDATE 202_customers SET company_id = ?, company = ?, updated_at = ?
-                     WHERE customer_id = ? AND user_id = ? AND company_id IS NULL'
-                );
-                $this->conn->bind($update, 'isiii', [
-                    $companyId,
+                $links[$after] = [
+                    self::companyIdOrFail($entities[$normalized]['id'], $userId, $canonical),
                     $entities[$normalized]['name'],
-                    time(),
-                    $after,
-                    $userId,
-                ]);
-                $linked += $this->conn->executeUpdate($update);
-                if ($linked >= $limit) {
-                    break;
-                }
+                ];
             }
-            $this->clearBlankCompanies($userId, $blank);
-        } while ($linked < $limit && count($pending) === $limit);
+            if ($links !== [] || $blank !== []) {
+                $linked += $this->conn->transaction(fn (): int => $this->writeLinks($userId, $links, $blank));
+            }
+        } while ($linked < $limit && ($stoppedShort || count($pending) === $limit));
 
         return $linked;
     }
 
     /**
-     * Store '' over company strings that name nothing, each only while the
-     * customer is still unlinked and still holds a string read as blank.
+     * One page of the sweep, inside its transaction: the customers still
+     * unlinked locked and stamped, the blank strings still blank stored as
+     * '', and each customer written announced when it was last written
+     * recently. Answers how many were linked.
      *
+     * @param array<int, array{0: int, 1: string}> $links customer_id => [company id, name]
      * @param array<int, string> $blank customer_id => the string as read
      */
-    private function clearBlankCompanies(int $userId, array $blank): void
+    private function writeLinks(int $userId, array $links, array $blank): int
     {
-        if ($blank === []) {
+        $now = time();
+        $announce = [];
+        $linked = 0;
+        if ($links !== []) {
+            // A customer a CRM save linked since the read is no longer taken.
+            $ids = array_keys($links);
+            $still = $this->lockCustomers(
+                'SELECT customer_id, updated_at FROM 202_customers
+                 WHERE user_id = ? AND company_id IS NULL AND customer_id IN (' . self::placeholders(count($ids)) . ')
+                 ORDER BY customer_id FOR UPDATE',
+                'i' . str_repeat('i', count($ids)),
+                [$userId, ...$ids]
+            );
+            foreach ($still as $customerId => $updatedAt) {
+                [$companyId, $name] = $links[$customerId];
+                $update = $this->conn->prepareWrite(
+                    'UPDATE 202_customers SET company_id = ?, company = ?, updated_at = ?
+                     WHERE customer_id = ? AND user_id = ? AND company_id IS NULL'
+                );
+                $this->conn->bind($update, 'isiii', [$companyId, $name, $now, $customerId, $userId]);
+                self::assertWritten($this->conn->executeUpdate($update), 1, 'the link of customer ' . $customerId);
+                $linked++;
+                if ($updatedAt >= $now - self::EVENT_WINDOW_SECONDS) {
+                    $announce[] = $customerId;
+                }
+            }
+        }
+        if ($blank !== []) {
+            $ids = array_keys($blank);
+            $strings = array_values(array_unique($blank));
+            $still = 'user_id = ? AND company_id IS NULL
+                 AND customer_id IN (' . self::placeholders(count($ids)) . ')
+                 AND company IN (' . self::placeholders(count($strings)) . ')';
+            $types = 'i' . str_repeat('i', count($ids)) . str_repeat('s', count($strings));
+            $cleared = $this->lockCustomers(
+                'SELECT customer_id, updated_at FROM 202_customers WHERE ' . $still
+                    . ' ORDER BY customer_id FOR UPDATE',
+                $types,
+                [$userId, ...$ids, ...$strings]
+            );
+            if ($cleared !== []) {
+                $stmt = $this->conn->prepareWrite(
+                    "UPDATE 202_customers SET company = '', updated_at = ? WHERE " . $still
+                );
+                $this->conn->bind($stmt, 'i' . $types, [$now, $userId, ...$ids, ...$strings]);
+                self::assertWritten($this->conn->executeUpdate($stmt), count($cleared), 'the blank clear');
+                foreach ($cleared as $customerId => $updatedAt) {
+                    if ($updatedAt >= $now - self::EVENT_WINDOW_SECONDS) {
+                        $announce[] = $customerId;
+                    }
+                }
+            }
+        }
+        sort($announce);
+        $this->announce($userId, $announce);
+
+        return $linked;
+    }
+
+    /**
+     * The customers a locking read of customer_id and updated_at answers,
+     * customer_id => updated_at as the row stands.
+     *
+     * @param list<int|string> $values
+     * @return array<int, int>
+     */
+    private function lockCustomers(string $sql, string $types, array $values): array
+    {
+        $stmt = $this->conn->prepareWrite($sql);
+        $this->conn->bind($stmt, $types, $values);
+        $rows = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $rows[(int) $row['customer_id']] = (int) $row['updated_at'];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * customer.updated for each customer, queued with the write that changed
+     * them.
+     *
+     * @param list<int> $customerIds
+     */
+    private function announce(int $userId, array $customerIds): void
+    {
+        if ($customerIds === []) {
             return;
         }
-        $ids = array_keys($blank);
-        $strings = array_values(array_unique($blank));
-        $stmt = $this->conn->prepareWrite(
-            "UPDATE 202_customers SET company = '', updated_at = ?
-             WHERE user_id = ? AND company_id IS NULL
-               AND customer_id IN (" . implode(', ', array_fill(0, count($ids), '?')) . ')
-               AND company IN (' . implode(', ', array_fill(0, count($strings), '?')) . ')'
+        (new MysqlWebhookRepository($this->conn))->enqueueEach(
+            $userId,
+            self::CUSTOMER_EVENT,
+            array_map(static fn (int $id): array => ['customer_id' => $id], $customerIds)
         );
-        $this->conn->bind(
-            $stmt,
-            'ii' . str_repeat('i', count($ids)) . str_repeat('s', count($strings)),
-            [time(), $userId, ...$ids, ...$strings]
-        );
-        $this->conn->executeUpdate($stmt);
+    }
+
+    /**
+     * A write over rows it locked writes each of them: fewer is a write
+     * whose rows changed under the lock, and its events would be false.
+     */
+    private static function assertWritten(int $written, int $locked, string $what): void
+    {
+        if ($written !== $locked) {
+            throw new QueryException(
+                ucfirst($what) . ' locked ' . $locked . ' customer row(s) and wrote ' . $written
+            );
+        }
+    }
+
+    private static function placeholders(int $count): string
+    {
+        return implode(', ', array_fill(0, $count, '?'));
     }
 
     /**
@@ -808,20 +944,43 @@ final class MysqlCompanyRepository
      * stored name — repairs rows stamped before string canonicalization
      * existed and any drift a partial write left behind (including a NULL
      * string next to a set company_id). One set-based statement, safe to run
-     * every maintenance pass.
+     * every maintenance pass, in a transaction with the customer.updated
+     * events of the corrected customers last written within
+     * EVENT_WINDOW_SECONDS, which are locked first so the statement writes
+     * each of them.
      *
      * @return int rows corrected
      */
     public function reconcileAttachedStrings(): int
     {
-        $stmt = $this->conn->prepareWrite(
-            'UPDATE 202_customers c
-             JOIN 202_companies co ON co.company_id = c.company_id AND co.user_id = c.user_id
-             SET c.company = co.name, c.updated_at = ?
-             WHERE c.company IS NULL OR c.company <> co.name'
-        );
-        $this->conn->bind($stmt, 'i', [time()]);
+        return $this->conn->transaction(function (): int {
+            $now = time();
+            $drift = 'c.company IS NULL OR c.company <> co.name';
+            $recent = $this->conn->prepareWrite(
+                'SELECT c.customer_id, c.user_id FROM 202_customers c
+                 JOIN 202_companies co ON co.company_id = c.company_id AND co.user_id = c.user_id
+                 WHERE (' . $drift . ') AND c.updated_at >= ?
+                 ORDER BY c.customer_id FOR UPDATE'
+            );
+            $this->conn->bind($recent, 'i', [$now - self::EVENT_WINDOW_SECONDS]);
+            $byUser = [];
+            foreach ($this->conn->fetchAll($recent) as $row) {
+                $byUser[(int) $row['user_id']][] = (int) $row['customer_id'];
+            }
 
-        return $this->conn->executeUpdate($stmt);
+            $stmt = $this->conn->prepareWrite(
+                'UPDATE 202_customers c
+                 JOIN 202_companies co ON co.company_id = c.company_id AND co.user_id = c.user_id
+                 SET c.company = co.name, c.updated_at = ?
+                 WHERE ' . $drift
+            );
+            $this->conn->bind($stmt, 'i', [$now]);
+            $corrected = $this->conn->executeUpdate($stmt);
+            foreach ($byUser as $userId => $customerIds) {
+                $this->announce($userId, $customerIds);
+            }
+
+            return $corrected;
+        });
     }
 }

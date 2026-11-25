@@ -491,6 +491,49 @@ final class LegacyApiAccountScopeIntegrationTest extends TestCase
         }
     }
 
+    /**
+     * The plugin's "simple page" update (page_type=slp) does not make an
+     * advanced page simple while text ads of type 1 name it, as Setup ›
+     * Landing Pages and PUT /landing-pages do not: Get Links offers those
+     * only on an advanced page. Once none does, the update is made.
+     */
+    public function testTheWordPressPluginDoesNotMakeAnAdvancedPageWithTextAdsSimple(): void
+    {
+        $page = self::USER + 6;
+        $ad = self::USER + 6;
+        self::q("DELETE FROM 202_landing_pages WHERE landing_page_id = $page");
+        self::q("DELETE FROM 202_text_ads WHERE text_ad_id = $ad");
+        self::row('202_landing_pages', [
+            'landing_page_id' => $page, 'landing_page_id_public' => $page, 'user_id' => self::USER,
+            'aff_campaign_id' => 0, 'landing_page_type' => 1, 'landing_page_nickname' => 'My Advanced Page',
+            'landing_page_url' => 'https://page.example/advanced', 'landing_page_time' => self::$now,
+        ]);
+        self::row('202_text_ads', ['text_ad_id' => $ad, 'user_id' => self::USER, 'aff_campaign_id' => 0, 'landing_page_id' => $page,
+            'text_ad_type' => 1, 'text_ad_name' => 'My Advanced Ad', 'text_ad_headline' => 'h', 'text_ad_description' => 'd',
+            'text_ad_display_url' => 'u', 'text_ad_time' => self::$now]);
+        $stored = static function () use ($page): array {
+            $found = self::$db->query("SELECT landing_page_type, aff_campaign_id, landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = $page");
+            self::assertInstanceOf(\mysqli_result::class, $found);
+
+            return $found->fetch_row() ?? [];
+        };
+        $update = 'api-v1:wp?type=wp_update_lp&page_type=slp&page_title=Changed&page_url=https%3A%2F%2Fpage.example%2Fchanged'
+            . '&lp_pid=' . $page . '&slp_page_campaign=' . self::USER;
+        try {
+            $refused = self::read($update, true);
+            self::assertSame('1', $refused['error'] ?? null, json_encode($refused));
+            self::assertStringContainsString('whose links offer text ads ("My Advanced Ad")', (string) ($refused['msg'] ?? ''));
+            self::assertSame(['1', '0', 'My Advanced Page'], $stored(), 'the refused update wrote');
+
+            self::q("UPDATE 202_text_ads SET text_ad_deleted = 1 WHERE text_ad_id = $ad");
+            self::assertSame(['error' => '0'], self::read($update, true));
+            self::assertSame(['0', (string) self::USER, '[WP] Changed'], $stored());
+        } finally {
+            self::q("DELETE FROM 202_text_ads WHERE text_ad_id = $ad");
+            self::q("DELETE FROM 202_landing_pages WHERE landing_page_id = $page");
+        }
+    }
+
     /** The key check each endpoint makes first, with nothing failing. */
     public function testTheKeyCheckReaderAnswersWithNothingFailing(): void
     {

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\DataEngine;
 
+use Prosper202\Click\AdClickIdColumns;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
@@ -52,7 +53,8 @@ final class ClickRollupSql
      * its first visit (MysqlClickRepository::recordReClick(), and
      * ReClickBackfill for the rows written before 1.9.79). A click the
      * backfill has not reached has no record (LatestVisit) and a row at each
-     * visit, each with that row's values.
+     * visit, each with that row's values. The UTM ids are one 202_google
+     * row's (2gg, AdClickIdColumns::rowJoin()), as every reader of them reads.
      */
     private const COLUMNS = [
         'user_id' => '2c.user_id',
@@ -99,6 +101,9 @@ final class ClickRollupSql
         'cost' => '2c.click_cpc AS cost',
     ];
 
+    /** The line of JOINS that build() makes the click's one 202_google row (AdClickIdColumns::rowJoin()). */
+    private const GOOGLE_ROW = '{GOOGLE_ROW}';
+
     /**
      * Every account-owned lookup is joined within the click's own account
      * (`x.user_id = 2c.user_id`): a click names its campaign, traffic source
@@ -121,7 +126,7 @@ LEFT OUTER JOIN 202_aff_networks AS 2an ON (2ac.aff_network_id = 2an.aff_network
 LEFT OUTER JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id AND 2pa.user_id = 2c.user_id)
 LEFT OUTER JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id AND 2pn.user_id = 2c.user_id)
 LEFT OUTER JOIN 202_keywords AS 2k ON (2ca.keyword_id = 2k.keyword_id)
-LEFT OUTER JOIN 202_google AS 2gg ON (2c.click_id = 2gg.click_id)
+{GOOGLE_ROW}
 LEFT OUTER JOIN 202_landing_pages AS 2lp ON (2c.landing_page_id = 2lp.landing_page_id AND 2lp.user_id = 2c.user_id)
 LEFT OUTER JOIN 202_text_ads AS 2ta ON (2ca.text_ad_id = 2ta.text_ad_id AND 2ta.user_id = 2c.user_id)
 LEFT OUTER JOIN 202_clicks_site AS 2cs ON (2c.click_id = 2cs.click_id)
@@ -206,9 +211,11 @@ SQL;
             self::refreshedColumns()
         ));
 
+        $joins = str_replace(self::GOOGLE_ROW, AdClickIdColumns::rowJoin('2gg', '2c.click_id'), self::JOINS);
+
         return 'insert into ' . $table . '(' . implode(",\n", array_keys(self::COLUMNS)) . ")\n"
             . "SELECT\n" . implode(",\n", array_values(self::COLUMNS)) . "\n"
-            . $clicks . substr(self::JOINS, strlen(self::CLICKS)) . "\n"
+            . $clicks . substr($joins, strlen(self::CLICKS)) . "\n"
             . 'WHERE (' . $whereClause . ') AND ' . LatestVisit::isLatest('2c') . "\n"
             . "on duplicate key update\n" . $updates;
     }
