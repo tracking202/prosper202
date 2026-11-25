@@ -2345,6 +2345,12 @@ paths:
     put:
       tags: [Landing Pages]
       summary: Update a landing page
+      description: >-
+        An advanced page (landing_page_type 1) is not made simple while text
+        ads of text_ad_type 1 name it, since Get Links offers those only on an
+        advanced page: the 422 names each ad's text_ad_id under
+        landing_page_type. Point each at another advanced page, or make it a
+        campaign ad, first.
       operationId: updateLandingPage
       requestBody:
         required: true
