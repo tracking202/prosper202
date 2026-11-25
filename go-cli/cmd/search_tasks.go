@@ -56,6 +56,8 @@ var searchTasks = []searchTask{
 		Phrases: []string{"traffic source accounts", "ad accounts"}},
 	{Run: "p202 ppc-network update",
 		Phrases: []string{"rename traffic source", "rename ad network"}},
+	{Run: "p202 goal campaign set",
+		Phrases: []string{"share a goal across campaigns", "funnel goal shared by campaigns", "account-wide goal"}},
 	{Run: "p202 ppc-network add-chatgpt-ads",
 		Phrases: []string{"add chatgpt ads", "set up chatgpt ads", "openai ads traffic source", "chatgpt traffic source"}},
 	{Run: "p202 tracker get-url",

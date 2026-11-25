@@ -165,10 +165,10 @@ G_LEVEL=$(field "d['data']['goal_id']")
 eq "$(field "d['data']['definition']['value']['amount']")" "4.00" "stored in canonical form"
 eq "$(api POST /goals "{\"scope\":\"campaign\",\"scope_id\":$CAMP_A,\"definition\":{\"name\":\"level 3\",\"trigger\":{\"event\":\"other\"}}}")" 409 \
    "a second goal of the same name on the campaign is a 409"
-for g in "$G_INSTALL" "$G_LEVEL"; do
-  api PUT "/goals/$g/campaigns/$CAMP_R" '{}' > /dev/null
-done
-eq "$(field "d['field_errors']['campaign_id'] is not None")" "true" "a campaign's own goal cannot be attached to another campaign"
+eq "$(api PUT "/goals/$G_INSTALL/campaigns/$CAMP_R" '{"payable":false}')" 200 "a campaign's own goal is shared with another campaign"
+eq "$(field "d['data']['payable']")" "false" "tracked there, not paid"
+eq "$(api PUT "/goals/$G_INSTALL/campaigns/$CAMP_A" '{"payable":false}')" 422 "its own campaign is not one it is shared with"
+eq "$(api DELETE "/goals/$G_INSTALL/campaigns/$CAMP_R")" 204 "and the share is removed"
 api POST /goals "{\"scope\":\"campaign\",\"scope_id\":$CAMP_R,\"definition\":{\"name\":\"Install\",\"trigger\":{\"event\":\"first_open\"},\"value\":{\"type\":\"fixed\",\"amount\":1}}}" > /dev/null
 api POST /goals "{\"scope\":\"campaign\",\"scope_id\":$CAMP_R,\"definition\":{\"name\":\"Level 3\",\"trigger\":{\"event\":\"level_reached\",\"where\":[{\"prop\":\"level\",\"op\":\"gte\",\"value\":3}]},\"value\":{\"type\":\"fixed\",\"amount\":4}}}" > /dev/null
 eq "$(Q "SELECT COUNT(*) FROM 202_campaign_goals WHERE campaign_id=$CAMP_R")" 2 "the replace campaign has the same two goals"

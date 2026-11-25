@@ -32,8 +32,17 @@ use Prosper202\Database\Schema\TableRegistry;
  * - 202_goal_versions: every definition a goal has had. A version is
  *   immutable; an edit adds one. `effective_at` is when it started to apply:
  *   an event is evaluated under the version current at its own received_at.
- * - 202_campaign_goals: which goals a campaign pays for, at what payout (NULL
- *   = the goal's own value), and whether the traffic source is told.
+ * - 202_campaign_goals: which goals a campaign counts besides its own, and
+ *   which of those it pays for (`payable`), at what payout (NULL = the
+ *   goal's own value), and whether the traffic source is told. A row with
+ *   `payable` 0 shares the goal with the campaign as tracked: its clicks
+ *   reach it, and nothing is paid (MysqlGoalRepository::campaignTerms()
+ *   reads the payable rows alone). Any goal may have a row on any of the
+ *   account's campaigns, another campaign's own goal included: that is how
+ *   one funnel is defined once and counted on several campaigns.
+ * - `every_campaign_since` on 202_goals: an account goal that counts on
+ *   every campaign of the account, from that time (NULL: only where a row
+ *   above names it). It is tracked there unless a campaign pays for it.
  * - 202_goal_subjects: one row per subject (a click or an install), the row
  *   every write for that subject locks first, holding its event count, the
  *   order key of its newest event, and the versions a re-evaluation rebased
@@ -93,6 +102,7 @@ final class GoalTables
                 `archived_at` int(10) unsigned DEFAULT NULL,
                 `created_at` int(10) unsigned NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
+                `every_campaign_since` int(10) unsigned DEFAULT NULL,
                 `live_name` varchar(100) GENERATED ALWAYS AS (IF(`archived_at` IS NULL AND `builtin` IS NULL, `name`, NULL)) STORED,
                 PRIMARY KEY (`goal_id`),
                 UNIQUE KEY `scope_builtin` (`user_id`,`scope`,`scope_id`,`builtin`),
@@ -129,10 +139,11 @@ final class GoalTables
                 `notify_traffic_source` tinyint(1) unsigned NOT NULL DEFAULT '1',
                 `created_at` int(10) unsigned NOT NULL,
                 `updated_at` int(10) unsigned NOT NULL,
+                `payable` tinyint(1) unsigned NOT NULL DEFAULT '1',
                 PRIMARY KEY (`campaign_id`,`goal_id`),
                 KEY `goal_id` (`goal_id`),
                 KEY `user_id` (`user_id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='The goals a campaign pays for, and at what payout'"
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='The goals a campaign counts and pays for, and at what payout'"
         );
     }
 

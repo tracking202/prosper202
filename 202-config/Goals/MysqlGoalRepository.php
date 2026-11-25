@@ -296,7 +296,10 @@ final class MysqlGoalRepository
     // ─── Campaign payouts ───────────────────────────────────────────
 
     /**
-     * The account's payable goals on a campaign. $userId is whose terms
+     * The account's payable goals on a campaign: its rows with `payable` 1.
+     * A row with `payable` 0 shares a goal with the campaign as tracked; it
+     * is in the campaign's goal set (campaignSet()) and never here, so every
+     * reader of a term reads "this campaign pays". $userId is whose terms
      * apply: a click's campaign id came from a tracker, and nothing stopped
      * one naming another account's campaign (the API checks linked ids
      * since 229df10; older clicks remain), so such a click must never be
@@ -306,7 +309,7 @@ final class MysqlGoalRepository
      */
     public function campaignTerms(int $campaignId, int $userId): array
     {
-        $stmt = $this->conn->prepareWrite('SELECT * FROM 202_campaign_goals WHERE campaign_id = ? AND user_id = ?');
+        $stmt = $this->conn->prepareWrite('SELECT * FROM 202_campaign_goals WHERE campaign_id = ? AND user_id = ? AND payable = 1');
         $this->conn->bind($stmt, 'ii', [$campaignId, $userId]);
         $out = [];
         foreach ($this->conn->fetchAll($stmt) as $row) {
@@ -316,11 +319,11 @@ final class MysqlGoalRepository
         return $out;
     }
 
-    /** @return list<array<string, mixed>> the campaigns paying for a goal */
+    /** @return list<array<string, mixed>> the campaigns a goal counts on by row, paid (`payable` 1) or tracked */
     public function campaignsForGoal(int $userId, int $goalId): array
     {
         $stmt = $this->conn->prepareWrite(
-            'SELECT cg.campaign_id, cg.goal_id, cg.payout, cg.notify_traffic_source, cg.created_at, cg.updated_at,
+            'SELECT cg.campaign_id, cg.goal_id, cg.payable, cg.payout, cg.notify_traffic_source, cg.created_at, cg.updated_at,
                     ac.aff_campaign_name, ac.payout_mode
              FROM 202_campaign_goals cg
              LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cg.campaign_id AND ac.user_id = cg.user_id
@@ -332,22 +335,44 @@ final class MysqlGoalRepository
     }
 
     /**
-     * Attach a goal to a campaign as payable, or change its terms.
+     * Attach a goal to a campaign as payable, or as tracked ($payable
+     * false: its clicks reach the goal and nothing is paid), or change its
+     * terms. A changed row keeps its created_at, the time the goal started
+     * to count there, so going from paid to tracked or back moves no
+     * event into or out of the goal's span.
      *
      * @param int|null $payoutUnits null = the goal's own value
      */
-    public function attach(int $userId, int $campaignId, int $goalId, ?int $payoutUnits, bool $notify, int $now): void
+    public function attach(int $userId, int $campaignId, int $goalId, ?int $payoutUnits, bool $notify, int $now, bool $payable = true): void
     {
         $stmt = $this->conn->prepareWrite(
-            'INSERT INTO 202_campaign_goals (campaign_id, goal_id, user_id, payout, notify_traffic_source, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE payout = VALUES(payout), notify_traffic_source = VALUES(notify_traffic_source), updated_at = VALUES(updated_at)'
+            'INSERT INTO 202_campaign_goals (campaign_id, goal_id, user_id, payable, payout, notify_traffic_source, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE payable = VALUES(payable), payout = VALUES(payout), notify_traffic_source = VALUES(notify_traffic_source), updated_at = VALUES(updated_at)'
         );
-        $this->conn->bind($stmt, 'iiisiii', [
-            $campaignId, $goalId, $userId,
+        $this->conn->bind($stmt, 'iiiisiii', [
+            $campaignId, $goalId, $userId, $payable ? 1 : 0,
             $payoutUnits === null ? null : Amount::fromUnits($payoutUnits),
             $notify ? 1 : 0, $now, $now,
         ]);
+        $this->conn->executeUpdate($stmt);
+    }
+
+    /**
+     * Make an account goal count on every campaign of the account from
+     * $since, or stop ($since null): from then on it counts only where a
+     * campaign_goals row names it. Turning it on again starts a new span
+     * at the new time, as a detached and reattached goal does.
+     */
+    public function setEveryCampaign(int $userId, int $goalId, ?int $since, int $now): void
+    {
+        $stmt = $this->conn->prepareWrite(
+            "UPDATE 202_goals SET every_campaign_since = ?, updated_at = ? WHERE goal_id = ? AND user_id = ? AND scope = 'account'"
+        );
+        $this->conn->bind($stmt, 'iiii', [$since, $now, $goalId, $userId]);
+        // The caller holds the goal's lock and has read it as this
+        // account's account goal; 0 rows is a write of the values it
+        // already had (the same second).
         $this->conn->executeUpdate($stmt);
     }
 
@@ -386,8 +411,8 @@ final class MysqlGoalRepository
 
     /**
      * The goals a click on this campaign evaluates: the campaign's own goals,
-     * the goals it attaches from another scope (from the moment they were
-     * attached), and — transitively — the prerequisites those name, which
+     * the goals shared with it (from the moment they were shared; see
+     * campaignSet()), and — transitively — the prerequisites those name, which
      * start when the goal that needs them does. Archived goals stay in the
      * set with their archive time as the end of their span, so a replay
      * sees exactly what the incremental evaluation saw.
@@ -396,24 +421,79 @@ final class MysqlGoalRepository
      */
     public function specsForCampaign(int $userId, int $campaignId): array
     {
-        $stmt = $this->conn->prepareWrite(
-            "SELECT g.goal_id, g.scope, g.scope_id, g.archived_at, cg.created_at AS attached_at
-             FROM 202_goals g
-             LEFT JOIN 202_campaign_goals cg ON cg.goal_id = g.goal_id AND cg.campaign_id = ? AND cg.user_id = g.user_id
-             WHERE g.user_id = ? AND ((g.scope = 'campaign' AND g.scope_id = ?) OR cg.campaign_id IS NOT NULL)"
-        );
-        $this->conn->bind($stmt, 'iii', [$campaignId, $userId, $campaignId]);
-
         $starts = [];
         $ends = [];
-        foreach ($this->conn->fetchAll($stmt) as $row) {
-            $goalId = (int) $row['goal_id'];
-            $own = (string) $row['scope'] === GoalScope::CAMPAIGN->value && (int) $row['scope_id'] === $campaignId;
-            $starts[$goalId] = $own ? 0 : (int) $row['attached_at'];
-            $ends[$goalId] = $row['archived_at'] !== null ? (int) $row['archived_at'] : null;
+        foreach ($this->campaignSet($userId, $campaignId) as $goalId => [$start, $end]) {
+            $starts[$goalId] = $start;
+            $ends[$goalId] = $end;
         }
 
         return $this->specsWithPrerequisites($userId, $starts, $ends);
+    }
+
+    /**
+     * The goals shared with a campaign, by a row (paid or tracked) or as an
+     * account goal that counts on every campaign: its goal set less its own
+     * goals and the prerequisites.
+     *
+     * @return list<int>
+     */
+    public function sharedGoalIds(int $userId, int $campaignId): array
+    {
+        $own = [];
+        $stmt = $this->conn->prepareWrite("SELECT goal_id FROM 202_goals WHERE user_id = ? AND scope = 'campaign' AND scope_id = ?");
+        $this->conn->bind($stmt, 'ii', [$userId, $campaignId]);
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $own[(int) $row['goal_id']] = true;
+        }
+
+        return array_values(array_filter(array_keys($this->campaignSet($userId, $campaignId)), static fn (int $id): bool => !isset($own[$id])));
+    }
+
+    /**
+     * A campaign's own goal set, without prerequisites: goal id =>
+     * [starts_at, ends_at]. Its own goals count from 0; a goal shared with
+     * it by a campaign_goals row (paid or tracked, of any scope, another
+     * campaign's own goal included) from the row's created_at; an account
+     * goal that counts on every campaign from its every_campaign_since. A
+     * goal shared both ways keeps the earlier start.
+     *
+     * @return array<int, array{0: int, 1: int|null}>
+     */
+    private function campaignSet(int $userId, int $campaignId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            "SELECT g.goal_id, g.scope, g.scope_id, g.archived_at, g.every_campaign_since, cg.created_at AS attached_at
+             FROM 202_goals g
+             LEFT JOIN 202_campaign_goals cg ON cg.goal_id = g.goal_id AND cg.campaign_id = ? AND cg.user_id = g.user_id
+             WHERE g.user_id = ? AND ((g.scope = 'campaign' AND g.scope_id = ?) OR cg.campaign_id IS NOT NULL
+                OR (g.scope = 'account' AND g.every_campaign_since IS NOT NULL))"
+        );
+        $this->conn->bind($stmt, 'iii', [$campaignId, $userId, $campaignId]);
+
+        $set = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $goalId = (int) $row['goal_id'];
+            $own = (string) $row['scope'] === GoalScope::CAMPAIGN->value && (int) $row['scope_id'] === $campaignId;
+            if ($own) {
+                $start = 0;
+            } else {
+                $from = [];
+                if ($row['attached_at'] !== null) {
+                    $from[] = (int) $row['attached_at'];
+                }
+                if ($row['every_campaign_since'] !== null && (string) $row['scope'] === GoalScope::ACCOUNT->value) {
+                    $from[] = (int) $row['every_campaign_since'];
+                }
+                if ($from === []) {
+                    throw new GoalEngineException('goal ' . $goalId . ' was read into campaign ' . $campaignId . "'s set with no start", GoalEngineException::INTEGRITY);
+                }
+                $start = min($from);
+            }
+            $set[$goalId] = [$start, $row['archived_at'] !== null ? (int) $row['archived_at'] : null];
+        }
+
+        return $set;
     }
 
     /**
@@ -439,19 +519,9 @@ final class MysqlGoalRepository
             $ends[(int) $row['goal_id']] = $row['archived_at'] !== null ? (int) $row['archived_at'] : null;
         }
         if ($campaignId !== null) {
-            $stmt = $this->conn->prepareWrite(
-                "SELECT g.goal_id, g.scope, g.scope_id, g.archived_at, cg.created_at AS attached_at
-                 FROM 202_goals g
-                 LEFT JOIN 202_campaign_goals cg ON cg.goal_id = g.goal_id AND cg.campaign_id = ? AND cg.user_id = g.user_id
-                 WHERE g.user_id = ? AND ((g.scope = 'campaign' AND g.scope_id = ?) OR cg.campaign_id IS NOT NULL)"
-            );
-            $this->conn->bind($stmt, 'iii', [$campaignId, $userId, $campaignId]);
-            foreach ($this->conn->fetchAll($stmt) as $row) {
-                $goalId = (int) $row['goal_id'];
-                $own = (string) $row['scope'] === GoalScope::CAMPAIGN->value && (int) $row['scope_id'] === $campaignId;
-                $start = $own ? 0 : (int) $row['attached_at'];
+            foreach ($this->campaignSet($userId, $campaignId) as $goalId => [$start, $end]) {
                 $starts[$goalId] = isset($starts[$goalId]) ? min($starts[$goalId], $start) : $start;
-                $ends[$goalId] = $row['archived_at'] !== null ? (int) $row['archived_at'] : null;
+                $ends[$goalId] = $end;
             }
         }
 

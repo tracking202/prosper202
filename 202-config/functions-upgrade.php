@@ -5498,6 +5498,13 @@ class UPGRADE
                 // which every ledger row its outcomes write carries
                 // (Ledger\ConsentWithheld); every event already there is 0.
                 \Prosper202\Database\Tables\GoalTables::goalEvents(),
+                // Goals shared across campaigns: 202_goals gains
+                // every_campaign_since, an account goal that counts on every
+                // campaign, and 202_campaign_goals payable, 0 on a row that
+                // counts a goal on a campaign without paying for it. Every
+                // goal and row already there is unchanged (NULL, and 1).
+                \Prosper202\Database\Tables\GoalTables::goals(),
+                \Prosper202\Database\Tables\GoalTables::campaignGoals(),
                 // The Bot202 Facebook Pixel Assistant's lookup rows, as a fresh
                 // install seeds them (DataSeeder); a paid install's are kept.
                 \Prosper202\Database\Tables\MiscTables::bot202FacebookPixelContentType(),

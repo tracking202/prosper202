@@ -60,7 +60,9 @@ use Throwable;
  * (202_campaign_goals), never by the evaluator. A row that is not paid
  * still carries the value it is reported at, so the breakdown can say
  * "$9.00, not paid" (a goal with no value carries 0):
- * - no campaign term for the goal: tracked at the goal's value, not paid;
+ * - no campaign term for the goal (a goal shared with the campaign as
+ *   tracked, `payable` 0, has none: campaignTerms() reads paid rows
+ *   only): tracked at the goal's value, not paid;
  * - a term with a payout: payable, that amount;
  * - otherwise the goal's value: fixed → payable, that amount; none →
  *   tracked; from_property → payable only when the event's path may set a
@@ -733,6 +735,18 @@ final class GoalEngine
             $campaigns[] = (int) $goal['scope_id'];
         }
         $campaigns = array_values(array_unique($campaigns));
+        // An account goal that counts on every campaign re-decides every
+        // click and PurLink of the account, not only the campaigns that
+        // name it by row.
+        $everyCampaign = $scope === GoalScope::ACCOUNT && $goal['every_campaign_since'] !== null;
+        $campaignFilter = static function (string $column) use ($campaigns, $everyCampaign): array {
+            if ($everyCampaign) {
+                return ['1 = 1', '', []];
+            }
+
+            return [$column . ' IN (' . implode(',', array_fill(0, count($campaigns), '?')) . ')', str_repeat('i', count($campaigns)), $campaigns];
+        };
+        $anyCampaign = $everyCampaign || $campaigns !== [];
 
         $subjectIds = [];
         if ($subjectType === GoalSubject::INSTALL) {
@@ -768,27 +782,27 @@ final class GoalEngine
                 $this->conn->bind($stmt, 'ii' . $types . 'i', [$userId, $after, ...$binds, $limit + 1]);
                 $subjectIds = array_map(static fn (array $r): int => (int) $r['subject_id'], $this->conn->fetchAll($stmt));
             }
-        } elseif ($subjectType === GoalSubject::PURLINK && $campaigns !== []) {
-            $marks = implode(',', array_fill(0, count($campaigns), '?'));
+        } elseif ($subjectType === GoalSubject::PURLINK && $anyCampaign) {
+            [$inCampaigns, $campaignTypes, $campaignBinds] = $campaignFilter('p.campaign_id');
             $stmt = $this->conn->prepareWrite(
                 "SELECT s.subject_id FROM 202_goal_subjects s
                  JOIN 202_purlink_goal_subjects p ON p.subject_id=s.subject_id AND p.user_id=s.user_id
                  WHERE s.subject_type='purlink' AND s.user_id=? AND s.subject_id>? AND s.event_count>0
-                   AND p.campaign_id IN ($marks)
+                   AND $inCampaigns
                    AND EXISTS (SELECT 1 FROM 202_clicks c WHERE c.click_id=p.click_id AND c.user_id=p.user_id)
                  ORDER BY s.subject_id LIMIT ?"
             );
-            $this->conn->bind($stmt, 'ii' . str_repeat('i', count($campaigns)) . 'i', [$userId, $after, ...$campaigns, $limit + 1]);
+            $this->conn->bind($stmt, 'ii' . $campaignTypes . 'i', [$userId, $after, ...$campaignBinds, $limit + 1]);
             $subjectIds = array_map(static fn (array $r): int => (int) $r['subject_id'], $this->conn->fetchAll($stmt));
-        } elseif ($subjectType === GoalSubject::CLICK && $campaigns !== []) {
-            $marks = implode(',', array_fill(0, count($campaigns), '?'));
+        } elseif ($subjectType === GoalSubject::CLICK && $anyCampaign) {
+            [$inCampaigns, $campaignTypes, $campaignBinds] = $campaignFilter('c.aff_campaign_id');
             $stmt = $this->conn->prepareWrite(
                 "SELECT DISTINCT s.subject_id FROM 202_goal_subjects s JOIN 202_clicks c ON c.click_id = s.subject_id
                  WHERE s.subject_type = 'click' AND s.user_id = ? AND s.subject_id > ? AND s.event_count > 0
-                   AND c.aff_campaign_id IN ($marks) AND " . LatestVisit::isLatest('c') . '
+                   AND $inCampaigns AND " . LatestVisit::isLatest('c') . '
                  ORDER BY s.subject_id LIMIT ?'
             );
-            $this->conn->bind($stmt, 'ii' . str_repeat('i', count($campaigns)) . 'i', [$userId, $after, ...$campaigns, $limit + 1]);
+            $this->conn->bind($stmt, 'ii' . $campaignTypes . 'i', [$userId, $after, ...$campaignBinds, $limit + 1]);
             $subjectIds = array_map(static fn (array $r): int => (int) $r['subject_id'], $this->conn->fetchAll($stmt));
         }
         $more = count($subjectIds) > $limit;

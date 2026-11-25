@@ -13,13 +13,14 @@ scope area (`goals:read`, `goals:write`, `goals:stage`). The CLI is
 |---|---|---|
 | `GET` | `/goals` | List (filter `campaign_id`, `registration_id`, `scope=account`; `include_archived=1`) |
 | `POST` | `/goals` | Create version 1 |
-| `GET` | `/goals/{id}` | The current definition, the campaigns paying for it, its live outcome count |
+| `GET` | `/goals/{id}` | The current definition, the campaigns it is set on, its live outcome count |
 | `PUT` | `/goals/{id}` | Edit: a new version when the definition changes |
 | `DELETE` | `/goals/{id}` | Archive (`?dry_run=1` previews) |
 | `GET` | `/goals/{id}/versions`, `/goals/{id}/versions/{v}` | Every version |
 | `GET` | `/goals/{id}/outcomes` | Live outcomes (`subject_type`, `subject_id`) |
-| `GET` | `/goals/{id}/campaigns` | The campaigns paying for it |
-| `PUT` / `DELETE` | `/goals/{id}/campaigns/{campaign_id}` | Pay for it on a campaign (`payout`, `notify_traffic_source`) / stop |
+| `GET` | `/goals/{id}/campaigns` | The campaigns it is set on, paid or tracked |
+| `PUT` / `DELETE` | `/goals/{id}/campaigns/{campaign_id}` | Count it on a campaign and pay for it there (`payable`, `payout`, `notify_traffic_source`) / stop |
+| `PUT` / `DELETE` | `/goals/{id}/every-campaign` | Count an account goal on every campaign / stop (`?dry_run=1` previews) |
 | `GET` / `POST` | `/goals/{id}/reevaluation` | Preview / apply re-evaluation under a version |
 | `POST` | `/goals/validate` | Validate a definition (a read) |
 | `POST` | `/goals/evaluate` | Evaluate definitions against events, writing nothing (a read) |
@@ -56,13 +57,43 @@ Every goal has one owner (`scope`, `scope_id`):
 - **`campaign`** — a campaign's own goal. It evaluates that campaign's clicks,
   and is payable there by default when its value is not `none`.
 - **`registration`** — an app's default set. Campaigns attach the ones they
-  pay for (`PUT /goals/{id}/campaigns/{campaign_id}`); an attached goal
+  count (`PUT /goals/{id}/campaigns/{campaign_id}`); an attached goal
   evaluates that campaign's clicks from the moment it is attached. The app's
   installs evaluate all of them once the Android intake exists (PR 5).
 - **`account`** — goals every app of the account shares; what an
   account-wide SKAN encoding names.
 
 Names are unique per owner. `after` may only name goals of the same owner.
+
+## One goal on several campaigns
+
+A goal is defined once and counted wherever it is set. Any goal of the
+account, a campaign's own included, can be set on any of its campaigns with
+`PUT /goals/{id}/campaigns/{campaign_id}`: from then on that campaign's
+clicks reach it, and its `after` goals come with it. `payable: false`
+counts it there without paying (the outcome and its conversion row are
+written, `payable` 0); without it the campaign pays the goal's value, or its
+`payout`. So a funnel whose goals belong to campaign 316 counts on 314 and
+315 too:
+
+```bash
+p202 goal campaign set 12 314 --not-payable   # counted on ChatGPT Ads, not paid
+p202 goal campaign set 12 315 --payout 4.00   # paid at 4.00 on 315
+```
+
+An account goal can count on **every** campaign instead
+(`PUT /goals/{id}/every-campaign`, `p202 goal campaign set <id> all`): every
+campaign's clicks, campaigns made later included, reach it from that moment
+(`every_campaign_since`), tracked, and paid only where a campaign is set to
+pay for it. `DELETE` turns it off; it then counts only where it is set.
+
+A share starts when it is made: events received before it are not
+evaluated for that campaign (a re-evaluation does not reach back past it
+either). Changing a share from paid to tracked or back keeps that start.
+Removing one, or turning every-campaign off, stops the goal counting there
+from then on and keeps what it already counted. The Setup › Campaigns page
+lists the goals shared with a campaign, paid or tracked; sharing is done
+through the API and the CLI.
 
 ## The definition
 
@@ -145,8 +176,9 @@ goal:<id>:<version>`, `dedupe_key: goal:<id>:<version>:<n>:<event_id>`, the
 event's `transaction_id` kept), so the click's value, its breakdown and MTA
 see it like any other conversion. Whether it pays is the campaign's:
 
-- a goal the campaign does not pay for is tracked, not paid (the row carries
-  the goal's value, `payable` 0);
+- a goal the campaign does not pay for (its own goal with no term, or a
+  goal shared with it with `payable: false`) is tracked, not paid (the row
+  carries the goal's value, `payable` 0);
 - a campaign `payout` overrides the goal's value there;
 - otherwise the goal's value: `fixed` pays; `none` is tracked; a
   `from_property` value pays only when the path the event arrived by may set

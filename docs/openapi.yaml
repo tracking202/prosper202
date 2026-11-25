@@ -7310,7 +7310,7 @@ paths:
       - $ref: "#/components/parameters/resourceId"
     get:
       tags: [Goals]
-      summary: List the campaigns paying for a goal
+      summary: List the campaigns a goal is set on, paid or tracked
       operationId: listGoalCampaigns
       responses:
         "200":
@@ -7330,13 +7330,22 @@ paths:
       - {name: campaignId, in: path, required: true, schema: {type: integer}}
     put:
       tags: [Goals]
-      summary: Make a campaign pay for a goal, or change its terms
+      summary: Make a campaign count and pay for a goal, or change its terms
       description: |
-        `payout` (null = the goal's own value) and `notify_traffic_source`
-        (default true). A campaign's own goal attaches only to that campaign;
-        registration and account goals attach to any of the caller's
-        campaigns, and are evaluated for its clicks from the moment they are
-        attached. Stageable.
+        Shares the goal with the campaign: any goal of the caller's (a
+        campaign's own goal, another campaign's, an app's or the account's)
+        can be set on any of the caller's campaigns, and is evaluated for its
+        clicks from the moment it is set. A funnel's goals are defined once
+        and set on each campaign that feeds it.
+
+        `payable` (default true) says whether the campaign pays for it;
+        `false` counts it there without paying: `payout` may only be null and
+        `notify_traffic_source` only false. It is refused for the campaign's own goal
+        (which always counts there; DELETE stops paying for it) and for the
+        built-in install goal. `payout` (null = the goal's own value) and
+        `notify_traffic_source` (default true). Changing a row from paid to
+        tracked or back keeps the time it started counting (`created_at`).
+        Stageable.
       operationId: setGoalCampaign
       requestBody:
         content:
@@ -7344,6 +7353,7 @@ paths:
             schema:
               type: object
               properties:
+                payable: {type: boolean, description: "Default true; false counts the goal on the campaign without paying"}
                 payout: {type: string, nullable: true, description: "Decimal amount, at most 5 places"}
                 notify_traffic_source: {type: boolean}
       responses:
@@ -7369,9 +7379,67 @@ paths:
       parameters:
         - $ref: "#/components/parameters/dryRun"
       tags: [Goals]
-      summary: Stop a campaign paying for a goal
-      description: Its outcomes on that campaign are tracked, not paid, from now on; conversions already recorded are kept.
+      summary: Stop a campaign paying for or counting a goal
+      description: >-
+        The campaign's own goal (and an account goal that counts on every
+        campaign) stays in its set, tracked, not paid; any other goal stops
+        counting on its clicks. Outcomes and conversions already recorded
+        are kept.
       operationId: removeGoalCampaign
+      responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`)
+        "204":
+          description: Removed
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /goals/{id}/every-campaign:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    put:
+      tags: [Goals]
+      summary: Count an account goal on every campaign
+      description: |
+        From now on every campaign's clicks reach the account goal,
+        campaigns made later included; it is tracked on each, and paid only
+        where a campaign pays for it (PUT /goals/{id}/campaigns/{campaignId}).
+        Already on, it keeps the time it started (`every_campaign_since`).
+        Body `{}`. Asks `manage_attribution_models`, like the account goal's
+        other writes. Stageable.
+      operationId: setGoalEveryCampaign
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "200":
+          description: The goal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GoalResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The goal is archived, or the built-in install goal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
+      tags: [Goals]
+      summary: Stop an account goal counting on every campaign
+      description: >-
+        From now on it counts only on the campaigns set on it one by one.
+        Outcomes and conversions already recorded are kept.
+      operationId: removeGoalEveryCampaign
       responses:
         "200":
           description: Dry-run preview (`dry_run=1`)
@@ -19721,6 +19789,8 @@ components:
         definition_valid: {type: boolean}
         effective_at: {type: integer}
         archived_at: {type: integer, nullable: true}
+        every_campaign: {type: boolean, description: "An account goal that counts on every campaign"}
+        every_campaign_since: {type: integer, nullable: true, description: "When it started counting on every campaign"}
         created_at: {type: integer}
         updated_at: {type: integer}
         campaigns: {type: array, items: {$ref: "#/components/schemas/GoalCampaignTerm"}}
@@ -19753,6 +19823,7 @@ components:
         campaign_id: {type: integer}
         goal_id: {type: integer}
         campaign_name: {type: string, nullable: true}
+        payable: {type: boolean, description: "false: the goal counts on the campaign and is not paid there"}
         payout_mode: {type: string, nullable: true, enum: [replace, accumulate, null]}
         payout: {type: string, nullable: true}
         notify_traffic_source: {type: boolean}
