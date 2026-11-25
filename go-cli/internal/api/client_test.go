@@ -588,6 +588,21 @@ func TestHintForAStaleVersion(t *testing.T) {
 	}
 }
 
+// An advanced landing page's delete refused while its text ads and trackers
+// name it is a 409 too; "update it instead of creating" is wrong advice.
+func TestHintForAPageItsTrackersName(t *testing.T) {
+	h := HintFor(&APIError{Status: 409, Message: "Landing page 7 is advanced and 1 tracker (tracker_id 3) name it",
+		Raw: map[string]interface{}{"details": map[string]interface{}{"text_ad_ids": []interface{}{}, "tracker_ids": []interface{}{3.0}}}})
+	for _, want := range []string{"Nothing was deleted", "p202 text-ad update", "p202 tracker update", "p202 tracker delete", "p202 tracker list --landing-page-id"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("hint lacks %q: %q", want, h)
+		}
+	}
+	if strings.Contains(h, "already exists") {
+		t.Errorf("the duplicate's hint: %q", h)
+	}
+}
+
 // The public app routes are selected by the app's token; the account's API
 // key must not travel with it (it is a credential those routes never read).
 func TestAppTokenRequestsCarryNoAPIKey(t *testing.T) {
