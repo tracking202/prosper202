@@ -22,6 +22,17 @@ ask="${P202_EVAL_ASK:-$(cat)}"
 run_id="$$-$(date +%s)"
 
 case "$ask" in
+    # Several links in one call (setup-links.json): create-with-url --items
+    # takes every tracker and answers each with its link; one key per item.
+    *"EVAL Bulk Source 1"*"EVAL Bulk Source 2"*)
+        c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name=="EVAL Campaign A")][0].aff_campaign_id')
+        a1=$(p202 ppc-account list --json | jq -r '[.data[] | select(.ppc_account_name=="EVAL Bulk Source 1")][0].ppc_account_id')
+        a2=$(p202 ppc-account list --json | jq -r '[.data[] | select(.ppc_account_name=="EVAL Bulk Source 2")][0].ppc_account_id')
+        items=$(jq -nc --arg c "$c" --arg a1 "$a1" --arg a2 "$a2" '[{aff_campaign_id: $c, ppc_account_id: $a1}, {aff_campaign_id: $c, ppc_account_id: $a2}]')
+        out=$(p202 tracker create-with-url --items "$items" --idempotency-key "eval-bulk-links-$run_id" --json)
+        printf 'Made both links for EVAL Campaign A (campaign %s) in one call (`p202 tracker create-with-url --items`):\n- EVAL Bulk Source 1: %s\n- EVAL Bulk Source 2: %s\n' "$c" \
+            "$(printf '%s' "$out" | jq -r '.data[0].tracking_url.direct_url')" "$(printf '%s' "$out" | jq -r '.data[1].tracking_url.direct_url')"
+        ;;
     # A tester's office (visitors.json): an always-count entry wins over every
     # built-in check, so add one, leave the checks alone, and report a test.
     *"QA team"*"198.51.100.0/24"*)
