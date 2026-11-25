@@ -722,6 +722,9 @@ func firstFlag(cmd *cobra.Command, names ...string) string {
 	return ""
 }
 
+// syncPollInterval is the wait between the polls of a server-side job.
+var syncPollInterval = 250 * time.Millisecond
+
 func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOptions) (bool, error) {
 	orchestrator, err := api.NewFromProfile(fromProfile)
 	if err != nil {
@@ -775,11 +778,16 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 	// the whole sync a second time. But it must not vanish either — the
 	// rendered response is then the job-creation reply, not its outcome.
 	var pollErr error
+	// kickErr is the last request to run the server's worker, when it
+	// failed: with every kick failing, nothing in this run starts the job.
+	var kickErr error
+	var jobID, lastStatus string
+	var lastJobResp []byte
 	if parseErr == nil {
-		jobID := scalarString(obj["job_id"])
+		jobID = scalarString(obj["job_id"])
 		if jobID != "" {
 			for attempt := 0; attempt < 20; attempt++ {
-				_, _ = orchestrator.Post("sync/worker/run", map[string]interface{}{"limit": 10})
+				_, kickErr = orchestrator.Post("sync/worker/run", map[string]interface{}{"limit": 10})
 				jobResp, getErr := orchestrator.Get("sync/jobs/"+jobID, nil)
 				if getErr != nil {
 					pollErr = getErr
@@ -791,6 +799,7 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 					break
 				}
 				status := strings.ToLower(strings.TrimSpace(scalarString(jobObj["status"])))
+				lastStatus, lastJobResp = status, jobResp
 				if status == "succeeded" || status == "failed" || status == "partial" || status == "cancelled" {
 					if err := render(jobResp); err != nil {
 						return true, err
@@ -808,9 +817,25 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 					}
 					return true, nil // server-side sync ran; the caller must not fall back
 				}
-				time.Sleep(250 * time.Millisecond)
+				time.Sleep(syncPollInterval)
 			}
 		}
+	}
+
+	if pollErr == nil && kickErr != nil {
+		if lastStatus == "running" {
+			output.Success(
+				"Warning: the request to run sync job %s failed (%v), but the server is running the job. "+
+					"The output below is the job as it stood, not its result — `p202 sync status` shows how it ended.",
+				jobID, kickErr)
+			render(lastJobResp)
+			return true, nil // the job is running server-side; falling back would run the sync twice
+		}
+		return true, withHint(
+			fmt.Errorf("sync job %s is still queued: the last request to run the server's sync worker failed: %w", jobID, kickErr),
+			"The job stays queued on the --from profile's install (`p202 sync status` lists it). A queued job runs only when that install's sync worker runs: "+
+				"the next `p202 sync` from that install starts it, and so does `202-cronjobs/sync-worker.php` where the server's crontab runs it, which a default install's does not. "+
+				"Fix the cause above, then run the same sync again: it runs this job too, and records already synced are found on the target by their natural key, not created twice.")
 	}
 
 	if pollErr != nil {

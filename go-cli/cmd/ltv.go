@@ -20,7 +20,12 @@ var ltvCmd = &cobra.Command{
 		"engagement, subscriptions, companies, products) and the writes the API offers — customer and\n" +
 		"company records (`ltv customer`, `ltv company`), revenue, engagement events, subscriptions and\n" +
 		"products pushed from other systems, custom fields, outbound webhooks and integrations.\n\n" +
-		"LTV writes cannot be staged: under --staged they are refused before anything is sent.",
+		"LTV writes cannot be staged: under --staged they are refused before anything is sent.\n\n" +
+		"Each part asks a scope of the key and a permission of its user's role, as the LTV pages do:\n" +
+		"reads ltv:read and campaign data; webhooks and integrations, to read, also API integrations;\n" +
+		"customer, company and product writes ltv:write and Setup; revenue, events and subscriptions\n" +
+		"sent in ltv:write and campaign data; fields, webhooks and integrations, to write, ltv:write\n" +
+		"and API integrations. `p202 whoami` shows which parts this key may use (`ltv`).",
 }
 
 // Values the LTV endpoints accept: MysqlLtvRepository's breakdowns(),
@@ -356,16 +361,24 @@ var ltvAbmCmd = &cobra.Command{
 	Short: "ABM account view — companies ranked by engagement with scores, depth metrics, revenue and MRR",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		params := map[string]string{}
-		if err := collectLtvPaging(cmd, params); err != nil {
+		company := getStringFlagOrDefault(cmd, "ltv", "company")
+		path := "ltv/abm"
+		if company != "" {
+			// One company's detail is not paged, and the server refuses
+			// limit and offset there rather than ignore them.
+			for _, f := range []string{"limit", "offset"} {
+				if cmd.Flags().Changed(f) {
+					return validationError("--%s pages the company list; it does nothing with --company", f).
+						WithHint("Drop --company to page the ranked list, or drop --%s to show %q.", f, company)
+				}
+			}
+			params["name"] = company
+			path = "ltv/abm/company"
+		} else if err := collectLtvPaging(cmd, params); err != nil {
 			return err
 		}
 		if v := getStringFlagOrDefault(cmd, "ltv", "days"); v != "" {
 			params["days"] = v
-		}
-		path := "ltv/abm"
-		if company := getStringFlagOrDefault(cmd, "ltv", "company"); company != "" {
-			params["name"] = company
-			path = "ltv/abm/company"
 		}
 		return ltvGet(path, params)
 	},

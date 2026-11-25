@@ -14,10 +14,7 @@ import (
 
 // requestErrorDrops are the requests whose error is still assigned to _, keyed "file: callee", with what the drop
 // does. The list only shrinks.
-var requestErrorDrops = map[string]string{
-	"cmd/sync.go: orchestrator.Post": "sync's server-side job: kicks the server's sync worker between status reads; if " +
-		"every kick fails, the 20 reads end and the job is printed as queued, with no warning",
-}
+var requestErrorDrops = map[string]string{}
 
 // TestRequestErrorsAreNotDiscarded holds every assignment of a request's error to _ (`offers, _ :=
 // fetchBreakdownRows(c, …)`, `_, _ = c.Post(…)`) to requestErrorDrops. `campaign optimize` dropped the error of its

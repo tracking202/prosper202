@@ -76,7 +76,14 @@ API version and feature detection.
     "principal": {
       "user_id": 1,
       "roles": ["super user"],
-      "scopes": ["*"]
+      "scopes": ["*"],
+      "ltv": {
+        "read": true,
+        "settings_read": true,
+        "crm_write": true,
+        "incoming": true,
+        "settings_write": true
+      }
     }
   }
 }
@@ -111,6 +118,7 @@ API version and feature detection.
 | `principal.user_id` | integer | The user the calling key acts as. |
 | `principal.roles` | array | That user's role names (`super user`, `admin`, …). |
 | `principal.scopes` | array | The key's scopes: `*` is full access; `read`, `write`, `stage` and `<area>:<action>` narrow it (see [API Key Scopes](00-api-integrations.md#api-key-scopes)). |
+| `principal.ltv` | object | Which parts of Customer LTV this key may use, `true` or `false` each: what the `/ltv` routes would answer, from the key's scope and its user's role (the permissions the LTV pages ask). `read`: the reports and the customer, company, product, subscription and field lists (`ltv:read`, campaign data). `settings_read`: webhooks, their deliveries and integrations (`ltv:read`, campaign data and API integrations). `crm_write`: customer, company and product writes (`ltv:write`, Setup). `incoming`: revenue, events, subscriptions and next-offer impressions sent in (`ltv:write`, campaign data). `settings_write`: fields, webhooks and integrations, and the LTV › Settings values of `PUT /users/{id}/preferences` (`ltv:write`, API integrations). A client leaves out what is `false`. A server without it predates it. |
 
 `principal` is the calling key's own facts, so any valid key reads it whatever
 its scope. It is how a key holder learns which account it is and what it may

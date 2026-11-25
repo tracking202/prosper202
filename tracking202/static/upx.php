@@ -44,8 +44,17 @@ $purLinkKey = $purLink['key'] ?? null;
 // How the click was found, kept on the conversion (MatchMethod): the
 // parameter or the cookie that named it, or the address it was guessed from.
 $matchedBy = $requestedClick['method'] ?? \Prosper202\Conversion\Ledger\MatchMethod::SAME_IP;
+// The accounts a click found by a parameter an account lists may belong to; null for any.
+$adClickOwners = null;
+// Neither the SubID nor a cookie named a click: the one click carrying an ad
+// click id the request sends, as gpb.php finds it (p202PixelClickByAdClickId()).
+$adClick = $requestedClick['click_id'] === null ? p202PixelClickByAdClickId($db, $_GET, 'upx') : null;
 if ($requestedClick['click_id'] !== null) {
     $mysql['click_id'] = (string) $requestedClick['click_id'];
+} elseif ($adClick !== null) {
+    $mysql['click_id'] = (string) $adClick['click_id'];
+    $adClickOwners = $adClick['owners'];
+    $matchedBy = \Prosper202\Conversion\Ledger\MatchMethod::AD_CLICK_ID;
 } else {
             // Nothing named a click: the latest click from this address of
             // the account whose pixel this is (pixelAccount()), when
@@ -81,7 +90,10 @@ if ($cvar_sql_result === false) {
     record_mysql_error($db, $cvar_sql);
 }
 $cvar_sql_row = p202FetchRow($cvar_sql_result, $cvar_sql);
-if (!$cvar_sql_row) {
+// A click found by a parameter an account lists is that account's (as on gpb.php).
+$notTheListingAccounts = $cvar_sql_row && $adClickOwners !== null
+    && !in_array((int) $cvar_sql_row['user_id'], $adClickOwners, true);
+if (!$cvar_sql_row || $notTheListingAccounts) {
     p202RespondJsonError(404, 'Click data not found');
 }
 
@@ -106,26 +118,9 @@ $source_row = p202FetchRow($source_result, $source_sql);
 // the conversion stores the address.
 p202ApplyOwnerPrivacy($cvar_sql_row['user_id'] ?? null);
 \Prosper202\InboundLog\RequestLog::current()?->account($cvar_sql_row['user_id'] ?? null);
-$mysql['t202kw'] = $db->real_escape_string((string) ($cvar_sql_row['keyword'] ?? ''));
-$mysql['c1'] = $db->real_escape_string((string) ($cvar_sql_row['c1'] ?? ''));
-$mysql['c2'] = $db->real_escape_string((string) ($cvar_sql_row['c2'] ?? ''));
-$mysql['c3'] = $db->real_escape_string((string) ($cvar_sql_row['c3'] ?? ''));
-$mysql['c4'] = $db->real_escape_string((string) ($cvar_sql_row['c4'] ?? ''));
-$mysql['gclid'] = $db->real_escape_string((string) ($cvar_sql_row['gclid'] ?? ''));
-$mysql['utm_source'] = $db->real_escape_string((string) ($cvar_sql_row['utm_source'] ?? ''));
-$mysql['utm_medium'] = $db->real_escape_string((string) ($cvar_sql_row['utm_medium'] ?? ''));
-$mysql['utm_campaign'] = $db->real_escape_string((string) ($cvar_sql_row['utm_campaign'] ?? ''));
-$mysql['utm_term'] = $db->real_escape_string((string) ($cvar_sql_row['utm_term'] ?? ''));
-$mysql['utm_content'] = $db->real_escape_string((string) ($cvar_sql_row['utm_content'] ?? ''));
-$mysql['click_user_id'] = $db->real_escape_string((string) ($cvar_sql_row['user_id'] ?? ''));
-$mysql['campaign_id'] = $db->real_escape_string((string) ($cvar_sql_row['aff_campaign_id'] ?? ''));
-$mysql['payout'] = $db->real_escape_string((string) ($cvar_sql_row['click_payout'] ?? '0'));
-$mysql['cpc'] = $db->real_escape_string((string) ($source_row['click_cpc'] ?? '0'));
-$mysql['click_cpa'] = $db->real_escape_string((string) ($cvar_sql_row['click_cpa'] ?? ''));
-$mysql['click_lead'] = $db->real_escape_string((string) ($cvar_sql_row['click_lead'] ?? '0'));
-$mysql['click_time'] = $db->real_escape_string((string) ($cvar_sql_row['click_time'] ?? '0'));
-$mysql['ppc_account_id'] = $db->real_escape_string((string) ($source_row['ppc_account_id'] ?? ''));
-$mysql['referer'] = urlencode((string) $db->real_escape_string((string) ($cvar_sql_row['site_url_address'] ?? '')));
+$mysql['payout'] = (string) ($cvar_sql_row['click_payout'] ?? '0');
+$mysql['cpc'] = (string) ($source_row['click_cpc'] ?? '0');
+$mysql['ppc_account_id'] = (string) ($source_row['ppc_account_id'] ?? '');
 
 if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
 	$mysql['use_pixel_payout'] = 1;
@@ -139,32 +134,8 @@ $adClickIds = \Prosper202\Click\AdClickIdColumns::of(
     $clickId
 );
 
-$tokens = [
-    "subid" => $mysql['click_id'],
-    "t202kw" => $mysql['t202kw'],
-	"c1" => $mysql['c1'],
-	"c2" => $mysql['c2'],
-	"c3" => $mysql['c3'],
-	"c4" => $mysql['c4'],
-    "gclid" => $mysql['gclid'],
-    "gbraid" => $adClickIds['gbraid'],
-    "wbraid" => $adClickIds['wbraid'],
-    "ttclid" => $adClickIds['ttclid'],
-    "msclkid" => $adClickIds['msclkid'],
-    "fbclid" => $adClickIds['fbclid'],
-    "oppref" => $adClickIds['oppref'],
-    "utm_source" => $mysql['utm_source'],
-    "utm_medium" => $mysql['utm_medium'],
-    "utm_campaign" => $mysql['utm_campaign'],
-    "utm_term" => $mysql['utm_term'],
-    "utm_content" => $mysql['utm_content'],
-    "cpc" => round((float) $mysql['cpc'], 2),
-	"cpc2" => $mysql['cpc'],
-    "timestamp" => time(),
-	"payout" => $mysql['payout'],
-	"random" => mt_rand(1000000, 9999999),
-    "referer" => $mysql['referer']
-];
+// The click's values as stored: replaceTokens() URL-encodes them (p202ConversionPixelTokens()).
+$tokens = p202ConversionPixelTokens($clickId, $cvar_sql_row, $adClickIds, $mysql['cpc'], $mysql['payout']);
 
 if (is_numeric($mysql['click_id'])) {
 

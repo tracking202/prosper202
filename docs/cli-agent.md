@@ -1070,6 +1070,8 @@ p202 analytics         --group-by DIM [--period P | --days N]
                        [--sort METRIC] [--sort-dir ASC|DESC] [-l limit] [-o offset] [filters...] [--json]
 p202 report breakeven  --aff-campaign-id ID [-b dimension] [--max-cpc N]
                        [-l limit] [-o offset] [-p period] [filters...] [--json]
+                       # the payout is the reports' (GET /reports/payout): a Campaign
+                       # optimizer runs it, and the id is in report breakdown -b campaign
 p202 analytics         --group-by DIM --split-at YYYY-MM-DD|UNIX
                        [--days N | --time-from UNIX [--time-to UNIX]]
                        [--sort clicks|conversions|revenue[_per_day]] [--sort-dir ASC|DESC]
@@ -1653,7 +1655,7 @@ Visitor-authored (or visitor-derived) fields returned by this CLI:
 | SubIDs `c1`--`c4` | Query parameters on the tracking link | `click get` (`c1`..`c4`), `report breakdown`/`analytics` by `c1`..`c4` |
 | UTM values | `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content` on the tracking link | `report breakdown`/`analytics` by `utm_source` .. `utm_content` |
 | Ad click ids | `gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid`, `oppref` on the tracking or landing URL | `click list`/`click get` (`gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid`, `oppref`; capped at 1,000 characters, not 512) |
-| IP addresses | The visitor's connection (or the `X-Forwarded-For` header the redirect honours) | `report breakdown`/`analytics` by `ip` |
+| IP addresses | The visitor's connection (or, behind Cloudflare or a proxy listed in `P202_TRUSTED_PROXIES`, the client its `X-Forwarded-For` or `Forwarded` header names) | `report breakdown`/`analytics` by `ip` |
 | Browser, platform, device names | Parsed from the visitor's user-agent string | `click list`/`click get` resolved names, `report breakdown`/`analytics` by `browser`/`platform`/`device` |
 | Region, city, ISP names | GeoIP resolution of the visitor's IP | `click list`/`click get`, `report breakdown`/`analytics` by `region`/`city`/`isp` |
 

@@ -188,8 +188,12 @@ final class ReportDepthIntegrationTest extends TestCase
         $i['ruleTwo'] = $rule('rd rule two', 0);
         $deletedRule = $i['ruleTwo'] + 1000;
 
-        $now = time() - 3600;
         $newYork = new \DateTimeZone('America/New_York');
+        // An hour ago, but not before the account's year began: the periods
+        // test counts these clicks in thisyear, whatever hour CI runs.
+        $yearStart = (new \DateTimeImmutable('first day of january this year 00:00', $newYork))
+            ->getTimestamp();
+        $now = max(time() - 3600, $yearStart);
         $lastYear = (new \DateTimeImmutable('first day of january last year 12:00', $newYork))
             ->modify('+14 days')->getTimestamp();
         $click = 0;

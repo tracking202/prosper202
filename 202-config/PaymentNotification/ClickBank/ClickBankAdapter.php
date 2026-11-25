@@ -10,6 +10,8 @@ use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\AccountSecrets;
 use Prosper202\PaymentNotification\ClickField;
 use Prosper202\PaymentNotification\ConfirmsTestNotifications;
+use Prosper202\PaymentNotification\DescribesIgnoredNotifications;
+use Prosper202\PaymentNotification\FindsReversedSalesByTransactionId;
 use Prosper202\PaymentNotification\FingerprintsNotifications;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\Notification;
@@ -43,9 +45,12 @@ use Prosper202\PaymentNotification\Verification;
  * totalAccountAmount says the account lost, since ClickBank refunds part of
  * a payment too (a subscription's product change refunds "a portion of the
  * old product's last recurring payment"), and the whole of it when it states
- * none or 0. A refund of a sale credited before the upgrade, which left no
- * row under its receipt, takes its amount back from the value the click
- * carried over (ReversesPreUpgradeSales).
+ * none or 0. A reversal with no tracking code (no article says a refund
+ * carries the order's) takes back the ClickBank sale under its receipt in
+ * the account whose key decrypted it (FindsReversedSalesByTransactionId). A
+ * refund of a sale credited before the upgrade, which left no row under its
+ * receipt, takes its amount back from the value the click carried over
+ * (ReversesPreUpgradeSales).
  *
  * The legacy versions (4.0 and earlier: a form signed with an 8-digit
  * `cverify`) are answered 415, saying which version to set.
@@ -53,6 +58,8 @@ use Prosper202\PaymentNotification\Verification;
 final class ClickBankAdapter implements
     ProviderAdapter,
     ConfirmsTestNotifications,
+    DescribesIgnoredNotifications,
+    FindsReversedSalesByTransactionId,
     FingerprintsNotifications,
     RecordsAmountsAsStated,
     ReversesPreUpgradeSales
@@ -76,6 +83,8 @@ final class ClickBankAdapter implements
         'CANCEL-REBILL' => NotificationKind::IGNORED,
         'UNCANCEL-REBILL' => NotificationKind::IGNORED,
         // A subscription's product changed (the article describes it by its old and new products).
+        // It can refund part of the last payment; no article says whether it or a refund carries
+        // that, so the answer states its amount (ignoredNote()) and nothing is taken back.
         'SUBSCRIPTION-CHG' => NotificationKind::IGNORED,
         // A cart left, a rebill's card declined, the buyer's details changed or the receipt resent.
         'ABANDONED_ORDER' => NotificationKind::IGNORED,
@@ -106,6 +115,9 @@ final class ClickBankAdapter implements
 
     /** @var array<string, mixed> */
     private array $order = [];
+
+    /** What parse() found the decrypted order's ignored notification to state. */
+    private string $ignoredNote = '';
 
     public function name(): string
     {
@@ -208,6 +220,14 @@ final class ClickBankAdapter implements
                 . ' not list; nothing was recorded.'
             );
         }
+        $this->ignoredNote = '';
+        if ($type === 'SUBSCRIPTION-CHG') {
+            $receipt = $order['receipt'] ?? null;
+            $receipt = is_string($receipt) && preg_match(self::RECEIPT, $receipt) === 1 ? $receipt : null;
+            $this->ignoredNote = self::productChangeNote($order, $receipt);
+
+            return new Notification($kind, $shown, $receipt);
+        }
         if (!$kind->records() && !$kind->reverses()) {
             return new Notification($kind, $shown);
         }
@@ -244,6 +264,38 @@ final class ClickBankAdapter implements
             self::namedClick($order),
             self::occurredAt($order)
         );
+    }
+
+    public function ignoredNote(InboundRequest $request): string
+    {
+        if ($request !== $this->decrypted) {
+            throw new \LogicException(
+                'ClickBankAdapter::ignoredNote() reads the order verify() decrypted from this request'
+            );
+        }
+
+        return $this->ignoredNote;
+    }
+
+    /**
+     * What a product change states, as it states it: nothing it says is
+     * recorded, so an amount that is not one is shown rather than refused.
+     *
+     * @param array<string, mixed> $order
+     */
+    private static function productChangeNote(array $order, ?string $receipt): string
+    {
+        $raw = $order['totalAccountAmount'] ?? null;
+        $stated = match (true) {
+            $raw === null => 'no totalAccountAmount',
+            is_string($raw) => 'a totalAccountAmount of ' . self::shown($raw),
+            is_int($raw), is_float($raw) => 'a totalAccountAmount of ' . self::shown(var_export($raw, true)),
+            default => 'a totalAccountAmount that is ' . gettype($raw),
+        };
+
+        return ' It states ' . $stated . ($receipt !== null ? ' under receipt ' . $receipt : '') . '. A product'
+            . ' change can refund part of the last payment, and no ClickBank article says whether this notification or'
+            . ' a refund carries it, so nothing was taken back.';
     }
 
     public function confirmTest(Connection $conn, int $accountId): void
@@ -350,7 +402,8 @@ final class ClickBankAdapter implements
      * tid=[[subid]]), or where it has none the extclid that version 8.0
      * sends an affiliate (extclid=[[subid]]). Null when it names neither,
      * which the processor answers as no_click (200); a value that is not a
-     * click id is refused rather than read as none.
+     * click id is refused rather than read as none. A reversal naming none is
+     * taken back from the sale under its receipt (FindsReversedSalesByTransactionId).
      *
      * @param array<string, mixed> $order
      */

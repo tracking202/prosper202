@@ -1,5 +1,11 @@
 version: 2
 
+# Every pull request here is opened against the default branch, master,
+# which takes a Dependabot bump (CLAUDE.md, "Branches";
+# scripts/check-pr-branch.sh). A bump merged into master between versions
+# reaches the next release when master is brought into the version branch,
+# which scripts/check-release-merge.sh asks for before the version merges.
+
 updates:
   # Workflows pin every action to a full commit SHA with the version in a
   # trailing comment (a tag like @v2 can be moved to other code). Dependabot
@@ -29,3 +35,40 @@ updates:
         update-types:
           - version-update:semver-major
           - version-update:semver-minor
+
+  # Composer: the release zip and the image install exactly composer.lock, so
+  # a fix in a PHP library reaches installs only through a lock bump. Minor
+  # and patch releases come grouped, one pull request a week. A new major
+  # (Slim 4, Symfony 7) comes as a pull request of its own: it is a migration
+  # to plan, so close it with `@dependabot ignore this major version` rather
+  # than merge it as a bump. Majors are not ignored here, because an ignore
+  # rule could also hold back a security update that only a major carries.
+  # Security updates (a repository setting) are opened as soon as an advisory
+  # is published, outside the group. composer.json pins the platform to PHP
+  # 8.3, so every proposal resolves for the oldest PHP the app supports.
+  # dependency-audit.yml runs `composer audit` on each one.
+  - package-ecosystem: composer
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      composer:
+        update-types:
+          - minor
+          - patch
+
+  # The Go CLI (go-cli/, the only Go module in the tree). Its binaries ship
+  # in the release zip, so the same grouping and the same rule for majors
+  # apply. These are module bumps, not toolchain releases: a Go release is
+  # bumped by hand (the `go` line in go.mod and every workflow's go-version),
+  # and govulncheck in dependency-audit.yml fails when the pinned Go has a
+  # known vulnerability the CLI reaches.
+  - package-ecosystem: gomod
+    directory: /go-cli
+    schedule:
+      interval: weekly
+    groups:
+      gomod:
+        update-types:
+          - minor
+          - patch
