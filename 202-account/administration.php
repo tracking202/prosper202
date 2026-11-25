@@ -69,7 +69,17 @@ $adminShownRows = [
     // User 1's row, where AutoOptimizeDatabase() reads it.
     'auto_database_management' => ['user_auto_database_optimization_days', 1],
 ];
-$adminShown = static function (string $form) use ($db, $adminShownRows): array {
+// The saved egress proxy as its form shows it: the URL, and the stored
+// credentials only by digest.
+$egressShownValues = static fn (?\Prosper202\Http\StoredEgressProxy $saved): array => $saved === null
+    ? ['url' => null]
+    : ['url' => $saved->url, 'credentials' => $saved->credentialsFingerprint()];
+$adminShown = static function (string $form) use ($db, $adminShownRows, $egressShownValues): array {
+    if ($form === 'egress_proxy') {
+        return $egressShownValues(
+            (new \Prosper202\Http\EgressProxyStore(new \Prosper202\Database\Connection($db)))->read()
+        );
+    }
     if ($form === 'geoip') {
         $refresh = new \Prosper202\GeoIp\RefreshStore(new \Prosper202\Database\Connection($db));
 
@@ -297,6 +307,10 @@ if (isset($_POST['egress_action'])) {
     $egressBy = (int) ($_SESSION['user_id'] ?? 0);
     try {
         if ($egressAction === 'save' || $egressAction === 'test') {
+            if ($egressAction === 'save') {
+                // Test connection saves nothing, so only a save is held to the version.
+                $adminRequireShown('egress_proxy', 'egress-proxy');
+            }
             $egressUrl = trim((string) ($_POST['egress_proxy_url'] ?? ''));
             $egressUser = (string) ($_POST['egress_proxy_username'] ?? '');
             $egressPassword = (string) ($_POST['egress_proxy_password'] ?? '');
@@ -1013,6 +1027,7 @@ if ($proxyWarning !== null) {
                 <?php } else { ?>
                     <form method="post" action="<?php echo $e($self . '#egress-proxy'); ?>">
                         <?php echo p202_account_token_field(); ?>
+                        <?php echo p202_account_shown_field('egress_proxy', $egressShownValues($egressSaved)); ?>
                         <label class="form-label" for="egress_proxy_url">Proxy URL</label>
                         <input type="text" class="form-control<?php echo p202_account_invalid($fieldErrors, 'egress_proxy_url'); ?>"
                             id="egress_proxy_url" name="egress_proxy_url" autocomplete="off" spellcheck="false"

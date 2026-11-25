@@ -24,6 +24,15 @@ final class StoredEgressProxy
         return $this->username !== '' || $this->password !== '';
     }
 
+    /**
+     * A digest of the stored credentials, for the settings form's version
+     * (ShownSettings): it changes with either, and gives neither away.
+     */
+    public function credentialsFingerprint(): string
+    {
+        return hash('sha256', strlen($this->username) . ':' . $this->username . ':' . $this->password);
+    }
+
     /** @return array{0: string, 1: string} for EgressProxy only */
     public function credentials(): array
     {
