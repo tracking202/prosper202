@@ -2360,7 +2360,14 @@ paths:
         - $ref: "#/components/parameters/dryRun"
       tags: [Landing Pages]
       summary: Delete a landing page
-      description: Soft delete.
+      description: >-
+        Soft delete. An advanced page (`landing_page_type` 1) is not deleted
+        while text ads of `text_ad_type` 1 or trackers name it, since each
+        would be left pointing at a page that is gone: the answer is 409,
+        naming them. Point each text ad at another advanced page or make it
+        a campaign ad, and move or delete each tracker, then delete the page.
+        A dry run answers the same refusal. A simple page is deleted as
+        before.
       operationId: deleteLandingPage
       responses:
         "200":
@@ -2369,6 +2376,15 @@ paths:
           description: Landing page deleted
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            The page is advanced and text ads of `text_ad_type` 1 or trackers
+            name it; nothing was deleted. `details.text_ad_ids` and
+            `details.tracker_ids` list them.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   # ─── Text Ads ────────────────────────────────────────────────────────
 
