@@ -34,7 +34,13 @@ class ReportBreakdownCommand extends BaseCommand
             ->addOption('aff-network-id', null, InputOption::VALUE_REQUIRED, 'Filter by affiliate network ID')
             ->addOption('ppc-network-id', null, InputOption::VALUE_REQUIRED, 'Filter by PPC network ID')
             ->addOption('landing-page-id', null, InputOption::VALUE_REQUIRED, 'Filter by landing page ID')
-            ->addOption('country-id', null, InputOption::VALUE_REQUIRED, 'Filter by country ID');
+            ->addOption('country-id', null, InputOption::VALUE_REQUIRED, 'Filter by country ID')
+            ->addOption(
+                'goals',
+                null,
+                InputOption::VALUE_REQUIRED,
+                'Goal ids in funnel order, comma separated (up to 10): each row gets its funnel'
+            );
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int
@@ -45,15 +51,59 @@ class ReportBreakdownCommand extends BaseCommand
         $params['sort_dir'] = $input->getOption('sort-dir');
         $params['limit'] = $input->getOption('limit');
         $params['offset'] = $input->getOption('offset');
+        $goals = $input->getOption('goals');
+        if ($goals !== null) {
+            $params['goals'] = $goals;
+        }
 
         $result = $this->client()->get('reports/breakdown', $params);
-        $this->render($output, $result, $input);
+        $this->render($output, $this->isJson($input) ? $result : self::withGoalColumns($result), $input);
         // --json carries `truncated` itself; a table says it on stderr.
         $note = $this->isJson($input) ? null : self::moreRowsNote($result);
         if ($note !== null) {
             ($output instanceof ConsoleOutputInterface ? $output->getErrorOutput() : $output)->writeln($note);
         }
         return Command::SUCCESS;
+    }
+
+    /**
+     * A funnel's rows for a table: each step's reached, rate, step rate and
+     * drop-off as columns named by the step's number and goal, in place of
+     * the nested list.
+     * --json keeps the answer as the server sent it.
+     *
+     * @param array<mixed> $result
+     * @return array<mixed>
+     */
+    public static function withGoalColumns(array $result): array
+    {
+        if (!is_array($result['goals'] ?? null) || !is_array($result['data'] ?? null)) {
+            return $result;
+        }
+        $names = [];
+        foreach ($result['goals'] as $goal) {
+            if (is_array($goal) && isset($goal['goal_id'])) {
+                $names[$goal['goal_id']] = (string) ($goal['name'] ?? ('goal ' . $goal['goal_id']));
+            }
+        }
+        foreach ($result['data'] as $i => $row) {
+            if (!is_array($row) || !is_array($row['goals'] ?? null)) {
+                continue;
+            }
+            $steps = $row['goals'];
+            unset($row['goals']);
+            foreach ($steps as $n => $step) {
+                // Numbered: two owners' goals can share a name.
+                $name = ($n + 1) . '. ' . ($names[$step['goal_id']] ?? ('goal ' . $step['goal_id']));
+                $row["$name reached"] = $step['reached'];
+                $row["$name rate"] = $step['rate'];
+                $row["$name step rate"] = $step['step_rate'];
+                $row["$name drop-off"] = $step['drop_off'];
+            }
+            $result['data'][$i] = $row;
+        }
+
+        return $result;
     }
 
     /**

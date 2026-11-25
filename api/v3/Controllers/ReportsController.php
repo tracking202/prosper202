@@ -8,6 +8,7 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\AccountTimezone;
+use Api\V3\Support\GoalFunnel;
 use Api\V3\Support\ReportFilter;
 use Api\V3\Support\ResponseSanitizer;
 use Api\V3\Support\StatementHelpers;
@@ -181,8 +182,11 @@ class ReportsController
     /** A breakdown sorts by any metric its rows carry. */
     private const array ALLOWED_SORTS = self::METRIC_FIELDS;
 
-    /** What a breakdown takes besides the window and the filters. */
-    private const array BREAKDOWN_PARAMS = ['breakdown', 'sort', 'sort_dir', 'limit', 'offset'];
+    /**
+     * What a breakdown takes besides the window and the filters. `goals`
+     * adds each row's goal funnel (GoalFunnel).
+     */
+    private const array BREAKDOWN_PARAMS = ['breakdown', 'sort', 'sort_dir', 'limit', 'offset', 'goals'];
 
     /**
      * Dimensions whose rows belong to an account: a click names one of them
@@ -417,16 +421,26 @@ class ReportsController
         $offset = self::wholeNumber($params, 'offset', 0, 0, PHP_INT_MAX, 'the number of rows to skip');
         $sortBy = self::sortField($params, 'total_clicks', self::ALLOWED_SORTS);
         $sortDir = self::sortDirection($params, 'DESC');
+        $funnel = GoalFunnel::fromParam(new Connection($this->db), $this->userId, $params['goals'] ?? null);
 
         [$where, $binds, $types] = $this->filtered($params);
+        $whereClause = 'WHERE ' . implode(' AND ', $where);
+        $goalTotals = $funnel === null ? null : $this->goalTotals($funnel, $whereClause, $binds, $types);
+        $funnelJoin = '';
+        $funnelSelect = '';
+        if ($funnel !== null) {
+            [$funnelTypes, $funnelBinds] = $funnel->joinBinds();
+            $binds = [...$funnelBinds, ...$binds];
+            $types = $funnelTypes . $types;
+            $funnelJoin = $funnel->join();
+            $funnelSelect = ",\n                " . $funnel->select();
+        }
         $ledger = $this->ledger($params);
         $sum = self::summed($ledger);
         if ($ledger !== null) {
             $binds = [...$ledger->binds, ...$binds];
             $types = $ledger->types . $types;
         }
-
-        $whereClause = 'WHERE ' . implode(' AND ', $where);
 
         $idSql = "ref.{$bd['id']}";
         $nameSql = $bd['name_sql'] ?? "ref.{$bd['name']}";
@@ -443,10 +457,11 @@ class ReportsController
         $sql = "SELECT
                 $idSql as id,
                 $nameSql as name,$extraSelect
-                " . self::metricsSelect($sum) . "
+                " . self::metricsSelect($sum) . $funnelSelect . "
             FROM 202_dataengine de
             {$ledger?->join}
             $join
+            $funnelJoin
             $whereClause
             GROUP BY $group
             ORDER BY $sortBy $sortDir, $idSql ASC
@@ -475,7 +490,12 @@ class ReportsController
             if ($sanitizeNames) {
                 $row = ResponseSanitizer::cleanRowFields($row, ['name']);
             }
-            $rows[] = array_merge($row, self::typedMetrics($row));
+            $metrics = self::typedMetrics($row);
+            if ($funnel !== null) {
+                [$row, $steps] = $funnel->take($row, $metrics['total_clicks']);
+                $metrics['goals'] = $steps;
+            }
+            $rows[] = array_merge($row, $metrics);
         }
         $stmt->close();
 
@@ -484,14 +504,54 @@ class ReportsController
             $rows = array_slice($rows, 0, $limit);
         }
 
-        return [
+        $answer = [
             'data' => $rows,
             'breakdown' => $breakdownType,
             'available_breakdowns' => array_keys(self::BREAKDOWNS),
             'truncated' => $truncated,
             'limit' => $limit,
             'offset' => $offset,
-        ] + $this->money($params) + $this->ledgerMeta($ledger);
+        ];
+        if ($funnel !== null) {
+            $answer['goals'] = $funnel->steps();
+            $answer['goal_totals'] = $goalTotals;
+        }
+
+        return $answer + $this->money($params) + $this->ledgerMeta($ledger);
+    }
+
+    /**
+     * The funnel over every click the window and the filters select, as one
+     * row: a breakdown's rows leave out the clicks with no value for their
+     * dimension, so their steps need not sum to this.
+     *
+     * @param list<int|string> $binds the WHERE's
+     * @return array{total_clicks: int, goals: list<array<string, int|float>>}
+     */
+    private function goalTotals(GoalFunnel $funnel, string $whereClause, array $binds, string $types): array
+    {
+        [$funnelTypes, $funnelBinds] = $funnel->joinBinds();
+        $sql = "SELECT COALESCE(SUM(de.clicks), 0) as total_clicks,
+                " . $funnel->select() . "
+            FROM 202_dataengine de
+            " . $funnel->join() . "
+            $whereClause";
+        $stmt = $this->prepare($sql);
+        $this->bind($stmt, $funnelTypes . $types, ...$funnelBinds, ...$binds);
+        $this->execute($stmt, 'Goal funnel totals query failed');
+        $row = $this->resultOf($stmt, 'Goal funnel totals query failed')->fetch_assoc();
+        $stmt->close();
+        if (!is_array($row)) {
+            throw new DatabaseException('Goal funnel totals query returned no row');
+        }
+        $clicks = $row['total_clicks'];
+        if (!is_int($clicks) && !(is_string($clicks) && preg_match('/^[0-9]+$/D', $clicks) === 1)) {
+            throw new DatabaseException('Goal funnel total_clicks is not a count');
+        }
+        $clicks = (int) $clicks;
+        [, $steps] = $funnel->take($row, $clicks);
+
+        return ['total_clicks' => $clicks, 'goals' => $steps];
     }
 
     /**

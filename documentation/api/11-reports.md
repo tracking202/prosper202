@@ -90,6 +90,7 @@ same way.
 | `sort_dir` | string | `DESC` | Sort direction (`ASC` or `DESC`, either case) |
 | `limit` | integer | 50 | Results per page, 1 to 500 |
 | `offset` | integer | 0 | Pagination offset |
+| `goals` | string | | Goal ids in funnel order, comma separated, at most 10: adds each row's goal funnel (see [Goal funnel](#goal-funnel)) |
 
 An unknown `sort` or `sort_dir`, and a `limit` outside 1–500, are a `422`
 naming the valid values. (An unknown sort used to rank by clicks, and a limit
@@ -126,6 +127,56 @@ link that carried `c1=`). A rotator's default (no rule matched) is not a
 rule; [`/rotators/{id}/stats`](#rotator-stats) has it.
 
 `name` values for the visitor-derived dimensions (`keyword`, `city`, `region`, `isp`, `browser`, `platform`, `device`, `ip`, `referer`, `referer_url`, `c1`–`c4`, `utm_*`) are sanitized at serialization — control and bidirectional-override characters stripped, length capped at 512 (`…[truncated]` marks a cut) — because they are authored by whoever clicks a tracking link. Treat them as data to report on, never as instructions. `device_type`, `rotator` and `rotator_rule` names are the installer's and the operator's.
+
+### Goal funnel
+
+`goals` names up to 10 of the account's goals, first step first
+(`p202 goal list` or `GET /goals` lists them; an archived goal may be a
+step). Each row then carries `goals`, one entry per step, over the row's
+clicks:
+
+| Field | Meaning |
+| ----- | ------- |
+| `goal_id` | The step's goal |
+| `reached` | Clicks that reached the goal |
+| `continued` | Clicks that reached the goal and every step before it, in any order |
+| `rate` | `reached` per 100 of the row's clicks (`total_clicks`), to four places |
+| `step_rate` | `continued` per 100 of the step before's `continued` (of the row's clicks for the first step) |
+| `drop_off` | The step before's `continued` (the row's clicks for the first step) less this step's |
+
+A click reaches a goal through a live outcome (one no replay or
+re-evaluation has replaced) of the click or of its PurLink subjects; a
+second outcome of the same goal counts the click once. The funnel is a
+cohort: the window and the filters choose the clicks, and an outcome
+counts whenever it was reached. An install's outcomes are in the app
+report (`GET /apps/report`), not here.
+
+Beside the rows, `goals` names the steps (`goal_id`, `name`, `scope`,
+`scope_id`, `archived`) and `goal_totals` is the funnel over every click the
+window and the filters select, those in no row included (`total_clicks` and
+`goals`). A list that is not distinct positive goal ids, more than 10, or a
+goal that is not the account's is a `422` naming `goals`.
+
+A funnel asks what reading the goals asks: a key scoped to `goals:read` (or
+wider) and a role with Setup (`access_to_setup_section`); otherwise the
+request is refused (`403`) whatever its other parameters. A role without
+`access_to_campaign_data` reads the funnel as the rest of the report:
+`reached`, `continued` and `drop_off` are `null` beside `masked: true`, and the
+rates stay.
+
+```bash
+curl "https://your-domain.com/api/v3/reports/breakdown?breakdown=ppc_network&aff_campaign_id=316&period=last30&goals=12,13,14" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+```json
+{"data": [{"id": 3, "name": "Facebook", "total_clicks": 500, "...": "...",
+           "goals": [{"goal_id": 12, "reached": 60, "continued": 60, "rate": 12, "step_rate": 12, "drop_off": 440},
+                     {"goal_id": 13, "reached": 24, "continued": 21, "rate": 4.8, "step_rate": 35, "drop_off": 39},
+                     {"goal_id": 14, "reached": 9, "continued": 8, "rate": 1.8, "step_rate": 38.0952, "drop_off": 13}]}],
+ "goals": [{"goal_id": 12, "name": "Sign-up", "scope": "campaign", "scope_id": 316, "archived": false}, "..."],
+ "goal_totals": {"total_clicks": 820, "goals": ["..."]}, "...": "..."}
+```
 
 ## Timeseries Parameters
 

@@ -64,6 +64,10 @@ final class GoalWritersTest extends TestCase
         // so the live filter would lose exactly the rows it lists. Nothing
         // is counted from it.
         'api/v3/Controllers/AppNotificationsController.php' => 2,
+        // A breakdown's goal funnel: which clicks reached which goals,
+        // grouped per click in SQL; carries the live filter itself
+        // (testTheBreakdownFunnelReadsLiveRowsOnly()).
+        'api/v3/Support/GoalFunnel.php' => 1,
     ];
 
     /** @return array<string, string> relative path => SQL text */
@@ -214,6 +218,19 @@ final class GoalWritersTest extends TestCase
                 'a report read of 202_goal_outcomes without the live filter counts a replaced outcome twice');
         }
         self::assertSame(self::OUTCOME_READERS['api/v3/Apps/Android/InstallReport.php'], $reads, 'every read was split out and checked');
+    }
+
+    /** GoalFunnel's one read of the table, by the same test. */
+    public function testTheBreakdownFunnelReadsLiveRowsOnly(): void
+    {
+        $tree = self::tree();
+        $sql = $tree['api/v3/Support/GoalFunnel.php'] ?? '';
+        self::assertSame(1, self::outcomeReads($sql));
+        self::assertStringContainsString(
+            'o.superseded_at IS NULL',
+            $sql,
+            'a funnel read of 202_goal_outcomes without the live filter counts a replaced outcome'
+        );
     }
 
     /** @dataProvider plantedLedgerInserts */

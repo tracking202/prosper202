@@ -26,6 +26,7 @@ This file captures the API paths and payload/query expectations used by upcoming
 - `GET /api/v3/reports/breakdown`
   - Also used by `analytics` shorthand command
   - `report breakdown --min-clicks/--min-cost/--zero-leads/--having` filter the rows client-side; on a masked answer (`"masked": true`) a filter that reads a masked figure (`CampaignFigures::REPORT`) is refused with exit 2, and a `--having` on a ratio keeps `masked` beside the rows it keeps; a `--having` that is not FIELD OP NUMBER, or names a field no breakdown row has, is refused (exit 1) before any request
+  - `report breakdown --goals` sends `goals` (distinct positive ids, at most 10, else exit 1 before any request); under a table or `--csv` each row's `goals` becomes `goal_NN_reached`/`_rate`/`_step_rate`/`_drop_off` columns with a stderr note naming the steps and `goal_totals`; `--json`/`--ndjson` are the server's answer
 - `GET /api/v3/attribution/models` (`?type=first_touch`), `GET /api/v3/attribution/models/{id}`
   - `attribution model list/get`; `report losers/winners` read them to pick, or check, the first-touch model (`model_type`, `status`)
 - `GET /api/v3/attribution/reports/breakdown`
