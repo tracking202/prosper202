@@ -106,6 +106,84 @@ var mcpDeferredToolSpecs = []mcpToolSpec{
 			"unallocated spend", "spend ledger"}},
 	{Name: "ad_spend_sync_status", Command: []string{"spend", "sync", "list"}, Title: "ChatGPT Ads spend sync status", Kind: mcpRead, NotHosted: true,
 		Words: []string{"spend sync", "is my spend sync working", "spend sync status", "last spend pull", "spend sync error", "chatgpt ads sync", "openai ads sync"}},
+
+	// Goals (Setup › Campaigns and Mobile Apps): what counts as a conversion, versioned. Hosted: the goals area.
+	// A goal tool takes the definition whole, as the API does, so no quick-flag default decides a part of it.
+	{Name: "goal_list", Command: []string{"goal", "list"}, Title: "List goals", Kind: mcpRead, HostedOmit: mcpEveryPage,
+		Words: []string{"goals", "conversion goals", "funnel steps", "what counts as a conversion", "campaign goals", "app goals"}},
+	{Name: "goal_get", Command: []string{"goal", "get"}, Title: "Get a goal", Kind: mcpRead,
+		Args:  []mcpArg{idArg("id", "Goal id (from goal_list).", true)},
+		Words: []string{"goal definition", "which campaigns pay for a goal", "goal outcome count", "goals"}},
+	{Name: "goal_create", Command: []string{"goal", "create"}, Title: "Create a goal", Kind: mcpCreate,
+		Omit: append([]string{"file"}, goalDefinitionFlags...), Required: []string{"definition"},
+		JSON: map[string]mcpProperty{"definition": goalDefinitionSchema()},
+		Note: "Owner: exactly one of campaign_id, registration_id and account. after names goals of the same owner by goal_id, so create a funnel in order and put each answer's goal_id in the next step's after. " +
+			"A staged create is a proposal with no goal_id yet: a goal after it waits until it is applied.",
+		Words: []string{"create goal", "add a conversion goal", "track an event as a goal", "funnel step", "goals"}},
+	{Name: "goal_update", Command: []string{"goal", "update"}, Title: "Edit a goal", Kind: mcpUpdate,
+		Args: []mcpArg{idArg("id", "Goal id (from goal_list).", true)},
+		Omit: append([]string{"file"}, goalDefinitionFlags...), Required: []string{"definition"},
+		JSON:  map[string]mcpProperty{"definition": goalDefinitionSchema()},
+		Note:  "definition replaces the whole current one: read it with goal_get, change it, send all of it. The same definition again is no new version (version_created: false).",
+		Words: []string{"edit goal", "change a goal", "goal value", "goals"}},
+	{Name: "goal_outcomes", Command: []string{"goal", "outcomes"}, Title: "A goal's outcomes", Kind: mcpRead,
+		Args:  []mcpArg{idArg("id", "Goal id (from goal_list).", true)},
+		Words: []string{"goal outcomes", "who reached a goal", "goal conversions", "goals"}},
+
+	// Keys a site's own server holds. Local only: AiConnect keeps an AI connection's key out of users,
+	// so a hosted model never mints a credential or reads a signing secret.
+	{Name: "api_key_create", Command: []string{"user", "apikey", "create"}, Title: "Create an API key", Kind: mcpCreate, NotHosted: true, NotStaged: true,
+		Args: []mcpArg{idArg("user_id", "User id (whoami's user_id).", true)}, Required: []string{"scope"},
+		Note:  "The answer holds the new key, shown once: give it to the person and keep it out of everything else. Name the narrowest scope the key needs, such as events:write,ltv:write; * is full access.",
+		Words: []string{"api key", "create an api key", "new key for a server", "key for the sdk"}},
+	// Not a read: the first read makes the key, and an app should ask before a secret enters the model's context.
+	{Name: "identity_key_get", Command: []string{"user", "identity-key", "get"}, Title: "Get the identity linking key", Kind: mcpCreate, NotHosted: true, NotStaged: true,
+		Args:  []mcpArg{idArg("user_id", "User id (whoami's user_id).", true)},
+		Note:  "The secret a site's server signs customer ids with (cust_sig). The first read makes it. Give it to the person and keep it out of everything else.",
+		Words: []string{"identity key", "linking key", "sign customer ids", "cust_sig"}},
+}
+
+// goalDefinitionSchema is the definition GoalDefinition::fromArray reads
+// (documentation/api/22-goals.md), with each part's keys;
+// TestGoalDefinitionSchemaIsTheParsers holds the two to each other. The
+// server refuses an unknown key and casts nothing, so the schema only guides.
+func goalDefinitionSchema() mcpProperty {
+	closed := false
+	object := func(desc string, props map[string]mcpProperty, required ...string) mcpProperty {
+		return mcpProperty{Type: "object", Description: desc, Properties: props, Required: required, AdditionalProperties: &closed}
+	}
+	predicate := object("", map[string]mcpProperty{
+		"prop":  {Type: "string", Description: "A property name, or $revenue."},
+		"op":    {Type: "string", Enum: goalPredicateOps},
+		"value": {Description: "A string, number or bool; a list of 1-50 for in; none for exists."},
+	}, "prop", "op")
+	return object("The goal (documentation/api/22-goals.md). Numbers are JSON numbers, ids integers.", map[string]mcpProperty{
+		"name": {Type: "string", Description: "1-100 characters, unique per owner."},
+		"trigger": object(`{"event": "<name>"} with optional where, or {"install": true}.`, map[string]mcpProperty{
+			"event":   {Type: "string"},
+			"where":   {Type: "array", Description: "Up to 20 conditions, all must hold.", Items: &predicate},
+			"install": {Type: "boolean"},
+		}),
+		"threshold": object(`Default {"count": 1}: the Nth matching event, or {"sum": {"prop": "<prop>", "gte": <amount>}}.`, map[string]mcpProperty{
+			"count": {Type: "integer"},
+			"sum": object("", map[string]mcpProperty{
+				"prop": {Type: "string"},
+				"gte":  {Description: "An amount."},
+			}, "prop", "gte"),
+		}),
+		"after": {Type: "array", Description: "Up to 5 goal_ids of the same owner reached first.", Items: &mcpProperty{Type: "integer"}},
+		"within": {Description: `{"days": 1-3650, "from": "install" | "click"}, or null for no window.`,
+			Properties: map[string]mcpProperty{"days": {Type: "integer"}, "from": {Type: "string", Enum: []string{"install", "click"}}}},
+		"repeat": object(`Default {"mode": "once"}; {"mode": "each"} with optional max (required with a sum).`, map[string]mcpProperty{
+			"mode": {Type: "string", Enum: []string{"once", "each"}},
+			"max":  {Type: "integer"},
+		}, "mode"),
+		"value": object(`Default {"type": "none"}; {"type": "fixed", "amount": "4.00"}; {"type": "from_property", "prop": "$revenue"}.`, map[string]mcpProperty{
+			"type":   {Type: "string", Enum: []string{"none", "fixed", "from_property"}},
+			"amount": {Description: "An amount, for fixed."},
+			"prop":   {Type: "string", Description: "For from_property; default $revenue."},
+		}, "type"),
+	}, "name", "trigger")
 }
 
 // destinationDeliveriesNote names only keys the install's answer carries
