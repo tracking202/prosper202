@@ -41,6 +41,9 @@ var mcpWriteToolInput = map[string]map[string]interface{}{
 	"rotator_update":          {"name": "S"},
 	"click_filter_update":     {"repeat_window": "6h"},
 	"click_filter_list_add":   {"address": "203.0.113.0/24", "action": "filter"},
+	"goal_create":             {"campaign_id": "1", "definition": map[string]interface{}{"name": "G", "trigger": map[string]interface{}{"event": "signup"}}},
+	"goal_update":             {"definition": map[string]interface{}{"name": "G", "trigger": map[string]interface{}{"event": "signup"}}},
+	"api_key_create":          {"scope": "events:write"},
 	"rotator_set_rules": {"rules": []interface{}{map[string]interface{}{
 		"rule_name": "Mobile",
 		"criteria":  []interface{}{map[string]interface{}{"type": "device", "value": "mobile"}},
@@ -675,6 +678,7 @@ var mcpNotHostedInput = map[string]string{
 	"click_filter_update":   `{"repeat_visits":"1"}`,
 	"click_filter_test":     `{"ip":"203.0.113.7"}`,
 	"click_filter_list_add": `{"action":"count","address":"203.0.113.7"}`,
+	"api_key_create":        `{"user_id":"4","scope":"events:write"}`,
 }
 
 // mcpHitPrefix counts the requests to a path under prefix, past the version

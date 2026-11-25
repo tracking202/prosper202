@@ -656,10 +656,21 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   `ad_spend` (`p202 spend list`: what ad platforms billed per ad per day or
   hour, your clicks that carried each ad, the spend no click carried, and
   `reaches`) and `ad_spend_sync_status` (`p202 spend sync list`: each
-  ChatGPT Ads connection's spend sync, on or off, its last run and error).
-  The destination tools, `ad_connection_check` and the two spend tools are
-  local only; the four campaign tools and `ad_connection_list` are offered
-  by the hosted server too. `p202 mcp tools --deferred`
+  ChatGPT Ads connection's spend sync, on or off, its last run and error),
+  the goal tools (`p202 goal`): `goal_list`, `goal_get`, `goal_create`,
+  `goal_update` and `goal_outcomes`, where a create or an edit takes the
+  whole definition as a JSON object (`documentation/api/22-goals.md`), an
+  edit replaces it, and a funnel is made in order, each step's `after`
+  naming the `goal_id` an earlier create answered (with `--staged` a create
+  is a proposal with no id yet, so a step after it waits until it is
+  applied), and `api_key_create` (`p202 user apikey create`, which takes a
+  `scope`) and `identity_key_get` (`p202 user identity-key get`, whose first
+  read makes the key), whose answers hold a secret for the person; neither
+  is offered with `--read-only` or `--staged`.
+  The destination tools, `ad_connection_check`, the two spend tools,
+  `api_key_create` and `identity_key_get` are local only; the four campaign
+  tools, `ad_connection_list` and the goal tools are offered by the hosted
+  server too. `p202 mcp tools --deferred`
   answers `tools`, `hosted_excludes` (the local-only ones),
   `staged_excludes` (the ones `--staged` does not offer), `hosted_omits`
   (arguments the hosted server leaves out) and `words` (the words each tool
@@ -696,7 +707,8 @@ when an answer was refused says so instead: the install may have made the
 change, so look with the matching get or list tool before calling again.
 A connection keeps the access it was approved with: one approved before the install ran
 1.9.79, to propose or make changes, reads text ads but cannot change them (text_ad_create, text_ad_update and
-text_ad_delete answer 403); connect again for that.
+text_ad_delete answer 403); connect again for that. So does one approved before the install ran 1.9.80 for
+the goal tools (they answer 403 until it is approved again).
 
 To improve the connector, the hosted server records which tools the app calls, the names (not the
 values) of their arguments, whether they work, with the error when one fails (quoted values taken

@@ -1524,10 +1524,14 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
   `ad_connection_check`, `ad_campaign_list`, `ad_campaign_pause`,
   `ad_campaign_activate` and `ad_campaign_spend`, and `ad_spend` and
   `ad_spend_sync_status` (what ad platforms billed per ad, and each ChatGPT
-  Ads connection's hourly spend pull); `--read-only` and `--staged` leave out
-  `destination_test` and `ad_connection_check`. The destination tools, the
-  check and the two spend tools are local only: the hosted server below
-  refuses them.
+  Ads connection's hourly spend pull), the goal tools `goal_list`, `goal_get`,
+  `goal_create`, `goal_update` and `goal_outcomes`, and `api_key_create` and
+  `identity_key_get`; `--read-only` and `--staged` leave out
+  `destination_test`, `ad_connection_check`, `api_key_create` and
+  `identity_key_get` (its first read makes the key), and `--read-only` the
+  goal writes too. The destination tools, the check, the two
+  spend tools, `api_key_create` and `identity_key_get` are local only: the
+  hosted server below refuses them.
 - `p202 mcp tools` prints the tool list as JSON (`--deferred`: the tools
   `get_more_tools` loads); `p202 mcp call <tool> --input '<json>'` runs one
   tool as the app would, deferred ones included, with the server's

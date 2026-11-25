@@ -7,7 +7,9 @@ Events are the evidence; a goal decides what they count as.
 
 All endpoints live under `/api/v3/goals` and are governed by the `goals`
 scope area (`goals:read`, `goals:write`, `goals:stage`). The CLI is
-`p202 goal …` (see [the Go CLI](../cli/10-go-cli.md)).
+`p202 goal …` (see [the Go CLI](../cli/10-go-cli.md)); an AI app reaches them
+through `p202 mcp` or the hosted connector as `goal_list`, `goal_get`,
+`goal_create`, `goal_update` and `goal_outcomes` (loaded by `get_more_tools`).
 
 | Method | Path | What |
 |---|---|---|
