@@ -11,6 +11,7 @@ use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\NothingToUpdateException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\PayloadKeys;
+use Api\V3\Support\ListQuery;
 use Api\V3\Support\QueryInt;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\StatementHelpers;
@@ -399,11 +400,7 @@ abstract class Controller
      */
     protected static function isDate(string $value): bool
     {
-        if (preg_match('/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/D', $value, $m) !== 1) {
-            return false;
-        }
-
-        return (int) $m[1] >= 1000 && checkdate((int) $m[2], (int) $m[3], (int) $m[1]);
+        return \Api\V3\Support\CalendarDate::isValid($value);
     }
 
     /**
@@ -623,57 +620,41 @@ abstract class Controller
     }
 
     /**
-     * The list's `filter[<field>]=<value>` pairs, each a field this
-     * controller declares with a value its type can hold.
+     * The columns `q=` searches: the list's record contains the text in one
+     * of them, in any case. [] (the default) is a list that cannot be
+     * searched, and refuses a q.
      *
-     * A filter it could not apply used to be skipped, so the list came
-     * back unfiltered with a 200: `filter[aff_campaing_id]=3` (a typo),
-     * `filter[aff_campaign_id_public]=…` (a read-only field), or
-     * `filter[aff_campaign_id]=abc` (bound as 0) each answered with every
-     * row, or none, as though it had been honoured. A narrowing that is
-     * silently dropped widens the answer (error pattern #4), so each of
-     * those is a 422 naming what the list can be filtered by. Read-only
-     * fields are filterable: a filter is a read.
-     *
-     * @param array<string, mixed> $params
-     * @param array<string, array<string, mixed>> $fields
-     * @return array<string, mixed>
+     * @return list<string>
      */
-    private function listFilters(array $params, array $fields): array
+    protected function listSearchColumns(): array
     {
-        if (!array_key_exists('filter', $params)) {
-            return [];
-        }
-        $filters = $params['filter'];
-        $filterable = 'Filter by field: ' . implode(', ', array_keys($fields));
-        if (!is_array($filters)) {
-            throw new ValidationException('Invalid filter', ['filter' => 'Use filter[<field>]=<value>. ' . $filterable]);
-        }
-        $errors = [];
-        foreach ($filters as $field => $value) {
-            $key = 'filter[' . $field . ']';
-            if (!isset($fields[$field])) {
-                $errors[$key] = 'Not a field of this list. ' . $filterable;
-                continue;
-            }
-            $type = $fields[$field]['type'] ?? 's';
-            if (!is_scalar($value)) {
-                $errors[$key] = 'Must be a single value';
-            } elseif ($type === 'i' && preg_match('/^-?[0-9]+$/D', (string) $value) !== 1) {
-                $errors[$key] = 'Must be a whole number';
-            } elseif ($type === 'd' && !is_numeric($value)) {
-                $errors[$key] = 'Must be a number';
-            } elseif (($fields[$field]['format'] ?? null) === 'date' && !self::isDate((string) $value)) {
-                // A date column compared with 'garbage' matches nothing, and
-                // the empty list read as "no events that day".
-                $errors[$key] = 'Must be a date written YYYY-MM-DD';
-            }
-        }
-        if ($errors !== []) {
-            throw new ValidationException('Invalid filter', $errors);
-        }
+        return [];
+    }
 
-        return $filters;
+    /**
+     * The condition `q=` narrows the list by, given q as a LIKE pattern
+     * (ListQuery::searchPattern()), or null when the list cannot be
+     * searched. Override where the name is another record's (a tracker is
+     * found by its campaign's).
+     *
+     * @return array{string, list<mixed>, string}|null [sql, binds, types]
+     */
+    protected function listSearchCondition(string $pattern): ?array
+    {
+        $columns = $this->listSearchColumns();
+
+        return $columns === [] ? null : ListQuery::searchCondition($columns, $pattern);
+    }
+
+    /**
+     * What `sort=` may name: a field of the list's answer => its column.
+     * The primary key by default.
+     *
+     * @return array<string, string>
+     */
+    protected function listSortFields(): array
+    {
+        return [$this->primaryKey() => $this->primaryKey()];
     }
 
     /**
@@ -789,14 +770,29 @@ abstract class Controller
         }
 
         // The primary key filters too: `filter[aff_campaign_id]=3` on
-        // campaigns is a lookup by id.
+        // campaigns is a lookup by id. A filter of several values matches
+        // a record that any one of them would.
         $fields = [$this->primaryKey() => ['type' => 'i']] + $this->resolveFields();
-        foreach ($this->listFilters($params, $fields) as $field => $value) {
-            [$condition, $bindValue, $bindType] = $this->filterCondition($field, $fields[$field], $value);
-            $where[] = $condition;
-            $binds[] = $bindValue;
-            $types .= $bindType;
+        foreach (ListQuery::filters($params, $fields) as $field => $values) {
+            $any = [];
+            foreach ($values as $value) {
+                [$condition, $bindValue, $bindType] = $this->filterCondition($field, $fields[$field], $value);
+                $any[] = $condition;
+                $binds[] = $bindValue;
+                $types .= $bindType;
+            }
+            $where[] = count($any) === 1 ? $any[0] : '(' . implode(' OR ', $any) . ')';
         }
+
+        $search = ListQuery::searchPattern($params);
+        if ($search !== null) {
+            $condition = $this->listSearchCondition($search) ?? throw ListQuery::notSearchable();
+            [$searchSql, $searchBinds, $searchTypes] = $condition;
+            $where[] = $searchSql;
+            array_push($binds, ...$searchBinds);
+            $types .= $searchTypes;
+        }
+        $orderBy = ListQuery::orderBy($params, $this->listSortFields(), $this->primaryKey()) ?? $this->listOrderBy();
 
         // A time filter applies where the records keep that time, or it is
         // refused naming it. These probed the table with `SHOW COLUMNS FROM
@@ -833,7 +829,6 @@ abstract class Controller
         $this->beforeListRead();
 
         $whereClause = $where ? 'WHERE ' . implode(' AND ', $where) : '';
-        $orderBy = $this->listOrderBy();
 
         $countSql = "SELECT COUNT(*) as total FROM {$this->tableName()} $whereClause";
         $total = 0;

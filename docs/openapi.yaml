@@ -1690,10 +1690,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
-        - name: filter[aff_network_id]
+        - $ref: "#/components/parameters/listFilter"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
           in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
           schema:
-            type: integer
+            type: string
+            enum: [aff_campaign_id, aff_campaign_name, aff_campaign_payout, aff_network_id]
+        - $ref: "#/components/parameters/listSortDir"
       responses:
         "200":
           description: Paginated campaign list
@@ -1785,6 +1793,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [aff_network_id, aff_network_name]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated affiliate network list
@@ -1875,6 +1895,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [ppc_network_id, ppc_network_name]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated PPC network list
@@ -1965,6 +1997,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [ppc_account_id, ppc_account_name, ppc_network_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated PPC account list
@@ -2055,6 +2099,25 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - name: q
+          in: query
+          description: >-
+            Only trackers whose campaign's name contains this text, in any
+            case. % and _ are matched as themselves. At most 255 characters.
+          schema:
+            type: string
+            maxLength: 255
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [tracker_id, aff_campaign_id, ppc_account_id, landing_page_id, text_ad_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated tracker list
@@ -2285,6 +2348,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [landing_page_id, landing_page_nickname, landing_page_url, aff_campaign_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated landing page list
@@ -2374,6 +2449,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [text_ad_id, text_ad_name, aff_campaign_id, landing_page_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated text ad list
@@ -4602,6 +4689,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [id, name, public_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated rotator list
@@ -7538,6 +7637,27 @@ paths:
       summary: List users
       description: Admin only.
       operationId: listUsers
+      parameters:
+        - name: q
+          in: query
+          description: >-
+            Only users whose user name, first name, last name or email
+            contains this text, in any case. % and _ are matched as
+            themselves. At most 255 characters.
+          schema:
+            type: string
+            maxLength: 255
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [user_id, user_name, user_fname, user_lname, user_email, user_time_register]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: User list
@@ -10431,6 +10551,18 @@ paths:
         schema:
           type: string
         description: Events carrying this tag in their comma-separated list
+      - $ref: "#/components/parameters/listQ"
+      - name: sort
+        in: query
+        description: >-
+          A field to order the list by, ascending unless sort_dir says
+          otherwise; ties are ordered by the key. Any other value is a 422.
+          Without it the list keeps its own order.
+        schema:
+          type: string
+          enum: [event_id, event_date, event_name]
+      - $ref: "#/components/parameters/listSortDir"
+      - $ref: "#/components/parameters/listFilter"
       responses:
         '200':
           description: Events ordered by `event_date`
@@ -14336,6 +14468,40 @@ components:
         type: integer
         default: 50
         maximum: 500
+    listQ:
+      name: q
+      in: query
+      description: >-
+        Only records whose name contains this text, in any case. % and _ are
+        matched as themselves. At most 255 characters. A list with no name
+        to search answers a 422.
+      schema:
+        type: string
+        maxLength: 255
+    listSortDir:
+      name: sort_dir
+      in: query
+      description: >-
+        asc (the default once sort is given) or desc, in either case. It
+        needs sort; given alone it is a 422.
+      schema:
+        type: string
+        enum: [asc, desc, ASC, DESC]
+    listFilter:
+      name: filter
+      in: query
+      style: deepObject
+      explode: true
+      description: >-
+        filter[<field>]=<value> keeps the records whose field holds the
+        value; a field the list does not hold, or a value its type cannot,
+        is a 422. A whole-number field takes up to 100 values separated by
+        commas (filter[aff_network_id]=1,4) and keeps a record holding any
+        of them; any other field's value is one value, commas included.
+      schema:
+        type: object
+        additionalProperties:
+          type: string
     offset:
       name: offset
       in: query

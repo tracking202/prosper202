@@ -1345,9 +1345,9 @@ try {
 
             $r->get('/roles', fn() => $make()->listRoles());
 
-            $r->get('', function () use ($auth, $make) {
+            $r->get('', function () use ($auth, $make, $queryParams) {
                 $auth->requireAdmin();
-                return $make()->list();
+                return $make()->list($queryParams);
             });
             $r->post('', function () use ($auth, $make, $idempotent, $payload) {
                 $auth->requireAdmin();
