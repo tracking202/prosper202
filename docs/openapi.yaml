@@ -16462,6 +16462,11 @@ components:
           description: The redirect of that rule the click was sent to.
         click_id_public:
           type: string
+          description: >-
+            The id the click's cloaked link (cl.php?pci=) and way out (pci.php?pci=)
+            carry, as text. From 1.9.80 a new click's is 19 digits, a 1, the click id
+            in twelve digits and a keyed suffix, so it names no other click; a click
+            from before keeps the old, shorter id. Empty or 0 for a click given none.
         click_cloaking:
           type: integer
         click_in:
