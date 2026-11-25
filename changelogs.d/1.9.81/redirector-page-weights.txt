@@ -1,2 +1,3 @@
 -- Fixed: Setup › Redirectors saves a destination weighted 0, as the API writes one to pause it in a split test. The weight field refused anything below 1 and the save read a posted "0" as a missing field, so a redirector whose rules the API had paused a destination in could not be saved from the page (6CRO).
 app: Fixed: Setup › Redirectors saves a split-test destination weighted 0.
+-- Fixed: Setup › Redirectors refuses a split test's weights exactly when the API does: a destination weighted 0 beside one above 0 is saved, every weight 0 is refused in the API's words. The page refused any destination weighted 0 (E8TS).
