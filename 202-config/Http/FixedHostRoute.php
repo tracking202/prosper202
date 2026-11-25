@@ -32,10 +32,13 @@ final class FixedHostRoute
 {
     public const MAX_BYTES = 8 * 1024 * 1024;
 
-    /** @var (callable(string): list<string>)|null */
+    /** @var (callable(string, float): list<string>)|null */
     private static $resolver = null;
 
-    /** @param (callable(string): list<string>)|null $resolver host => addresses; null for the system's */
+    /**
+     * @param (callable(string, float): list<string>)|null $resolver (host, seconds) => addresses;
+     *        null for the system's
+     */
     public static function resolveWith(?callable $resolver): void
     {
         self::$resolver = $resolver;
@@ -112,7 +115,14 @@ final class FixedHostRoute
             $host = strtolower($named[1]);
             $port = isset($named[2]) ? (int) $named[2] : $port;
             $literal = filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false;
-            $addresses = $literal ? [$host] : (self::$resolver ?? [WebhookGuard::class, 'systemResolve'])($host);
+            try {
+                $resolve = self::$resolver ?? [WebhookGuard::class, 'systemResolve'];
+                $addresses = $literal ? [$host] : $resolve($host, WebhookGuard::LOOKUP_SECONDS);
+            } catch (DnsLookupFailed $e) {
+                return $e->getMessage()
+                    . ' With an egress proxy, this server still looks up every host itself;'
+                    . ' the proxy is never asked to.';
+            }
         } else {
             return 'the host of ' . $shown . ' could not be read, so it cannot be routed through the egress proxy.';
         }

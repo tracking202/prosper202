@@ -122,6 +122,8 @@ final class DeliverySenderTest extends TestCase
         self::assertTrue($o[CURLOPT_POST]);
         self::assertSame($delivery['payload'], $o[CURLOPT_POSTFIELDS]);
         self::assertSame(DeliverySender::headers($delivery), $o[CURLOPT_HTTPHEADER]);
+        self::assertLessThanOrEqual(WebhookSender::TIMEOUT * 1000, $o[CURLOPT_TIMEOUT_MS], 'the lookup included');
+        unset($o[CURLOPT_TIMEOUT_MS]);
         self::assertSame(WebhookSender::curlOptions(
             (new WebhookGuard(static fn (): array => [self::PUBLIC], ''))->check('https://hooks.example.com/p202'),
             (string) $delivery['payload'],

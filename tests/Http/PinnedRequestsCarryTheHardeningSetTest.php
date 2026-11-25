@@ -69,7 +69,7 @@ final class PinnedRequestsCarryTheHardeningSetTest extends TestCase
 
     /** Where each sender hands the proxy it read to its options: a default of none is never taken by omission. */
     private const PROXY_PASSED = [
-        '202-config/Attribution/WebhookSender.php' => 'self::curlOptions($target,$body??\'\',$headers,$timeout,$proxy)',
+        '202-config/Attribution/WebhookSender.php' => 'self::curlOptions($target,$body??\'\',$headers,$left,$proxy)',
         '202-config/Notifications/PostbackSender.php' => 'self::curlOptions($target,$left,$proxy)',
         'api/v3/Support/RemoteApiClient.php' => 'self::curlOptions($target,$method,$url,$headers,$body,$left,$proxy)',
         '202-config/Setup/LandingPageCheck.php' => 'self::curlOptions($target,$left,$proxy)',

@@ -85,7 +85,7 @@ final class LandingPageCheck
         for ($redirects = 0;; $redirects++) {
             $where = PostbackSender::origin($hop);
             try {
-                $target = $this->guard->checkPage($hop);
+                $target = $this->guard->checkPage($hop, $deadline);
             } catch (WebhookRefused $e) {
                 return self::error(($redirects === 0
                     ? 'Your page was not fetched: '

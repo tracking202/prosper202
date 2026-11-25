@@ -226,6 +226,12 @@ final class WebhookSenderTest extends TestCase
         self::assertSame([null, null, 200, '{"ok":true}'], [$got['refused'], $got['strayed'], $got['status'], $got['body']]);
         self::assertSame(200, $posted['status']);
         [$get, $post] = $this->sent;
+        foreach ([&$get, &$post] as &$sent) {
+            // The time the lookup left, which the options cannot know.
+            self::assertLessThanOrEqual(WebhookSender::TIMEOUT * 1000, $sent[CURLOPT_TIMEOUT_MS]);
+            unset($sent[CURLOPT_TIMEOUT_MS]);
+        }
+        unset($sent);
         self::assertTrue($get[CURLOPT_HTTPGET]);
         self::assertArrayNotHasKey(CURLOPT_POST, $get);
         self::assertArrayNotHasKey(CURLOPT_POSTFIELDS, $get);

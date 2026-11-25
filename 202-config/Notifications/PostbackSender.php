@@ -32,7 +32,8 @@ use Prosper202\Http\EgressProxy;
  * name itself. They are followed at all because the sender always has, and
  * a network that moved its endpoint (http to https, a new host) answers its
  * old URL with a redirect; refusing those would stop postbacks that work.
- * The whole chain shares TIMEOUT, as it did when curl followed it.
+ * The whole chain shares TIMEOUT, as it did when curl followed it, and so
+ * does each hop's address lookup (WebhookGuard's deadline).
  *
  * The answer says whether the network heard it (PostbackResult): delivered
  * on a 2xx or 3xx status, refused when a check said no, failed otherwise.
@@ -88,19 +89,24 @@ final class PostbackSender
         for ($redirects = 0;; $redirects++) {
             $via = $redirects === 0 ? '' : 'redirected to ' . self::origin($hop) . ', which was not followed: ';
             try {
-                $target = $this->guard->checkPostback($hop);
+                $target = $this->guard->checkPostback($hop, $deadline);
             } catch (WebhookUnresolved $e) {
                 return PostbackResult::failed($via . $e->getMessage());
             } catch (WebhookRefused $e) {
                 return PostbackResult::refused(($redirects === 0 ? 'not sent: ' : $via) . $e->getMessage());
             }
 
-            $left = (int) ceil($deadline - microtime(true));
-            if ($left < 1) {
+            $remaining = $deadline - microtime(true);
+            if ($remaining < 0.001) {
                 return PostbackResult::failed('not delivered: the postback took more than '
                     . self::TIMEOUT . ' seconds over ' . $redirects . ' redirects');
             }
-            $response = ($this->transport)(self::curlOptions($target, $left, $proxy));
+            $left = (int) ceil($remaining);
+            $options = self::curlOptions($target, $left, $proxy);
+            // The lookup came out of TIMEOUT too. curl keeps whichever of
+            // CURLOPT_TIMEOUT and CURLOPT_TIMEOUT_MS is set last: this one, to the millisecond.
+            $options[CURLOPT_TIMEOUT_MS] = max(1, (int) floor($remaining * 1000));
+            $response = ($this->transport)($options);
             $status = $response['status'];
             $connected = $response['primary_ip'];
             $peer = EgressProxy::expectedPeer($target, $proxy);

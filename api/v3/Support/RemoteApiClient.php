@@ -371,7 +371,7 @@ class RemoteApiClient
 
         try {
             $this->guard ??= new WebhookGuard();
-            $target = $this->guard->checkSync($this->baseUrl, self::operatorHosts());
+            $target = $this->guard->checkSync($this->baseUrl, self::operatorHosts(), $this->deadline);
             $proxy = EgressProxy::configured();
         } catch (WebhookUnresolved $e) {
             throw SyncException::urlUnresolved('Not sent to ' . $this->remote() . ': ' . $e->getMessage(), $e);
@@ -379,6 +379,11 @@ class RemoteApiClient
             throw SyncException::urlRefused('Not sent to ' . $this->remote() . ': ' . $e->getMessage(), $e);
         } catch (\UnexpectedValueException $e) {
             throw SyncException::urlRefused('Not sent to ' . $this->remote() . ': ' . $e->getMessage(), $e);
+        }
+        // The lookup came out of the sync's time.
+        $left = (int) floor($this->deadline - microtime(true));
+        if ($left < 1) {
+            throw $this->outOfTime($what);
         }
 
         $answer = ($this->transport)(self::curlOptions($target, $method, $url, $headers, $body, $left, $proxy));

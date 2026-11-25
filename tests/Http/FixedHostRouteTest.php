@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Http;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Http\DnsLookupFailed;
 use Prosper202\Http\EgressProxy;
 use Prosper202\Http\FixedHostRoute;
 use Prosper202\Http\StoredEgressProxy;
@@ -79,6 +80,13 @@ final class FixedHostRouteTest extends TestCase
         $why = FixedHostRoute::options('https://my.tracking202.com/x');
         self::assertIsString($why);
         self::assertStringContainsString('my.tracking202.com does not resolve from this server', $why);
+
+        FixedHostRoute::resolveWith(static fn (): never => throw new DnsLookupFailed(
+            'my.tracking202.com was not looked up within 5 seconds: the resolver did not answer in time.'
+        ));
+        $why = FixedHostRoute::options('https://my.tracking202.com/x');
+        self::assertIsString($why, 'a lookup that ran out is a reason, not an exception out of exec()');
+        self::assertStringStartsWith('my.tracking202.com was not looked up within 5 seconds', $why);
 
         self::saved('proxy.example:3128');
         $why = FixedHostRoute::options('https://my.tracking202.com/x');

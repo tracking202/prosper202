@@ -327,6 +327,37 @@ PHP;
         self::assertSame(SyncException::LIMIT, $e->errorCode);
     }
 
+    /**
+     * The guard's lookup is held to the sync's deadline, and the request
+     * has what the lookup left (backlog Y9Q3).
+     */
+    public function testTheLookupComesOutOfTheSyncsTime(): void
+    {
+        $given = [];
+        $guard = new WebhookGuard(static function (string $host, float $seconds) use (&$given): array {
+            $given[] = $seconds;
+            usleep(1_200_000);
+
+            return [self::PUBLIC];
+        }, '');
+        $calls = [];
+        $client = self::client(self::SYNC, [self::answer(200)], $calls, $guard, microtime(true) + 3.0);
+
+        $client->get('campaigns');
+
+        self::assertCount(1, $given);
+        self::assertLessThanOrEqual(3.0, $given[0]);
+        self::assertGreaterThan(2.9, $given[0]);
+        self::assertSame(1, $calls[0][CURLOPT_TIMEOUT], 'the 1.8 s the lookup left, in whole seconds down');
+
+        $calls = [];
+        $client = self::client(self::SYNC, [self::answer(200)], $calls, $guard, microtime(true) + 1.9);
+        $e = self::failure(static fn () => $client->get('campaigns'));
+        self::assertSame([], $calls, 'a lookup that left less than a second sends nothing');
+        self::assertSame(SyncException::LIMIT, $e->errorCode);
+        self::assertStringContainsString('ran out of time at GET campaigns from ' . self::TARGET, $e->getMessage());
+    }
+
     /** One SyncEngine run's two remotes share one deadline. */
     public function testBothRemotesOfASyncShareItsDeadline(): void
     {
