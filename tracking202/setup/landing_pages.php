@@ -295,16 +295,11 @@ if (isset($_GET['delete_landing_page_id'])) {
 	}
 
 	if ($userObj->hasPermission("remove_landing_page")) {
-		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-		$mysql['landing_page_id'] = $db->real_escape_string((string)$_GET['delete_landing_page_id']);
-		$mysql['landing_page_time'] = time();
-		$delete_sql = " UPDATE  `202_landing_pages`
-						SET     `landing_page_deleted`='1',
-								`landing_page_time`='" . $mysql['landing_page_time'] . "'
-						WHERE   `user_id`='" . $mysql['user_id'] . "'
-						AND     `landing_page_id`='" . $mysql['landing_page_id'] . "'";
-
-		if ($delete_result = $db->query($delete_sql)) {
+		$deleteId = $_GET['delete_landing_page_id'];
+		$deleteRefusal = \Prosper202\Setup\LandingPageDelete::fromSetupPage($db, (int) $_SESSION['user_id'], $deleteId);
+		if ($deleteRefusal !== null) {
+			$error['delete'] = '<div class="error">' . htmlspecialchars($deleteRefusal, ENT_QUOTES, 'UTF-8') . '</div>';
+		} else {
 			$delete_success = true;
 
 			// Landing Page Optimizer (segments-v2 G10): deletes change the
@@ -319,8 +314,6 @@ if (isset($_GET['delete_landing_page_id'])) {
 					$slack->push('advanced_landing_page_deleted', ['name' => $_GET['delete_landing_page_name'] ?? '', 'user' => $user_row['username'] ?? '']);
 				}
 			}
-		} else {
-			record_mysql_error($delete_sql);
 		}
 	} else {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/landing_pages.php');
