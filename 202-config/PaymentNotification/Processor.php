@@ -36,6 +36,9 @@ use Prosper202\Database\Connection;
  * From a provider whose 1.9.56 handler wrote no rows (ReversesPreUpgradeSales),
  * a refund naming no sale on file takes its stated amount back from the value
  * the click carried from before the upgrade, at most what is left of it.
+ * From a provider whose refunds can name no click
+ * (FindsReversedSalesByTransactionId), a refund naming none takes back the
+ * provider's sale under its transaction id in the verified account.
  */
 final class Processor
 {
@@ -85,7 +88,8 @@ final class Processor
         if ($notification->kind === NotificationKind::IGNORED) {
             return new Outcome(
                 OutcomeKind::IGNORED,
-                'Verified. Prosper202 records sales and refunds; a ' . $event . ' notification records nothing.',
+                'Verified. Prosper202 records sales and refunds; a ' . $event . ' notification records nothing.'
+                . ($provider instanceof DescribesIgnoredNotifications ? $provider->ignoredNote($request) : ''),
                 null,
                 $account
             );
@@ -257,25 +261,81 @@ final class Processor
                 'A ' . $n->event . ' notification needs the transaction id of the sale it takes back.'
             );
         }
-        if ($n->clickId === null) {
-            return self::noClick($n, $original, $provider->clickField(), 'there is no sale to reverse');
+        $clickId = $n->clickId;
+        if ($clickId === null) {
+            if (!($provider instanceof FindsReversedSalesByTransactionId)) {
+                return self::noClick($n, $original, $provider->clickField(), 'there is no sale to reverse');
+            }
+            $clickId = $this->clickOfSale($n, $original, $provider, $verification);
+            if ($clickId instanceof Outcome) {
+                return $clickId;
+            }
         }
         if ($this->purLink($n) === false) {
-            return self::unknownClick($n->clickId, $provider->clickField());
+            return self::unknownClick($clickId, $provider->clickField());
         }
-        $owner = $this->owner($n->clickId, $verification);
+        $owner = $this->owner($clickId, $verification);
         if ($owner === null) {
-            return self::unknownClick($n->clickId, $provider->clickField());
+            return self::unknownClick($clickId, $provider->clickField());
         }
-        $currency = $this->currency($n, $owner, $provider, $request, $this->saleCurrency($n->clickId, $original, $owner));
+        $currency = $this->currency($n, $owner, $provider, $request, $this->saleCurrency($clickId, $original, $owner));
         if ($currency instanceof Outcome) {
             return $currency;
         }
 
         return self::noted(
-            $this->recordReversal($n, $n->clickId, $owner, $provider, $request, $original),
+            $this->recordReversal($n, $clickId, $owner, $provider, $request, $original),
             $currency
         );
+    }
+
+    /**
+     * The click of the provider's sale under a reversal's transaction id, in
+     * the accounts whose secret verified it, for a reversal that names no
+     * click (FindsReversedSalesByTransactionId); no_click when none is on
+     * file, and a conflict when the id is on more than one click, which
+     * leaves the reversal no way to say whose sale it takes back. Deleted
+     * sales and reversals are not sales on file.
+     */
+    private function clickOfSale(
+        Notification $n,
+        string $original,
+        ProviderAdapter $provider,
+        Verification $verification
+    ): int|Outcome {
+        $accounts = $verification->accounts();
+        $conn = new Connection($this->db);
+        // From the primary, as saleOnFile() reads: a sale just written is the one this takes back.
+        $stmt = $conn->prepareWrite(
+            'SELECT DISTINCT click_id FROM 202_conversion_logs WHERE transaction_id = ? AND source = ?'
+            . ' AND reverses_conv_id IS NULL AND deleted = 0'
+            . ' AND user_id IN (' . implode(', ', array_fill(0, count($accounts), '?')) . ')'
+            . ' ORDER BY click_id LIMIT 2'
+        );
+        $conn->bind($stmt, 'ss' . str_repeat('i', count($accounts)), [
+            $original, $provider->source()->value, ...$accounts,
+        ]);
+        $clicks = array_map(static fn (array $row): int => (int) $row['click_id'], $conn->fetchAll($stmt));
+        if ($clicks === []) {
+            return self::noClick(
+                $n,
+                $original,
+                $provider->clickField(),
+                'there is no ' . $provider->name() . ' sale under it to reverse in the account whose secret key'
+                . ' verified it'
+            );
+        }
+        if (count($clicks) > 1) {
+            return new Outcome(
+                OutcomeKind::CONFLICT,
+                'Transaction ' . $original . ' is recorded on more than one click, and this ' . $n->event . ' names'
+                . ' none, so it cannot say which sale it takes back; nothing was recorded.',
+                null,
+                count($accounts) === 1 ? $accounts[0] : null
+            );
+        }
+
+        return $clicks[0];
     }
 
     private function recordReversal(
