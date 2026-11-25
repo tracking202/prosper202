@@ -46,6 +46,11 @@ final class MysqlClickRepository implements ClickRepositoryInterface
     {
         $stmt = $this->conn->prepareWrite('INSERT INTO 202_clicks_counter SET click_id = DEFAULT');
         $clickId = $this->conn->executeInsert($stmt);
+        // The one writer of the counter (ClickCounterWrittenOnlyByAllocatorTest),
+        // so only a write outside the code moves it this far.
+        if (ClickId::isEdge($clickId)) {
+            throw new EdgeClickIdRefused($clickId);
+        }
         RecordedClicks::note($clickId);
 
         return $clickId;

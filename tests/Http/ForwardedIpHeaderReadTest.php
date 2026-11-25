@@ -9,8 +9,9 @@ use Prosper202\Http\VisitorIp;
 use Tests\Support\SourceScan;
 
 /**
- * Only VisitorIp reads a forwarding header (X-Forwarded-For, X-Real-IP,
- * Client-IP, CF-Connecting-IP and the rest).
+ * Only VisitorIp reads a forwarding header (X-Forwarded-For, RFC 7239
+ * Forwarded, X-Real-IP, Client-IP, CF-Connecting-IP and the rest).
+ * ForwardedHeader parses Forwarded's text and names no header.
  *
  * Before it existed, connect.php and connect2.php each rewrote
  * $_SERVER['HTTP_X_FORWARDED_FOR'] in place, and a dozen sites read it back
@@ -32,13 +33,85 @@ use Tests\Support\SourceScan;
  * to: a name assembled from pieces that split a stem (`'X_FORWARD' .
  * 'ED_FOR'`) or computed by a transform — a deliberate evasion, not the slip
  * this guards against.
+ *
+ * The scheme and host a proxy forwards (X-Forwarded-Proto, -SSL, -Port,
+ * -Host, Front-End-Https, CF-Visitor and the rest) are a second family with
+ * one reader, p202_request_is_https(): both believe a header only from a
+ * proxy listed in P202_TRUSTED_PROXIES (TrustedProxies, CLAUDE.md #16), and
+ * a second reader would be a second rule.
  */
 final class ForwardedIpHeaderReadTest extends TestCase
 {
     /** @var array<string, string> repo-relative path => why it may read the headers */
     private const ALLOWED = [
-        '202-config/Http/VisitorIp.php' => 'the one reader: precedence, leftmost hop, validation, REMOTE_ADDR fallback',
+        '202-config/Http/VisitorIp.php' => 'the one reader: REMOTE_ADDR unless a listed proxy, then X-Forwarded-For from the right',
     ];
+
+    /** @var array<string, string> repo-relative path => why it may read the scheme headers */
+    private const SCHEME_ALLOWED = [
+        '202-config/request-https.php' => 'the one reader: the web server\'s HTTPS, or a listed proxy\'s forwarded scheme',
+    ];
+
+    public function testNoServedFileReadsAForwardedSchemeOutsideTheHttpsAnswer(): void
+    {
+        $found = [];
+        $seenAllowed = 0;
+        foreach (SourceScan::phpFiles() as $path => $source) {
+            $reads = self::headerNames($source, self::namesSchemeHeader(...));
+            if (isset(self::SCHEME_ALLOWED[$path])) {
+                $seenAllowed += count($reads);
+                continue;
+            }
+            foreach ($reads as [$line, $text]) {
+                $found[] = sprintf('%s:%d  %s', $path, $line, $text);
+            }
+        }
+
+        self::assertGreaterThanOrEqual(3, $seenAllowed, 'the scan finds request-https.php\'s own reads');
+        self::assertSame([], $found, "A forwarded scheme or host is read outside p202_request_is_https():\n  "
+            . implode("\n  ", $found)
+            . "\nAsk p202_request_is_https(\$_SERVER), which believes a proxy only when P202_TRUSTED_PROXIES lists it.");
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function schemeSpellings(): iterable
+    {
+        yield 'X-Forwarded-Proto key' => ['<?php $p = $_SERVER[\'HTTP_X_FORWARDED_PROTO\'] ?? \'\';'];
+        yield 'header form, lower case' => ['<?php $p = $headers[\'x-forwarded-proto\'];'];
+        yield 'X-Forwarded-SSL' => ['<?php $p = $_SERVER["HTTP_X_FORWARDED_SSL"];'];
+        yield 'X-Forwarded-Port' => ['<?php $p = getenv(\'HTTP_X_FORWARDED_PORT\');'];
+        yield 'X-Forwarded-Host' => ['<?php $h = $_SERVER[\'HTTP_X_FORWARDED_HOST\'];'];
+        yield 'X-Forwarded-Scheme' => ['<?php $h = $_SERVER[\'HTTP_X_FORWARDED_SCHEME\'];'];
+        yield 'Front-End-Https' => ['<?php $h = $_SERVER[\'HTTP_FRONT_END_HTTPS\'];'];
+        yield 'X-Url-Scheme' => ['<?php $h = $_SERVER[\'HTTP_X_URL_SCHEME\'];'];
+        yield 'CF-Visitor' => ['<?php $h = $_SERVER[\'HTTP_CF_VISITOR\'];'];
+        yield 'unquoted key inside a string' => ['<?php $line = "p=$_SERVER[HTTP_X_FORWARDED_PROTO]";'];
+    }
+
+    /** @dataProvider schemeSpellings */
+    public function testEverySpellingOfASchemeReadIsSeen(string $source): void
+    {
+        self::assertNotSame([], self::headerNames($source, self::namesSchemeHeader(...)), 'not seen: ' . $source);
+    }
+
+    public function testWhatIsNotASchemeHeaderIsNotReported(): void
+    {
+        foreach ([
+            '<?php $p = $_SERVER[\'HTTPS\'];',
+            '<?php $p = $_SERVER[\'REQUEST_SCHEME\'];',
+            '<?php $p = $_SERVER[\'HTTP_X_FORWARDED_FOR\'];',
+            "<?php // X-Forwarded-Proto is read by request-https.php\n\$a = 1;",
+        ] as $source) {
+            self::assertSame([], self::headerNames($source, self::namesSchemeHeader(...)), $source);
+        }
+    }
+
+    private static function namesSchemeHeader(string $text): bool
+    {
+        $n = (string) preg_replace('/^HTTP_/', '', strtoupper(str_replace('-', '_', trim($text))));
+
+        return preg_match('/^(?:X_FORWARDED_(?:PROTO|PROTOCOL|SSL|PORT|HOST|SCHEME|SERVER|PREFIX)|FRONT_END_HTTPS|X_URL_SCHEME|CF_VISITOR)$/D', $n) === 1;
+    }
 
     public function testEveryHeaderVisitorIpReadsIsOneTheScanKnows(): void
     {
@@ -103,6 +176,11 @@ final class ForwardedIpHeaderReadTest extends TestCase
         ];
         yield 'Sucuri, no underscore before IP' => ['<?php $ip = $_SERVER[\'HTTP_X_SUCURI_CLIENTIP\'];'];
         yield 'RFC 7239 Forwarded' => ['<?php $f = $_SERVER[\'HTTP_FORWARDED\'];'];
+        yield 'Forwarded in header form' => ['<?php $f = getallheaders()[\'Forwarded\'] ?? \'\';'];
+        yield 'Forwarded, lower case' => ['<?php $f = $headers[\'forwarded\'];'];
+        yield 'Forwarded through getenv()' => ['<?php $f = getenv("HTTP_FORWARDED");'];
+        yield 'Forwarded inside a string' => ['<?php $line = "f=$_SERVER[HTTP_FORWARDED]";'];
+        yield 'a request-context header lookup' => ['<?php $f = RequestContext::header(\'Forwarded\');'];
         yield 'True-Client-IP' => ['<?php $f = $_SERVER[\'HTTP_TRUE_CLIENT_IP\'];'];
         yield 'a piece split at a word boundary' => ['<?php $k = \'HTTP_X_\' . \'FORWARDED_FOR\';'];
         yield 'a hex escape in a double-quoted key' => ['<?php $ip = $_SERVER["HTTP_X_FORWARDED\x5fFOR"];'];
@@ -128,6 +206,8 @@ final class ForwardedIpHeaderReadTest extends TestCase
         yield 'a method named client_ip' => ['<?php $ip = AUTH::client_ip();'];
         yield 'a comment that names the header' => ["<?php // X-Forwarded-For is read by VisitorIp\n\$a = 1;"];
         yield 'REMOTE_ADDR' => ['<?php $ip = $_SERVER[\'REMOTE_ADDR\'];'];
+        yield 'the Forwarded parser\'s pair names' => ['<?php $p = $pairs[\'proto\'] ?? $pairs[\'for\'] ?? \'\';'];
+        yield 'a word that contains Forwarded' => ['<?php $s = \'Forwarded for review\'; $t = \'X_FORWARDED_PROTO\';'];
     }
 
     /** @dataProvider nonReads */
@@ -141,8 +221,9 @@ final class ForwardedIpHeaderReadTest extends TestCase
      *
      * @return list<array{int, string}> [line, text]
      */
-    private static function headerNames(string $source): array
+    private static function headerNames(string $source, ?\Closure $names = null): array
     {
+        $names ??= self::namesForwardingHeader(...);
         $tokens = token_get_all($source);
         $found = [];
         foreach ($tokens as $i => $t) {
@@ -161,7 +242,7 @@ final class ForwardedIpHeaderReadTest extends TestCase
                 $texts = [$t[1]];
             }
             foreach ($texts as $text) {
-                if (self::namesForwardingHeader($text)) {
+                if ($names($text)) {
                     $found[] = [$t[2], trim($t[1])];
                     break;
                 }

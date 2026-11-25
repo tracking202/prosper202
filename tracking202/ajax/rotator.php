@@ -76,21 +76,19 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
         if (!is_array($rule) || !$listed($rule['criteria'] ?? null) || !$listed($rule['redirects'] ?? null)) {
             die("ERROR");
         }
-		$rule_empty = count($rule) != count(array_filter($rule));
-		if ($rule_empty) {
+		if (!p202_rotator_fields_filled($rule)) {
 			die("ERROR");
 		}
-			foreach ($rule['criteria'] as $criteria) {
-				if (!is_array($criteria) || count($criteria) != count(array_filter($criteria))) {
-					die("ERROR");
-				}
+		foreach ($rule['criteria'] as $criteria) {
+			if (!is_array($criteria) || !p202_rotator_fields_filled($criteria)) {
+				die("ERROR");
 			}
-
-			foreach ($rule['redirects'] as $redirect) {
-				if (!is_array($redirect) || count($redirect) != count(array_filter($redirect))) {
-					die("ERROR");
-				}
+		}
+		foreach ($rule['redirects'] as $redirect) {
+			if (!is_array($redirect) || !p202_rotator_fields_filled($redirect)) {
+				die("ERROR");
 			}
+		}
 	}
 
 	$refuse = static function (?string $reason = null): never {
@@ -168,6 +166,25 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 	header('Content-Type: text/plain; charset=utf-8'); // the list repeats what was typed
 	echo $rewritesJson === false ? 'DONE' : "DONE\n" . $rewritesJson;
 
+}
+
+/**
+ * Whether every field the editor posted holds something: a list that is not
+ * empty or a string that is not ''. "0" is a value (a weight of 0 pauses a
+ * destination, and the API stores it), so this is not array_filter()'s
+ * truthiness, which refused it; what a value may be is planRule()'s to say.
+ *
+ * @param array<array-key, mixed> $fields
+ */
+function p202_rotator_fields_filled(array $fields): bool
+{
+	foreach ($fields as $value) {
+		if (is_array($value) ? $value === [] : (!is_string($value) || $value === '')) {
+			return false;
+		}
+	}
+
+	return true;
 }
 
 /**

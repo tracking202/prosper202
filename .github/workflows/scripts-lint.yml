@@ -120,7 +120,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
           cache-dependency-path: go-cli/go.sum
 
       # The binary only. golangci-lint-action@v7 always runs the linter and
@@ -156,3 +156,9 @@ jobs:
       # exactly and the guard refuses a pull request that edits the files.
       - name: Run changelog tests
         run: ./scripts/tests/changelog.test.sh
+
+      # The dependency audit fails a run only where its strictness says so;
+      # each answer of the two tools, and a run that could not tell, is run
+      # against a throwaway repository and stand-ins.
+      - name: Run dependency-audit tests
+        run: ./scripts/tests/dependency-audit.test.sh

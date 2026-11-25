@@ -70,6 +70,11 @@ final class SessionSignInPathsTest extends TestCase
         '202-config/functions-standalone-ui.php' => 'the setup wizard\'s own session, opened by'
             . ' p202_standalone_wizard_token() where connect.php cannot load (no 202-config.php yet, so no account'
             . ' to be signed in as): it holds the wizard\'s token and nothing else',
+        'api/v3/SessionSignIn.php' => 'the v3 API\'s session sign-in, which asks AUTH::signedInUserId() (logged_in():'
+            . ' the user\'s standing and session generation read now) right after it opens the session and before'
+            . ' anything reads it (SessionSignInServedIntegrationTest)',
+        '202-config/session-settings.php' => 'withWritableSession(), which reopens to write a session connect.php or'
+            . ' Api\\V3\\SessionSignIn already opened and asked',
     ];
 
     /** Where a sign-in begins a session, each after a read that asks UserStanding's rule. */

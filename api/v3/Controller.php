@@ -599,6 +599,24 @@ abstract class Controller
     // ─── Lifecycle Hooks ─────────────────────────────────────────────
 
     /**
+     * Run the row write of a create, update or delete ($write: its INSERT,
+     * UPDATE or delete statement). A controller whose write must take locks
+     * first, and check under them what it checked before, overrides this and
+     * runs $write in the transaction that holds them. The read-back and the
+     * change record come after it returns, past the commit (CLAUDE.md #13).
+     *
+     * @template T
+     * @param array<string, mixed>|null $current the row before (null on a create)
+     * @param array<string, mixed> $clean the validated fields written (none on a delete)
+     * @param callable(): T $write
+     * @return T
+     */
+    protected function writeRow(?array $current, array $clean, callable $write): mixed
+    {
+        return $write();
+    }
+
+    /**
      * Called before INSERT.  Return extra columns to include in the INSERT.
      * @return array<string, array{type: string, value: mixed}>
      */
@@ -987,17 +1005,21 @@ abstract class Controller
             implode(', ', $placeholders)
         );
 
-        $stmt = $this->prepare($sql);
-        $this->bind($stmt, $types, ...$binds);
+        $insertId = $this->writeRow(null, $clean, function () use ($sql, $types, $binds): int {
+            $stmt = $this->prepare($sql);
+            $this->bind($stmt, $types, ...$binds);
 
-        try {
-            $this->execute($stmt, 'Insert failed');
-        } catch (\mysqli_sql_exception $e) {
-            $this->rethrowDuplicateKey($e, $stmt);
-        }
+            try {
+                $this->execute($stmt, 'Insert failed');
+            } catch (\mysqli_sql_exception $e) {
+                $this->rethrowDuplicateKey($e, $stmt);
+            }
 
-        $insertId = $stmt->insert_id;
-        $stmt->close();
+            $insertId = $stmt->insert_id;
+            $stmt->close();
+
+            return $insertId;
+        });
 
         // The row exists from here on. A failure past this point is not a
         // failed create, and must not be reported as one: the caller would
@@ -1067,15 +1089,17 @@ abstract class Controller
             implode(' AND ', $where)
         );
 
-        $stmt = $this->prepare($sql);
-        $this->bind($stmt, $types, ...$binds);
+        $this->writeRow($currentData, $clean, function () use ($sql, $types, $binds): void {
+            $stmt = $this->prepare($sql);
+            $this->bind($stmt, $types, ...$binds);
 
-        try {
-            $this->execute($stmt, 'Update failed');
-        } catch (\mysqli_sql_exception $e) {
-            $this->rethrowDuplicateKey($e, $stmt);
-        }
-        $stmt->close();
+            try {
+                $this->execute($stmt, 'Update failed');
+            } catch (\mysqli_sql_exception $e) {
+                $this->rethrowDuplicateKey($e, $stmt);
+            }
+            $stmt->close();
+        });
 
         // As in create(): the write has landed, so a later failure must not
         // read as "the update did not happen".
@@ -1135,11 +1159,13 @@ abstract class Controller
             );
         }
 
-        $stmt = $this->prepare($sql);
-        $this->bind($stmt, $types, ...$binds);
+        $this->writeRow((array)$existing['data'], [], function () use ($sql, $types, $binds): void {
+            $stmt = $this->prepare($sql);
+            $this->bind($stmt, $types, ...$binds);
 
-        $this->execute($stmt, 'Delete failed');
-        $stmt->close();
+            $this->execute($stmt, 'Delete failed');
+            $stmt->close();
+        });
 
         return (array)$existing['data'];
     }

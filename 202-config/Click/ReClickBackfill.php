@@ -233,15 +233,15 @@ final class ReClickBackfill
      *     next_click_id: int, through_click_id: int, started_at: int, finished_at: int|null,
      *     reclicked_clicks: int, same_second_ties: int, mixed_accounts: int,
      *     failed_click_id: int|null, failed_runs: int, failing_since: int|null,
-     *     skipped_clicks: int, last_skipped_click_id: int|null
+     *     skipped_clicks: int, last_skipped_click_id: int|null, stopped_at: int|null
      * }|null
      */
     public function state(): ?array
     {
         $stmt = $this->conn->prepareWrite(
             'SELECT next_click_id, through_click_id, started_at, finished_at, reclicked_clicks, same_second_ties,'
-            . ' mixed_accounts, failed_click_id, failed_runs, failing_since, skipped_clicks, last_skipped_click_id'
-            . ' FROM 202_reclick_backfill'
+            . ' mixed_accounts, failed_click_id, failed_runs, failing_since, skipped_clicks, last_skipped_click_id,'
+            . ' stopped_at FROM 202_reclick_backfill'
             . ' WHERE backfill_id = 1'
         );
         $row = $this->conn->fetchOne($stmt);
@@ -269,6 +269,7 @@ final class ReClickBackfill
             'failing_since' => $row['failing_since'] === null ? null : $int('failing_since'),
             'skipped_clicks' => $int('skipped_clicks'),
             'last_skipped_click_id' => $row['last_skipped_click_id'] === null ? null : $int('last_skipped_click_id'),
+            'stopped_at' => $row['stopped_at'] === null ? null : $int('stopped_at'),
         ];
     }
 
@@ -278,12 +279,14 @@ final class ReClickBackfill
      * else how far it is; when the run stopped at a click that failed, which
      * click, in how many runs with an error of its own and since when
      * (stalled_at_click_id, failed_runs, failing_since; null, 0 and null while
-     * nothing fails); and
+     * nothing fails), and the first run that stopped there, for any error
+     * (stopped_at; null while nothing fails, and for a stop older than the
+     * column, which 1.9.81 added); and
      * how many clicks were stepped over, the latest by id.
      *
      * @return array{
      *     in_progress: bool, started_at: int, reclicked_clicks: int, same_second_ties: int, percent: int,
-     *     stalled_at_click_id: int|null, failed_runs: int, failing_since: int|null,
+     *     stalled_at_click_id: int|null, stopped_at: int|null, failed_runs: int, failing_since: int|null,
      *     skipped_clicks: int, last_skipped_click_id: int|null, note: string
      * }|null
      */
@@ -331,12 +334,49 @@ final class ReClickBackfill
             'same_second_ties' => $s['same_second_ties'],
             'percent' => $percent,
             'stalled_at_click_id' => $s['failed_click_id'],
+            'stopped_at' => $s['failed_click_id'] === null ? null : $s['stopped_at'],
             'failed_runs' => $s['failed_runs'],
             'failing_since' => $s['failing_since'],
             'skipped_clicks' => $s['skipped_clicks'],
             'last_skipped_click_id' => $s['last_skipped_click_id'],
             'note' => $note,
         ];
+    }
+
+    /**
+     * What Settings and the cron job's output say while the walk is stopped
+     * at a click that fails: since when, in $zone, and progress()'s note;
+     * null while it is not stopped. A stop older than the stopped_at column
+     * has no time, and says so.
+     *
+     * @param array{in_progress: bool, stalled_at_click_id: int|null, stopped_at: int|null, note: string}|null $progress
+     */
+    public static function stopNotice(?array $progress, \DateTimeZone $zone): ?string
+    {
+        if ($progress === null || !$progress['in_progress'] || $progress['stalled_at_click_id'] === null) {
+            return null;
+        }
+        $since = $progress['stopped_at'] === null
+            ? 'since a run before the upgrade to 1.9.81, which started keeping when a stop began'
+            : 'since ' . (new \DateTimeImmutable('@' . $progress['stopped_at']))->setTimezone($zone)
+                ->format('M j, Y g:ia T');
+
+        return 'The re-click backfill has been stopped ' . $since . '. ' . $progress['note'];
+    }
+
+    /**
+     * One cron run of the walk, from $now for RUN_SECONDS: the line its
+     * output shows when the run stopped at a click that fails (stopNotice(),
+     * in UTC), else null.
+     */
+    public function runFromCron(int $now): ?string
+    {
+        $run = $this->run($now + self::RUN_SECONDS);
+        if ($run === null || $run['failed_click_id'] === null) {
+            return null;
+        }
+
+        return self::stopNotice($this->progress(), new \DateTimeZone('UTC'));
     }
 
     /**
@@ -388,12 +428,13 @@ final class ReClickBackfill
             . ' skipped_clicks = skipped_clicks + ?, last_skipped_click_id = COALESCE(?, last_skipped_click_id),'
             . ' failed_runs = IF(failed_click_id < ?, 0, failed_runs),'
             . ' failing_since = IF(failed_click_id < ?, NULL, failing_since),'
+            . ' stopped_at = IF(failed_click_id < ?, NULL, stopped_at),'
             . ' failed_click_id = IF(failed_click_id < ?, NULL, failed_click_id)'
             . ' WHERE backfill_id = 1 AND next_click_id = ?'
         );
-        $this->conn->bind($move, 'iiiiiiiiiii', [
+        $this->conn->bind($move, 'iiiiiiiiiiii', [
             $to, $done['reclicked_clicks'], $done['same_second_ties'], $done['mixed_accounts'],
-            $finished ? ($this->clock)() : null, $done['skipped_clicks'], $skipped, $to, $to, $to, $from,
+            $finished ? ($this->clock)() : null, $done['skipped_clicks'], $skipped, $to, $to, $to, $to, $from,
         ]);
         if ($this->conn->executeUpdate($move) !== 1) {
             throw new \RuntimeException('the re-click backfill cursor moved under this run (expected ' . $from . ')');
@@ -404,7 +445,8 @@ final class ReClickBackfill
      * Keep the click the run stopped at with the cursor, and since when it
      * fails: failed_runs counts its runs that failed with an error of its own
      * ($own), and failing_since is the first of them; an error that is not
-     * the click's neither adds to nor resets either. The assignments run left
+     * the click's neither adds to nor resets either. stopped_at is the first
+     * run that stopped at the click, for any error. The assignments run left
      * to right, so the click is written last.
      */
     private function recordFailure(int $clickId, bool $own): void
@@ -412,14 +454,15 @@ final class ReClickBackfill
         $stmt = $this->conn->prepareWrite(
             'UPDATE 202_reclick_backfill SET failed_runs = IF(failed_click_id <=> ?, failed_runs + ?, ?),'
             . ' failing_since = IF(failed_click_id <=> ? AND failing_since IS NOT NULL, failing_since,'
-            . ' IF(? = 1, ?, NULL)), failed_click_id = ?'
+            . ' IF(? = 1, ?, NULL)), stopped_at = IF(failed_click_id <=> ?, stopped_at, ?), failed_click_id = ?'
             . ' WHERE backfill_id = 1'
         );
         $count = $own ? 1 : 0;
+        $now = ($this->clock)();
         $this->conn->bind(
             $stmt,
-            'iiiiiii',
-            [$clickId, $count, $count, $clickId, $count, ($this->clock)(), $clickId]
+            'iiiiiiiii',
+            [$clickId, $count, $count, $clickId, $count, $now, $clickId, $now, $clickId]
         );
         if ($this->conn->executeUpdate($stmt) !== 1) {
             throw new \RuntimeException('the re-click backfill could not record that click ' . $clickId . ' failed');

@@ -52,6 +52,12 @@ function p202_ltv_tabs(string $active, ?array $window = null): string
         'companies' => ['bi-building', 'Companies'],
         'settings' => ['bi-gear', 'Settings'],
     ];
+    // Settings asks Account › API Integrations' permission too
+    // (ltv_settings.php); without it the tab is a dead end.
+    global $userObj;
+    if (!$userObj instanceof \User || !$userObj->hasPermission('access_to_api_integrations')) {
+        unset($tabs['settings']);
+    }
     $window ??= p202_ltv_window_query();
     $base = get_absolute_url() . 'tracking202/analyze/ltv.php';
     $html = '<nav class="nav p202-tabs" aria-label="Customer LTV views">';

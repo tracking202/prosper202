@@ -141,11 +141,52 @@ final class ServerStateStoreRateLimitTest extends TestCase
     }
 
     /**
-     * The public endpoints must key on the validated TCP peer. consumeRateLimit()
-     * takes whatever key the caller builds, and connect2.php's $ip_address is
-     * the first of six client-supplied proxy headers — keying on it lets a
-     * flooder mint a fresh bucket per request. softIpRateLimit() is the wrapper
-     * that resolves REMOTE_ADDR itself and prunes.
+     * softIpRateLimit()'s bucket is the client VisitorIp names: behind a
+     * listed proxy each visitor its own, and from any other peer the peer,
+     * however many addresses the header claims (CLAUDE.md #16).
+     */
+    public function testTheSoftLimitKeysOnTheClientATrustedProxyNames(): void
+    {
+        $store = new ServerStateStore($this->dir);
+        $saved = $_SERVER;
+        $before = getenv('P202_TRUSTED_PROXIES');
+        try {
+            putenv('P202_TRUSTED_PROXIES=10.0.0.1');
+            $_SERVER['REMOTE_ADDR'] = '10.0.0.1';
+            $_SERVER['HTTP_X_FORWARDED_FOR'] = '198.51.100.7';
+            $this->assertNull($store->softIpRateLimit('t', 1, 60));
+            $this->assertNotNull($store->softIpRateLimit('t', 1, 60), 'the same visitor again is over the limit');
+            $_SERVER['HTTP_X_FORWARDED_FOR'] = '198.51.100.7, 198.51.100.8';
+            $this->assertNull($store->softIpRateLimit('t', 1, 60), 'another visitor behind the same proxy has its own bucket');
+            $_SERVER['HTTP_X_FORWARDED_FOR'] = '203.0.113.99, 198.51.100.8';
+            $this->assertNotNull($store->softIpRateLimit('t', 1, 60), 'a forged hop to the left does not mint a bucket');
+            $this->assertCount(2, $this->bucketFiles());
+
+            $_SERVER['REMOTE_ADDR'] = '192.0.2.50';
+            foreach (['198.51.100.20', '198.51.100.21'] as $i => $claimed) {
+                $_SERVER['HTTP_X_FORWARDED_FOR'] = $claimed;
+                $answer = $store->softIpRateLimit('t', 1, 60);
+                $i === 0 ? $this->assertNull($answer) : $this->assertNotNull($answer, 'an unlisted peer is one bucket, whatever it claims');
+            }
+            $this->assertCount(3, $this->bucketFiles());
+
+            putenv('P202_TRUSTED_PROXIES');
+            $_SERVER['REMOTE_ADDR'] = '10.0.0.1';
+            $_SERVER['HTTP_X_FORWARDED_FOR'] = '198.51.100.30';
+            $this->assertNull($store->softIpRateLimit('t', 1, 60));
+            $_SERVER['HTTP_X_FORWARDED_FOR'] = '198.51.100.31';
+            $this->assertNotNull($store->softIpRateLimit('t', 1, 60), 'no setting: the proxy is the one client');
+        } finally {
+            $_SERVER = $saved;
+            putenv($before === false ? 'P202_TRUSTED_PROXIES' : 'P202_TRUSTED_PROXIES=' . $before);
+        }
+    }
+
+    /**
+     * The public endpoints must key on the client softIpRateLimit() resolves
+     * (VisitorIp). consumeRateLimit() takes whatever key the caller builds,
+     * and a key built from a forwarding header the caller read itself lets a
+     * flooder mint a fresh bucket per request.
      */
     public function testPublicEndpointsUseThePeerKeyedLimiter(): void
     {
@@ -170,7 +211,7 @@ final class ServerStateStoreRateLimitTest extends TestCase
             $this->assertStringNotContainsString(
                 'consumeRateLimit(',
                 $src,
-                $file . ' must not build its own bucket key: unauthenticated endpoints key on REMOTE_ADDR only'
+                $file . ' must not build its own bucket key: unauthenticated endpoints key on the client softIpRateLimit() resolves'
             );
         }
     }

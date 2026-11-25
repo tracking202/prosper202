@@ -35,28 +35,10 @@ if (!file_exists(__DIR__ . '/version.php')) {
 }
 require_once(__DIR__ . '/version.php');
 
-// Ensure sessions survive for at least ~14 hours (matches the 50000s login check).
-// PHP's default gc_maxlifetime is 1440s (24 min), which silently destroys sessions.
-ini_set('session.gc_maxlifetime', '50000');
-ini_set('session.cookie_lifetime', '0'); // session cookie — expires when browser closes
-
-// Harden the session cookie before it is created. Without these, the PHPSESSID
-// cookie is readable from JavaScript (XSS session theft) and sent cross-site.
-//  - HttpOnly:  not exposed to document.cookie
-//  - SameSite:  Lax blocks the cookie on cross-site POSTs (CSRF mitigation) while
-//               still allowing normal top-level navigations.
-//  - Secure:    only sent over HTTPS. Gated on the request actually being HTTPS so
-//               plain-HTTP installs (local/dev, TLS-terminating proxies that don't
-//               forward the flag) keep working.
-// The answer is p202_request_is_https(), which the setup wizard's session
-// (functions-standalone-ui.php) and getSecureStatus() share, so no page
-// decides the flag differently.
-require_once __DIR__ . '/request-https.php';
-$_request_is_https = p202_request_is_https($_SERVER);
-ini_set('session.cookie_httponly', '1');
-ini_set('session.cookie_samesite', 'Lax');
-ini_set('session.cookie_secure', $_request_is_https ? '1' : '0');
-ini_set('session.use_strict_mode', '1'); // reject attacker-supplied (uninitialized) session IDs
+// The session's lifetime, its cookie's flags and strict mode, as the API's
+// session sign-in sets them too (202-config/session-settings.php).
+require_once __DIR__ . '/session-settings.php';
+p202_session_settings();
 
 // Start the session at the beginning to avoid undefined $_SESSION variable.
 // AJAX detection depends on clients sending X-Requested-With. jQuery does this
@@ -72,33 +54,7 @@ if ($_is_ajax) {
     session_start();
 }
 
-if (!function_exists('withWritableSession')) {
-    /**
-     * Reopen a read-only session just long enough to persist writes, then
-     * release the session lock again for the rest of the request.
-     */
-    function withWritableSession(callable $callback): void
-    {
-        $openedHere = false;
-
-        if (session_status() !== PHP_SESSION_ACTIVE) {
-            if (headers_sent()) {
-                error_log('withWritableSession: headers already sent; session writes may not persist');
-                $callback();
-                return;
-            }
-
-            session_start();
-            $openedHere = true;
-        }
-
-        $callback();
-
-        if ($openedHere && session_status() === PHP_SESSION_ACTIVE) {
-            session_write_close();
-        }
-    }
-}
+// withWritableSession() is in session-settings.php, required above.
 
 DEFINE('TRACKING202_RSS_URL', 'http://rss.tracking202.com');
 DEFINE('TRACKING202_ADS_URL', 'https://ads.tracking202.com');
@@ -312,6 +268,8 @@ if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
 // Never masked: on these pages it is the operator's own address, which the
 // sign-in log keeps as it arrived.
 $ip_address = ipAddress(\Prosper202\Http\VisitorIp::fromServer($_SERVER), false);
+// Forwarding headers from a proxy nobody listed, for Settings' warning.
+\Prosper202\Http\UnlistedProxySighting::record(ROOT_PATH, $_SERVER);
 include_once(CONFIG_PATH . '/functions-ui.php');
 include_once(CONFIG_PATH . '/template.php');
 

@@ -170,7 +170,7 @@ final class InstallIntake
             // masked when the install's or the owner's privacy setting holds
             // back for it (StoredVisitorIp::forAccount()). Resolved before
             // the transaction, so the 'eu' answer's GeoIP read holds no lock.
-            // The per-peer rate limit keyed on REMOTE_ADDR, in index.php.
+            // The per-client rate limit keyed on the same address, in index.php.
             $storedIp = StoredVisitorIp::forAccount($this->conn, $remoteIp, $registration->userId);
             $work = fn (): array => $this->record($registration, $payload, $parsed, $first, $storedIp);
             try {
