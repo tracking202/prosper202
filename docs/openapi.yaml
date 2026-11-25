@@ -192,7 +192,11 @@ tags:
   - name: Forecast Events
     description: Calendar events (holidays, promotions) that event-aware forecasting shifts predictions around
   - name: LTV
-    description: Customer lifetime value — customers, companies, revenue, subscriptions, products, custom fields, webhooks and integrations (scopes `ltv:read` / `ltv:write`)
+    description: >-
+      Customer lifetime value — customers, companies, revenue, subscriptions, products, custom fields, webhooks and
+      integrations (scopes `ltv:read` / `ltv:write`). Every LTV read refuses a query parameter it does not take with
+      a 422 naming it and the ones it takes ("Unknown parameter(s): …"), rather than answer as though it were not
+      sent.
   - name: Sync
     description: Server-side sync between Prosper202 instances — plans, jobs, the change feed and the audit trail (admin, scopes `sync:read` / `sync:write`)
   - name: Destinations
@@ -10896,6 +10900,22 @@ paths:
           - subscribers
           - at_risk
         description: Only this segment; any other value is a 422 naming `segment`
+      - name: updated_since
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+        description: >-
+          Only the customers whose record was written at or after this unix time; every change to what the list shows
+          for a customer (its CRM fields, its totals, its subscriptions) writes the record. A value that is not a whole
+          number of 0 or more is a 422 naming `updated_since`.
+      - name: deleted_since
+        in: query
+        schema:
+          type: integer
+        description: >-
+          Not taken: the list answers live customers only, so a customer erased or merged into another since a time
+          cannot be listed. Sending it is a 422 naming `deleted_since`.
       responses:
         '200':
           description: Customers

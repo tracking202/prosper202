@@ -150,7 +150,8 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         int $limit,
         int $offset,
         ?string $search = null,
-        ?string $segment = null
+        ?string $segment = null,
+        ?int $updatedSince = null
     ): array {
         // Refused, never replaced: an unknown sort read as total_revenue and
         // an unknown direction as DESC, so `sort=revenue` came back ranked by
@@ -189,6 +190,12 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
                 );
             }
             $where .= ' AND ' . self::CUSTOMER_SEGMENTS[$segment];
+        }
+
+        if ($updatedSince !== null) {
+            $where .= ' AND c.updated_at >= ?';
+            $types .= 'i';
+            $binds[] = $updatedSince;
         }
 
         $countStmt = $this->conn->prepareRead("SELECT COUNT(*) AS total FROM 202_customers c {$joins} {$where}");

@@ -748,19 +748,19 @@ try {
             $cls = \Api\V3\Controllers\LtvController::class;
             $r->get('/summary',        fn() => $crud($cls)->summary($queryParams));
             $r->get('/customers',      fn() => $crud($cls)->customers($queryParams));
-            $r->get('/customers/{id}', fn($ctx) => $crud($cls)->customerDetail(PathId::of($ctx)));
+            $r->get('/customers/{id}', fn($ctx) => $crud($cls)->customerDetail(PathId::of($ctx), $queryParams));
             $r->get('/customers/{id}/engagement', fn($ctx) => $crud($cls)->customerEngagement(PathId::of($ctx), $queryParams));
-            $r->get('/customers/{id}/next-offer', fn($ctx) => $crud($cls)->customerNextOffer(PathId::of($ctx)));
+            $r->get('/customers/{id}/next-offer', fn($ctx) => $crud($cls)->customerNextOffer(PathId::of($ctx), $queryParams));
             $r->get('/abm',            fn() => $crud($cls)->abm($queryParams));
             $r->get('/abm/company',    fn() => $crud($cls)->abmCompany($queryParams));
             $r->get('/breakdown',      fn() => $crud($cls)->breakdown($queryParams));
             $r->get('/cohorts',        fn() => $crud($cls)->cohorts($queryParams));
-            $r->get('/mrr',            fn() => $crud($cls)->mrr());
+            $r->get('/mrr',            fn() => $crud($cls)->mrr($queryParams));
             $r->get('/predict',        fn() => $crud($cls)->predict($queryParams));
             $r->get('/products',       fn() => $crud($cls)->products($queryParams));
             $r->get('/companies',      fn() => $crud($cls)->listCompanies($queryParams));
             $r->get('/subscriptions',  fn() => $crud($cls)->listSubscriptions($queryParams));
-            $r->get('/fields',         fn() => $crud($cls)->fieldsList());
+            $r->get('/fields',         fn() => $crud($cls)->fieldsList($queryParams));
         }, [
             static function () use ($auth): void {
                 $auth->requireScope('ltv:read');
@@ -775,9 +775,9 @@ try {
         // as they are to change.
         $router->group('/ltv', function (Router $r) use ($crud, $queryParams) {
             $cls = \Api\V3\Controllers\LtvController::class;
-            $r->get('/webhooks',       fn() => $crud($cls)->listWebhooks());
+            $r->get('/webhooks',       fn() => $crud($cls)->listWebhooks($queryParams));
             $r->get('/webhooks/{id}/deliveries', fn($ctx) => $crud($cls)->webhookDeliveries(PathId::of($ctx), $queryParams));
-            $r->get('/integrations',   fn() => $crud($cls)->listIntegrations());
+            $r->get('/integrations',   fn() => $crud($cls)->listIntegrations($queryParams));
         }, [
             static function () use ($auth): void {
                 $auth->requireScope('ltv:read');
