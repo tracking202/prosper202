@@ -55,7 +55,7 @@ final class StoredVisitorIp
      * connect2.php. '' for anything that is not an address.
      *
      * Storage only. Whatever keys a decision on the sender — the intakes'
-     * rate limits — keys on REMOTE_ADDR as it arrived (CLAUDE.md #16).
+     * rate limits — keys on VisitorIp's address unmasked (CLAUDE.md #16).
      *
      * @param ?int $ownerId the account the request names, null when none does
      *        (an unregistered app's postback): the install's setting alone

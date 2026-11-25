@@ -75,7 +75,13 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
             return;
         }
         self::cleanUp();
-        self::$now = time();
+        // Noon yesterday in the account's zone, not time(): the runs reach
+        // hours past $now and must stay in its local day, which time() leaves
+        // whenever CI runs in that day's last hours.
+        self::$now = (new \DateTimeImmutable('@' . time()))
+            ->setTimezone(new \DateTimeZone(self::ZONE))
+            ->modify('yesterday noon')
+            ->getTimestamp();
         self::user(self::OWNER, self::ZONE);
         self::user(self::OTHER);
         self::user(self::QUIET);

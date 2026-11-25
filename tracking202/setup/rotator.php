@@ -317,7 +317,19 @@ $criterionRow = static function (array $criterion, ?string $warning = null) use 
 		. '</div>';
 };
 
-$redirectRow = static function (array $redirect) use ($campaignOptions, $pageOptions): string {
+/**
+ * The most a weight field takes: 100, as the API (RotatorsController::destination())
+ * takes a weight; or the stored weight where an older page saved one above
+ * 100, which the save keeps when it is posted back unchanged, so the form
+ * holding it can still be sent.
+ */
+$weightMax = static function (mixed $stored): int {
+	$held = is_scalar($stored) && preg_match('/^\d{1,3}$/D', (string) $stored) === 1 ? (int) $stored : 0;
+
+	return max(100, $held);
+};
+
+$redirectRow = static function (array $redirect) use ($campaignOptions, $pageOptions, $weightMax): string {
 	$type = !empty($redirect['redirect_lp']) ? 'lp' : (!empty($redirect['redirect_url']) ? 'url' : 'campaign');
 	return '<div class="row g-2 align-items-end mb-2" data-p202-row data-redirect data-redirect-id="' . p202_setup_e($redirect['id'] ?? 'none') . '">'
 		. '<div class="col-12 col-md-3"><label class="form-label small w-100">Send to<select class="form-select form-select-sm" data-rule-field="redirect_type">'
@@ -329,7 +341,7 @@ $redirectRow = static function (array $redirect) use ($campaignOptions, $pageOpt
 		. p202_setup_options($pageOptions, (string) ($redirect['redirect_lp'] ?? ''), 'Choose a landing page') . '</select></label>'
 		. '<label class="form-label small w-100" data-destination="url"' . ($type === 'url' ? '' : ' hidden') . '>URL<input type="url" class="form-control form-control-sm" data-rule-field="redirect_url" required placeholder="https://" value="' . p202_setup_e($redirect['redirect_url'] ?? '') . '"></label>'
 		. '</div>'
-		. '<div class="col-8 col-md-2" data-split-only><label class="form-label small w-100">Weight<input type="number" min="1" class="form-control form-control-sm" data-rule-field="weight" required value="' . p202_setup_e($redirect['weight'] ?? '') . '" placeholder="50"></label></div>'
+		. '<div class="col-8 col-md-2" data-split-only><label class="form-label small w-100">Weight<input type="number" min="0" max="' . $weightMax($redirect['weight'] ?? null) . '" class="form-control form-control-sm" data-rule-field="weight" required value="' . p202_setup_e($redirect['weight'] ?? '') . '" placeholder="50"></label></div>'
 		. '<div class="col-4 col-md-1" data-split-only><button type="button" class="btn btn-link btn-sm text-danger" data-p202-remove-row aria-label="Remove this destination"><i class="bi bi-x-lg"></i></button></div>'
 		. '</div>';
 };

@@ -48,7 +48,8 @@ func withLinkParam(link, key, value string) string {
 }
 
 // geoIPs maps an ISO country code to a representative public IP, used to spoof
-// the visitor's geo (via X-Forwarded-For) for tracker test.
+// the visitor's geo (via X-Forwarded-For) for tracker test. The install believes
+// the header only from an address its P202_TRUSTED_PROXIES lists.
 var geoIPs = map[string]string{
 	"US": "8.8.8.8",
 	"CA": "24.48.0.1",
@@ -70,37 +71,39 @@ var deviceUAs = map[string]string{
 	"tablet":  "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
 }
 
-// countryCodeFromValue extracts the ISO code from a single criteria token
-// formatted as "United States(US)" -> "US".
-func countryCodeFromValue(v string) string {
-	open := strings.LastIndex(v, "(")
-	closeP := strings.LastIndex(v, ")")
-	if open >= 0 && closeP > open {
-		return strings.ToUpper(strings.TrimSpace(v[open+1 : closeP]))
+// describeCountryValues is a country criterion's values for --explain, each
+// with the code the redirects compare, or a note that it names none.
+func describeCountryValues(values []string) string {
+	parts := make([]string, 0, len(values))
+	for _, v := range values {
+		if code, ok := criterionCountryCode(v); ok {
+			if v != code {
+				v += " [" + code + "]"
+			}
+		} else {
+			v += " [names no country code, never matches]"
+		}
+		parts = append(parts, v)
 	}
-	return strings.ToUpper(strings.TrimSpace(v))
+	if len(parts) == 0 {
+		return "(no value)"
+	}
+	return strings.Join(parts, ",")
 }
 
-// countryCodesFromValue parses a criteria value into the set of country codes,
-// mirroring rtr.php which splits the value on commas (a rule criterion may list
-// several countries, e.g. "United States(US),Canada(CA)").
-func countryCodesFromValue(v string) []string {
-	out := []string{}
-	for _, tok := range strings.Split(v, ",") {
-		if tok = strings.TrimSpace(tok); tok != "" {
-			out = append(out, countryCodeFromValue(tok))
-		}
+// rotatorTestGeo is a --geo value as a visitor's country code: two letters,
+// in upper case, as GeoIP gives it. UK is GB to GeoIP, so a rule naming GB
+// is what a visitor from the UK meets.
+func rotatorTestGeo(geo string) (string, error) {
+	code := strings.ToUpper(strings.TrimSpace(geo))
+	if code == "UK" {
+		code = "GB"
 	}
-	return out
-}
-
-func contains(list []string, s string) bool {
-	for _, x := range list {
-		if x == s {
-			return true
-		}
+	if _, ok := criterionCountryCode(code); !ok || len(code) != 2 {
+		return "", validationError("--geo %q is not a two-letter country code", geo).
+			WithHint("Pass ISO codes as GeoIP gives them, e.g. --geo US,GB,DE; `p202 rotator criteria-values` lists names with their codes.")
 	}
-	return false
+	return code, nil
 }
 
 // rotatorDestination resolves which destination a visitor from geo hits, by
@@ -131,15 +134,14 @@ func rotatorDestination(data map[string]interface{}, geo string) (rule, dest str
 			case criterionMatchesEveryone(criterionValues(val)):
 				ok = true // ALL, in any case and among other values, matches any visitor
 				explain = append(explain, fmt.Sprintf("rule %q: %s ALL -> true", r["rule_name"], stmt))
+			case !criterionStatementKnown(stmt):
+				ok = false // the redirects match no visitor with a statement they do not read
+				explain = append(explain, fmt.Sprintf("rule %q: %s statement %q matches no visitor -> false", r["rule_name"], ctype, stmt))
 			case ctype == "country":
-				codes := countryCodesFromValue(val)
-				inList := contains(codes, geo)
-				if stmt == "is_not" {
-					ok = !inList
-				} else {
-					ok = inList
-				}
-				explain = append(explain, fmt.Sprintf("rule %q: country %s %s -> %v", r["rule_name"], stmt, strings.Join(codes, ","), ok))
+				values := criterionValues(val)
+				inList := criterionCountryListed(values, geo)
+				ok = inList == (stmt == "is")
+				explain = append(explain, fmt.Sprintf("rule %q: country %s %s -> %v", r["rule_name"], stmt, describeCountryValues(values), ok))
 			default:
 				// device/browser/platform/ip/region/city criteria can't be
 				// evaluated locally. Don't silently treat them as a match — flag
@@ -203,10 +205,25 @@ var rotatorTestCmd = &cobra.Command{
 	Use:   "test <rotator_id>",
 	Short: "Show where a rotator routes traffic per geo (local rule evaluation)",
 	Long: "Evaluates the rotator's active rules locally and prints the destination a\n" +
-		"visitor from each --geo would reach. --explain shows per-criteria pass/fail,\n" +
-		"which surfaces the Name(CC) country-format mismatches that silently break rules.",
+		"visitor from each --geo (an ISO code, UK read as GB) would reach, reading\n" +
+		"country values as the redirects do: by the code alone (US) or in the\n" +
+		"brackets that end it (United States(US)). --explain shows per-criteria\n" +
+		"pass/fail and marks a value that names no code, which never matches.",
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		geos := splitCSV(mustString(cmd, "geo"))
+		if len(geos) == 0 {
+			geos = []string{"US", "GB", "CA", "AU", "BR", "IN"}
+		}
+		for i, g := range geos {
+			code, err := rotatorTestGeo(g)
+			if err != nil {
+				return err
+			}
+			geos[i] = code
+		}
+		explain, _ := cmd.Flags().GetBool("explain")
+
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
@@ -222,16 +239,10 @@ var rotatorTestCmd = &cobra.Command{
 			return err
 		}
 
-		geos := splitCSV(mustString(cmd, "geo"))
-		if len(geos) == 0 {
-			geos = []string{"US", "GB", "CA", "AU", "BR", "IN"}
-		}
-		explain, _ := cmd.Flags().GetBool("explain")
-
 		rows := make([]map[string]interface{}, 0, len(geos))
 		for _, g := range geos {
 			rule, dest, ex := rotatorDestination(resp.Data, g)
-			row := map[string]interface{}{"geo": strings.ToUpper(g), "matched_rule": rule, "destination": dest}
+			row := map[string]interface{}{"geo": g, "matched_rule": rule, "destination": dest}
 			if explain {
 				row["criteria"] = strings.Join(ex, "; ")
 			}
@@ -618,7 +629,7 @@ func init() {
 	rotatorTestCmd.Flags().Bool("explain", false, "Show per-criteria pass/fail for each geo")
 	rotatorCmd.AddCommand(rotatorTestCmd)
 
-	trackerTestCmd.Flags().String("geo", "", "Comma-separated country codes to simulate (spoofs X-Forwarded-For)")
+	trackerTestCmd.Flags().String("geo", "", "Comma-separated country codes to simulate (sends X-Forwarded-For, which the install reads only from an address in its P202_TRUSTED_PROXIES)")
 	trackerTestCmd.Flags().String("device", "", "Device to simulate")
 	enumFlag(trackerTestCmd, "device", newEnum(sortedKeys(deviceUAs), enumFoldCase()))
 	// The tracker command is built dynamically in crud.go's init() (which runs

@@ -44,6 +44,13 @@ function p202_alerts_post(\mysqli $db, int $userId, array $post): array
         p202_account_flash($kind, $text);
         p202_account_redirect(P202_ALERTS_RETURN);
     }
+    p202_account_require_shown(
+        $db,
+        $userId,
+        'money_loss_alerts',
+        static fn (): array => (new MysqlAlertStore(new Connection($db)))->settings($userId)->toArray(),
+        P202_ALERTS_RETURN
+    );
     $posted = [
         'enabled' => $post['alerts_enabled'] ?? '0',
         'notify_slack' => $post['alerts_notify_slack'] ?? '0',
@@ -368,6 +375,7 @@ function p202_alerts_card(
         . ' only if you set a webhook, and webhooks only to ones subscribed to the alerts.</p>'
         . '<form method="post" action="' . $action . '">'
         . '<input type="hidden" name="update_money_loss_alerts" value="1">' . p202_account_token_field()
+        . p202_account_shown_field('money_loss_alerts', $settings->toArray())
         . $switch(
             'enabled',
             'Alerts on',

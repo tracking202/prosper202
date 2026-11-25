@@ -350,6 +350,47 @@ final class ReClickRollupUpgradeIntegrationTest extends TestCase
         );
     }
 
+    /**
+     * A 1.9.80 walk stopped at a click has no stopped_at; the 1.9.80 rung's
+     * reconcile adds it, empty, and Settings then says the stop began before
+     * the upgrade rather than naming a time.
+     */
+    public function testTheRungAddsWhenTheWalkStoppedToA1980MarkerTable(): void
+    {
+        self::seed();
+        self::q(ClickTables::clickLatestVisits()->createStatement);
+        $definition = ClickTables::reClickBackfill()->createStatement;
+        $earlier = (string) preg_replace('/\n\s*`stopped_at`[^\n]*,/', '', $definition, -1, $removed);
+        self::assertSame(1, $removed, 'stopped_at is in the definition, and out of the 1.9.80 one');
+        self::q($earlier);
+        self::q('INSERT INTO 202_reclick_backfill SET backfill_id = 1, started_at = 1, next_click_id = ' . self::LEGACY . ','
+            . ' through_click_id = ' . self::ONE_VISIT . ', failed_click_id = ' . self::LEGACY . ', failed_runs = 0');
+        self::stored('1.9.80');
+        self::assertSame([], self::stoppedAtColumn(), 'the 1.9.80 table has no stopped_at');
+
+        [$out, $err] = self::upgrade();
+
+        self::assertSame('RETURNED true', $out, $err);
+        self::assertStringNotContainsString('Prosper202 upgrade', $err, 'a rung that converged logs nothing');
+        self::assertSame('1.9.81', self::version());
+        self::assertSame([['stopped_at', 'YES', 'NULL']], self::stoppedAtColumn());
+        $progress = (new ReClickBackfill(new Connection(self::$db)))->progress();
+        self::assertSame([self::LEGACY, null], [$progress['stalled_at_click_id'] ?? 'none', $progress['stopped_at'] ?? null]);
+        self::assertStringStartsWith(
+            'The re-click backfill has been stopped since a run before the upgrade to 1.9.81,',
+            (string) ReClickBackfill::stopNotice($progress, new \DateTimeZone('UTC'))
+        );
+    }
+
+    /** @return list<list<string>> */
+    private static function stoppedAtColumn(): array
+    {
+        return self::all(
+            "SELECT COLUMN_NAME, IS_NULLABLE, IFNULL(COLUMN_DEFAULT, 'NULL') FROM information_schema.COLUMNS"
+            . " WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '202_reclick_backfill' AND COLUMN_NAME = 'stopped_at'"
+        );
+    }
+
     private const STOPPED_CLICK_COLUMNS = [
         'failed_click_id', 'failed_runs', 'failing_since', 'skipped_clicks', 'last_skipped_click_id',
     ];

@@ -263,6 +263,7 @@ final class SessionGenerationIntegrationTest extends TestCase
             'P202_SU_SESSION_ID' => $admins,
             'P202_SU_USER' => (string) self::ADMIN,
             'P202_SU_GET' => json_encode(['edit_user_id' => (string) self::USER], JSON_THROW_ON_ERROR),
+            'P202_SU_OPEN_FIRST' => json_encode(['edit_user_id' => (string) self::USER], JSON_THROW_ON_ERROR),
             'P202_SU_POST' => json_encode([
                 'token' => 'SESSION',
                 'user_id' => (string) self::USER,

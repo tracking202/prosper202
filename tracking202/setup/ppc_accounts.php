@@ -94,6 +94,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if (empty($ppc_network_name)) {
 			$error['ppc_network_name'] = 'Type in the name the traffic source.';
 		}
+        $tooLong = \Prosper202\Setup\FieldLength::refusal(
+            'ppc_network_name',
+            (string) $_POST['ppc_network_name'],
+            'The traffic source name'
+        );
+        if ($tooLong !== null) {
+            $error['ppc_network_name'] = $tooLong;
+        }
 
 		if (empty($error)) {
 			$mysql['ppc_network_name'] = $db->real_escape_string((string)$_POST['ppc_network_name']);
@@ -186,10 +194,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if (isset($_POST['ppc_network_id']) && ($network_editing == false)) {
 
 		$ppc_account_name = trim((string) $_POST['ppc_account_name']);
-		$do_edit_ppc_account = trim(filter_input(INPUT_POST, 'do_edit_ppc_account', FILTER_SANITIZE_NUMBER_INT));
+        // Read from $_POST, as every other field here: filter_input() answers
+        // null for a field the request does not carry, and trim(null) throws.
+        $postedEdit = $_POST['do_edit_ppc_account'] ?? null;
+        $do_edit_ppc_account = trim(is_string($postedEdit) ? $postedEdit : '');
 		if ($ppc_account_name == '' && $do_edit_ppc_account == '1') {
 			$error['ppc_account_name'] = 'What is the username for this account?';
 		}
+        $tooLong = \Prosper202\Setup\FieldLength::refusal(
+            'ppc_account_name',
+            (string) $_POST['ppc_account_name'],
+            'The account name'
+        );
+        if ($tooLong !== null) {
+            $error['ppc_account_name'] = $tooLong;
+        }
 
 		$ppc_network_id = trim((string) $_POST['ppc_network_id']);
 		if ($ppc_network_id == '') {
@@ -278,6 +297,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			}
 		}
 
+        $savedAccountId = null;
 		if (empty($error)) {
 
             $ppc_network_row = p202FetchRow($ppc_network_result, $ppc_network_sql);
@@ -302,14 +322,58 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     . " AND user_id='" . $mysql['user_id'] . "'";
 			}
 
-            $ppc_account_result = _mysqli_query($ppc_account_sql);
-            if ($ppc_account_result === false) {
-                record_mysql_error($ppc_account_sql);
+            // The account, then its sources, in the lock order the traffic
+            // source repair shares (TrafficSourceAccountWrite); the source is
+            // asked for again under the lock, since a repair may have moved it
+            // to another user after it was read above.
+            // An edit that leaves the account where it is, as the lock finds
+            // it, is not asked, as the API does not ask it.
+            $accountConn = new \Prosper202\Database\Connection($db);
+            $postedSourceId = (int) $mysql['ppc_network_id'];
+            $accountOwnerId = (int) $mysql['user_id'];
+            $editedAccountId = $editing == true ? (int) $mysql['ppc_account_id'] : null;
+            try {
+                $savedAccountId = \Prosper202\Setup\TrafficSourceAccountWrite::run(
+                    $accountConn,
+                    $editedAccountId === null ? [] : [$editedAccountId],
+                    [$postedSourceId],
+                    static function (array $sources, array $onSources) use (
+                        $db,
+                        $ppc_account_sql,
+                        $postedSourceId,
+                        $accountOwnerId,
+                        $editedAccountId
+                    ): ?int {
+                        $stays = $editedAccountId !== null
+                            && ($onSources[$editedAccountId] ?? 0) === $postedSourceId;
+                        $owned = $stays || \Prosper202\Setup\TrafficSourceAccountWrite::ownsLive(
+                            $sources,
+                            $postedSourceId,
+                            $accountOwnerId
+                        );
+                        if (!$owned) {
+                            return null;
+                        }
+                        $written = $db->query($ppc_account_sql);
+                        if ($written === false) {
+                            throw new \RuntimeException((string) $db->error);
+                        }
+
+                        return (int) $db->insert_id;
+                    }
+                );
+            } catch (\Throwable $e) {
+                record_mysql_error($db, 'saving traffic source account (202_ppc_accounts)', $e->getMessage());
             }
+        }
+        if (empty($error) && $savedAccountId === null) {
+            $error['wrong_user'] = 'You are not authorized to add an account to another user\'s traffic source';
+        }
+        if (empty($error)) {
 			$add_success = true;
 			// Cast to int: this id is interpolated into SQL without quotes, where
 			// real_escape_string() would not prevent injection in a numeric context.
-			$the_ppc_account_id = (int)($db->insert_id != 0 ? $db->insert_id : $mysql['ppc_account_id']);
+            $the_ppc_account_id = (int)($savedAccountId !== 0 ? $savedAccountId : $mysql['ppc_account_id']);
             // An account moved to another traffic source: its clicks' report
             // rows keep the source they were rolled up under until they are
             // rolled up again, so they are queued for the cron job
@@ -431,17 +495,39 @@ if (isset($_GET['delete_ppc_account_id'])) {
 								`ppc_account_time`='" . $mysql['ppc_account_time'] . "'
 						WHERE   `user_id`='" . $mysql['user_id'] . "'
 						AND     `ppc_account_id`='" . $mysql['ppc_account_id'] . "'";
-		if ($delete_result = _mysqli_query($delete_sql)) {
-			$delete_success = true;
-			// Landing Page Optimizer (segments-v2 G10): deletes change the
-			// synced snapshot too (buildSnapshot omits deleted rows) — flag
-			// dirty so the hourly cron re-pushes. DB-only — no HTTP here.
-			\Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
-			if ($slack)
-				$slack->push('traffic_source_account_deleted', ['account_name' => $_GET['delete_ppc_account_name'], 'user' => $user_row['username']]);
-        } else {
-            record_mysql_error($delete_sql);
+        // A removal is read by the traffic source repair as well (a removed
+        // account still names its source, and its time is stamped), so it
+        // takes the account and its source as every account write does.
+        // An id that is not one names no account, as the query's quoted id did.
+        $deletedAccountId = \Prosper202\Http\PostedId::read($_GET['delete_ppc_account_id']);
+        if ($deletedAccountId !== null) {
+            try {
+                \Prosper202\Setup\TrafficSourceAccountWrite::run(
+                    new \Prosper202\Database\Connection($db),
+                    [$deletedAccountId],
+                    [],
+                    static function () use ($db, $delete_sql): void {
+                        $removed = $db->query($delete_sql);
+                        if ($removed === false) {
+                            throw new \RuntimeException((string) $db->error);
+                        }
+                    }
+                );
+            } catch (\Throwable $e) {
+                record_mysql_error($db, 'removing traffic source account (202_ppc_accounts)', $e->getMessage());
+            }
 		}
+        $delete_success = true;
+        // Landing Page Optimizer (segments-v2 G10): deletes change the
+        // synced snapshot too (buildSnapshot omits deleted rows) — flag
+        // dirty so the hourly cron re-pushes. DB-only — no HTTP here.
+        \Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
+        if ($slack) {
+            $slack->push('traffic_source_account_deleted', [
+                'account_name' => $_GET['delete_ppc_account_name'],
+                'user' => $user_row['username'],
+            ]);
+        }
 	} else {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
 	}
@@ -680,7 +766,7 @@ if ($error) {
 					<?php } ?>
 					<div class="mb-3">
 						<label class="form-label" for="ppc_network_name">Traffic source name</label>
-						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'ppc_network_name'); ?>" id="ppc_network_name" name="ppc_network_name" value="<?php echo p202_setup_e($sourceFormName); ?>" maxlength="255" required<?php echo $sourceIsPrimary ? ' autofocus' : ''; ?>>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'ppc_network_name'); ?>" id="ppc_network_name" name="ppc_network_name" value="<?php echo p202_setup_e($sourceFormName); ?>" maxlength="<?php echo \Prosper202\Setup\FieldLength::of('ppc_network_name'); ?>" required<?php echo $sourceIsPrimary ? ' autofocus' : ''; ?>>
 						<?php echo p202_setup_feedback($error, 'ppc_network_name'); ?>
 					</div>
 					<?php if ($network_editing) {
@@ -739,7 +825,7 @@ if ($error) {
 					</div>
 					<div class="mb-3">
 						<label class="form-label" for="ppc_account_name">Account username</label>
-						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'ppc_account_name'); ?>" id="ppc_account_name" name="ppc_account_name" value="<?php echo p202_setup_e($accountName); ?>" maxlength="255" required<?php echo $editing ? ' autofocus' : ''; ?>>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'ppc_account_name'); ?>" id="ppc_account_name" name="ppc_account_name" value="<?php echo p202_setup_e($accountName); ?>" maxlength="<?php echo \Prosper202\Setup\FieldLength::of('ppc_account_name'); ?>" required<?php echo $editing ? ' autofocus' : ''; ?>>
 						<div class="form-text">The name you know the account by at the traffic source.</div>
 						<?php echo p202_setup_feedback($error, 'ppc_account_name'); ?>
 					</div>

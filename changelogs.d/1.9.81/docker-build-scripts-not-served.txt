@@ -1,0 +1,2 @@
+-- Fixed: The Docker image no longer serves build/: a request for build/scripts/write-config.php wrote 202-config.php from the container's environment before the setup wizard had run, and the release tools answered requests too. The image keeps the config writer in /usr/local/lib/prosper202/, the app stage leaves build/ out of the docroot, and every runnable script under build/ answers a web request with a 404, for checkouts served as the web root.
+app: Fixed: The Docker image no longer serves the build scripts, one of which could write 202-config.php before setup.

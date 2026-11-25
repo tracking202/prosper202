@@ -71,6 +71,7 @@ final class IntegrationSecretsAreNotRenderedTest extends TestCase
         'DimensionSync::pushForUser' => 'how many dimensions it sent the optimizer',
         'getAllDniNetworks' => 'the hosted service\'s list of networks, asked with the install hash',
         'count' => 'how many',
+        'p202_account_shown_field' => 'an HMAC of what the form shows, under the session\'s secret (ShownSettings)',
     ];
 
     private const SINK_CALLS = ['printf', 'vprintf', 'print_r', 'var_dump', 'var_export', 'p202_account_flash'];
@@ -91,6 +92,10 @@ final class IntegrationSecretsAreNotRenderedTest extends TestCase
             '<?php echo $endpoint(\'Site key\', $lpo_site_key); ?>' => 'the Landing Page Optimizer\'s site key,'
                 . ' which the hosted service issues at pairing and the card shows to copy; the API answers it as'
                 . ' stored-only, and whether the page should too is left to its owner (backlog 03VE)',
+            'p202_account_flash(\'ok\', $keyOutcome === \'kept\' ? \'Nothing changed: your saved \''
+                . ' . $keyLabel . \' is kept.\''
+                => 'processApiKeyUpdate()\'s answer, \'saved\' or \'kept\', picks one of two fixed sentences; it is'
+                . ' tainted only because the save is handed the row read under the settings lock (ShownSettings)',
         ],
     ];
 

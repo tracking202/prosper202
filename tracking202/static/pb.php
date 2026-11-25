@@ -58,8 +58,28 @@ if ($pbSignedSubid !== null) {
         $click_id = $pbLegacy['click_id'];
     }
 }
+// The subid named the click, unless p202ClickByAdClickId() finds it below.
+$matchedBy = \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID;
 if ($click_id === null) {
-	p202RespondJsonError(404, 'Missing or malformed subid');
+    // No SubID at all (empty, or the network's unfilled macro): the one click
+    // carrying an ad click id sent back, as gpb.php finds it. One a listed
+    // parameter found must be of this campaign's account, and either way the
+    // click is held to the campaign below, as a SubID's is.
+    $pbAdClick = p202ClickByAdClickId($db, $_GET, 'pb');
+    $pbOwner = (int) $aff_campaign_row['user_id'];
+    if ($pbAdClick === null) {
+        p202RespondJsonError(404, 'Missing or malformed subid');
+    }
+    if ($pbAdClick['owners'] !== null && !in_array($pbOwner, $pbAdClick['owners'], true)) {
+        p202RespondJsonError(404, 'Unknown subid for this campaign');
+    }
+    $click_id = $pbAdClick['click_id'];
+    $matchedBy = \Prosper202\Conversion\Ledger\MatchMethod::AD_CLICK_ID;
+}
+if ($pbSignedSubid === null && ($pbLegacy ?? null) === null) {
+    // The click and how it was found (its subid, or an ad click id sent back),
+    // kept so a refused request can be recorded from the log.
+    \Prosper202\InboundLog\RequestLog::current()?->matched($click_id, $matchedBy);
 }
 
 // An event (plan §2.2), on a click of this campaign: stored and evaluated
@@ -68,7 +88,10 @@ if ($click_id === null) {
 try {
 	$webEvent = $pbSignedSubid !== null
 		? p202RecordPurLinkWebEvent($db, (string) $pbRawSubid, $pbSignedSubid['key'], $_GET)
-		: p202RecordWebEvent($db, $click_id, $_GET, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, ['campaign_id' => (int) $aff_campaign_row['aff_campaign_id'], 'browser' => false]);
+        : p202RecordWebEvent($db, $click_id, $_GET, $matchedBy, [
+            'campaign_id' => (int) $aff_campaign_row['aff_campaign_id'],
+            'browser' => false,
+        ]);
 } catch (\Throwable $webEventError) {
 	error_log('pb: event recording failed for click ' . $click_id . ': ' . $webEventError->getMessage());
 	p202RespondJsonError(500, 'Failed to record event');
@@ -85,8 +108,10 @@ try {
     // credits the click's latest visit.
 	// status=reversed with the transaction id of an earlier conversion
 	// records a reversal row that nets against it (see p202ExtractReversal).
-	// The subid named the click (MatchMethod::CLICK_ID).
-	$outcome = p202RecordLegacyConversion($db, $click_id, 2, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, [
+    // The subid named the click (MatchMethod::CLICK_ID), or an ad click id
+    // did (AD_CLICK_ID), which may find any account's click: the campaign
+    // check holds it to the campaign's account too (p202ClickVisitedCampaign()).
+    $outcome = p202RecordLegacyConversion($db, $click_id, 2, $matchedBy, [
 		'campaign_id'    => (int) $aff_campaign_row['aff_campaign_id'],
 		'transaction_id' => p202ExtractTransactionId($_GET),
 		'ip'             => p202StoredVisitorIp(),
