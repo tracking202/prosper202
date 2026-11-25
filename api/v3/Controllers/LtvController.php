@@ -49,6 +49,9 @@ class LtvController
     use StatementHelpers;
     use AccountTimezone;
 
+    /** The window and custom-field filters every read that builds an LtvQuery takes (query()). */
+    private const array WINDOW_PARAMS = ['period', 'time_from', 'time_to'];
+
     private Connection $conn;
     private MysqlCustomerRepository $customers;
     private MysqlCustomerFieldRepository $fields;
@@ -72,14 +75,28 @@ class LtvController
 
     public function summary(array $params): array
     {
+        self::refuseUnknownParams($params, self::WINDOW_PARAMS, true);
+
         return $this->wrap(fn (): array => ['data' => $this->ltv->summary($this->query($params))]);
     }
 
     public function customers(array $params): array
     {
+        self::refuseUnknownParams(
+            $params,
+            [...self::WINDOW_PARAMS, 'limit', 'offset', 'sort', 'dir', 'q', 'segment', 'updated_since'],
+            true,
+            ['deleted_since' => 'is not accepted here: the list answers live customers only, so it cannot be'
+                . ' filtered by when one was erased or merged into another'],
+        );
+
         return $this->wrap(function () use ($params): array {
             $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
             $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
+            // Every write of a customer row sets its updated_at, its totals'
+            // included (CustomerWritesStampUpdatedAtTest), so the customers
+            // changed since a time are the rows stamped since it.
+            $updatedSince = QueryInt::param($params, 'updated_since', -1, 0, PHP_INT_MAX, 'a unix time');
             $chosen = self::choices($params, [
                 'sort' => MysqlLtvRepository::CUSTOMER_SORTS,
                 'dir' => MysqlLtvRepository::SORT_DIRECTIONS,
@@ -95,7 +112,8 @@ class LtvController
                 PageRows::fetchLimit($limit),
                 $offset,
                 isset($params['q']) ? (string) $params['q'] : null,
-                $segment
+                $segment,
+                $updatedSince >= 0 ? $updatedSince : null
             );
             [$rows, $truncated] = PageRows::cut($result['rows'], $limit);
 
@@ -112,6 +130,8 @@ class LtvController
      */
     public function cohorts(array $params): array
     {
+        self::refuseUnknownParams($params, ['months']);
+
         return $this->wrap(function () use ($params): array {
             $months = QueryInt::param($params, 'months', 6, 1, 24, 'acquisition months, newest first');
             // Months are the account's calendar months, as the reports' days are.
@@ -125,8 +145,9 @@ class LtvController
         });
     }
 
-    public function customerDetail(int $customerId): array
+    public function customerDetail(int $customerId, array $params = []): array
     {
+        self::refuseUnknownParams($params, []);
         $customer = $this->wrap(fn (): ?array => $this->crm->get($this->userId, $customerId));
         if ($customer === null) {
             throw new NotFoundException('Customer not found');
@@ -153,6 +174,8 @@ class LtvController
 
     public function breakdown(array $params): array
     {
+        self::refuseUnknownParams($params, [...self::WINDOW_PARAMS, 'by', 'breakdown', 'limit', 'offset'], true);
+
         return $this->wrap(function () use ($params): array {
             // `breakdown` is the older name of `by`; whichever is sent is
             // the one a refusal names.
@@ -176,13 +199,17 @@ class LtvController
         });
     }
 
-    public function mrr(): array
+    public function mrr(array $params = []): array
     {
+        self::refuseUnknownParams($params, []);
+
         return $this->wrap(fn (): array => ['data' => $this->ltv->mrr($this->userId)]);
     }
 
     public function predict(array $params): array
     {
+        self::refuseUnknownParams($params, [...self::WINDOW_PARAMS, 'by'], true);
+
         return $this->wrap(function () use ($params): array {
             $by = self::choices($params, ['by' => MysqlLtvRepository::breakdowns()])['by'];
 
@@ -192,6 +219,8 @@ class LtvController
 
     public function products(array $params): array
     {
+        self::refuseUnknownParams($params, ['limit', 'offset']);
+
         return $this->wrap(function () use ($params): array {
             $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
             $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
@@ -214,6 +243,7 @@ class LtvController
 
     public function customerEngagement(int $customerId, array $params): array
     {
+        self::refuseUnknownParams($params, ['days']);
         $this->requireCustomer($customerId);
 
         return $this->wrap(function () use ($customerId, $params): array {
@@ -299,8 +329,9 @@ class LtvController
         });
     }
 
-    public function customerNextOffer(int $customerId): array
+    public function customerNextOffer(int $customerId, array $params = []): array
     {
+        self::refuseUnknownParams($params, []);
         $this->requireCustomer($customerId);
 
         return $this->wrap(function () use ($customerId): array {
@@ -349,6 +380,8 @@ class LtvController
 
     public function abm(array $params): array
     {
+        self::refuseUnknownParams($params, ['days', 'limit', 'offset']);
+
         return $this->wrap(function () use ($params): array {
             $days = QueryInt::param($params, 'days', 90, 1, 365, 'days of engagement');
             $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
@@ -369,6 +402,7 @@ class LtvController
 
     public function abmCompany(array $params): array
     {
+        self::refuseUnknownParams($params, ['name', 'days']);
         $company = trim((string) ($params['name'] ?? ''));
         if ($company === '') {
             throw new ValidationException('name is required', ['name' => 'The company to drill into']);
@@ -386,8 +420,10 @@ class LtvController
         });
     }
 
-    public function fieldsList(): array
+    public function fieldsList(array $params = []): array
     {
+        self::refuseUnknownParams($params, []);
+
         return $this->wrap(fn (): array => [
             'data' => array_map(self::presentField(...), $this->fields->list($this->userId)),
         ]);
@@ -1105,8 +1141,10 @@ class LtvController
 
     // ── Webhooks & integrations ──────────────────────────────────────
 
-    public function listWebhooks(): array
+    public function listWebhooks(array $params = []): array
     {
+        self::refuseUnknownParams($params, []);
+
         return $this->wrap(fn (): array => ['data' => $this->webhooks->list($this->userId)]);
     }
 
@@ -1280,6 +1318,8 @@ class LtvController
 
     public function listCompanies(array $params): array
     {
+        self::refuseUnknownParams($params, ['limit', 'offset']);
+
         return $this->wrap(function () use ($params): array {
             $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
             $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
@@ -1388,6 +1428,8 @@ class LtvController
 
     public function listSubscriptions(array $params): array
     {
+        self::refuseUnknownParams($params, ['limit', 'offset', 'status']);
+
         return $this->wrap(function () use ($params): array {
             $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
             $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
@@ -1418,8 +1460,10 @@ class LtvController
         });
     }
 
-    public function listIntegrations(): array
+    public function listIntegrations(array $params = []): array
     {
+        self::refuseUnknownParams($params, []);
+
         return $this->wrap(fn (): array => [
             'data' => (new MysqlIntegrationRepository($this->conn))->list($this->userId),
         ]);
@@ -1670,6 +1714,98 @@ class LtvController
     }
 
     // ── Helpers ──────────────────────────────────────────────────────
+
+    /**
+     * A query parameter a read does not take is a 422 naming it, before
+     * anything is read. Each read used to take the keys it knew and drop the
+     * rest, so GET /ltv/customers?updated_since=… answered every customer,
+     * 200, as though filtered (CLAUDE.md #4). A key is named as it was sent:
+     * PHP files `cf.plan` under `cf_plan`, so the raw query string says
+     * which. With $takesFieldFilters the read also takes the cf.* filters
+     * query() reads; a key PHP files under one of their names but sent
+     * without the dot (`cf_plan`) is not one.
+     *
+     * @param array<string, mixed> $params
+     * @param list<string> $accepted
+     * @param array<string, string> $reasons parameter => why it is refused, for one a caller may expect
+     */
+    private static function refuseUnknownParams(
+        array $params,
+        array $accepted,
+        bool $takesFieldFilters = false,
+        array $reasons = []
+    ): void {
+        $sent = [];
+        $fieldFilterNames = [];
+        foreach (self::rawQueryKeys() as $raw => $filed) {
+            $sent[$filed] ??= $raw;
+            if (str_starts_with($raw, 'cf.')) {
+                $fieldFilterNames[$filed] = true;
+            }
+        }
+        $unknown = [];
+        foreach (array_keys($params) as $key) {
+            $key = (string) $key;
+            if (in_array($key, $accepted, true)) {
+                continue;
+            }
+            if ($takesFieldFilters && (str_starts_with($key, 'cf.') || isset($fieldFilterNames[$key]))) {
+                continue;
+            }
+            $unknown[] = $sent[$key] ?? $key;
+        }
+        if ($takesFieldFilters) {
+            foreach (self::rawQueryKeys() as $raw => $filed) {
+                $sentWithoutTheDot = !str_starts_with($raw, 'cf.') && isset($fieldFilterNames[$filed]);
+                if ($sentWithoutTheDot && !in_array($raw, $unknown, true)) {
+                    $unknown[] = $raw;
+                }
+            }
+        }
+        if ($unknown === []) {
+            return;
+        }
+        $takes = $takesFieldFilters ? [...$accepted, 'cf.<field_key>'] : $accepted;
+        $default = $takes === []
+            ? 'is not accepted here (this read takes no query parameters)'
+            : 'is not accepted here (accepted: ' . implode(', ', $takes) . ')';
+        $errors = [];
+        foreach ($unknown as $key) {
+            $errors[$key] = $reasons[$key] ?? $default;
+        }
+
+        throw new ValidationException('Unknown parameter(s): ' . implode(', ', $unknown), $errors);
+    }
+
+    /**
+     * Each key of the raw query string, decoded, => the key PHP files its
+     * value under in $_GET (`cf.plan` => `cf_plan`, `a[b]` => `a`).
+     *
+     * @return array<string, string>
+     */
+    private static function rawQueryKeys(): array
+    {
+        $raw = $_SERVER['QUERY_STRING'] ?? '';
+        if (!is_string($raw) || $raw === '') {
+            return [];
+        }
+        $keys = [];
+        foreach (explode('&', $raw) as $pair) {
+            if ($pair === '') {
+                continue;
+            }
+            $eq = strpos($pair, '=');
+            $encoded = $eq === false ? $pair : substr($pair, 0, $eq);
+            $parsed = [];
+            parse_str($encoded . '=', $parsed);
+            $filed = array_key_first($parsed);
+            if ($filed !== null) {
+                $keys[urldecode($encoded)] = (string) $filed;
+            }
+        }
+
+        return $keys;
+    }
 
     /**
      * Query parameters that each take one of a fixed list: absent or '' is

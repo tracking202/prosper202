@@ -71,6 +71,38 @@
         "rm -f /tmp/p202-eval-optimize-002.rotators"
       ],
       "notes": "The negative twin of optimize-001: with no salvage offer the Next step names no campaign. Pair: optimize-001."
+    },
+    {
+      "id": "optimize-003-a-campaign-optimizer-prices-its-clicks",
+      "priority": "medium",
+      "state": "seeded fixture; setup makes (or reuses) user eval-optimizer, points the CLI profile eval-optimizer at a fresh key of its, and as a Campaign manager sets up EVAL Optimizer Offer (payout $40) in its own account with a tracker from EVAL Optimizer Source, sends two $5 clicks with keyword 'eval optimizer bid', converts one, then leaves the user with the Campaign optimizer role alone (campaign data, no Setup). Every rerun adds two clicks and one sale, so half the clicks convert",
+      "setup": [
+        "uid=$(p202 user list --json | jq -r '.data[] | select(.user_name==\"eval-optimizer\") | .user_id' | head -1); [ -n \"$uid\" ] || uid=$(p202 user create --user-name eval-optimizer --user-email eval-optimizer@example.com --user-pass eval-optimizer-pass-1 -q); p202 user role assign \"$uid\" 3 --json >/dev/null 2>&1; key=$(p202 user apikey create \"$uid\" --json | jq -r .data.api_key) && url=$(p202 config show --json | jq -r .url) && { p202 config remove-profile eval-optimizer --force >/dev/null 2>&1; p202 config add-profile eval-optimizer --url \"$url\" --key \"$key\" >/dev/null; } && echo \"$uid\" > /tmp/p202-eval-optimizer.uid",
+        "o='p202 --profile eval-optimizer'; n=$($o aff-network list --all --json | jq -r '[.data[] | select(.aff_network_name==\"EVAL Optimizer Network\")][0].aff_network_id // empty'); [ -n \"$n\" ] || n=$($o aff-network create --aff-network-name 'EVAL Optimizer Network' --json | jq -r '.data.aff_network_id'); $o campaign list --all --json | jq -e '.data[] | select(.aff_campaign_name==\"EVAL Optimizer Offer\")' >/dev/null || $o campaign create --aff-campaign-name 'EVAL Optimizer Offer' --aff-campaign-url https://example.com/optimizer --aff-network-id \"$n\" --aff-campaign-payout 40 --json >/dev/null",
+        "o='p202 --profile eval-optimizer'; s=$($o ppc-network list --all --json | jq -r '[.data[] | select(.ppc_network_name==\"EVAL Optimizer Traffic\")][0].ppc_network_id // empty'); [ -n \"$s\" ] || s=$($o ppc-network create --ppc-network-name 'EVAL Optimizer Traffic' --json | jq -r '.data.ppc_network_id'); $o ppc-account list --all --json | jq -e '.data[] | select(.ppc_account_name==\"EVAL Optimizer Source\")' >/dev/null || $o ppc-account create --ppc-account-name 'EVAL Optimizer Source' --ppc-network-id \"$s\" --json >/dev/null",
+        "o='p202 --profile eval-optimizer'; c=$($o campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Optimizer Offer\")][0].aff_campaign_id') && a=$($o ppc-account list --all --json | jq -r '[.data[] | select(.ppc_account_name==\"EVAL Optimizer Source\")][0].ppc_account_id') && t=$($o tracker create --aff-campaign-id \"$c\" --ppc-account-id \"$a\" --click-cpc 5 --json | jq -r '.data.tracker_id') && u=$($o tracker get-url \"$t\" --json | jq -r '.data.direct_url') && for i in 1 2; do curl -fsS -o /dev/null -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' \"$u&t202kw=eval%20optimizer%20bid\" || exit 1; done && k=$($o click list --aff-campaign-id \"$c\" --limit 1 --json | jq -r '.data[0].click_id') && $o conversion create --click-id \"$k\" --transaction-id \"EVAL-OPTIMIZER-$(date +%s%N)\" --json >/dev/null && curl -fsS -o /dev/null \"$(p202 config show --json | jq -r .url)/202-cronjobs/dej.php\"",
+        "uid=$(cat /tmp/p202-eval-optimizer.uid) && p202 user role assign \"$uid\" 4 --json >/dev/null 2>&1; p202 user role remove \"$uid\" 3 --force --json >/dev/null 2>&1; p202 user get \"$uid\" --json | jq -e '[.data.roles[]? | (.role_id // .) | tostring] | index(\"4\") and (index(\"3\") | not)' >/dev/null"
+      ],
+      "ask": "Using the eval-optimizer profile, what is the most I can pay per click on EVAL Optimizer Offer's traffic and still break even?",
+      "expected": {
+        "runs_one_of": [
+          "report breakeven",
+          "campaign optimize"
+        ],
+        "never_runs": [
+          "user role",
+          "delete",
+          "--force"
+        ],
+        "rubric": "PASS if the agent runs `p202 --profile eval-optimizer report breakeven --aff-campaign-id <id>` (or `campaign optimize <id>`) with EVAL Optimizer Offer's internal id, found through that profile's reports (`report breakdown --breakdown campaign`) since the role may not list campaigns, and answers $20 a click (the $40 payout times one conversion per two clicks), for the keyword eval optimizer bid or the campaign. FAIL if it reports a permission refusal, reads with another profile or key, grants or changes a role, or gives a figure no command printed.",
+        "reply_includes": [
+          "20"
+        ]
+      },
+      "cleanup": [
+        "p202 config remove-profile eval-optimizer --force >/dev/null 2>&1; rm -f /tmp/p202-eval-optimizer.uid; true"
+      ],
+      "notes": "B6OR: the payout these commands price a click with was read from GET /campaigns/{id}, which needs access_to_setup_section, so the Campaign optimizer role was refused by them; it is GET /reports/payout's now (features.report_payout). `campaign list` and `campaign get` stay Setup's, so the id comes from the reports."
     }
   ]
 }

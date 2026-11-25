@@ -288,6 +288,8 @@ $ip_address = ipAddress(
     \Prosper202\Http\VisitorIp::fromServer($_SERVER),
     !\Prosper202\Http\PrivacyMode::tracksInFull($_SESSION['privacy'], p202VisitorMayBeInEu(...))
 );
+// Forwarding headers from a proxy nobody listed, for Settings' warning.
+\Prosper202\Http\UnlistedProxySighting::record(ROOT_PATH, $_SERVER);
 
 /**
  * The visitor's address as every click-path row stores it (StoredVisitorIp):

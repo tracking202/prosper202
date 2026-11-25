@@ -345,30 +345,47 @@ final class AuthClassTest extends TestCase
     }
 
     /**
-     * The sign-in location comes from REMOTE_ADDR alone: a request carrying
-     * any forwarding header is unknown, which holds analytics.
+     * The sign-in location comes from REMOTE_ADDR, or from the client a
+     * listed proxy names: a request carrying a forwarding header from any
+     * other peer is unknown, which holds analytics.
      *
      * @dataProvider signInRequests
      * @param array<string, string> $server
      */
-    public function testTheSignInLocationIsTheConnectingPeersNeverAForwardedOne(array $server, ?bool $expected): void
-    {
+    public function testTheSignInLocationIsTheConnectingPeersNeverAForwardedOne(
+        array $server,
+        ?bool $expected,
+        string $trusted = 'cloudflare'
+    ): void {
+        // Global-unicast IPv6 stand-ins: PHP 8.3 counts 2001:db8::/32 as
+        // reserved, and a test address must not be one the code may refuse.
         $countries = [
             '192.0.2.10' => ['DE', true],
             '198.51.100.7' => ['US', false],
             '203.0.113.5' => ['GB', false],
-            '2001:db8::10' => ['FR', true],
-            '2001:db8::20' => ['US', false],
+            '2a00:1450::10' => ['FR', true],
+            '2a00:1450::20' => ['US', false],
         ];
         $country = static fn (string $ip): ?array => $countries[$ip] ?? null;
 
-        self::assertSame($expected, AUTH::sign_in_is_eu($server, $country));
+        self::assertSame(
+            $expected,
+            AUTH::sign_in_is_eu($server, $country, \Prosper202\Http\TrustedProxies::parse($trusted))
+        );
     }
 
-    /** @return array<string, array{array<string, string>, ?bool}> */
+    /** @return array<string, array{0: array<string, string>, 1: ?bool, 2?: string}> */
     public static function signInRequests(): array
     {
         return [
+            'Cloudflare not listed: its header is unknown' => [
+                ['REMOTE_ADDR' => '172.64.0.1', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'], null, '',
+            ],
+            'nothing listed, no header: the peer' => [['REMOTE_ADDR' => '192.0.2.10'], true, ''],
+            'a listed balancer' => [['REMOTE_ADDR' => '10.0.0.1', 'HTTP_X_FORWARDED_FOR' => '192.0.2.10'], true, '10.0.0.0/8'],
+            'a listed balancer, a forged hop to the left' => [
+                ['REMOTE_ADDR' => '10.0.0.1', 'HTTP_X_FORWARDED_FOR' => '192.0.2.10, 198.51.100.7'], false, '10.0.0.0/8',
+            ],
             'an EU address' => [['REMOTE_ADDR' => '192.0.2.10'], true],
             'a UK address' => [['REMOTE_ADDR' => '203.0.113.5'], true],
             'an address elsewhere' => [['REMOTE_ADDR' => '198.51.100.7'], false],
@@ -380,27 +397,25 @@ final class AuthClassTest extends TestCase
             'a forged CF-Connecting-IP' => [['REMOTE_ADDR' => '192.0.2.10', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], null],
             'a forged Forwarded' => [['REMOTE_ADDR' => '192.0.2.10', 'HTTP_FORWARDED' => 'for=198.51.100.7'], null],
             'no address' => [[], null],
-            // Behind Cloudflare: an edge server's CF-Connecting-IP is the visitor.
-            'Cloudflare, a visitor elsewhere' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], false],
-            'Cloudflare, a visitor in the EU' => [['REMOTE_ADDR' => '104.16.0.9', 'HTTP_CF_CONNECTING_IP' => '192.0.2.10'], true],
-            'Cloudflare: X-Forwarded-For ignored' => [
-                ['REMOTE_ADDR' => '162.158.1.1', 'HTTP_X_FORWARDED_FOR' => '192.0.2.10', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], false,
+            // Behind Cloudflare, listed: the hop an edge server appended to
+            // X-Forwarded-For is the visitor; CF-Connecting-IP is not read.
+            'Cloudflare, a visitor elsewhere' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'], false],
+            'Cloudflare, a visitor in the EU' => [['REMOTE_ADDR' => '104.16.0.9', 'HTTP_X_FORWARDED_FOR' => '192.0.2.10'], true],
+            'Cloudflare: a forged hop to the left is never reached' => [
+                ['REMOTE_ADDR' => '162.158.1.1', 'HTTP_X_FORWARDED_FOR' => '192.0.2.10, 198.51.100.7', 'HTTP_CF_CONNECTING_IP' => '192.0.2.10'], false,
             ],
-            'Cloudflare, no CF-Connecting-IP' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'], null],
-            'Cloudflare, a malformed CF-Connecting-IP' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7, 192.0.2.10'], null],
-            'Cloudflare, a private CF-Connecting-IP' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_CF_CONNECTING_IP' => '10.0.0.5'], null],
-            'Cloudflare, a loopback CF-Connecting-IP' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_CF_CONNECTING_IP' => '127.0.0.1'], null],
-            'the last address of a Cloudflare range' => [['REMOTE_ADDR' => '172.71.255.255', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], false],
-            'the first address past a Cloudflare range' => [['REMOTE_ADDR' => '172.72.0.0', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], null],
+            'Cloudflare, only CF-Connecting-IP: the edge itself' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], null],
+            'Cloudflare, a malformed hop: the edge itself' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_X_FORWARDED_FOR' => 'for=198.51.100.7'], null],
+            'Cloudflare, a private hop the database cannot place' => [['REMOTE_ADDR' => '172.64.0.1', 'HTTP_X_FORWARDED_FOR' => '10.0.0.5'], null],
+            'the last address of a Cloudflare range' => [['REMOTE_ADDR' => '172.71.255.255', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'], false],
+            'the first address past a Cloudflare range' => [['REMOTE_ADDR' => '172.72.0.0', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'], null],
             'Cloudflare over IPv6, a visitor in the EU over IPv6' => [
-                ['REMOTE_ADDR' => '2606:4700::6810:84e5', 'HTTP_CF_CONNECTING_IP' => '2001:DB8:0::10'], true,
+                ['REMOTE_ADDR' => '2606:4700::6810:84e5', 'HTTP_X_FORWARDED_FOR' => '2A00:1450:0::10'], true,
             ],
-            'Cloudflare over IPv6, the end of a /29' => [['REMOTE_ADDR' => '2a06:98c7:ffff::1', 'HTTP_CF_CONNECTING_IP' => '2001:db8::20'], false],
-            'past a Cloudflare /29' => [['REMOTE_ADDR' => '2a06:98c8::1', 'HTTP_CF_CONNECTING_IP' => '2001:db8::20'], null],
-            'Cloudflare, a unique-local IPv6 CF-Connecting-IP' => [['REMOTE_ADDR' => '2400:cb00::1', 'HTTP_CF_CONNECTING_IP' => 'fd00::1'], null],
-            'Cloudflare, a link-local IPv6 CF-Connecting-IP' => [['REMOTE_ADDR' => '2400:cb00::1', 'HTTP_CF_CONNECTING_IP' => 'fe80::1'], null],
+            'Cloudflare over IPv6, the end of a /29' => [['REMOTE_ADDR' => '2a06:98c7:ffff::1', 'HTTP_X_FORWARDED_FOR' => '2a00:1450::20'], false],
+            'past a Cloudflare /29' => [['REMOTE_ADDR' => '2a06:98c8::1', 'HTTP_X_FORWARDED_FOR' => '2a00:1450::20'], null],
             'a Cloudflare address written IPv4-mapped is not Cloudflare' => [
-                ['REMOTE_ADDR' => '::ffff:172.64.0.1', 'HTTP_CF_CONNECTING_IP' => '198.51.100.7'], null,
+                ['REMOTE_ADDR' => '::ffff:172.64.0.1', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'], null,
             ],
         ];
     }
@@ -540,12 +555,19 @@ final class AuthClassTest extends TestCase
         $this->assertFalse(AUTH::check_csrf_token(), 'a blanked session token and no posted token');
     }
 
-    public function testClientIpReturnsValidForwardedIp(): void
+    public function testClientIpReturnsTheClientATrustedProxyNames(): void
     {
-        $_SERVER['HTTP_X_FORWARDED_FOR'] = '198.51.100.23';
+        $_SERVER['HTTP_X_FORWARDED_FOR'] = '203.0.113.66, 198.51.100.23';
         $_SERVER['REMOTE_ADDR'] = '10.0.0.1';
-
-        $this->assertSame('198.51.100.23', AUTH::client_ip());
+        $before = getenv(\Prosper202\Http\TrustedProxies::ENV);
+        try {
+            putenv(\Prosper202\Http\TrustedProxies::ENV . '=10.0.0.0/8');
+            $this->assertSame('198.51.100.23', AUTH::client_ip());
+            putenv(\Prosper202\Http\TrustedProxies::ENV);
+            $this->assertSame('10.0.0.1', AUTH::client_ip(), 'from a peer nobody listed the header is a claim');
+        } finally {
+            putenv($before === false ? \Prosper202\Http\TrustedProxies::ENV : \Prosper202\Http\TrustedProxies::ENV . '=' . $before);
+        }
     }
 
     public function testClientIpFallsBackWhenForwardedValueIsNotAnIp(): void

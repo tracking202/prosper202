@@ -108,6 +108,50 @@ final class WebhookSenderTest extends TestCase
         self::assertSame(0, $sent, 'no request was made');
     }
 
+    /**
+     * A resolver that answers nothing says nothing about the URL: one DNS
+     * hiccup at send time is retried like a timeout, with nothing sent.
+     */
+    public function testAHostThatDoesNotResolveIsNotSentAndIsRetried(): void
+    {
+        $result = $this->sender(static fn (): array => [])
+            ->send('https://hooks.example.com/', 'secretsecretsecret', 'x', 1, 1);
+        self::assertFalse($result->delivered);
+        self::assertTrue($result->retryable, 'a name that did not resolve may resolve on the next run');
+        self::assertNull($result->status);
+        self::assertStringContainsString('hooks.example.com does not resolve', (string) $result->error);
+        self::assertSame([], $this->sent, 'no request was made');
+    }
+
+    /**
+     * Every refusal of the address itself stays final: the guard's verdict
+     * on a private, loopback, link-local or metadata answer, or on a URL
+     * that is not https, does not change on a later run.
+     *
+     * @return iterable<string, array{0: list<string>, 1: string}>
+     */
+    public static function refusedAddresses(): iterable
+    {
+        yield 'private' => [['10.0.0.5'], 'https://hooks.example.com/'];
+        yield 'loopback' => [['127.0.0.1'], 'https://hooks.example.com/'];
+        yield 'metadata' => [['169.254.169.254'], 'https://hooks.example.com/'];
+        yield 'one private among public' => [['93.184.216.34', '192.168.1.1'], 'https://hooks.example.com/'];
+        yield 'plain http' => [['93.184.216.34'], 'http://hooks.example.com/'];
+    }
+
+    /**
+     * @dataProvider refusedAddresses
+     * @param list<string> $answer
+     */
+    public function testARefusedAddressIsNotRetried(array $answer, string $url): void
+    {
+        $result = $this->sender(static fn (): array => $answer)->send($url, 'secretsecretsecret', 'x', 1, 1);
+        self::assertFalse($result->delivered);
+        self::assertFalse($result->retryable);
+        self::assertStringStartsWith('Not sent: ', (string) $result->error);
+        self::assertSame([], $this->sent);
+    }
+
     public function testAConnectionThatLandedElsewhereIsNotDelivered(): void
     {
         $result = $this->sender(static fn (): array => ['93.184.216.34'], ['status' => 200, 'primary_ip' => '10.0.0.7'])

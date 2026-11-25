@@ -45,11 +45,9 @@ if ($token === '') {
 // personalization down, and the tokens themselves are unguessable.
 try {
     $stateStore = \Api\V3\Support\ServerStateStore::forInstall($db);
-    // softIpRateLimit() keys on the validated TCP peer (REMOTE_ADDR) and
-    // prunes stale buckets. Not connect2.php's $ip_address: that is the
-    // first of six client-supplied proxy headers with no trusted-proxy
-    // check, so a flooder sending a random CF-Connecting-IP per request
-    // both misses the limit entirely and mints one bucket file per request.
+    // softIpRateLimit() keys on the client VisitorIp names (REMOTE_ADDR, or
+    // the client a listed trusted proxy saw), never a header a flooder
+    // chooses per request, and prunes stale buckets.
     $retryAfter = $stateStore->softIpRateLimit('p13n', 60, 60);
     if ($retryAfter !== null) {
         // The same `{}` as every other outcome — deliberately no 429 and no

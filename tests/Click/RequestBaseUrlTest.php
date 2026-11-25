@@ -16,6 +16,19 @@ final class RequestBaseUrlTest extends TestCase
 {
     private const HOST = 'track.example.test';
 
+    /** The TLS-terminating proxy, listed in P202_TRUSTED_PROXIES. */
+    private const PROXY = '10.0.0.1';
+
+    protected function setUp(): void
+    {
+        putenv('P202_TRUSTED_PROXIES=' . self::PROXY);
+    }
+
+    protected function tearDown(): void
+    {
+        putenv('P202_TRUSTED_PROXIES');
+    }
+
     private static function root(): string
     {
         return dirname(__DIR__, 2);
@@ -42,8 +55,12 @@ final class RequestBaseUrlTest extends TestCase
         yield 'HTTPS' => [['HTTP_HOST' => "$h:8443", 'HTTPS' => 'on'], "https://$h:8443/"];
         yield 'HTTPS off' => [['HTTP_HOST' => $h, 'HTTPS' => 'off'], "http://$h/"];
         yield 'a TLS-terminating proxy' => [
-            ['HTTP_HOST' => "$h:8122", 'HTTP_X_FORWARDED_PROTO' => 'https'],
+            ['HTTP_HOST' => "$h:8122", 'HTTP_X_FORWARDED_PROTO' => 'https', 'REMOTE_ADDR' => self::PROXY],
             "https://$h:8122/",
+        ];
+        yield 'a forwarded scheme from an unlisted peer is not believed' => [
+            ['HTTP_HOST' => "$h:8122", 'HTTP_X_FORWARDED_PROTO' => 'https', 'REMOTE_ADDR' => '198.51.100.7'],
+            "http://$h:8122/",
         ];
         yield 'a forwarded host is not believed' => [
             ['HTTP_HOST' => $h, 'HTTP_X_FORWARDED_HOST' => 'evil.example', 'SERVER_PORT' => '80'],
@@ -104,7 +121,7 @@ final class RequestBaseUrlTest extends TestCase
     public function testTheInstallerBaseUrlIsTheSameOrigin(): void
     {
         require_once self::root() . '/202-config/functions-install-helpers.php';
-        $server = self::request(['HTTP_HOST' => 'evil.example/x', 'HTTP_X_FORWARDED_PROTO' => 'https']);
+        $server = self::request(['HTTP_HOST' => 'evil.example/x', 'HTTP_X_FORWARDED_PROTO' => 'https', 'REMOTE_ADDR' => self::PROXY]);
         self::assertSame('https://127.0.0.1:8112/p/', install_request_base_url($server, '/p/'));
     }
 }
