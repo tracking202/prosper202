@@ -163,6 +163,11 @@ final class CompanyTest extends TestCase
         $write->whenQueryContainsReturnRows('SELECT company_id, name, normalized_name', [
             ['company_id' => 2, 'name' => 'Acme', 'normalized_name' => 'acme', 'domain' => null],
         ]);
+        // The attached customers whose string the rename changes, locked.
+        $write->whenQueryContainsReturnRows('ORDER BY customer_id FOR UPDATE', [
+            ['customer_id' => 21, 'updated_at' => 1],
+        ]);
+        $write->whenQueryContainsAffectedRows('UPDATE 202_customers SET company =', 1);
         $repo = new MysqlCompanyRepository(new Connection($write, new FakeMysqliConnection()));
 
         $repo->update(7, 2, ['name' => '  Initech   Global ']);
@@ -175,8 +180,14 @@ final class CompanyTest extends TestCase
 
         $customerUpdates = $write->statementsContaining('UPDATE 202_customers SET company =');
         self::assertCount(1, $customerUpdates, 'legacy company strings must follow the rename');
-        self::assertSame('siii', $customerUpdates[0]->boundTypes);
-        self::assertContains('Initech Global', $customerUpdates[0]->boundValues);
+        self::assertSame('siiis', $customerUpdates[0]->boundTypes);
+        self::assertSame('Initech Global', $customerUpdates[0]->boundValues[0]);
+        self::assertSame([2, 7, 'Initech Global'], array_slice($customerUpdates[0]->boundValues, 2));
+        self::assertStringContainsString(
+            'CAST(company AS BINARY) <> CAST(? AS BINARY)',
+            $customerUpdates[0]->sql,
+            'only the strings the rename changes, a change of case included'
+        );
     }
 
     public function testMergeRepointsCustomersAndDeletesSource(): void
@@ -251,10 +262,20 @@ final class CompanyTest extends TestCase
         $write->whenQueryContainsReturnRows('normalized_name = ? LIMIT 1', [
             ['company_id' => 4, 'name' => 'Acme Corp', 'normalized_name' => 'acme corp', 'domain' => null],
         ]);
+        // Locked again in the page's transaction: each is still unlinked, the blanks still blank.
+        $write->whenQueryContainsReturnRows('AND company IN (', [
+            ['customer_id' => 12, 'updated_at' => 1],
+            ['customer_id' => 13, 'updated_at' => 1],
+        ]);
+        $write->whenQueryContainsReturnRows('company_id IS NULL AND customer_id IN', [
+            ['customer_id' => 11, 'updated_at' => 1],
+        ]);
+        $write->whenQueryContainsAffectedRows('UPDATE 202_customers SET company_id = ?', 1);
+        $write->whenQueryContainsAffectedRows("UPDATE 202_customers SET company = ''", 2);
         $repo = new MysqlCompanyRepository(new Connection($write, new FakeMysqliConnection()));
 
         $before = time();
-        $repo->linkUnlinkedCustomers(7, 100);
+        self::assertSame(1, $repo->linkUnlinkedCustomers(7, 100));
         $after = time();
 
         $selects = $write->statementsContaining('FROM 202_customers FORCE INDEX');
@@ -530,8 +551,9 @@ final class CompanyTest extends TestCase
 
         $repo->reconcileAttachedStrings();
 
-        $updates = $write->statementsContaining('JOIN 202_companies co ON co.company_id = c.company_id');
+        $updates = $write->statementsContaining('SET c.company = co.name');
         self::assertCount(1, $updates);
+        self::assertStringContainsString('JOIN 202_companies co ON co.company_id = c.company_id', $updates[0]->sql);
         self::assertStringContainsString('SET c.company = co.name', $updates[0]->sql);
         self::assertStringContainsString('c.company IS NULL OR c.company <> co.name', $updates[0]->sql, 'must also repair NULL-string-with-id partial writes');
     }

@@ -282,6 +282,59 @@ final class OwnedReferencesIntegrationTest extends TestCase
         $ads->update($ad, ['text_ad_type' => 1, 'landing_page_id' => $m['landing_page_id'], 'text_ad_name' => 'y']);
     }
 
+    /**
+     * An advanced page is not made simple while text ads of type 1 name it:
+     * Get Links offers those only on an advanced page, so the change left
+     * them offered nowhere with a 200. The refusal names every such ad and
+     * none other (a removed one, a campaign's, another account's), on a PUT
+     * and on a bulk row; once none remain, the change is made.
+     */
+    public function testAnAdvancedPageWithTextAdsIsNotMadeSimple(): void
+    {
+        $m = $this->ids['mine'];
+        $pages = new LandingPagesController(self::$db, self::USER);
+        $ads = new TextAdsController(self::$db, self::USER);
+        $page = (int) $pages->create(['landing_page_url' => 'https://adv.example', 'landing_page_nickname' => 'adv', 'landing_page_type' => 1, 'aff_campaign_id' => 0])['data']['landing_page_id'];
+        $body = ['text_ad_name' => 'x', 'text_ad_headline' => 'h', 'text_ad_description' => 'd', 'text_ad_display_url' => 'x', 'text_ad_type' => 1, 'aff_campaign_id' => 0, 'landing_page_id' => $page];
+        $first = (int) $ads->create($body)['data']['text_ad_id'];
+        $second = (int) $ads->create(['text_ad_name' => 'y'] + $body)['data']['text_ad_id'];
+        $removed = (int) $ads->create(['text_ad_name' => 'z'] + $body)['data']['text_ad_id'];
+        $ads->delete($removed);
+        self::q("INSERT INTO 202_text_ads SET user_id = " . self::USER . ", aff_campaign_id = {$m['aff_campaign_id']}, landing_page_id = $page, text_ad_type = 0, text_ad_name = 'c', text_ad_headline = 'h', text_ad_description = 'd', text_ad_display_url = 'x', text_ad_time = 0");
+        self::q("INSERT INTO 202_text_ads SET user_id = " . self::OTHER . ", aff_campaign_id = 0, landing_page_id = $page, text_ad_type = 1, text_ad_name = 'o', text_ad_headline = 'h', text_ad_description = 'd', text_ad_display_url = 'x', text_ad_time = 0");
+        $makeSimple = ['landing_page_type' => 0, 'aff_campaign_id' => $m['aff_campaign_id']];
+        $type = static fn (): int => (int) $pages->get($page)['data']['landing_page_type'];
+
+        try {
+            $pages->update($page, $makeSimple);
+            self::fail('an advanced page its ads name was made simple');
+        } catch (ValidationException $e) {
+            $said = $e->getFieldErrors()['landing_page_type'] ?? '';
+            self::assertStringContainsString("2 text ads of text_ad_type 1 name it (text_ad_id $first, $second)", $said, json_encode($e->getFieldErrors()));
+            self::assertStringContainsString("GET /text-ads?filter[landing_page_id]=$page&filter[text_ad_type]=1", $said);
+        }
+        self::assertSame(1, $type(), 'the refused update changed the type');
+        $pages->update($page, ['landing_page_nickname' => 'renamed']);
+
+        \Api\V3\RequestContext::setHeaders(['Idempotency-Key' => 'simple-' . bin2hex(random_bytes(6))]);
+        try {
+            $result = $pages->bulkUpsert(['rows' => [['landing_page_id' => $page] + $makeSimple]]);
+        } finally {
+            \Api\V3\RequestContext::reset();
+        }
+        self::assertSame(['error'], array_column($result['data'], 'status'), json_encode($result));
+        self::assertArrayHasKey('landing_page_type', $result['data'][0]['field_errors'] ?? [], json_encode($result['data'][0]));
+        self::assertSame(1, $type(), 'the refused row changed the type');
+
+        $ads->update($first, ['text_ad_type' => 0, 'aff_campaign_id' => $m['aff_campaign_id']]);
+        $ads->delete($second);
+        self::assertSame(0, (int) $pages->update($page, $makeSimple)['data']['landing_page_type']);
+
+        // A page already simple saves with an ad of type 1 stored on it before #260.
+        self::q("UPDATE 202_text_ads SET text_ad_type = 1 WHERE text_ad_id = $first");
+        $pages->update($page, ['landing_page_type' => 0, 'landing_page_nickname' => 'still simple']);
+    }
+
     public function testBulkUpsertRefusesTheRowNotTheBatch(): void
     {
         $m = $this->ids['mine'];
