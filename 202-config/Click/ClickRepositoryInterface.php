@@ -8,7 +8,8 @@ interface ClickRepositoryInterface
 {
     /**
      * A new click id from 202_clicks_counter, outside any transaction: every
-     * path needs it before the write, for the public id and the URLs.
+     * path needs it before the write, for the public id and the URLs. Never
+     * one of the edge's (ClickId::isEdge()): EdgeClickIdRefused instead.
      */
     public function allocateClickId(): int;
 

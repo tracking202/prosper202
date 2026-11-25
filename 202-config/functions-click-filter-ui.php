@@ -41,6 +41,14 @@ function p202_click_filter_post(\mysqli $db, int $userId, array $post): array
     }
     $store = new MysqlClickFilterStore(new Connection($db));
     if (isset($post['update_click_filter'])) {
+        p202_account_require_shown(
+            $db,
+            $userId,
+            'click_filter',
+            static fn (): array => $store->settings($userId)->toArray(),
+            P202_CLICK_FILTER_RETURN
+        );
+
         return p202_click_filter_save_settings($store, $userId, $post, $answer);
     }
     if (isset($post['add_click_filter_entry'])) {
@@ -250,6 +258,7 @@ function p202_click_filter_card(array $filter, ?array $test, array $errors, arra
         . ' Changes apply to clicks from now on.</p>'
         . '<form method="post" action="' . $action . '">'
         . '<input type="hidden" name="update_click_filter" value="1">' . $token
+        . p202_account_shown_field('click_filter', $settings->toArray())
         . $switch('sign_in_addresses', $settings->signInAddresses, 'Your own clicks', 'Filter a click from an address a user of this install last signed in from.')
         . $switch('crawler_ranges', $settings->crawlerRanges, 'Search engine crawlers', 'Filter clicks from the built-in Google, Yahoo and Microsoft crawler ranges (IPv4).')
         . $switch('repeat_visits', $settings->repeatVisits, 'Repeat visits', 'Filter a second click from the same address within the window below: the first is counted.')

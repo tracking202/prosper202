@@ -192,7 +192,11 @@ tags:
   - name: Forecast Events
     description: Calendar events (holidays, promotions) that event-aware forecasting shifts predictions around
   - name: LTV
-    description: Customer lifetime value — customers, companies, revenue, subscriptions, products, custom fields, webhooks and integrations (scopes `ltv:read` / `ltv:write`)
+    description: >-
+      Customer lifetime value — customers, companies, revenue, subscriptions, products, custom fields, webhooks and
+      integrations (scopes `ltv:read` / `ltv:write`). Every LTV read refuses a query parameter it does not take with
+      a 422 naming it and the ones it takes ("Unknown parameter(s): …"), rather than answer as though it were not
+      sent.
   - name: Sync
     description: Server-side sync between Prosper202 instances — plans, jobs, the change feed and the audit trail (admin, scopes `sync:read` / `sync:write`)
   - name: Destinations
@@ -984,10 +988,11 @@ paths:
         affiliate's Affiliate IPN, and `jvzoo_vendor`, `?role=vendor`, for a
         product's JVZIPN v1 URL), Zaxaa (ZPN), PayKickstart (the
         product IPN, set under each product's IPN Integration tab) and
-        Shopify (the order and refund webhooks), on this
-        install's tracking base (user 1's tracking
-        domain or this server's name, and the install's path — the base
-        tracker links use), and whether the caller has stored the secret
+        Shopify (the order and refund webhooks), on the
+        caller's tracking base (the caller's own tracking domain, as the
+        page uses the signed-in user's, or the host this request arrived at
+        when none is set, and the install's path — the base tracker links
+        use), and whether the caller has stored the secret
         each is checked with (`secret_stored`; for PayKickstart,
         `keys_stored` counts its keys, one for each PayKickstart campaign).
         The secrets are never served.
@@ -1651,6 +1656,15 @@ paths:
                               table the install lacks, or another error not tied
                               to the click's own data) in 10 runs over an hour
                               from the first of them and is stepped over.
+                          stopped_at:
+                            type: integer
+                            nullable: true
+                            description: >-
+                              Unix time of the first run that stopped at
+                              stalled_at_click_id, for an error of any kind;
+                              null while nothing fails, and for a stop that
+                              began before the upgrade to 1.9.81. Settings and
+                              the cron job's output show it with the note.
                           failed_runs:
                             type: integer
                             description: >-
@@ -9945,6 +9959,22 @@ paths:
                             items:
                               type: string
                             description: '"*" is full access; read, write, stage and <area>:<action> narrow it.'
+                          ltv:
+                            type: object
+                            description: >-
+                              Which parts of Customer LTV this key's scope and its user's role let it
+                              use, as the /ltv routes would answer. See documentation/api/17-capabilities.md.
+                            properties:
+                              read:
+                                type: boolean
+                              settings_read:
+                                type: boolean
+                              crm_write:
+                                type: boolean
+                              incoming:
+                                type: boolean
+                              settings_write:
+                                type: boolean
                       server:
                         type: object
                         additionalProperties: true
@@ -10896,6 +10926,22 @@ paths:
           - subscribers
           - at_risk
         description: Only this segment; any other value is a 422 naming `segment`
+      - name: updated_since
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+        description: >-
+          Only the customers whose record was written at or after this unix time; every change to what the list shows
+          for a customer (its CRM fields, its totals, its subscriptions) writes the record. A value that is not a whole
+          number of 0 or more is a 422 naming `updated_since`.
+      - name: deleted_since
+        in: query
+        schema:
+          type: integer
+        description: >-
+          Not taken: the list answers live customers only, so a customer erased or merged into another since a time
+          cannot be listed. Sending it is a 422 naming `deleted_since`.
       responses:
         '200':
           description: Customers
@@ -11846,7 +11892,8 @@ paths:
       - LTV
       summary: Update a company
       description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
-        an `idempotency_key` field instead) and have no `dry_run` preview. Supply `name`, `domain` or both.
+        an `idempotency_key` field instead) and have no `dry_run` preview. Supply `name`, `domain` or both. A new `name`
+        queues a `customer.updated` webhook for each attached customer whose `company` it changes.
       operationId: ltvPatchCompany
       requestBody:
         required: true
@@ -11910,7 +11957,8 @@ paths:
       - LTV
       summary: Merge another company into this one
       description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
-        an `idempotency_key` field instead) and have no `dry_run` preview.
+        an `idempotency_key` field instead) and have no `dry_run` preview. Queues a `customer.updated` webhook for each
+        customer the merge moves.
       operationId: ltvMergeCompany
       parameters:
       - name: id
@@ -13497,8 +13545,8 @@ paths:
         class the page builds its code with (`Prosper202\Setup\LandingPageCode`),
         byte for byte: the loader script for the page itself, and the ways out
         to the offer. The snippets start from `base_url`, the tracker link's base
-        (user 1's tracking domain, or the host this request arrived at when none
-        is set, plus the install directory) written scheme-relative (`//host/...`)
+        (the caller's own tracking domain, or the host this request arrived at
+        when none is set, plus the install directory) written scheme-relative (`//host/...`)
         as the page writes it, so they work on an http or an https landing page.
 
         A simple page (`landing_page_type` 0) links out to its own campaign:
@@ -15570,7 +15618,7 @@ components:
 
     CampaignCreate:
       type: object
-      required: [aff_campaign_name, aff_campaign_url]
+      required: [aff_campaign_name, aff_campaign_url, aff_campaign_payout, aff_network_id]
       properties:
         aff_campaign_name:
           type: string
@@ -16034,7 +16082,7 @@ components:
           type: integer
         landing_page_nickname:
           type: string
-          maxLength: 255
+          maxLength: 50
         leave_behind_page_url:
           type: string
           maxLength: 255
@@ -16078,7 +16126,7 @@ components:
 
     LandingPageCreate:
       type: object
-      required: [landing_page_url, aff_campaign_id]
+      required: [landing_page_url, aff_campaign_id, landing_page_nickname]
       properties:
         landing_page_url:
           type: string
@@ -16093,7 +16141,7 @@ components:
           type: integer
         landing_page_nickname:
           type: string
-          maxLength: 255
+          maxLength: 50
         leave_behind_page_url:
           type: string
           maxLength: 255
@@ -16110,7 +16158,7 @@ components:
           type: integer
         landing_page_nickname:
           type: string
-          maxLength: 255
+          maxLength: 50
         leave_behind_page_url:
           type: string
           maxLength: 255
@@ -16158,16 +16206,16 @@ components:
           readOnly: true
         text_ad_name:
           type: string
-          maxLength: 255
+          maxLength: 100
         text_ad_headline:
           type: string
-          maxLength: 500
+          maxLength: 100
         text_ad_description:
           type: string
-          maxLength: 2000
+          maxLength: 100
         text_ad_display_url:
           type: string
-          maxLength: 2048
+          maxLength: 100
         aff_campaign_id:
           type: integer
         landing_page_id:
@@ -16188,20 +16236,20 @@ components:
 
     TextAdCreate:
       type: object
-      required: [text_ad_name]
+      required: [text_ad_name, text_ad_headline, text_ad_description, text_ad_display_url]
       properties:
         text_ad_name:
           type: string
-          maxLength: 255
+          maxLength: 100
         text_ad_headline:
           type: string
-          maxLength: 500
+          maxLength: 100
         text_ad_description:
           type: string
-          maxLength: 2000
+          maxLength: 100
         text_ad_display_url:
           type: string
-          maxLength: 2048
+          maxLength: 100
         aff_campaign_id:
           type: integer
         landing_page_id:
@@ -16219,16 +16267,16 @@ components:
       properties:
         text_ad_name:
           type: string
-          maxLength: 255
+          maxLength: 100
         text_ad_headline:
           type: string
-          maxLength: 500
+          maxLength: 100
         text_ad_description:
           type: string
-          maxLength: 2000
+          maxLength: 100
         text_ad_display_url:
           type: string
-          maxLength: 2048
+          maxLength: 100
         aff_campaign_id:
           type: integer
         landing_page_id:
@@ -18589,7 +18637,7 @@ components:
           nullable: true
         attempts:
           type: integer
-          description: Runs so far; a retryable webhook failure (no connection, timeout, 5xx, 408, 429) is retried after 1 and then 2 minutes, 3 runs in all.
+          description: Runs so far; a retryable webhook failure (no connection, timeout, 5xx, 408, 429, a host that does not resolve) is retried after 1 and then 2 minutes, 3 runs in all.
         last_error:
           type: string
           nullable: true
@@ -19391,6 +19439,7 @@ components:
             case-insensitively; a value contradicting the link is `422`.
         app_key:
           type: string
+          maxLength: 255
           description: The App Store id (digits, no leading zero) or the package name
         app_name:
           type: string

@@ -84,6 +84,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if (empty($landing_page_nickname)) {
 		$error['landing_page_nickname'] = '<div class="error">Give this landing page a nickname</div>';
 	}
+    $tooLong = \Prosper202\Setup\FieldLength::refusal('landing_page_nickname', $landing_page_nickname, 'The nickname');
+    if ($tooLong !== null) {
+        $error['landing_page_nickname'] = '<div class="error">'
+            . htmlspecialchars($tooLong, ENT_QUOTES, 'UTF-8') . '</div>';
+    }
 
 	// A URL typed without its scheme (lp.example.com/x) is saved with https://, as the API saves it, and the page says so.
 	$schemeAdded = false;
@@ -556,7 +561,7 @@ if ($error) {
 
 					<div class="mb-3">
 						<label class="form-label" for="landing_page_nickname">Nickname</label>
-						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'landing_page_nickname'); ?>" id="landing_page_nickname" name="landing_page_nickname" value="<?php echo p202_setup_e($form['landing_page_nickname']); ?>" maxlength="255" required>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'landing_page_nickname'); ?>" id="landing_page_nickname" name="landing_page_nickname" value="<?php echo p202_setup_e($form['landing_page_nickname']); ?>" maxlength="<?php echo \Prosper202\Setup\FieldLength::of('landing_page_nickname'); ?>" required>
 						<?php echo p202_setup_feedback($error, 'landing_page_nickname'); ?>
 					</div>
 

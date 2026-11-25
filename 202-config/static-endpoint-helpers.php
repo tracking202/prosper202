@@ -637,6 +637,11 @@ if (!function_exists('p202RecordConversion')) {
             // the click carried from before the ledger (its legacy baseline).
             $data['reverses_carried_value'] = true;
         }
+        if (!empty($log['reversal']) && !empty($log['cap_at_sale'])) {
+            // A reversal stating more than its sale takes back the whole sale,
+            // capped by the writer under the click lock (R4CE).
+            $data['cap_at_sale'] = true;
+        }
         if (!empty($log['notify_traffic_source'])) {
             // Queue the click's traffic-source server postbacks with the row
             // (NotificationOutbox), in its transaction; they are sent after
@@ -1279,7 +1284,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
      * @param array{
      *     user_id?: int, campaign_id?: int, transaction_id?: string,
      *     use_pixel_payout?: bool, payout?: string, ip?: string, user_agent?: string,
-     *     source?: string, reversal?: bool, reversal_ref?: string, reverses_carried_value?: bool,
+     *     source?: string, reversal?: bool, reversal_ref?: string, reverses_carried_value?: bool, cap_at_sale?: bool,
      *     event_name?: string|null,
      *     conv_time?: int,
      *     notify_traffic_source?: bool,
@@ -1390,6 +1395,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
                 'reversal'        => !empty($opts['reversal']),
                 'reversal_ref'    => (string) ($opts['reversal_ref'] ?? ''),
                 'reverses_carried_value' => !empty($opts['reverses_carried_value']),
+                'cap_at_sale'     => !empty($opts['cap_at_sale']),
                 'event_name'      => (string) ($opts['event_name'] ?? ''),
                 'notify_traffic_source' => !empty($opts['notify_traffic_source']),
                 'currency'        => (string) ($opts['currency'] ?? ''),
