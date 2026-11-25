@@ -1651,6 +1651,15 @@ paths:
                               table the install lacks, or another error not tied
                               to the click's own data) in 10 runs over an hour
                               from the first of them and is stepped over.
+                          stopped_at:
+                            type: integer
+                            nullable: true
+                            description: >-
+                              Unix time of the first run that stopped at
+                              stalled_at_click_id, for an error of any kind;
+                              null while nothing fails, and for a stop that
+                              began before the upgrade to 1.9.81. Settings and
+                              the cron job's output show it with the note.
                           failed_runs:
                             type: integer
                             description: >-
