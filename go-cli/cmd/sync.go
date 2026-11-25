@@ -175,8 +175,7 @@ var syncStatusCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("encoding output: %w", err)
 		}
-		render(payload)
-		return nil
+		return render(payload)
 	},
 }
 
@@ -209,8 +208,7 @@ var syncHistoryCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("encoding output: %w", err)
 		}
-		render(payload)
-		return nil
+		return render(payload)
 	},
 }
 
@@ -309,7 +307,9 @@ func executeSync(entityArg, fromProfile, toProfile string, opts syncOptions) err
 	if err != nil {
 		return fmt.Errorf("encoding output: %w", err)
 	}
-	render(payload)
+	if err := render(payload); err != nil {
+		return err
+	}
 	// --skip-errors goes on past a failed record; it does not make the sync
 	// a success. It exited 0 with records failed, which a script reads as
 	// everything synced. The results list each failure.
@@ -792,7 +792,9 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 				}
 				status := strings.ToLower(strings.TrimSpace(scalarString(jobObj["status"])))
 				if status == "succeeded" || status == "failed" || status == "partial" || status == "cancelled" {
-					render(jobResp)
+					if err := render(jobResp); err != nil {
+						return true, err
+					}
 					// The job's own outcome is the command's: a failed,
 					// partial or cancelled job exited 0 here, read by a
 					// script as a sync that happened.
@@ -817,7 +819,9 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 				"The output below is the job as queued, not its result — check `p202 sync status`.",
 			pollErr)
 	}
-	render(resp)
+	if err := render(resp); err != nil {
+		return true, err
+	}
 
 	// nilerr is right that an error was seen and nil is returned; that is
 	// deliberate here and the warning above says so.
@@ -911,7 +915,9 @@ func tryServerSyncRead(path, fromProfile, toProfile string) (bool, error) {
 
 		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
-	render(resp)
+	if err := render(resp); err != nil {
+		return true, err
+	}
 
 	return true, nil // server-side sync ran; the caller must not fall back
 }

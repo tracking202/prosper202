@@ -99,8 +99,7 @@ var whoamiCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("encoding whoami: %w", err)
 		}
-		render(encoded)
-		return nil
+		return render(encoded)
 	},
 }
 

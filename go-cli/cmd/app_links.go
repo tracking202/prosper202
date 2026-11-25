@@ -52,8 +52,7 @@ var appLinkCmd = &cobra.Command{
 			return withHint(err, "`p202 app list` lists your apps; `p202 campaign list` your campaigns.")
 		}
 		if !apply {
-			render(data)
-			return nil
+			return render(data)
 		}
 		var envelope struct {
 			Data struct {
@@ -68,8 +67,7 @@ var appLinkCmd = &cobra.Command{
 		}
 		if envelope.Data.Campaign.Ready || len(envelope.Data.Campaign.Apply) == 0 {
 			// Nothing to write: say so in the same shape as a read.
-			render(data)
-			return nil
+			return render(data)
 		}
 		body := map[string]interface{}{}
 		for field, value := range envelope.Data.Campaign.Apply {
@@ -86,8 +84,7 @@ var appLinkCmd = &cobra.Command{
 		if err != nil {
 			return withHint(err, "%s", "The campaign was not changed. `p202 campaign get "+campaign+"` shows it as it is.")
 		}
-		render(updated)
-		return nil
+		return render(updated)
 	},
 }
 
