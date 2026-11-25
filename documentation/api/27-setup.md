@@ -173,7 +173,8 @@ Some networks leave the sub id macro unfilled, so the global postback arrives
 as `gpb.php?subid={aff_sub}&amount=49.00` with the macro itself where the
 click's id should be, or with `subid=` empty. Until 1.9.80 that conversion was
 answered `SubID not found` and lost. Now `gpb.php` looks for the click by an
-**ad click id** the postback sends back instead: the `gclid`, `gbraid` or
+**ad click id** the postback sends back instead (and since 1.9.81 so do
+`pb.php`, `gpx.php` and `upx.php`; [below](#the-other-postbacks-and-pixels)): the `gclid`, `gbraid` or
 `wbraid` Google put on the ad click, Microsoft's `msclkid`, Meta's `fbclid`,
 TikTok's `ttclid` or OpenAI's `oppref` (ChatGPT ads), which every click keeps.
 
@@ -245,9 +246,24 @@ A conversion found this way is recorded with `match_method` `ad_click_id`
 ([Conversions](10-conversions.md#how-each-conversions-click-was-found)), so
 `GET /conversions?match_method=ad_click_id` lists them, and Setup › Inbound
 Log says which parameter found the click and how many clicks carry it, or
-why none was found. Only
-`gpb.php` does this; the pixels and `pb.php` read the SubID and cookies as
-before.
+why none was found.
+
+### The other postbacks and pixels
+
+Since 1.9.81 the per-campaign postback and the global pixels read an unfilled
+SubID the same way and look the click up by the same ad click ids:
+
+- **`pb.php`** answers as `gpb.php` does (`404`, `409` or `503`), and the
+  click must also be one of its own campaign's (`acip`), as a click its SubID
+  names must: `404 Unknown subid for this campaign` otherwise.
+- **`gpx.php` and `upx.php`** first try the visitor's tracking cookie, then
+  the ad click id, then, where your account has it on, the
+  [same-IP fallback](14-users.md#same-ip-fallback-user_pref_same_ip_fallback) as before. A pixel answers its
+  visitor the same either way, so an id that finds no click, or more than
+  one, records nothing by itself; the Inbound Log says why.
+- **`px.php` and `cb202.php`** are not asked: neither reads a SubID a network
+  fills. `px.php`'s click is the one the visitor's cookie names, and
+  ClickBank's tracking code is filled by Prosper202's own HopLink redirect.
 
 ## Postback authentication
 
