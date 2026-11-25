@@ -316,6 +316,65 @@ final class ClicksAndSetupPagesIntegrationTest extends TestCase
         }
     }
 
+    public function testAnAdvancedPageItsAdsOrTrackersNameIsNotRemoved(): void
+    {
+        $u = self::USER;
+        $page = self::insert("INSERT INTO 202_landing_pages SET user_id = $u, aff_campaign_id = 0,"
+            . " landing_page_nickname = 'Held page', landing_page_url = 'https://lp.example.com/held',"
+            . ' landing_page_id_public = 7132, landing_page_time = 0, landing_page_type = 1');
+        $ad = self::insert("INSERT INTO 202_text_ads SET user_id = $u, aff_campaign_id = 0, landing_page_id = $page,"
+            . " text_ad_type = 1, text_ad_name = 'Held <i>ad</i>', text_ad_headline = 'h', text_ad_description = 'd',"
+            . " text_ad_display_url = 'x', text_ad_time = 0");
+        $tracker = self::insert("INSERT INTO 202_trackers SET user_id = $u, tracker_id_public = 7132001,"
+            . " aff_campaign_id = 0, text_ad_id = 0, ppc_account_id = 0, landing_page_id = $page, rotator_id = 0,"
+            . ' click_cloaking = 0, tracker_time = 0');
+        $name = "permission_description = 'remove_landing_page'";
+        $permission = self::one("SELECT permission_id FROM 202_permissions WHERE $name");
+        if ($permission === null) {
+            $permission = (string) self::insert("INSERT INTO 202_permissions SET $name");
+            self::$addedPermissions[] = (int) $permission;
+        }
+        $grant = 'role_id = ' . self::ROLE . ', permission_id = ' . (int) $permission;
+        self::q("INSERT INTO 202_role_permission SET $grant");
+        $remove = static fn (): string => self::page('tracking202/setup/landing_pages.php', [
+            'delete_landing_page_id' => (string) $page, 'delete_landing_page_name' => 'Held page',
+            'token' => 'p202pagerunnertoken',
+        ]);
+        $deleted = static fn (): ?string => self::one(
+            "SELECT landing_page_deleted FROM 202_landing_pages WHERE landing_page_id = $page"
+        );
+
+        try {
+            $refused = $remove();
+            self::assertStringContainsString(
+                'This advanced page is still used by 1 text ad'
+                . ' (&quot;Held &lt;i&gt;ad&lt;/i&gt;&quot;) and 1 tracker (tracker ' . $tracker . '),'
+                . ' so it was not removed: removing it would leave their links pointing at a page that is gone.',
+                $refused
+            );
+            self::assertStringContainsString('In Text Ads, point each ad at another advanced page or at a campaign.'
+                . ' In Get Links, delete each tracker or build it on another page. Then remove this page.', $refused);
+            self::assertSame('0', $deleted(), 'the refused delete removed the page');
+
+            self::q("DELETE FROM 202_text_ads WHERE text_ad_id = $ad");
+            $refused = $remove();
+            self::assertStringContainsString("This advanced page is still used by 1 tracker (tracker $tracker),"
+                . ' so it was not removed: removing it would leave that link pointing', $refused);
+            self::assertStringNotContainsString('In Text Ads', $refused);
+            self::assertSame('0', $deleted());
+
+            self::q("DELETE FROM 202_trackers WHERE tracker_id = $tracker");
+            $removed = $remove();
+            self::assertStringNotContainsString('so it was not removed', $removed);
+            self::assertSame('1', $deleted());
+        } finally {
+            self::q('DELETE FROM 202_role_permission WHERE ' . str_replace(', ', ' AND ', $grant));
+            self::q("DELETE FROM 202_trackers WHERE landing_page_id = $page");
+            self::q("DELETE FROM 202_text_ads WHERE landing_page_id = $page");
+            self::q("DELETE FROM 202_landing_pages WHERE landing_page_id = $page");
+        }
+    }
+
     public function testVisitorsSaysWhyAClickWasFilteredAndNotFraudCountsItAgain(): void
     {
         $u = self::USER;
