@@ -304,7 +304,8 @@ final class ClickTables
     /**
      * The 1.9.79 re-click backfill's walk (Prosper202\Click\ReClickBackfill):
      * one row for the installation, written by the upgrade, or none on an
-     * install that never had re-clicks written before 1.9.79.
+     * install that never had re-clicks written before 1.9.79. stopped_at came
+     * in 1.9.81, reconciled by that rung.
      */
     public static function reClickBackfill(): SchemaDefinition
     {
@@ -324,6 +325,7 @@ final class ClickTables
                 `failing_since` int(10) unsigned DEFAULT NULL,
                 `skipped_clicks` bigint(20) unsigned NOT NULL DEFAULT '0',
                 `last_skipped_click_id` bigint(20) unsigned DEFAULT NULL,
+                `stopped_at` int(10) unsigned DEFAULT NULL,
                 PRIMARY KEY (`backfill_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );

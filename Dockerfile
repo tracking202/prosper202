@@ -79,7 +79,12 @@ COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 # The entrypoint runs composer as root inside the container
 ENV COMPOSER_ALLOW_SUPERUSER=1
 
+# The entrypoint and the config writer it runs live outside the docroot: under
+# /var/www/html, write-config.php answers a request by writing 202-config.php
+# from the container's environment before the setup wizard has run. The app
+# stage leaves build/ out of the docroot (.dockerignore sends only these two).
 COPY build/scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY build/scripts/write-config.php /usr/local/lib/prosper202/write-config.php
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 WORKDIR /var/www/html
@@ -105,6 +110,9 @@ RUN composer validate --no-check-publish --no-check-all \
     && composer install --no-dev --no-interaction --no-scripts --no-autoloader --no-progress
 COPY --chown=www-data:www-data . /var/www/html
 RUN composer dump-autoload --optimize --no-dev
+# The two build/ files .dockerignore lets through are for the COPY lines above;
+# nothing under build/ is the app's (TestScriptsAreNotServedTest).
+RUN rm -rf /var/www/html/build
 # Pre-create the volume mount points owned by the web user: a named volume
 # copies the image directory's ownership on first use, and without this the
 # volumes initialize root-owned, which would break API/state writes running as

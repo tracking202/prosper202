@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
+use P202Cli\OptionName;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
@@ -36,6 +37,15 @@ class LtvAbmCommand extends BaseCommand
 
         $company = $input->getOption('company');
         if ($company !== null && trim((string) $company) !== '') {
+            // One company's detail is not paged; the server refuses limit
+            // and offset there rather than drop them.
+            foreach (['limit', 'offset'] as $option) {
+                if (array_key_exists($option, $params)) {
+                    $flag = OptionName::flag($option);
+                    throw new \RuntimeException($flag . ' pages the company list; it does nothing with --company.'
+                        . ' Drop --company to page the ranked list, or drop ' . $flag . '.');
+                }
+            }
             $params['name'] = trim((string) $company);
             $result = $this->client()->get('ltv/abm/company', $params);
         } else {

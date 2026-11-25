@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Api\V3;
 
 use Api\V3\Support\CampaignFigures;
+use Api\V3\Support\LtvAccess;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Report\CampaignDataMask;
 
@@ -208,24 +209,30 @@ final class RolePermissionTest extends TestCase
         $scope = static fn (string $s): string => "staticfunction()use(\$auth):void{\$auth->requireScope('$s');}";
         $ltv = array_values(array_filter($this->mainRoutes(), static fn (array $r): bool => preg_match('#^/ltv(/|$)#', $r['path']) === 1));
         self::assertGreaterThan(40, count($ltv), 'the LTV routes were read');
-        $seen = ['read' => 0, 'incoming' => 0, 'crm' => 0, 'settings' => 0];
+        // The parts /capabilities answers from (principal.ltv): a route that
+        // asked anything else would be offered or withheld wrongly there.
+        $asks = static fn (string $part): array => [
+            $scope(LtvAccess::PARTS[$part]['scope']),
+            ...array_map($gate, LtvAccess::PARTS[$part]['permissions']),
+        ];
+        $seen = array_fill_keys(array_keys(LtvAccess::PARTS), 0);
         foreach ($ltv as $route) {
             $key = $route['method'] . ' ' . $route['path'];
             if (preg_match('#^GET /ltv/(integrations|webhooks)(/|$)#', $key) === 1) {
-                [$kind, $expected] = ['read', [$scope('ltv:read'), $gate('access_to_campaign_data'), $gate('access_to_api_integrations')]];
+                $kind = 'settings_read';
             } elseif ($route['method'] === 'GET') {
-                [$kind, $expected] = ['read', [$scope('ltv:read'), $gate('access_to_campaign_data')]];
+                $kind = 'read';
             } elseif (preg_match('#^/ltv/(fields|webhooks|integrations)(/|$)#', $route['path']) === 1) {
-                [$kind, $expected] = ['settings', [$scope('ltv:write'), $gate('access_to_api_integrations')]];
+                $kind = 'settings_write';
             } elseif (preg_match('#^/ltv/(revenue|events|subscriptions)(/|$)|^/ltv/customers/\{id\}/next-offer/impression$#', $route['path']) === 1) {
-                [$kind, $expected] = ['incoming', [$scope('ltv:write'), $gate('access_to_campaign_data')]];
+                $kind = 'incoming';
             } else {
-                [$kind, $expected] = ['crm', [$scope('ltv:write'), $gate('access_to_setup_section')]];
+                $kind = 'crm_write';
             }
             $seen[$kind]++;
-            self::assertSame($expected, $route['middleware'], "$key (line {$route['line']}) asks the $kind permission");
+            self::assertSame($asks($kind), $route['middleware'], "$key (line {$route['line']}) asks the $kind permission");
         }
-        self::assertGreaterThan(0, min($seen), 'reads, CRM writes and Settings writes were all found: ' . json_encode($seen));
+        self::assertGreaterThan(0, min($seen), 'every LtvAccess part has its routes: ' . json_encode($seen));
     }
 
     /**

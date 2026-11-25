@@ -1066,4 +1066,28 @@ final class MysqlClickRepositoryIntegrationTest extends TestCase
         self::assertFalse(\Prosper202\Click\RecordedClicks::has($first - 1), 'only the ids allocated');
         \Prosper202\Click\RecordedClicks::reset();
     }
+
+    /**
+     * A counter at the edge's first id refuses it, on a real AUTO_INCREMENT:
+     * the last id below is handed out and the next is not. The counter here is
+     * a temporary table of the same name, which shadows the real one for this
+     * session alone.
+     */
+    public function testACounterThatReachesTheEdgeRefusesTheId(): void
+    {
+        self::q('CREATE TEMPORARY TABLE 202_clicks_counter (click_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,'
+            . ' PRIMARY KEY (click_id)) ENGINE=InnoDB AUTO_INCREMENT=' . (\Prosper202\Click\ClickId::EDGE_FIRST - 1));
+        try {
+            self::assertSame(\Prosper202\Click\ClickId::EDGE_FIRST - 1, self::repo()->allocateClickId());
+            try {
+                self::repo()->allocateClickId();
+                self::fail('the counter handed out an edge id');
+            } catch (\Prosper202\Click\EdgeClickIdRefused $refused) {
+                self::assertSame(\Prosper202\Click\ClickId::EDGE_FIRST, $refused->clickId);
+            }
+        } finally {
+            self::q('DROP TEMPORARY TABLE 202_clicks_counter');
+            \Prosper202\Click\RecordedClicks::reset();
+        }
+    }
 }

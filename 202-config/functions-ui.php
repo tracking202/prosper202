@@ -274,6 +274,30 @@ function p202_postback_queue_notice(\mysqli $db, int $userId, string $base): str
 }
 
 /**
+ * Settings' warning that the re-click backfill is stopped at a click that
+ * fails (Prosper202\Click\ReClickBackfill::stopNotice()): since when, in
+ * the page's zone, and why it waits. '' while it is not stopped. A read that
+ * fails says so, rather than reading as a walk under way.
+ */
+function p202_reclick_backfill_notice(\mysqli $db, ?\DateTimeZone $zone = null): string
+{
+    try {
+        $progress = (new \Prosper202\Click\ReClickBackfill(new \Prosper202\Database\Connection($db)))->progress();
+    } catch (\Throwable $e) {
+        error_log('Settings: the re-click backfill could not be read: ' . $e->getMessage());
+
+        return p202_flash('bad', 'Whether the re-click backfill is stopped could not be checked just now; the'
+            . ' server\'s error log says why ("Settings: the re-click backfill could not be read").');
+    }
+    $notice = \Prosper202\Click\ReClickBackfill::stopNotice(
+        $progress,
+        $zone ?? new \DateTimeZone(date_default_timezone_get())
+    );
+
+    return $notice === null ? '' : p202_flash('warn', $notice);
+}
+
+/**
  * Home's and Account Overview's notice that Google Ads is still fetching
  * paid 1.9.56's retired feed (Prosper202\OfflineConversion\
  * LegacyGoogleFeedFetches), linking to where each schedule is moved over.
