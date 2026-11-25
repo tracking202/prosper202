@@ -10,6 +10,7 @@ use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\AccountSecrets;
 use Prosper202\PaymentNotification\ClickField;
 use Prosper202\PaymentNotification\ConfirmsTestNotifications;
+use Prosper202\PaymentNotification\FindsReversedSalesByTransactionId;
 use Prosper202\PaymentNotification\FingerprintsNotifications;
 use Prosper202\PaymentNotification\InboundRequest;
 use Prosper202\PaymentNotification\Notification;
@@ -43,9 +44,12 @@ use Prosper202\PaymentNotification\Verification;
  * totalAccountAmount says the account lost, since ClickBank refunds part of
  * a payment too (a subscription's product change refunds "a portion of the
  * old product's last recurring payment"), and the whole of it when it states
- * none or 0. A refund of a sale credited before the upgrade, which left no
- * row under its receipt, takes its amount back from the value the click
- * carried over (ReversesPreUpgradeSales).
+ * none or 0. A reversal with no tracking code (no article says a refund
+ * carries the order's) takes back the ClickBank sale under its receipt in
+ * the account whose key decrypted it (FindsReversedSalesByTransactionId). A
+ * refund of a sale credited before the upgrade, which left no row under its
+ * receipt, takes its amount back from the value the click carried over
+ * (ReversesPreUpgradeSales).
  *
  * The legacy versions (4.0 and earlier: a form signed with an 8-digit
  * `cverify`) are answered 415, saying which version to set.
@@ -53,6 +57,7 @@ use Prosper202\PaymentNotification\Verification;
 final class ClickBankAdapter implements
     ProviderAdapter,
     ConfirmsTestNotifications,
+    FindsReversedSalesByTransactionId,
     FingerprintsNotifications,
     RecordsAmountsAsStated,
     ReversesPreUpgradeSales
@@ -350,7 +355,8 @@ final class ClickBankAdapter implements
      * tid=[[subid]]), or where it has none the extclid that version 8.0
      * sends an affiliate (extclid=[[subid]]). Null when it names neither,
      * which the processor answers as no_click (200); a value that is not a
-     * click id is refused rather than read as none.
+     * click id is refused rather than read as none. A reversal naming none is
+     * taken back from the sale under its receipt (FindsReversedSalesByTransactionId).
      *
      * @param array<string, mixed> $order
      */
