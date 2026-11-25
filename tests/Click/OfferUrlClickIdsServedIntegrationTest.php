@@ -33,6 +33,7 @@ final class OfferUrlClickIdsServedIntegrationTest extends TestCase
     private const PLAIN = 48923;
     private const ROTATED = 48924;
     private const ROTATOR = 48931;
+    private const PAGE = 48941;
 
     /** @var resource|null */
     private static $server = null;
@@ -92,7 +93,10 @@ final class OfferUrlClickIdsServedIntegrationTest extends TestCase
 
     private static function cleanUp(): void
     {
-        $ids = ['202_trackers' => 'tracker_id', '202_rotators' => 'id', '202_aff_campaigns' => 'aff_campaign_id'];
+        $ids = [
+            '202_trackers' => 'tracker_id', '202_rotators' => 'id', '202_aff_campaigns' => 'aff_campaign_id',
+            '202_landing_pages' => 'landing_page_id',
+        ];
         foreach ($ids as $table => $id) {
             self::q("DELETE FROM $table WHERE $id BETWEEN 48900 AND 48999");
         }
@@ -123,6 +127,11 @@ final class OfferUrlClickIdsServedIntegrationTest extends TestCase
         self::row('202_rotators', [
             'id' => self::ROTATOR, 'public_id' => self::ROTATOR + self::PUBLIC, 'user_id' => self::OWNER,
             'name' => 'rotator', 'default_url' => null, 'default_campaign' => self::NAMED, 'default_lp' => null,
+        ]);
+        self::row('202_landing_pages', [
+            'landing_page_id' => self::PAGE, 'user_id' => self::OWNER, 'landing_page_id_public' => self::PAGE + self::PUBLIC,
+            'aff_campaign_id' => self::NAMED, 'landing_page_nickname' => 'page', 'landing_page_url' => 'https://shop.example/lp',
+            'landing_page_type' => 0, 'landing_page_time' => time(),
         ]);
         $trackers = [
             [self::DIRECT, self::NAMED, 0, 0],
@@ -247,6 +256,22 @@ final class OfferUrlClickIdsServedIntegrationTest extends TestCase
         foreach (array_keys(ClickRecord::AD_CLICK_IDS) as $name) {
             $expected = in_array($name, ['gbraid', 'wbraid', 'ttclid'], true) ? ['ID-' . $name] : [];
             self::assertSame($expected, $parameters[$name] ?? [], $name);
+        }
+    }
+
+    /** A visitor with no click cookie: every token is filled empty, and the page's own ids still reach the offer. */
+    public function testALandingPageVisitWithNoClickStillSendsTheLinksIds(): void
+    {
+        [$status, $headers] = self::get(
+            '/tracking202/redirect/lp.php?lpip=' . (self::PAGE + self::PUBLIC) . '&adgroup=spring'
+            . '&gbraid=ID-gbraid&wbraid=ID-wbraid&ttclid=ID-ttclid'
+        );
+        self::assertSame(302, $status, $headers . $this->serverLog());
+        $offer = self::location($headers);
+        self::assertStringStartsWith('https://offer.example/named?s=', $offer);
+        $parameters = self::parameters($offer);
+        foreach (['gbraid', 'wbraid', 'ttclid'] as $name) {
+            self::assertSame('ID-' . $name, end($parameters[$name]), "$name in $offer" . $this->serverLog());
         }
     }
 }

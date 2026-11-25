@@ -42,10 +42,10 @@ final class PassOnClickIdsTest extends TestCase
         self::assertSame($passOn, PassOnClickIds::withoutCarried($passOn, 'https://offer.example/go'));
     }
 
-    public function testWhatTheUrlCarriesDecidesNotTheValue(): void
+    public function testAFilledValueIsCarriedWhateverItIs(): void
     {
-        // Filled empty, written in by hand, or cut to its column: one gbraid either way.
-        foreach (['gbraid=', 'gbraid=hand-written', 'gbraid=' . str_repeat('a', 150)] as $carried) {
+        // Written in by hand, or cut to its column: one gbraid either way.
+        foreach (['gbraid=hand-written', 'gbraid=' . str_repeat('a', 150)] as $carried) {
             self::assertSame(
                 'promo=1&',
                 PassOnClickIds::withoutCarried(
@@ -54,6 +54,21 @@ final class PassOnClickIdsTest extends TestCase
                 )
             );
         }
+    }
+
+    /** A click id the URL names with no value (no click filled it) carries nothing: the link's id goes on. */
+    public function testAnEmptyValueCarriesNothing(): void
+    {
+        foreach (['s=p&gbraid=', 's=p&gbraid', 'gbraid=&s=p', 'gbraid&s=p', 's=p&gbraid=&gbraid'] as $query) {
+            $url = 'https://o.example/x?' . $query;
+            self::assertSame([], PassOnClickIds::carriedBy($url), $query);
+            self::assertSame('a=1&gbraid=REAL&', PassOnClickIds::withoutCarried('a=1&gbraid=REAL&', $url), $query);
+        }
+        // Another id of the URL is still carried while this one is empty.
+        self::assertSame(
+            'gbraid=REAL&',
+            PassOnClickIds::withoutCarried('gbraid=REAL&wbraid=W&', 'https://o.example/?gbraid=&wbraid=W')
+        );
     }
 
     public function testOnlyTheClickIdsAreDropped(): void

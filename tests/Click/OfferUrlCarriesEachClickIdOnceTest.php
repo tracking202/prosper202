@@ -79,6 +79,16 @@ final class OfferUrlCarriesEachClickIdOnceTest extends TestCase
         self::assertSame('https://offer.example/go?gbraid=[[gbraid]]&gbraid=G1', $url);
     }
 
+    /** With no click every token is filled empty (lp.php, off.php): the link's id is not lost. */
+    public function testAnIdTheNoClickUrlLeavesEmptyKeepsTheLinksId(): void
+    {
+        foreach (['gbraid=', 'gbraid'] as $empty) {
+            $url = self::redirect(['t202id' => '42', 'gbraid' => 'REAL'], 'https://offer.example/go?s=p&' . $empty);
+
+            self::assertSame('https://offer.example/go?s=p&' . $empty . '&gbraid=REAL', $url);
+        }
+    }
+
     /** A cloaked link's 202vars carry the pass-on whole: cl.php decides against the page. */
     public function testACloakedLinkPacksThePassOnWhole(): void
     {

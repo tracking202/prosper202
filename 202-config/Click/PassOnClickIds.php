@@ -12,10 +12,11 @@ namespace Prosper202\Click;
  * and the gbraid, wbraid and ttclid are not the tracker's: a landing page's
  * Google tag reads them from its URL. An offer URL that also names one with
  * its token (`gbraid=[[gbraid]]`) then received it twice, the token's value
- * and the link's. A click id the destination carries, filled or written in,
- * is carried once: the pass-on drops it. Every other parameter is passed on
- * as before, a duplicate included, since a reader that takes the last value
- * reads the link's.
+ * and the link's. A click id the destination carries with a value, filled or
+ * written in, is carried once: the pass-on drops it. An id with no value
+ * (`gbraid=`, a bare `gbraid`) carries nothing, so the link's still goes on.
+ * Every other parameter is passed on as before, a duplicate included, since a
+ * reader that takes the last value reads the link's.
  */
 final class PassOnClickIds
 {
@@ -26,8 +27,8 @@ final class PassOnClickIds
     /**
      * The ad click ids $url's query carries, by name. The fragment is not
      * the query, and an id whose value is still an unfilled token
-     * (`gbraid=[[gbraid]]` in an outage's cached URL) carries nothing: the
-     * link's id goes on beside it, as before.
+     * (`gbraid=[[gbraid]]` in an outage's cached URL) or empty (`gbraid=`,
+     * `gbraid`) carries nothing: the link's id goes on beside it, as before.
      *
      * @return array<string, true>
      */
@@ -44,7 +45,7 @@ final class PassOnClickIds
         $carried = [];
         foreach (explode('&', substr($url, $question + 1)) as $piece) {
             [$name, $value] = self::split($piece);
-            if (isset(ClickRecord::AD_CLICK_IDS[$name]) && preg_match('/^\[\[[^\[\]]*\]\]$/', $value) !== 1) {
+            if (isset(ClickRecord::AD_CLICK_IDS[$name]) && $value !== '' && preg_match('/^\[\[[^\[\]]*\]\]$/', $value) !== 1) {
                 $carried[$name] = true;
             }
         }
