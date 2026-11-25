@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Prosper202\Notifications;
 
+use Prosper202\Conversion\AdPlatformConsent;
+use Prosper202\Conversion\Ledger\ConsentWithheld;
 use Prosper202\Conversion\TrafficSourcePixels;
 use Prosper202\Database\Connection;
 
@@ -80,6 +82,13 @@ use Prosper202\Database\Connection;
  * with its last error. A row whose URL the sender refuses (PostbackSender:
  * an address it does not call, here or at a redirect) is `failed` at once,
  * with the reason: every later try would be refused the same way.
+ *
+ * Nothing is sent about a conversion whose visitor refused consent
+ * (AdPlatformConsent, the rule the destinations follow): its `reached` rows
+ * are stored `withheld` with the reason, and a `reached` or `correction`
+ * whose visitor refuses before it goes out (a later visit of the click) is
+ * `withheld` when its turn comes. A retraction still goes: it takes back
+ * what the network was told before the refusal.
  */
 final class NotificationOutbox implements OutcomeNotificationSink
 {
@@ -115,7 +124,9 @@ final class NotificationOutbox implements OutcomeNotificationSink
 
     /**
      * Queue the `reached` postbacks for a new ledger row, in the caller's
-     * transaction. Returns how many rows were queued.
+     * transaction. Returns how many rows were recorded: `withheld` ones, for
+     * a visitor who refused consent ($requestRefused: the writer's request
+     * did), are counted too.
      */
     public function queueReached(
         int $userId,
@@ -126,6 +137,7 @@ final class NotificationOutbox implements OutcomeNotificationSink
         string $dedupeKey,
         ?string $transactionId,
         ?int $goalId = null,
+        bool $requestRefused = false,
     ): int {
         $click = TrafficSourcePixels::clickTokens($this->conn, $userId, $clickId, true);
         if ($click === null || $click['ppc_account_id'] <= 0) {
@@ -151,11 +163,15 @@ final class NotificationOutbox implements OutcomeNotificationSink
             'p202_goal_value' => $money,
         ] + $click['tokens'];
 
+        $consent = AdPlatformConsent::ofConversion($this->conn, $userId, $convId, $requestRefused, true);
+        $status = $consent->allows() ? 'pending' : 'withheld';
+        $reason = $consent->reason();
+        $note = $reason !== null ? mb_strimwidth($reason, 0, 255, '…', 'UTF-8') : null;
         $queued = 0;
         $now = $this->now();
         foreach ($pixels as $pixel) {
             foreach (self::destinations((string) $pixel['pixel_code']) as $destination => $url) {
-                $queued += $this->insert($userId, $convId, (int) $pixel['pixel_id'], $destination, self::KIND_REACHED, 0, 'pending', self::replaceTokens($url, $tokens), null, $now);
+                $queued += $this->insert($userId, $convId, (int) $pixel['pixel_id'], $destination, self::KIND_REACHED, 0, $status, self::replaceTokens($url, $tokens), $note, $now);
             }
         }
 
@@ -200,8 +216,9 @@ final class NotificationOutbox implements OutcomeNotificationSink
             }
             // Sent, failed, or pending after an attempt: each may have
             // reached the network. A cancelled reached is announced only if
-            // a correction says so (above).
-            if ($status !== 'cancelled') {
+            // a correction says so (above); a withheld one never went out
+            // unless an attempt before the refusal did.
+            if ($status !== 'cancelled' && !($status === 'withheld' && (int) $row['attempts'] === 0)) {
                 $announced[$at[0] . ':' . $at[1]] = $at;
             }
         }
@@ -436,37 +453,54 @@ final class NotificationOutbox implements OutcomeNotificationSink
      * No row is claimed after $seconds, and a host whose send failed is not
      * asked again in the same run, so one slow traffic source cannot hold up the rest.
      *
+     * A `reached` or `correction` whose visitor has refused consent by now
+     * (AdPlatformConsent) is not sent: it is `withheld`, with the reason.
+     *
      * @param list<int>|null $convIds
-     * @return array{sent: int, failed: int, retrying: int}
+     * @return array{sent: int, failed: int, retrying: int, withheld: int}
      */
     public function sendDue(int $limit, ?array $convIds = null, int $seconds = 50): array
     {
         $stopAt = microtime(true) + max(1, $seconds);
         $unanswered = [];
         $now = $this->now();
-        $sql = "SELECT notification_id, pixel_id, url, attempts FROM 202_notification_pending
-                WHERE status = 'pending' AND next_attempt_at <= ?";
+        // The refusal is read beside each row, as DestinationQueue::deliver() reads it (#27: the ledger row is the account's own).
+        $select = static fn (string $parts): string => 'SELECT n.notification_id, n.pixel_id, n.url, n.attempts, n.kind, ' . $parts
+            . " FROM 202_notification_pending AS n
+                LEFT JOIN 202_conversion_logs AS cl ON cl.conv_id = n.conv_id AND cl.user_id = n.user_id
+                WHERE n.status = 'pending' AND n.next_attempt_at <= ?";
+        $sql = '';
         $types = 'i';
         $binds = [$now];
         if ($convIds !== null) {
             if ($convIds === []) {
-                return ['sent' => 0, 'failed' => 0, 'retrying' => 0];
+                return ['sent' => 0, 'failed' => 0, 'retrying' => 0, 'withheld' => 0];
             }
-            $sql .= ' AND conv_id IN (' . implode(',', array_fill(0, count($convIds), '?')) . ')';
+            $sql .= ' AND n.conv_id IN (' . implode(',', array_fill(0, count($convIds), '?')) . ')';
             $types .= str_repeat('i', count($convIds));
             array_push($binds, ...$convIds);
         }
         // Paged by id: rows of a host that failed this run are passed over, not
         // left at the front of the window for the next page (CLAUDE.md #37).
-        $sql .= ' AND notification_id > ? ORDER BY notification_id LIMIT ?';
+        $sql .= ' AND n.notification_id > ? ORDER BY n.notification_id LIMIT ?';
         $types .= 'ii';
         $limit = max(1, $limit);
         $after = 0;
         $tried = 0;
+        $parts = ConsentWithheld::partsSql();
 
-        $out = ['sent' => 0, 'failed' => 0, 'retrying' => 0];
+        $out = ['sent' => 0, 'failed' => 0, 'retrying' => 0, 'withheld' => 0];
         while ($tried < $limit && microtime(true) < $stopAt) {
-            $stmt = $this->conn->prepareWrite($sql);
+            try {
+                $stmt = $this->conn->prepareWrite($select($parts) . $sql);
+            } catch (\Throwable $e) {
+                // Before the 1.9.80 upgrade no refusal is kept to read; queueReached() held back the writer's own.
+                if (!ConsentWithheld::storageMissing($e)) {
+                    throw $e;
+                }
+                $parts = "'0' AS refused_request, '0' AS refused_replaced, '0' AS refused_visit";
+                $stmt = $this->conn->prepareWrite($select($parts) . $sql);
+            }
             $this->conn->bind($stmt, $types, [...$binds, $after, $limit]);
             $rows = $this->conn->fetchAll($stmt);
             if ($rows === []) {
@@ -479,6 +513,18 @@ final class NotificationOutbox implements OutcomeNotificationSink
                     continue;
                 }
                 $id = (int) $row['notification_id'];
+                $consent = AdPlatformConsent::fromParts($row);
+                if ((string) $row['kind'] !== self::KIND_RETRACTION && !$consent->allows()) {
+                    $hold = $this->conn->prepareWrite(
+                        "UPDATE 202_notification_pending SET status = 'withheld', last_error = ?
+                         WHERE notification_id = ? AND status = 'pending' AND attempts = ?"
+                    );
+                    $this->conn->bind($hold, 'sii', [mb_strimwidth((string) $consent->reason(), 0, 255, '…', 'UTF-8'), $id, (int) $row['attempts']]);
+                    if ($this->conn->executeUpdate($hold) === 1) {
+                        $out['withheld']++;
+                    }
+                    continue;
+                }
                 $attempts = (int) $row['attempts'] + 1;
                 // Claim: only the worker that moves the attempt count sends.
                 $claim = $this->conn->prepareWrite(
@@ -562,21 +608,25 @@ final class NotificationOutbox implements OutcomeNotificationSink
 
     /**
      * What the outbox holds for a conversion's `reached` announcement:
-     * rows in all, rows not cancelled (queued, sent or failed), and rows
-     * still waiting to go out.
+     * rows in all, rows neither cancelled nor withheld (queued, sent or
+     * failed), rows still waiting to go out, and rows withheld for consent.
      *
-     * @return array{total: int, live: int, pending: int}
+     * @return array{total: int, live: int, pending: int, withheld: int}
      */
     public function reachedState(int $convId): array
     {
         $stmt = $this->conn->prepareWrite(
-            "SELECT COUNT(*) AS total, COALESCE(SUM(status <> 'cancelled'), 0) AS live, COALESCE(SUM(status = 'pending'), 0) AS pending
+            "SELECT COUNT(*) AS total, COALESCE(SUM(status NOT IN ('cancelled', 'withheld')), 0) AS live,
+                    COALESCE(SUM(status = 'pending'), 0) AS pending, COALESCE(SUM(status = 'withheld'), 0) AS withheld
              FROM 202_notification_pending WHERE conv_id = ? AND kind = 'reached'"
         );
         $this->conn->bind($stmt, 'i', [$convId]);
         $row = $this->conn->fetchOne($stmt) ?? [];
 
-        return ['total' => (int) ($row['total'] ?? 0), 'live' => (int) ($row['live'] ?? 0), 'pending' => (int) ($row['pending'] ?? 0)];
+        return [
+            'total' => (int) ($row['total'] ?? 0), 'live' => (int) ($row['live'] ?? 0),
+            'pending' => (int) ($row['pending'] ?? 0), 'withheld' => (int) ($row['withheld'] ?? 0),
+        ];
     }
 
     /**

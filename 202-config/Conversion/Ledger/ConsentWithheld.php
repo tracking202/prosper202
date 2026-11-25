@@ -18,6 +18,8 @@ use Prosper202\Identity\ConsentRefusal;
  * install's own reports count it. A goal event keeps its request's refusal
  * in 202_goal_events.consent_withheld, which every ledger row its outcomes
  * write, first or again, carries. A consenting request leaves the 0.
+ * Traffic source pixels and postbacks ask the same rule
+ * (Prosper202\Conversion\AdPlatformConsent).
  */
 final class ConsentWithheld
 {
@@ -89,6 +91,57 @@ final class ConsentWithheld
     public static function visitRefusedSql(): string
     {
         return ConsentRefusal::standsSql('cl.click_id');
+    }
+
+    /**
+     * refusedSql()'s three as select-list columns of the row aliased `cl`,
+     * under the names refusalOf() reads.
+     */
+    public static function partsSql(): string
+    {
+        return self::requestRefusedSql() . ' AS refused_request, '
+            . self::replacedRefusedSql() . ' AS refused_replaced, '
+            . self::visitRefusedSql() . ' AS refused_visit';
+    }
+
+    /**
+     * Where the visitor of a row read with partsSql() refused, or null when
+     * nothing says they did. Anything but a 0, a missing column included,
+     * reads as a refusal (CLAUDE.md #11).
+     *
+     * @param array<string, mixed> $row
+     */
+    public static function refusalOf(array $row): ?string
+    {
+        $refused = static fn (string $key): bool => (string) ($row[$key] ?? '1') !== '0';
+
+        return match (true) {
+            $refused('refused_request') => 'on the conversion\'s request',
+            $refused('refused_replaced') => 'on a conversion this one replaced',
+            $refused('refused_visit') => 'on a visit, a conversion or a goal event of its click',
+            default => null,
+        };
+    }
+
+    /**
+     * Whether $e says the refusals' storage is not there yet: the ledger's
+     * column (1054) or ConsentRefusal's table (1146), which the 1.9.80
+     * upgrade adds. No refusal could be kept before it.
+     */
+    public static function storageMissing(\Throwable $e): bool
+    {
+        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+            $message = $current->getMessage();
+            if (
+                // The server names the column as the statement did, with its alias: 'cl.consent_withheld'.
+                (Connection::isMysqlError($current, 1054, '') && preg_match("/'(?:\\w+\\.)?" . self::COLUMN . "'/", $message) === 1)
+                || (Connection::isMysqlError($current, 1146, '') && str_contains($message, \Prosper202\Database\Schema\TableRegistry::CLICK_CONSENT_REFUSALS))
+            ) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

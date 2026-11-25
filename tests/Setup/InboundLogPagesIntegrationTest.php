@@ -307,6 +307,25 @@ final class InboundLogPagesIntegrationTest extends TestCase
         self::assertStringContainsString('inbound_log.php?click_id=' . self::CLICK . '">its inbound requests</a>', $list);
     }
 
+    /** A conversion whose visitor refused consent says, on the page and in the download, that no ad platform was told. */
+    public function testConversionLogsSayWhichConversionsWereHeldBackForConsent(): void
+    {
+        p202RecordLegacyConversion(self::requireScratch(), self::CLICK, 2, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID,
+            ['user_id' => self::USER, 'transaction_id' => 'ORD-ASKED', 'conv_time' => self::ARRIVED]);
+        $lines = self::csv();
+        self::assertSame('held_back_for_consent', end($lines[0]));
+        self::assertSame('no', array_combine($lines[0], $lines[1])['held_back_for_consent'], 'a consenting visitor');
+        self::assertStringNotContainsString('Held back for consent', self::page('tracking202/logs/index.php', [], self::USER, ['range' => 'alltime']));
+
+        self::q("UPDATE 202_conversion_logs SET consent_withheld = 1 WHERE transaction_id = 'ORD-ASKED' AND user_id = " . self::USER);
+        $lines = self::csv();
+        self::assertSame('yes', array_combine($lines[0], $lines[1])['held_back_for_consent']);
+        self::assertStringContainsString(
+            'Held back for consent: no ad platform, traffic source pixel or postback was told',
+            self::page('tracking202/logs/index.php', [], self::USER, ['range' => 'alltime'])
+        );
+    }
+
     public function testADownloadLongerThanItsCapSaysSo(): void
     {
         foreach (['ORD-1' => self::ARRIVED - 60, 'ORD-2' => self::ARRIVED] as $transaction => $at) {

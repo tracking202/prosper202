@@ -216,10 +216,104 @@ final class RememberMeKeysRevokedIntegrationTest extends TestCase
 
     public function testTheSignOutPageRevokesItsKey(): void
     {
-        $page = self::request('202-account/signout.php', ['P202_SU_REMEMBER' => self::cookie(self::USER, 'a')]);
+        $page = self::request('202-account/signout.php', [
+            'P202_SU_REMEMBER' => self::cookie(self::USER, 'a'),
+            'P202_SU_POST' => '{"token": "SESSION"}',
+        ]);
         self::assertNull($page['result']['uncaught'], $page['output']);
         self::assertFileDoesNotExist(self::$sessions . '/sess_' . $page['result']['signed_in_as']);
+        self::assertFalse($page['result']['cookie_kept'], 'the cookie is cleared');
+        self::assertSame(302, $page['result']['status'], 'and the browser is sent on');
         self::assertSame([self::key(self::USER, 'b')], self::keys(self::USER));
+    }
+
+    /**
+     * A GET signed out, so a link or an image on any other site could sign a
+     * person out. Only a POST carrying the session's token signs out; a GET
+     * draws the button that posts it, and a POST without the token draws it
+     * again with a 403, the session, the cookie and the key all kept.
+     *
+     * @dataProvider requestsThatSignNobodyOut
+     */
+    public function testTheSignOutPageSignsNobodyOutWithoutAPostOfTheToken(
+        ?string $post,
+        int $status,
+        bool $warns
+    ): void {
+        $env = ['P202_SU_REMEMBER' => self::cookie(self::USER, 'a')];
+        if ($post !== null) {
+            $env['P202_SU_POST'] = $post;
+        }
+        $page = self::request('202-account/signout.php', $env);
+        $r = $page['result'];
+        self::assertNull($r['uncaught'], $page['output']);
+        // No status set is a 200.
+        self::assertContains($r['status'], $status === 200 ? [false, 200] : [$status], $page['output']);
+        self::assertFileExists(self::$sessions . '/sess_' . $r['signed_in_as'], 'the session is kept');
+        self::assertSame($r['signed_in_as'], $r['session_id'], 'and is the same session');
+        self::assertContains('user_id', $r['session_keys'], 'still signed in');
+        self::assertTrue($r['cookie_kept'], 'the cookie is kept');
+        self::assertSame(
+            [self::key(self::USER, 'a'), self::key(self::USER, 'b')],
+            self::keys(self::USER),
+            'every key is kept'
+        );
+
+        $form = self::signOutForm($page['output']);
+        self::assertSame('post', $form['method']);
+        self::assertStringEndsWith('202-account/signout.php', $form['action']);
+        self::assertSame($r['token'], $form['token'], "the form carries the session's token");
+        self::assertSame(
+            $warns,
+            str_contains($page['output'], 'did not come from a page of yours'),
+            'a POST without the token is told why it is still signed in'
+        );
+    }
+
+    /** @return array<string, array{?string, int, bool}> */
+    public static function requestsThatSignNobodyOut(): array
+    {
+        return [
+            'a GET' => [null, 200, false],
+            'a POST with no token' => ['{"other": "1"}', 403, true],
+            'a POST with another token' => ['{"token": "p202someoneelsestoken0000000000"}', 403, true],
+            'a POST with an empty token' => ['{"token": ""}', 403, true],
+            'a POST with a list for a token' => ['{"token": ["SESSION"]}', 403, true],
+        ];
+    }
+
+    public function testTheSignOutPageSendsABrowserSignedInToNobodyOnWithoutAForm(): void
+    {
+        $page = self::request('202-account/signout.php', ['P202_SU_SESSION' => 'anonymous']);
+        self::assertNull($page['result']['uncaught'], $page['output']);
+        self::assertSame(302, $page['result']['status'], 'sent on');
+        self::assertStringNotContainsString('data-p202-signout', $page['output'], 'nothing to sign out of');
+        self::assertCount(2, self::keys(self::USER));
+    }
+
+    /** @return array{method: string, action: string, token: ?string} the page's one sign-out form */
+    private static function signOutForm(string $html): array
+    {
+        $doc = new \DOMDocument();
+        self::assertTrue(@$doc->loadHTML('<?xml encoding="utf-8"?>' . $html));
+        $forms = (new \DOMXPath($doc))->query('//form[@data-p202-signout]');
+        self::assertNotFalse($forms);
+        self::assertSame(1, $forms->length, "the page draws one sign-out form:\n$html");
+        $form = $forms->item(0);
+        self::assertInstanceOf(\DOMElement::class, $form);
+        $token = null;
+        foreach ($form->getElementsByTagName('input') as $input) {
+            if ($input->getAttribute('name') === 'token') {
+                $token = $input->getAttribute('value');
+            }
+        }
+        self::assertSame(1, $form->getElementsByTagName('button')->length, 'with one button');
+
+        return [
+            'method' => strtolower($form->getAttribute('method')),
+            'action' => $form->getAttribute('action'),
+            'token' => $token,
+        ];
     }
 
     public function testASignOutWithNoCookieRevokesNothing(): void
@@ -515,7 +609,7 @@ final class RememberMeKeysRevokedIntegrationTest extends TestCase
             (new MysqlUserRepository(new Connection($db)))->update($user, ['user_pass' => $password]);
         };
         $store = static function (\mysqli $db, int $user, string $password): void {
-            \Prosper202\User\PasswordChange::store(new Connection($db), $user, \hash_user_pass($password), false);
+            \Prosper202\User\PasswordChange::store(new Connection($db), $user, \hash_user_pass($password));
         };
 
         return [
@@ -569,7 +663,7 @@ final class RememberMeKeysRevokedIntegrationTest extends TestCase
     {
         try {
             $hash = \hash_user_pass('x-password');
-            \Prosper202\User\PasswordChange::store(new Connection(self::$db), 990899, $hash, false);
+            \Prosper202\User\PasswordChange::store(new Connection(self::$db), 990899, $hash);
             $threw = null;
         } catch (\RuntimeException $e) {
             $threw = $e->getMessage();

@@ -132,7 +132,10 @@ module.exports = {
         expect.match(new URL(ui.page.url()).pathname, /\/202-account\/?$/, 'and the new password signs in');
         // Signed out again, and the old password back, for the scenarios after
         // this one (setup's undo puts it back too, should this scenario crash).
+        // A GET draws the button; the sign-out is its POST, with the session's token.
         await app.goto('/202-account/signout.php');
+        await app.submit('form[data-p202-signout] button[type="submit"]');
+        expect.match(new URL(ui.page.url()).pathname, /\/202-login\.php$|\/$/, 'and the button signs out');
         db.write("UPDATE 202_users SET user_pass='" + state.hash.replace(/'/g, "''") + "' WHERE user_id=" + state.owner);
       },
     },

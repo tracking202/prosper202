@@ -196,7 +196,10 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
      *        Performs a type-4 GET and says whether it succeeded; injected by tests.
      * @param (\Closure(): bool)|null $visitorMayBeTracked whether a Meta
      *        Purchase (type 6) may fire (p202ConversionMayTrack()); held back without it
-     * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int, server_skipped: int}
+     * @param \Prosper202\Conversion\AdPlatformConsent|null $consent the
+     *        conversion's (AdPlatformConsent::ofConversion()); without one that
+     *        allows it no pixel fires
+     * @return array{markup: string, types: list<int>, server_calls: int, server_failures: int, browser_skipped: int, server_skipped: int, withheld: string|null}
      */
     function p202FireTrafficSourcePixels(
         mysqli $db,
@@ -204,14 +207,15 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
         array $tokens,
         ?callable $fetch = null,
         bool $server = true,
-        ?\Closure $visitorMayBeTracked = null
+        ?\Closure $visitorMayBeTracked = null,
+        ?\Prosper202\Conversion\AdPlatformConsent $consent = null
     ): array {
         // $server false: the type-4 postbacks were queued with the
         // conversion (notify_traffic_source) and go out after the answer
         // (p202SendQueuedPostbacksAfterAnswer()) or from the worker.
         $conn = new \Prosper202\Database\Connection($db);
 
-        return \Prosper202\Conversion\TrafficSourcePixels::fire($conn, $ppcAccountId, $tokens, $fetch, true, $server, $visitorMayBeTracked);
+        return \Prosper202\Conversion\TrafficSourcePixels::fire($conn, $ppcAccountId, $tokens, $fetch, true, $server, $visitorMayBeTracked, $consent);
     }
 }
 
@@ -1302,18 +1306,18 @@ if (!function_exists('p202PostbackClickSql')) {
             FROM ' . \Prosper202\Click\LatestVisit::of($id) . ' AS 2c
             LEFT JOIN `202_clicks_tracking` AS 2cid USING (`click_id`)
             LEFT JOIN `202_clicks_advance` AS 2ca USING (`click_id`)
-            LEFT JOIN `202_google` AS 2g USING (`click_id`)
-            LEFT JOIN `202_tracking_c1` AS 2c1 USING (`c1_id`)
-            LEFT JOIN `202_tracking_c2` AS 2c2 USING (`c2_id`)
-            LEFT JOIN `202_tracking_c3` AS 2c3 USING (`c3_id`)
-            LEFT JOIN `202_tracking_c4` AS 2c4 USING (`c4_id`)
-            LEFT JOIN `202_utm_source` AS 2us USING (`utm_source_id`)
-            LEFT JOIN `202_utm_medium` AS 2um USING (`utm_medium_id`)
-            LEFT JOIN `202_utm_campaign` AS 2uca USING (`utm_campaign_id`)
-            LEFT JOIN `202_utm_term` AS 2ut USING (`utm_term_id`)
-            LEFT JOIN `202_utm_content` AS 2uco USING (`utm_content_id`)
+            ' . \Prosper202\Click\AdClickIdColumns::rowJoin('2g', '2c.click_id') . '
+            LEFT JOIN `202_tracking_c1` AS 2c1 ON (2c1.`c1_id` = 2cid.`c1_id`)
+            LEFT JOIN `202_tracking_c2` AS 2c2 ON (2c2.`c2_id` = 2cid.`c2_id`)
+            LEFT JOIN `202_tracking_c3` AS 2c3 ON (2c3.`c3_id` = 2cid.`c3_id`)
+            LEFT JOIN `202_tracking_c4` AS 2c4 ON (2c4.`c4_id` = 2cid.`c4_id`)
+            LEFT JOIN `202_utm_source` AS 2us ON (2us.`utm_source_id` = 2g.`utm_source_id`)
+            LEFT JOIN `202_utm_medium` AS 2um ON (2um.`utm_medium_id` = 2g.`utm_medium_id`)
+            LEFT JOIN `202_utm_campaign` AS 2uca ON (2uca.`utm_campaign_id` = 2g.`utm_campaign_id`)
+            LEFT JOIN `202_utm_term` AS 2ut ON (2ut.`utm_term_id` = 2g.`utm_term_id`)
+            LEFT JOIN `202_utm_content` AS 2uco ON (2uco.`utm_content_id` = 2g.`utm_content_id`)
             LEFT JOIN `202_keywords` AS 2kw ON (2ca.`keyword_id` = 2kw.`keyword_id`)
-            LEFT JOIN `202_cpa_trackers` AS 2cpa USING (`click_id`)
+            LEFT JOIN `202_cpa_trackers` AS 2cpa ON (2cpa.`click_id` = 2c.`click_id`)
             LEFT JOIN `202_trackers` AS 2trc
                 ON (2cpa.`tracker_id_public` = 2trc.`tracker_id_public` AND 2trc.`user_id` = 2c.`user_id`)
             LEFT JOIN `202_clicks_site` AS 2cs ON (2c.click_id = 2cs.click_id)
@@ -1662,7 +1666,8 @@ if (!function_exists('p202RecordWebEvent')) {
         $notifier = new \Prosper202\Goals\TrafficSourceNotifier(
             $conn,
             (bool) ($opts['browser'] ?? false),
-            static fn (int $click): bool => p202ConversionMayTrack($db, $click, $get)
+            static fn (int $click): bool => p202ConversionMayTrack($db, $click, $get),
+            !\Prosper202\Identity\RequestSignals::consentGiven($get)
         );
         $engine = new \Prosper202\Goals\GoalEngine($conn, null, null, null, $notifier);
         try {
@@ -1743,7 +1748,7 @@ if (!function_exists('p202RecordPurLinkWebEvent')) {
             return ['status' => 'not_found', 'reason' => 'unknown_click'];
         }
         $events = new \Prosper202\Goals\WebEvents($conn);
-        $notifier = new \Prosper202\Goals\TrafficSourceNotifier($conn, false);
+        $notifier = new \Prosper202\Goals\TrafficSourceNotifier($conn, false, null, !\Prosper202\Identity\RequestSignals::consentGiven($get));
         $engine = new \Prosper202\Goals\GoalEngine($conn, null, null, null, $notifier);
         $event = null;
         try {

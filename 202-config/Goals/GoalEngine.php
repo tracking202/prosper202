@@ -1563,6 +1563,7 @@ final class GoalEngine
                 (string) ($recorded['dedupeKey'] ?? $data['dedupe_key']),
                 $event?->transactionId,
                 $o->goalId,
+                $event?->consentWithheld === true,
             );
         }
 
@@ -1816,7 +1817,9 @@ final class GoalEngine
      *
      * With server-to-server postbacks queued, the outbox is the record:
      * `reached` when a queued, sent or failed row stands for this
-     * conversion, `suppressed` (replacement) when every one was cancelled.
+     * conversion, `suppressed` (consent_withheld) when its visitor refused
+     * consent and the rows were withheld, `suppressed` (replacement) when
+     * every one was cancelled.
      * With none queued (no traffic source, or only browser pixels) the
      * decision is structural: a written outcome that follows a retired one
      * ($follows) is a replacement.
@@ -1830,7 +1833,7 @@ final class GoalEngine
         $reason = null;
         $queued = 0;
         if ($written['payable']) {
-            $state = $written['conversion_id'] !== null ? $this->outbox->reachedState($written['conversion_id']) : ['total' => 0, 'live' => 0, 'pending' => 0];
+            $state = $written['conversion_id'] !== null ? $this->outbox->reachedState($written['conversion_id']) : ['total' => 0, 'live' => 0, 'pending' => 0, 'withheld' => 0];
             if (!$written['notify']) {
                 $kind = 'off';
             } elseif ($subject->clickId === null) {
@@ -1838,7 +1841,12 @@ final class GoalEngine
             } elseif ($written['revived'] || !$written['conversion_new']) {
                 [$kind, $reason] = ['suppressed', 'replacement'];
             } elseif ($state['total'] > 0) {
-                [$kind, $reason] = $state['live'] > 0 ? ['reached', null] : ['suppressed', 'replacement'];
+                [$kind, $reason] = match (true) {
+                    $state['live'] > 0 => ['reached', null],
+                    // The visitor refused consent: nothing is told to the traffic source (AdPlatformConsent).
+                    $state['withheld'] > 0 => ['suppressed', 'consent_withheld'],
+                    default => ['suppressed', 'replacement'],
+                };
                 $queued = $state['pending'];
             } elseif ($follows) {
                 [$kind, $reason] = ['suppressed', 'replacement'];

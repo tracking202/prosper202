@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Rotator;
 
+use Prosper202\Click\AdClickIdColumns;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 
@@ -36,7 +37,8 @@ final class RecordedLink
             . ' LEFT JOIN 202_tracking_c2 AS tc2 ON tc2.c2_id = ct.c2_id'
             . ' LEFT JOIN 202_tracking_c3 AS tc3 ON tc3.c3_id = ct.c3_id'
             . ' LEFT JOIN 202_tracking_c4 AS tc4 ON tc4.c4_id = ct.c4_id'
-            . ' LEFT JOIN 202_google AS g ON g.click_id = c.click_id'
+            // The click's one 202_google row: a plain join repeats the click per row.
+            . ' ' . AdClickIdColumns::rowJoin('g', 'c.click_id')
             . ' LEFT JOIN 202_utm_source AS us ON us.utm_source_id = g.utm_source_id'
             . ' LEFT JOIN 202_utm_medium AS um ON um.utm_medium_id = g.utm_medium_id'
             . ' LEFT JOIN 202_utm_campaign AS uca ON uca.utm_campaign_id = g.utm_campaign_id'
