@@ -201,7 +201,7 @@ final class TrafficSourceSettingsIntegrationTest extends TestCase
         $fired = TrafficSourcePixels::fire(new Connection(self::$db), $account, ['subid' => '77', 'transactionid' => 'T1'], static function (string $url) use (&$fetched): bool {
             $fetched[] = $url;
             return true;
-        });
+        }, consent: \Prosper202\Conversion\AdPlatformConsent::given());
         self::assertSame(['https://net.example/pb?c=77&tx=T1'], $fetched, 'the postback the API wrote is the one sent');
         self::assertStringContainsString("<img src='https://img.example/px.gif?c=77'", $fired['markup'], 'the image the API wrote is the one rendered');
 
