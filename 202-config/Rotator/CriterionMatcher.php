@@ -144,18 +144,20 @@ final class CriterionMatcher
                 return self::countryListed($visitor, $values) === $is;
             case 'device':
                 return self::listed(strtolower($visitor->device), $values, true) === $is;
+            case 'isp':
+                // No ISP without MaxMind ISP: "is not" matches, as it did.
+                return $visitor->isp === null ? !$is : self::ispListed($visitor->isp, $values) === $is;
         }
 
         $actual = self::visitorValue($type, $visitor);
         if ($actual === null) {
-            // No ISP without MaxMind ISP: "is not" matches, as it did.
-            return $type === 'isp' && !$is;
+            return false;
         }
 
         return self::listed($actual, $values) === $is;
     }
 
-    /** The value a geo, ISP or user-agent criterion compares; null when there is none to compare. */
+    /** The value a geo or user-agent criterion compares; null when there is none to compare. */
     private static function visitorValue(string $type, VisitorFacts $visitor): ?string
     {
         $code = (string) ($visitor->geo['country_code'] ?? '');
@@ -163,7 +165,6 @@ final class CriterionMatcher
         return match ($type) {
             'region' => (string) ($visitor->geo['region'] ?? '') . '(' . $code . ')',
             'city' => (string) ($visitor->geo['city'] ?? '') . '(' . $code . ')',
-            'isp' => $visitor->isp,
             'platform' => $visitor->os,
             'browser' => $visitor->browser,
             default => null,
@@ -191,6 +192,25 @@ final class CriterionMatcher
         }
 
         return false;
+    }
+
+    /**
+     * Whether an ISP criterion lists the visitor's ISP, by its whole name
+     * (Criterion::visitorIsp()) or as a click records it
+     * (Criterion::recordedIsp()). isp_name keeps 50 characters, so a name
+     * copied from Analyze › ISP is the recorded one, and compared with the
+     * whole name it never matched. A value longer than the recorded name
+     * still has to be the whole name: cut to the recorded length it would
+     * also match every ISP sharing its first 50 characters, which a rule
+     * that names one ISP in full does not ask for.
+     *
+     * @param list<string> $values
+     */
+    private static function ispListed(string $isp, array $values): bool
+    {
+        $recorded = Criterion::recordedIsp($isp);
+
+        return self::listed($isp, $values) || self::listed($recorded, $values);
     }
 
     /** @param list<string> $values */
