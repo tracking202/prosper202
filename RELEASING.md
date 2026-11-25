@@ -205,7 +205,46 @@ This is the normal path. CI builds and publishes; you only tag.
    developers)". `.github/` is not in the zip, so the file can land after
    the release checks without changing the tested tree.
 
-3. **Tag and push the tag.** The tag must be `v` + the exact version you set:
+3. **Check that the privacy page is still true, before tagging.** The policy
+   at `prosper.tracking202.com/privacy` (`privacy.html` in
+   `tracking202/prosper202-marketing`) says what an install sends to
+   Tracking202 and to others, what it loads from other hosts, what Prosper202
+   does with a visitor's consent, and how long things are kept. Each release
+   can make a sentence there untrue, and nothing else checks it. Read the
+   version's changelog block and its diff for every change to what leaves an
+   install, what an install keeps, or a consent default or switch, and hold
+   the page to them:
+   - **What the install sends.** Every outbound call in the shipped tree, not
+     only the new ones: `grep -rlE "curl_init|getData\(|tracking202\.com"`
+     over the served PHP, plus the `<script>`, `<img>` and `<iframe>` tags
+     that load another host (`ShellIsolationTest` lists the ones allowed). For
+     each, the page names the purpose, the fields sent, when, and to whom. The
+     product analytics queue (`202_messaging_events`,
+     `202_messaging_attributes`, `202-config/Messaging/CENTRAL-API.md`) counts,
+     with the events recorded, the profile sent, and the consent block sent
+     for every user.
+   - **The version it names.** A sentence such as "in the current release
+     (x.y.z) …" is either still true of this version or rewritten.
+   - **Consent.** The account holder's switches (Personal Settings › Data &
+     communication: defaults, the EU/UK prompt, what switching off deletes)
+     and everything a visitor's refusal (`p202_consent=0`) holds back, such
+     as cookies, ad-platform destinations and offline conversion files. The
+     install's own disclosure (`202-account/disclosure.php`)
+     and the Settings labels must say the same as the policy.
+   - **Third-party content.** A script or service the page lists that the
+     release removed comes off the page, and one it added goes on.
+   - **Retention.** A period the release adds or changes, on the install or on
+     a hosted service it talks to (the Landing Page Optimizer edge, the AI
+     connector, the chat), is stated.
+
+   The test is the spirit of the law, not its letter: someone who read the
+   page should not be surprised by anything this version sends, keeps or
+   loads. Fix what is untrue or missing on a branch of the marketing repo,
+   change "Last updated", and get the owner's yes before merging it; merge it
+   when the release goes live, with the docs pass (step 7). When nothing
+   changed, say so in the version branch's pull request to master.
+
+4. **Tag and push the tag.** The tag must be `v` + the exact version you set:
 
    ```bash
    git checkout master && git pull   # after the version branch is merged
@@ -213,7 +252,7 @@ This is the normal path. CI builds and publishes; you only tag.
    git push origin v1.9.59
    ```
 
-4. **Let CI do the rest.** The [`Release` workflow](.github/workflows/release.yml)
+5. **Let CI do the rest.** The [`Release` workflow](.github/workflows/release.yml)
    fires on `v*` tags. It:
    - runs on `ubuntu-24.04`, using the image's own PHP 8.3 and Composer
      (checked, with the extensions the build needs, before anything else) and
@@ -226,7 +265,7 @@ This is the normal path. CI builds and publishes; you only tag.
    - publishes a GitHub Release for the tag with the zip attached and
      `.github/release-notes/<version>.md` as its notes.
 
-5. **Verify on the Releases page.** Confirm `prosper202-<version>.zip` is
+6. **Verify on the Releases page.** Confirm `prosper202-<version>.zip` is
    attached and the version in the filename matches the tag. The build has
    already run `release-tree.php verify` on its contents; a spot check that
    `vendor/autoload.php` and `go-cli/dist/linux-amd64/p202` exist, and that
@@ -239,7 +278,7 @@ This is the normal path. CI builds and publishes; you only tag.
 > `GITHUB_TOKEN` (with `contents: write`) to create the release and upload the
 > asset.
 
-6. **Do a full docs pass when the release goes live.** Going live is the
+7. **Do a full docs pass when the release goes live.** Going live is the
    GitHub Release being published (for a security release, once the owner has
    said it may be), not the tag or the version branch merging. Prepare the
    changes on branches before, and merge them when it goes live, not earlier:
@@ -273,7 +312,7 @@ This is the normal path. CI builds and publishes; you only tag.
    - **For a security release,** the docs describe how the new version
      behaves. They never say what earlier versions allowed.
 
-7. **Publish a launch post on the blog when the release goes live**, at
+8. **Publish a launch post on the blog when the release goes live**, at
    `prosper.tracking202.com/blog/` (repo `prosper202-marketing`, `blog/`; see
    the Blog section of `documentation/build.py`). Draft it on a branch, check
    it in the branch's Cloudflare preview, and merge it with the docs.

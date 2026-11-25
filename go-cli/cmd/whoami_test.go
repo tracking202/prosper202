@@ -95,3 +95,22 @@ func TestAServerWithoutThePrincipal(t *testing.T) {
 		t.Errorf("whoami: err = %v, hint %q", err, hintFor(err))
 	}
 }
+
+// The server says which parts of Customer LTV the key may use, so an agent
+// leaves out what its role would be refused; whoami passes the answer on.
+func TestWhoamiShowsWhichLtvPartsTheKeyMayUse(t *testing.T) {
+	srv := identityServer(t, `{"data":{"features":{},"principal":{"user_id":7,"roles":["Campaign optimizer"],`+
+		`"scopes":["*"],"ltv":{"read":true,"settings_read":false,"crm_write":false,"incoming":true,"settings_write":false}}}}`)
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "good")
+	stdout, _, err := executeCommand("whoami", "--json")
+	if err != nil {
+		t.Fatalf("whoami: %v", err)
+	}
+	for _, want := range []string{`"ltv": {`, `"read": true`, `"settings_write": false`, `"crm_write": false`} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("whoami lacks %s:\n%s", want, stdout)
+		}
+	}
+}

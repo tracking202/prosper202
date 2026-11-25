@@ -39,8 +39,8 @@ through the real route, permission included), and the deletes preview with
 Built by `Prosper202\Setup\LandingPageCode`, the class Get LP Code builds its
 code with, so the strings are the page's byte for byte (a test holds them to
 what the page served before the class existed). Every snippet starts from
-`base_url`: the tracker link's base (user 1's tracking domain, or this
-server's name and port when none is set, plus the install directory) written
+`base_url`: the tracker link's base (the caller's own tracking domain, or the
+host the request arrived at when none is set, plus the install directory) written
 scheme-relative, `//track.example.com/`, as the page writes it — the code then
 works on an http or an https landing page.
 

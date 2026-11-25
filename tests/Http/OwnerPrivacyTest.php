@@ -46,6 +46,8 @@ final class OwnerPrivacyTest extends TestCase
             self::assertSame(1, preg_match('/^function ' . $name . '\(.*?^\}\n/ms', $source, $m), $name);
             eval($m[0]);
         }
+        // The visitor behind a listed proxy (TrustedProxies).
+        putenv('P202_TRUSTED_PROXIES=10.0.0.1');
         $_SERVER = ['REMOTE_ADDR' => '10.0.0.1', 'HTTP_X_FORWARDED_FOR' => self::VISITOR, 'SCRIPT_NAME' => '/x.php'];
         $_COOKIE = ['p202vid' => str_repeat('a', 32)];
         $this->log = (string) tempnam(sys_get_temp_dir(), 'p202-owner-privacy-');
@@ -55,6 +57,7 @@ final class OwnerPrivacyTest extends TestCase
     protected function tearDown(): void
     {
         @unlink($this->log);
+        putenv('P202_TRUSTED_PROXIES');
         parent::tearDown();
     }
 

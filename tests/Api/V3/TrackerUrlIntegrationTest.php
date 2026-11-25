@@ -221,15 +221,20 @@ final class TrackerUrlIntegrationTest extends TestCase
         $id = $this->tracker(0);
         $proxied = [
             'SERVER_PORT' => '8080', 'HTTPS' => '',
-            'HTTP_HOST' => 'proxy.example:9443', 'HTTP_X_FORWARDED_PROTO' => 'https',
+            'HTTP_HOST' => 'proxy.example:9443', 'HTTP_X_FORWARDED_PROTO' => 'https', 'REMOTE_ADDR' => '10.0.0.1',
         ];
-        self::assertStringStartsWith(
-            'https://proxy.example:9443/tracking202/redirect/dl.php?t202id=',
-            $this->url($id, [], $proxied)['direct_url']
-        );
-        self::setDomain('track.example.com');
-        $stored = $this->url($id, [], $proxied)['direct_url'];
-        self::assertStringStartsWith('https://track.example.com/tracking202/', $stored);
+        putenv('P202_TRUSTED_PROXIES=10.0.0.1');
+        try {
+            self::assertStringStartsWith(
+                'https://proxy.example:9443/tracking202/redirect/dl.php?t202id=',
+                $this->url($id, [], $proxied)['direct_url']
+            );
+            self::setDomain('track.example.com');
+            $stored = $this->url($id, [], $proxied)['direct_url'];
+            self::assertStringStartsWith('https://track.example.com/tracking202/', $stored);
+        } finally {
+            putenv('P202_TRUSTED_PROXIES');
+        }
     }
 
     public function testAnotherAccountsLandingPageIsNotLinked(): void

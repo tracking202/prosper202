@@ -5567,9 +5567,13 @@ class UPGRADE
             // The Shopify refund tables, which a database upgraded by an
             // early 1.9.80 build can lack (Prosper202\PaymentNotification\
             // Shopify\SettlementSchema), reconciled on the way up.
+            //
+            // The re-click backfill's stopped_at, when a stop began, which
+            // Settings and the cron output show (Prosper202\Click\ReClickBackfill).
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
+                \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
                 // The egress proxy set on Account › Settings (Prosper202\Http\EgressProxyStore).
                 \Prosper202\Database\Tables\SecretTables::egressProxy(),
             ]);

@@ -36,6 +36,10 @@ services:
       - P202_SERVER_STATE_DIR=/var/lib/prosper202/api-v3-state
       # Uploaded MaxMind ISP databases — persisted outside the docroot.
       - P202_GEO_DIR=/var/lib/prosper202/geo
+      # Whose X-Forwarded-For names the visitor. No host port is published,
+      # so only Coolify's proxy on the private Docker network reaches this
+      # container; `cloudflare` keeps Cloudflare's hop when it proxies the domain.
+      - P202_TRUSTED_PROXIES=${P202_TRUSTED_PROXIES:-cloudflare,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7}
     volumes:
       - prosper202-exports:/var/www/html/202-config/temp/attribution-exports
       - prosper202-api-state:/var/lib/prosper202/api-v3-state
