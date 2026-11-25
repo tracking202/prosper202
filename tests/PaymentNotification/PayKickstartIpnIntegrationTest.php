@@ -319,10 +319,12 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         $again = $this->post(self::fields(['event' => 'refund', 'amount' => '']), self::KEY_1);
         self::assertOutcome(OutcomeKind::DUPLICATE, 200, $again);
         self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post(self::fields(['event' => 'refund']), self::KEY_1));
+        // The same notification (its transaction_time) stating another amount is refused (CLAUDE.md #15).
         $second = $this->post(self::fields(['event' => 'refund', 'amount' => '10.00']), self::KEY_1);
         self::assertOutcome(OutcomeKind::CONFLICT, 409, $second);
-        self::assertSame('Transaction PK-TX-0001 on click ' . self::CLICK . ' is already reversed by 47; this refund'
-            . ' states 10.00, and a sale is reversed once. Nothing was changed.', $second->message);
+        self::assertSame('Transaction PK-TX-0001 on click ' . self::CLICK . ' is already reversed by 47 in conversion '
+            . self::conversionIds()[1] . ', recorded for this refund; this refund states 10.00. Nothing was changed.',
+            $second->message);
         self::assertCount(2, self::conversions());
     }
 
@@ -361,23 +363,38 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         self::assertCount(2, self::conversions());
     }
 
-    public function testAFullRefundAfterAPartialOneIsRefusedNamingWhatIsStillCredited(): void
+    /**
+     * A full refund at a partial one's transaction_time is that notification
+     * stating another amount, refused naming what is still credited; at
+     * another time it is a later refund and takes back the rest (T4PZ).
+     */
+    public function testAFullRefundAfterAPartialOneTakesBackWhatIsStillCredited(): void
     {
         $this->post(self::fields(), self::KEY_1);
         $this->post(self::fields(['event' => 'refund', 'amount' => '10.50']), self::KEY_1);
+        $reversal = self::conversionIds()[1];
 
         // No amount, and 0, each state a full refund: not the reversal on file.
         foreach (['', '0', '0.00'] as $amount) {
             $full = $this->post(self::fields(['event' => 'refund', 'amount' => $amount]), self::KEY_1);
             self::assertOutcome(OutcomeKind::CONFLICT, 409, $full);
-            self::assertSame('Transaction PK-TX-0001 on click ' . self::CLICK . ' is already reversed by 10.5, and'
-                . ' 36.5 of its 47 is still credited; this refund states its full amount, 47, and a sale is reversed'
-                . ' once. Nothing was changed.', $full->message);
+            self::assertSame('Transaction PK-TX-0001 on click ' . self::CLICK . ' is already reversed by 10.5 in'
+                . ' conversion ' . $reversal . ', recorded for this refund, and 36.5 of its 47 is still credited; this'
+                . ' refund states its full amount, 47. Nothing was changed.', $full->message);
         }
         $fields = self::fields(['event' => 'refund']);
         unset($fields['amount']);
         self::assertOutcome(OutcomeKind::CONFLICT, 409, $this->post($fields, self::KEY_1));
         self::assertSame(['47.00000', '-10.50000'], array_column(self::conversions(), 'click_payout'));
+
+        $later = self::fields(['event' => 'refund', 'amount' => '', 'transaction_time' => (string) (self::$now + 60)]);
+        $rest = $this->post($later, self::KEY_1);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $rest);
+        self::assertSame('Reversed transaction PK-TX-0001 on click ' . self::CLICK . ' by 36.5, all that was left of'
+            . ' the sale.', $rest->message);
+        self::assertSame(['47.00000', '-10.50000', '-36.50000'], array_column(self::conversions(), 'click_payout'));
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post($later, self::KEY_1));
+        self::assertCount(3, self::conversions());
     }
 
     public function testARefundOfTheWholeSaleIsAFullRefundHoweverItIsStated(): void
@@ -391,8 +408,9 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         }
         $partial = $this->post(self::fields(['event' => 'refund', 'amount' => '5']), self::KEY_1);
         self::assertOutcome(OutcomeKind::CONFLICT, 409, $partial);
-        self::assertSame('Transaction PK-TX-0001 on click ' . self::CLICK . ' is already reversed by 47; this refund'
-            . ' states 5, and a sale is reversed once. Nothing was changed.', $partial->message);
+        self::assertSame('Transaction PK-TX-0001 on click ' . self::CLICK . ' is already reversed by 47 in conversion '
+            . self::conversionIds()[1] . ', recorded for this refund; this refund states 5. Nothing was changed.',
+            $partial->message);
         self::assertSame(['47.00000', '-47.00000'], array_column(self::conversions(), 'click_payout'));
     }
 
@@ -440,7 +458,7 @@ final class PayKickstartIpnIntegrationTest extends TestCase
             array_map(static fn (array $r): array => [$r['click_payout'], $r['deleted']], self::conversions())
         );
 
-        // Each of the two, sent again, is a duplicate; another refund meets the one that stands.
+        // Each of the two, sent again, is a duplicate; another refund finds nothing left to take back.
         self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post($second, self::KEY_1));
         self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post($first, self::KEY_1));
         $partial = $this->post(self::fields(['event' => 'refund', 'amount' => '5']), self::KEY_1);
@@ -751,13 +769,13 @@ final class PayKickstartIpnIntegrationTest extends TestCase
     /** No adapter sends a currency yet; the processor refuses one it would have to convert. */
     /** A refund with an id of its own (no PayKickstart refund has one) is told from another by that id. */
     /**
-     * A refund carries no id of its own, so a second refund of a sale already
-     * reversed, at another transaction_time, is another refund: refused
-     * naming the reversal on file, never a 200 duplicate that loses it. The
-     * first one sent again is that refund however it is rendered: another
-     * spelling of its amount, other buyer details, signed with another key.
+     * A refund carries no id of its own, so a second refund of a sale partly
+     * reversed, at another transaction_time, is another refund: recorded,
+     * never a 200 duplicate that loses it (T4PZ). The first one sent again is
+     * that refund however it is rendered: another spelling of its amount,
+     * other buyer details, signed with another key.
      */
-    public function testASecondRefundOfTheSameAmountAtAnotherTimeIsRefusedNotADuplicate(): void
+    public function testASecondRefundOfTheSameAmountAtAnotherTimeIsAnotherPartialRefund(): void
     {
         $this->post(self::fields(), self::KEY_1);
         $first = self::fields(
@@ -769,17 +787,15 @@ final class PayKickstartIpnIntegrationTest extends TestCase
             ['event' => 'refund', 'amount' => '-10.00', 'transaction_time' => (string) (self::$now + 120)]
         );
         $outcome = $this->post($second, self::KEY_1);
-        self::assertOutcome(OutcomeKind::CONFLICT, 409, $outcome);
-        $reversal = (int) self::conversionIds()[1];
-        self::assertSame('Transaction PK-TX-0001 on click ' . self::CLICK . ' is already reversed by 10 in conversion '
-            . $reversal . ', and 37 of its 47 is still credited; this refund is another notification than that'
-            . ' reversal\'s and states 10.00, and a sale is reversed once. Nothing was changed.', $outcome->message);
-        self::assertSame(['47.00000', '-10.00000'], array_column(self::conversions(), 'click_payout'));
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $outcome);
+        self::assertSame('Reversed transaction PK-TX-0001 on click ' . self::CLICK . ' by 10.00.', $outcome->message);
+        self::assertSame(['47.00000', '-10.00000', '-10.00000'], array_column(self::conversions(), 'click_payout'));
 
         $rendered = ['amount' => '10', 'buyer_email' => 'changed@example.com', 'licenses' => 'LIC-1'] + $first;
         self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post($rendered, self::KEY_2));
         self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post($first, self::KEY_1));
-        self::assertCount(2, self::conversions());
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post($second, self::KEY_1));
+        self::assertCount(3, self::conversions());
     }
 
     /**
@@ -866,7 +882,7 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         self::assertOutcome(OutcomeKind::DUPLICATE, 200, $send($refund('RF-1')));
         $other = $send($refund('RF-2'));
         self::assertOutcome(OutcomeKind::CONFLICT, 409, $other);
-        self::assertStringContainsString('a sale can be reversed once', $other->message);
+        self::assertStringContainsString('is already reversed in full', $other->message);
 
         $deleted = (int) self::conversionIds()[1];
         self::conversionRepository()->softDelete($deleted, self::ACCOUNT);

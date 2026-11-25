@@ -40,8 +40,8 @@ use Prosper202\PaymentNotification\Verification;
  * refund is told from another by its transaction_time (fingerprint()), which
  * PayKickstart documents as when the transaction was generated, so its retry
  * carries the same one whatever else it renders again. A second refund of a
- * sale already reversed at another time is refused naming the reversal on
- * file, never answered as the first (CLAUDE.md #15).
+ * sale at another time is another partial refund, never answered as the
+ * first (CLAUDE.md #15): it takes back what it states of what is left.
  */
 final class PayKickstartAdapter implements ProviderAdapter, FingerprintsNotifications, KeyedRefundsByBodyBefore1980
 {

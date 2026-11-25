@@ -161,6 +161,10 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *        each transaction_id is taken back from it once),
      *        cap_at_sale (true = a reversal stating more than the sale it
      *        reverses takes back the whole sale; applied under the click lock),
+     *        reverses_partially (true = a sale already partly reversed takes
+     *        another reversal rather than refusing it: each takes back what it
+     *        states, at most what is still credited (none stated: all of it),
+     *        summed under the click lock; with nothing left it is refused),
      *        once_per_click (true = record only while the click is not yet a
      *        lead; checked under the click lock),
      *        once_per_click_unkeyed (true = the same check, applied only when
@@ -510,7 +514,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
         $shopifyPartial = $reverses !== null && !$reversesCarried
             && $source === ConversionSource::SHOPIFY && ($reverses['source'] ?? null) === ConversionSource::SHOPIFY->value;
-        if ($reverses !== null && !$shopifyPartial) {
+        $partial = $reverses !== null && !$reversesCarried && !$shopifyPartial && !empty($data['reverses_partially']);
+        if ($reverses !== null && !$shopifyPartial && !$partial) {
             // The carried value stands for every sale before the ledger: each
             // transaction id is taken back from it once.
             $otherStmt = $this->conn->prepareWrite(
@@ -572,14 +577,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         } elseif ($shopifyPartial) {
             // The click transaction serializes refunds. Sum all live reversals,
             // including those made by another source, before limiting this one.
-            $prior = $this->conn->prepareWrite(
-                'SELECT click_payout FROM 202_conversion_logs WHERE reverses_conv_id = ? AND user_id = ? AND deleted = 0'
-            );
-            $this->conn->bind($prior, 'ii', [(int) $reverses['conv_id'], $userId]);
-            $left = max(0, Amount::toUnits((string) $reverses['click_payout']));
-            foreach ($this->conn->fetchAll($prior) as $row) {
-                $left -= abs(Amount::toUnits((string) $row['click_payout']));
-            }
+            $left = $this->creditedOf($reverses, $userId);
             if ($left <= 0) {
                 throw new ReversalException('Nothing remains of this sale to refund.', ReversalException::CONFLICT);
             }
@@ -592,6 +590,20 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $saleUnits = abs(Amount::toUnits((string) $reverses['click_payout']));
             if (!empty($data['cap_at_sale']) && $explicitPayout !== null && abs($explicitPayout) > $saleUnits) {
                 $explicitPayout = $saleUnits;
+            }
+            if ($partial) {
+                // Read under the click's lock, so two refunds of one sale cannot both take its last credit.
+                $left = $this->creditedOf($reverses, $userId);
+                if ($left <= 0) {
+                    throw new ReversalException(
+                        'Conversion ' . (int) $reverses['conv_id'] . ' (transaction id "' . $transactionId
+                        . '") is already reversed in full; nothing of it is left to take back.',
+                        ReversalException::CONFLICT
+                    );
+                }
+                if ($explicitPayout !== null ? abs($explicitPayout) > $left : $left < $saleUnits) {
+                    $explicitPayout = $left;
+                }
             }
             $money = $this->reversalMoney(
                 $explicitPayout,
@@ -958,6 +970,34 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     }
 
     /**
+     * What a sale still credits, in units, read under the click's lock: its
+     * amount less what its live reversals took back, from any source.
+     *
+     * @param array<string, mixed> $sale the row a reversal reverses
+     */
+    private function creditedOf(array $sale, int $userId): int
+    {
+        $credited = max(0, Amount::toUnits((string) $sale['click_payout']));
+
+        return max(0, $credited - $this->reversedOf((int) $sale['conv_id'], $userId));
+    }
+
+    /** What the live reversals of a conversion took back, in units, read from the primary. */
+    private function reversedOf(int $convId, int $userId): int
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT click_payout FROM 202_conversion_logs WHERE reverses_conv_id = ? AND user_id = ? AND deleted = 0'
+        );
+        $this->conn->bind($stmt, 'ii', [$convId, $userId]);
+        $taken = 0;
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $taken += abs(Amount::toUnits((string) $row['click_payout']));
+        }
+
+        return $taken;
+    }
+
+    /**
      * What is left of a legacy baseline, in units, read under the click's
      * lock: nothing once a later sale superseded it or when it carried no
      * value above 0, else its value less what live reversals took back.
@@ -970,16 +1010,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             return 0;
         }
         // Signed: 1.9.56 could leave a click below 0, which leaves nothing.
-        $left = Amount::toUnits((string) $baseline['click_payout']);
-        $stmt = $this->conn->prepareWrite(
-            'SELECT click_payout FROM 202_conversion_logs WHERE reverses_conv_id = ? AND user_id = ? AND deleted = 0'
-        );
-        $this->conn->bind($stmt, 'ii', [(int) $baseline['conv_id'], $userId]);
-        foreach ($this->conn->fetchAll($stmt) as $row) {
-            $left -= abs(Amount::toUnits((string) $row['click_payout']));
-        }
+        $carried = Amount::toUnits((string) $baseline['click_payout']);
 
-        return max(0, $left);
+        return max(0, $carried - $this->reversedOf((int) $baseline['conv_id'], $userId));
     }
 
     /**

@@ -10,9 +10,9 @@ namespace Prosper202\PaymentNotification;
  * ClickBank's notification is not its form fields (an encrypted JSON order,
  * so the fields are empty and would make every refund the same one), and
  * PayKickstart's refund is told from another by its transaction_time. The
- * processor keys a refund without an id of its own by it, and refuses any
- * other reversal of a payment that one already stands against, whatever it
- * states: the provider's retry is the same notification, so it is another.
+ * processor keys a refund without an id of its own by it, and records any
+ * other as another partial refund, at most what the payment still credits:
+ * the provider's retry is the same notification, so it is another.
  */
 interface FingerprintsNotifications
 {

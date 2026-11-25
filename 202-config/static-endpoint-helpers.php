@@ -642,6 +642,11 @@ if (!function_exists('p202RecordConversion')) {
             // capped by the writer under the click lock (R4CE).
             $data['cap_at_sale'] = true;
         }
+        if (!empty($log['reversal']) && !empty($log['reverses_partially'])) {
+            // Another partial refund of a sale, capped at what is left of it
+            // under the click lock (T4PZ).
+            $data['reverses_partially'] = true;
+        }
         if (!empty($log['notify_traffic_source'])) {
             // Queue the click's traffic-source server postbacks with the row
             // (NotificationOutbox), in its transaction; they are sent after
@@ -1285,6 +1290,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
      *     user_id?: int, campaign_id?: int, transaction_id?: string,
      *     use_pixel_payout?: bool, payout?: string, ip?: string, user_agent?: string,
      *     source?: string, reversal?: bool, reversal_ref?: string, reverses_carried_value?: bool, cap_at_sale?: bool,
+     *     reverses_partially?: bool,
      *     event_name?: string|null,
      *     conv_time?: int,
      *     notify_traffic_source?: bool,
@@ -1396,6 +1402,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
                 'reversal_ref'    => (string) ($opts['reversal_ref'] ?? ''),
                 'reverses_carried_value' => !empty($opts['reverses_carried_value']),
                 'cap_at_sale'     => !empty($opts['cap_at_sale']),
+                'reverses_partially' => !empty($opts['reverses_partially']),
                 'event_name'      => (string) ($opts['event_name'] ?? ''),
                 'notify_traffic_source' => !empty($opts['notify_traffic_source']),
                 'currency'        => (string) ($opts['currency'] ?? ''),

@@ -31,8 +31,11 @@ use Prosper202\Database\Connection;
  * one that states another is refused, never answered as the first
  * (CLAUDE.md #15). Where the provider says what one notification is
  * (FingerprintsNotifications), a refund is a duplicate only when it is that
- * notification. A refund takes back at most what its sale recorded: one
- * stating more is capped at the sale and its answer names both amounts.
+ * notification. A refund told apart from every other (its own id, a
+ * fingerprint, Shopify's) takes back what it states of what its sale still
+ * credits, so a sale takes several partial refunds; one keyed only by its
+ * body is the sale's one reversal. Either takes back at most what is left:
+ * one stating more is capped there and its answer names both amounts.
  * From a provider whose 1.9.56 handler wrote no rows (ReversesPreUpgradeSales),
  * a refund naming no sale on file takes its stated amount back from the value
  * the click carried from before the upgrade, at most what is left of it.
@@ -293,10 +296,16 @@ final class Processor
         // that stands (a sale is reversed once), or reverses the sale again
         // when none does: the one on file was deleted. A provider that says
         // what one notification is (FingerprintsNotifications) sends a retry
-        // as that same notification, so any other is another reversal, never
+        // as that same notification, so any other is another refund, never
         // a duplicate of the one that stands, whatever amount it states.
         $ownId = $n->transactionId !== null && $n->transactionId !== $original;
         $exact = $provider instanceof FingerprintsNotifications;
+        // A refund told apart from every other (its own id, the provider's
+        // fingerprint, Shopify's refunds) takes back what it states of what
+        // the sale still credits, so a sale takes several partial refunds;
+        // one keyed only by its body cannot be told from that body rendered
+        // again, so it stays the sale's one reversal (T4PZ).
+        $partial = $ownId || $exact || $provider->source() === ConversionSource::SHOPIFY;
         $bodyKey = $request->heldKeys['body'] ?? self::bodyFingerprint($request->fields);
         $body = $exact ? ($request->heldKeys['notification'] ?? $provider->fingerprint($request)) : $bodyKey;
         $reference = $ownId ? (string) $n->transactionId : 'body:' . $body;
@@ -314,22 +323,17 @@ final class Processor
                 $owner
             );
             if ($before !== null) {
-                return $this->repeatedReversal($n, $on, $before, $owner);
+                return $this->repeatedReversal($n, $on, $before, $owner, false, $partial);
             }
         }
-        // A refund takes back at most what its sale recorded (a sale is
-        // reversed once): one stating more (a fee, a mismatched payment) is
-        // capped there and answered 200 naming both amounts, which the log
-        // keeps, since a provider retries a refusal for days. The writer
-        // applies the cap under the click's lock (cap_at_sale): this read
-        // comes before it, and a sale still committing reads as none (R4CE).
+        // A refund takes back at most what its sale still credits: one
+        // stating more (a fee, a mismatched payment) is capped there and
+        // answered 200 naming both amounts, which the log keeps, since a
+        // provider retries a refusal for days. The writer caps it under the
+        // click's lock (cap_at_sale, reverses_partially), and the answer is
+        // worded from the row it wrote: a read here comes before the lock,
+        // and a sale still committing reads as none (R4CE).
         $amount = $n->amount;
-        $by = $amount ?? 'its full amount';
-        if ($amount !== null && $sale !== null && abs(Amount::toUnits($amount)) > $sale['units']) {
-            $by = self::units($sale['units']) . ', the whole sale: this ' . $n->event . ' states ' . $amount
-                . ', more than the sale recorded';
-            $amount = Amount::fromUnits($sale['units']);
-        }
         // A sale credited before the upgrade left no row to name: the writer
         // takes its refund back from the value the click carried over, capped
         // under the click lock at what is left of it.
@@ -340,6 +344,7 @@ final class Processor
             'reversal_ref' => $ref,
             'reverses_carried_value' => $carriedPath,
             'cap_at_sale' => true,
+            'reverses_partially' => $partial,
             'use_pixel_payout' => $amount !== null,
             'payout' => $amount ?? '',
             'conv_time' => $time,
@@ -353,12 +358,13 @@ final class Processor
             if (
                 $result['reason'] === 'duplicate' && !$carriedPath && !$ownId
                 && $provider instanceof KeyedRefundsByBodyBefore1980
-                && $this->deletedReversalOfAnotherAmount($n, $result['conv_id'], $owner)
+                && $this->deletedReversalOfAnotherAmount($n, $result['conv_id'], $owner, $partial)
             ) {
                 $result = $write('body:' . $bodyKey);
             }
         } catch (ReversalException $e) {
-            $standing = !$ownId && $e->kind === ReversalException::CONFLICT
+            // Partial refunds conflict only when nothing of the sale is left.
+            $standing = !$partial && $e->kind === ReversalException::CONFLICT
                 ? $this->liveReversalOfTransaction($clickId, $original, $owner)
                 : null;
             if ($standing !== null) {
@@ -374,24 +380,9 @@ final class Processor
         }
         $taken = $carriedPath && $result['conv_id'] > 0 ? $this->carriedTaken($result['conv_id'], $owner) : null;
         if ($result['recorded']) {
-            // A sale that committed after the read above: the writer found it
-            // under the lock and capped the refund there.
-            if (
-                $sale === null && $taken === null && $n->amount !== null
-                && $provider->source() !== ConversionSource::SHOPIFY
-            ) {
-                $stored = $this->storedReversal($result['conv_id'], $owner);
-                if (abs(Amount::toUnits($n->amount)) > $stored['sale'] && $stored['reversed'] === $stored['sale']) {
-                    $by = self::units($stored['sale']) . ', the whole sale: this ' . $n->event . ' states ' . $n->amount
-                        . ', more than the sale recorded';
-                }
-            }
-            if ($provider->source() === ConversionSource::SHOPIFY && $result['payout'] !== '' && $amount !== null) {
-                $actual = abs(Amount::toUnits($result['payout']));
-                if ($actual !== abs(Amount::toUnits($amount))) {
-                    $by = self::units($actual) . ', all that was left of the sale: this ' . $n->event . ' states ' . $amount;
-                }
-            }
+            $by = $taken === null
+                ? $this->reversedBy($n, $this->storedReversal($result['conv_id'], $owner))
+                : (string) $amount;
             if ($taken !== null) {
                 if ($taken !== abs(Amount::toUnits((string) $amount))) {
                     $by = self::units($taken) . ', all that was left of it: this ' . $n->event . ' states ' . $amount;
@@ -420,8 +411,7 @@ final class Processor
                 );
             }
 
-            return $this->repeatedReversal($n, $on, $result['conv_id'], $owner, false,
-                $provider->source() === ConversionSource::SHOPIFY);
+            return $this->repeatedReversal($n, $on, $result['conv_id'], $owner, false, $partial);
         }
         if ($result['reason'] === 'unknown_click' || $result['reason'] === 'foreign_click') {
             return self::unknownClick($clickId, $provider->clickField());
@@ -770,9 +760,10 @@ final class Processor
     /**
      * A refund that repeats a reversal on file: a duplicate only when it takes
      * back what that reversal took back (one that states no amount takes the
-     * whole sale), and refused naming both otherwise (CLAUDE.md #15). One
-     * that is known to be another notification than the reversal's
-     * ($another) is refused whatever it states: it is another refund.
+     * whole sale, or with $partial all that was left of it), and refused
+     * naming both otherwise (CLAUDE.md #15). One that is known to be another
+     * notification than the reversal's ($another) is refused whatever it
+     * states: it is another refund, and a sale is reversed once.
      */
     private function repeatedReversal(
         Notification $n,
@@ -780,11 +771,11 @@ final class Processor
         int $reversalId,
         int $owner,
         bool $another = false,
-        bool $shopifyPartial = false
+        bool $partial = false
     ): Outcome {
         $stored = $this->storedReversal($reversalId, $owner);
-        // Capped as the reversal was: a refund stating more than its sale took back the whole sale.
-        $cap = $shopifyPartial ? $this->shopifyRemainingBefore($reversalId, $owner, $stored['sale']) : $stored['sale'];
+        // Capped as the reversal was: at the sale, or at what the sale still credited before it.
+        $cap = $partial ? $this->remainingBefore($reversalId, $owner, $stored['sale']) : $stored['sale'];
         $stated = $n->amount !== null ? min(abs(Amount::toUnits($n->amount)), $cap) : $cap;
         $by = self::units($stored['reversed']);
         if ($another || $stated !== $stored['reversed']) {
@@ -799,16 +790,20 @@ final class Processor
                     $owner
                 );
             }
-            $rest = $stored['sale'] - $stored['reversed'];
+            $rest = $partial
+                ? $this->remainingBefore($reversalId, $owner, $stored['sale'], false)
+                : $stored['sale'] - $stored['reversed'];
             $credited = $rest > 0
                 ? ', and ' . self::units($rest) . ' of its ' . self::units($stored['sale']) . ' is still credited'
                 : '';
 
             return new Outcome(
                 OutcomeKind::CONFLICT,
-                $on . ' is already reversed by ' . $by . ($another ? ' in conversion ' . $reversalId : '') . $credited
-                . $states
-                . ', and a sale is reversed once. Nothing was changed.',
+                $partial
+                    ? $on . ' is already reversed by ' . $by . ' in conversion ' . $reversalId . ', recorded for this '
+                        . $n->event . $credited . $states . '. Nothing was changed.'
+                    : $on . ' is already reversed by ' . $by . ($another ? ' in conversion ' . $reversalId : '')
+                        . $credited . $states . ', and a sale is reversed once. Nothing was changed.',
                 $reversalId,
                 $owner
             );
@@ -825,8 +820,11 @@ final class Processor
         );
     }
 
-    /** Remaining sale amount immediately before this Shopify reversal, conservatively excluding deleted rows. */
-    private function shopifyRemainingBefore(int $reversalId, int $owner, int $sale): int
+    /**
+     * What the sale a reversal reverses still credited just before it
+     * ($before), or still credits now, counting only live reversals.
+     */
+    private function remainingBefore(int $reversalId, int $owner, int $sale, bool $before = true): int
     {
         $conn = new Connection($this->db);
         // The writer just found this reversal on the primary. A lagging replica
@@ -834,8 +832,8 @@ final class Processor
         $stmt = $conn->prepareWrite(
             'SELECT earlier.click_payout FROM 202_conversion_logs current'
             . ' JOIN 202_conversion_logs earlier ON earlier.reverses_conv_id = current.reverses_conv_id'
-            . ' AND earlier.user_id = current.user_id AND earlier.conv_id < current.conv_id AND earlier.deleted = 0'
-            . ' WHERE current.conv_id = ? AND current.user_id = ?'
+            . ' AND earlier.user_id = current.user_id' . ($before ? ' AND earlier.conv_id < current.conv_id' : '')
+            . ' AND earlier.deleted = 0 WHERE current.conv_id = ? AND current.user_id = ?'
         );
         $conn->bind($stmt, 'ii', [$reversalId, $owner]);
         foreach ($conn->fetchAll($stmt) as $row) {
@@ -898,15 +896,40 @@ final class Processor
 
     /**
      * Whether a reversal is deleted and took back another amount than this
-     * refund states (capped at the sale, the whole sale when it states none),
-     * the comparison repeatedReversal() makes.
+     * refund states (capped as repeatedReversal() caps it), the comparison
+     * repeatedReversal() makes.
      */
-    private function deletedReversalOfAnotherAmount(Notification $n, int $reversalId, int $owner): bool
+    private function deletedReversalOfAnotherAmount(Notification $n, int $reversalId, int $owner, bool $partial): bool
     {
         $stored = $this->storedReversal($reversalId, $owner);
-        $stated = $n->amount !== null ? min(abs(Amount::toUnits($n->amount)), $stored['sale']) : $stored['sale'];
+        $cap = $partial ? $this->remainingBefore($reversalId, $owner, $stored['sale']) : $stored['sale'];
+        $stated = $n->amount !== null ? min(abs(Amount::toUnits($n->amount)), $cap) : $cap;
 
         return $stored['deleted'] && $stated !== $stored['reversed'];
+    }
+
+    /**
+     * What a recorded reversal took back, as its answer says it: the amount
+     * stated, or the cap the writer applied naming both.
+     *
+     * @param array{deleted: bool, reversed: int, sale: int} $stored
+     */
+    private function reversedBy(Notification $n, array $stored): string
+    {
+        if ($n->amount === null) {
+            return $stored['reversed'] < $stored['sale']
+                ? self::units($stored['reversed']) . ', all that was left of the sale'
+                : 'its full amount';
+        }
+        if ($stored['reversed'] === abs(Amount::toUnits($n->amount))) {
+            return $n->amount;
+        }
+
+        return $stored['reversed'] === $stored['sale']
+            ? self::units($stored['sale']) . ', the whole sale: this ' . $n->event . ' states ' . $n->amount
+                . ', more than the sale recorded'
+            : self::units($stored['reversed']) . ', all that was left of the sale: this ' . $n->event . ' states '
+                . $n->amount;
     }
 
     /** The account's row on a click under a dedupe key, deleted or not, or null. */
