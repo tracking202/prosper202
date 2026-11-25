@@ -20,7 +20,12 @@ var ltvCmd = &cobra.Command{
 		"engagement, subscriptions, companies, products) and the writes the API offers — customer and\n" +
 		"company records (`ltv customer`, `ltv company`), revenue, engagement events, subscriptions and\n" +
 		"products pushed from other systems, custom fields, outbound webhooks and integrations.\n\n" +
-		"LTV writes cannot be staged: under --staged they are refused before anything is sent.",
+		"LTV writes cannot be staged: under --staged they are refused before anything is sent.\n\n" +
+		"Each part asks a scope of the key and a permission of its user's role, as the LTV pages do:\n" +
+		"reads ltv:read and campaign data; webhooks and integrations, to read, also API integrations;\n" +
+		"customer, company and product writes ltv:write and Setup; revenue, events and subscriptions\n" +
+		"sent in ltv:write and campaign data; fields, webhooks and integrations, to write, ltv:write\n" +
+		"and API integrations. `p202 whoami` shows which parts this key may use (`ltv`).",
 }
 
 // Values the LTV endpoints accept: MysqlLtvRepository's breakdowns(),

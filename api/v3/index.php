@@ -951,6 +951,10 @@ try {
                 'user_id' => $auth->userId(),
                 'roles' => $auth->roles(),
                 'scopes' => $auth->scopes(),
+                // Customer LTV, part by part: whether this key's scope and its
+                // user's role let it use each (LtvAccess::PARTS), so a client
+                // does not offer what the role would be refused.
+                'ltv' => \Api\V3\Support\LtvAccess::of($auth, $db),
             ];
 
             return $answer;
@@ -1436,7 +1440,13 @@ try {
             });
             $r->put('/{id}/preferences', function ($ctx) use ($auth, $make, $payload, $db) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
-                return $make()->updatePreferences(PathId::of($ctx), $payload);
+                // The LTV › Settings values ask what the LTV Settings writes ask.
+                return $make()->updatePreferences(
+                    PathId::of($ctx),
+                    $payload,
+                    null,
+                    static fn () => \Api\V3\Support\LtvAccess::require($auth, $db, 'settings_write')
+                );
             });
 
             // Click filtering (Personal settings' card, asked the same way):
