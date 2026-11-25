@@ -278,6 +278,40 @@ final class RedirectorRulesSaveIntegrationTest extends TestCase
         ];
     }
 
+    /**
+     * NN65: a weight field takes what the API takes, 0 to 100, so the form
+     * no longer sends a weight the save then refuses. A weight an older
+     * page stored above 100 is the exception the API makes too: it is
+     * shown in a field that takes it, and posted back unchanged it is kept;
+     * changed to another above 100, it is refused.
+     */
+    public function testAWeightFieldTakesTheApisRangeAndAHeldWeightAbove100IsKept(): void
+    {
+        self::q('UPDATE 202_rotator_rules SET splittest = 1 WHERE id = ' . self::KEPT);
+        $old = self::insert('INSERT INTO 202_rotator_rules_redirects SET rule_id = ' . self::KEPT
+            . ", redirect_url = 'https://old.example/', weight = '150', name = 'URL: <a href=https://old.example/>link</a>'");
+
+        $page = self::page('tracking202/setup/rotator.php', ['rotator_id' => (string) self::ROTATOR]);
+        preg_match('~<template id="redirect-template">.*?</template>~s', $page, $template);
+        self::assertNotSame([], $template, 'the page carries the new destination\'s template');
+        self::assertStringContainsString('<input type="number" min="0" max="100" ', $template[0], 'a new destination takes 0 to 100');
+        self::assertMatchesRegularExpression('/data-redirect-id="' . self::KEPT . '".*?min="0" max="100" [^>]*value="100"/s', $page);
+        self::assertMatchesRegularExpression('/data-redirect-id="' . $old . '".*?min="0" max="150" [^>]*value="150"/s', $page,
+            'the weight stored above 100 is in a field that takes it');
+
+        $post = self::post();
+        $post['data'][0]['redirects'] = [
+            ['id' => (string) self::KEPT, 'type' => 'campaign', 'value' => (string) self::OFFER, 'weight' => '100'],
+            ['id' => (string) $old, 'type' => 'url', 'value' => 'https://old.example/', 'weight' => '150'],
+        ];
+        self::assertSame('DONE', trim(self::save($post)), 'posted back unchanged, it is kept');
+        $post['data'][0]['redirects'][1]['weight'] = '140';
+        self::assertSame('ERROR: Rule 1, destination 2, weight: A whole number from 0 to 100.', trim(self::save($post)));
+        $weights = self::requireScratch()->query('SELECT weight FROM 202_rotator_rules_redirects WHERE rule_id = ' . self::KEPT . ' ORDER BY id');
+        self::assertInstanceOf(\mysqli_result::class, $weights);
+        self::assertSame([['100'], ['150']], $weights->fetch_all());
+    }
+
     /** JK3D: a default_type the page does not know is refused before any write (it ran `UPDATE 202_rotators SET `). */
     public function testAnUnknownDefaultTypeWritesNothing(): void
     {
