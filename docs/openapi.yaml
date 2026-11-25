@@ -11846,7 +11846,8 @@ paths:
       - LTV
       summary: Update a company
       description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
-        an `idempotency_key` field instead) and have no `dry_run` preview. Supply `name`, `domain` or both.
+        an `idempotency_key` field instead) and have no `dry_run` preview. Supply `name`, `domain` or both. A new `name`
+        queues a `customer.updated` webhook for each attached customer whose `company` it changes.
       operationId: ltvPatchCompany
       requestBody:
         required: true
@@ -11910,7 +11911,8 @@ paths:
       - LTV
       summary: Merge another company into this one
       description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
-        an `idempotency_key` field instead) and have no `dry_run` preview.
+        an `idempotency_key` field instead) and have no `dry_run` preview. Queues a `customer.updated` webhook for each
+        customer the merge moves.
       operationId: ltvMergeCompany
       parameters:
       - name: id
