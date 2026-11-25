@@ -1,5 +1,11 @@
 <?php
 declare(strict_types=1);
+// Wherever a checkout is the web root (the dev compose stack), this file is
+// served: a request would write 202-config.php before the setup wizard does.
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
 /**
  * Generate 202-config.php from 202-config-sample.php using values supplied by
  * the environment. The Docker entrypoint calls this so the container wires its
@@ -12,7 +18,13 @@ declare(strict_types=1);
  * 202-config.php already exists, making it safe to run on every container start.
  */
 
-$root   = dirname(__DIR__, 2) . '/';   // build/scripts -> repo root
+// The app directory: the argument the Docker entrypoint passes (the image
+// keeps this script outside the docroot), else the checkout this file is in.
+$root = isset($argv[1]) ? rtrim($argv[1], '/') . '/' : dirname(__DIR__, 2) . '/';
+if (!is_dir($root)) {
+    fwrite(STDERR, "Error: {$root} is not a directory\n");
+    exit(1);
+}
 $sample = $root . '202-config-sample.php';
 $target = $root . '202-config.php';
 

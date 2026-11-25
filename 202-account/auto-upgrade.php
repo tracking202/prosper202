@@ -341,7 +341,7 @@ template_top('1-Click Upgrade');
 					<?php } else {
 						unset($_SESSION['user_id']); ?>
 						<?php echo p202_flash('ok', 'Prosper202 has been upgraded. Sign in again to use the new version.'); ?>
-						<a class="btn btn-primary" href="<?php echo $e(get_absolute_url() . '202-account/signout.php'); ?>">Sign in again</a>
+						<?php echo p202_signout_form(get_absolute_url(), $_SESSION['token'] ?? null, 'Sign in again', 'btn btn-primary'); ?>
 					<?php } ?>
 				</div>
 			</section>

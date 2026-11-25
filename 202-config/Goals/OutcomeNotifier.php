@@ -30,7 +30,8 @@ namespace Prosper202\Goals;
  *                 or an earlier row for the same goal and n, of any version
  *                 and retired or not, was announced — plan §5.7),
  *                 `no_click` (an install with no click has no traffic
- *                 source);
+ *                 source), `consent_withheld` (its visitor refused consent:
+ *                 its queued postbacks are withheld, AdPlatformConsent);
  *     off         payable, but the campaign does not notify for this goal;
  *     none        not payable: nothing is ever sent for it.
  */

@@ -300,6 +300,40 @@ final class CriterionMatcherTest extends TestCase
         self::assertTrue(CriterionMatcher::criterion('isp', 'is_not', 'Example Telecom', $visitor));
     }
 
+    /**
+     * 202_locations_isp.isp_name keeps 50 characters, so the name Analyze ›
+     * ISP lists for a longer ISP, and a rule copied from it, is the first 50.
+     * That name matches; a longer value is still read as the whole name, so
+     * a cut of it does not match every ISP sharing its first 50 characters.
+     */
+    public function testAnIspRuleMatchesTheNameAClickRecords(): void
+    {
+        $whole = 'Deutsche Telekom Netzwerk Infrastruktur Berlin Mitte Ost GmbH';
+        self::assertGreaterThan(50, strlen($whole));
+        $recorded = substr($whole, 0, 50);
+        $visitor = self::visitor(['isp' => $whole]);
+        $other = self::visitor(['isp' => substr($whole, 0, 52) . 'Hamburg AG']);
+
+        self::assertTrue(CriterionMatcher::criterion('isp', 'is', $whole, $visitor), 'the whole name');
+        self::assertTrue(CriterionMatcher::criterion('isp', 'is', $recorded, $visitor), 'the name a click records');
+        self::assertTrue(CriterionMatcher::criterion('isp', 'is', 'Other ISP, ' . $recorded, $visitor), 'in a list');
+        self::assertFalse(CriterionMatcher::criterion('isp', 'is_not', $recorded, $visitor));
+        self::assertTrue(CriterionMatcher::criterion('isp', 'is_not', 'Other ISP', $visitor));
+        self::assertFalse(CriterionMatcher::criterion('isp', 'is', substr($whole, 0, 55), $visitor), 'a prefix longer than the recorded name is no name');
+        self::assertFalse(CriterionMatcher::criterion('isp', 'is', $whole, $other), 'the whole name names one ISP');
+        self::assertTrue(CriterionMatcher::criterion('isp', 'is', $recorded, $other), 'the recorded name is all the click keeps');
+        self::assertFalse(CriterionMatcher::criterion('isp', 'is', substr($whole, 0, 49), $visitor), 'a shorter cut is no name');
+    }
+
+    /** A cut that ends on a space is recorded and typed without it. */
+    public function testAnIspCutAtASpaceMatchesWithoutIt(): void
+    {
+        $whole = str_repeat('a', 49) . ' Broadband';
+        $visitor = self::visitor(['isp' => $whole]);
+        self::assertTrue(CriterionMatcher::criterion('isp', 'is', str_repeat('a', 49), $visitor));
+        self::assertTrue(CriterionMatcher::criterion('isp', 'is', str_repeat('a', 49) . ' ', $visitor));
+    }
+
     /** One matcher: both redirect scripts ask it, and neither keeps a copy of the rule types. */
     public function testBothRedirectScriptsAskTheMatcher(): void
     {

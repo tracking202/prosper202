@@ -212,6 +212,12 @@ but unchanged keys is `422` (`No valid fields to update`).
 | `user_ltv_score_weights` | `volume:N,time:N,scroll:N,video:N,recency:N` summing to 100, or `""` for the defaults | LTV › Settings |
 | `user_ltv_rec_fatigue` | `times,days` such as `3,21`, `0` for off, `""` for the defaults | LTV › Settings |
 
+A change to one of the four `user_ltv_` values asks what LTV › Settings asks
+of the other LTV settings writes: a key with `ltv:write` whose user's role has
+`access_to_api_integrations`, or `403` naming what is missing and nothing
+written. The value `GET` gave, sent back, is no change and passes whatever the
+role (`principal.ltv.settings_write` on [`/capabilities`](17-capabilities.md)).
+
 ### Privacy (`user_pref_privacy`)
 
 Which visitors are held back: no tracking cookies, and their address stored
@@ -283,7 +289,8 @@ affected.
 ### Ad click id parameters (`user_pref_click_id_params`)
 
 Personal settings › Advanced › **Match conversions by ad click id**. When a
-global postback (`gpb.php`) arrives with its SubID empty or unfilled, it finds
+postback or pixel (`gpb.php`, `pb.php`, `gpx.php`, `upx.php`) arrives with its
+SubID empty or unfilled, it finds
 the click by an ad click id the postback sends back
 ([Setup](27-setup.md#when-the-network-does-not-send-the-subid-back)). A
 postback that sends the id as `gclid`, `gbraid`, `wbraid`, `msclkid`,

@@ -216,10 +216,10 @@ base64), and one starting `whsec_` must be base64 after the prefix. It also
 carries `X-P202-Export-Id` and `X-P202-Delivery-Attempt`, and, through 1.9.82,
 `X-P202-Timestamp` and `X-P202-Signature: sha256=<hex>`, the HMAC-SHA256 of
 `<timestamp>.<body>` under the export's secret, which 1.9.83 stops sending. A
-2xx answer
-completes the export; no connection, a timeout, 5xx, 408 or 429 is retried
-after one minute and then two (three runs in all); a redirect, another 4xx or
-a refused address fails the export at once. The file stays downloadable
+2xx answer completes the export; no connection, a timeout, 5xx, 408 or 429, a
+host that does not resolve, or a `P202_WEBHOOK_ALLOW_NETWORKS` that does not
+parse is retried after one minute and then two (three runs in all); a redirect,
+another 4xx or a refused address fails the export at once. The file stays downloadable
 whatever the webhook did.
 
 ```bash

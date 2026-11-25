@@ -102,7 +102,10 @@ final class NormalizedRuleMatchesServedIntegrationTest extends TestCase
             [PHP_BINARY, '-d', 'display_errors=0', '-d', 'log_errors=1', '-d', 'error_log=' . self::$log,
                 '-S', "127.0.0.1:$port", '-t', $root],
             [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
-            $pipes
+            $pipes,
+            null,
+            // Visitors stand in through X-Forwarded-For from this machine (TrustedProxies).
+            ['P202_TRUSTED_PROXIES' => '127.0.0.1'] + getenv()
         );
         self::$base = "http://127.0.0.1:$port";
         for ($i = 0; $i < 50; $i++) {

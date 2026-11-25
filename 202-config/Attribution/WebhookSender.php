@@ -122,7 +122,9 @@ final class WebhookSender
 
         $response = $this->post($url, $body, $headers);
         if ($response['refused'] !== null) {
-            return WebhookResult::failed(null, 'Not sent: ' . $response['refused'], false);
+            // A host that did not resolve this time, or an allowlist that does
+            // not parse, may be fine on a later run; a refused address is not.
+            return WebhookResult::failed(null, 'Not sent: ' . $response['refused'], $response['retryable']);
         }
         $status = $response['status'];
 
