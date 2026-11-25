@@ -469,7 +469,9 @@ try {
         // Reads too: the Setup pages are the only place these records are
         // shown, and every one of them asks for access_to_setup_section first
         // (SetupController). The reports name a campaign or a source to any
-        // role; the record itself -- its URL, payout, cost -- only Setup does.
+        // role; the record itself -- its URL, payout, cost -- only Setup does
+        // (the payout alone is also GET /reports/payout's, masked as the
+        // reports' money, for the rankings a Campaign optimizer runs).
         // A Campaign viewer's key listed every campaign the page hid from it.
         foreach ($crudMap as $resource => $class) {
             $router->group("/$resource", function (Router $r) use ($class, $crud, $queryParams) {
@@ -733,7 +735,8 @@ try {
         // ── Reports ──────────────────────────────────────────────────────
         // Overview and Analyze ask for no permission; a role without
         // access_to_campaign_data gets them masked ($campaignFigures).
-        $router->group('/reports', function (Router $r) use ($crud, $queryParams, $campaignFigures, $reportFigures) {
+        $payoutFigures = \Api\V3\Support\CampaignFigures::PAYOUT;
+        $router->group('/reports', function (Router $r) use ($crud, $queryParams, $campaignFigures, $reportFigures, $payoutFigures) {
             $cls = \Api\V3\Controllers\ReportsController::class;
             $r->get('/summary',    fn() => $campaignFigures($crud($cls)->summary($queryParams), $reportFigures));
             $r->get('/breakdown',  fn() => $campaignFigures($crud($cls)->breakdown($queryParams), $reportFigures));
@@ -741,6 +744,9 @@ try {
             $r->get('/daypart',    fn() => $campaignFigures($crud($cls)->daypart($queryParams), $reportFigures));
             $r->get('/weekpart',   fn() => $campaignFigures($crud($cls)->weekpart($queryParams), $reportFigures));
             $r->get('/groups',     fn() => $campaignFigures($crud($cls)->groups($queryParams), $reportFigures));
+            // A campaign's payout, which the rankings price clicks with: the
+            // reports' to read, since GET /campaigns/{id} is Setup's.
+            $r->get('/payout',     fn() => $campaignFigures($crud($cls)->payout($queryParams), $payoutFigures));
         });
 
         // ── LTV: reads (ltv:read) ───────────────────────────────────────
@@ -1559,7 +1565,7 @@ try {
                 'clicks'        => '/clicks',
                 'conversions'   => '/conversions',
                 'update'        => '/clicks/cpc, /conversions/{subids|subids/delete|subids/reset|uploads}',
-                'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart|groups}',
+                'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart|groups|payout}',
                 'spend_ledger'  => '/spend-ledger[/conversions|/sync[/{id}[/run]]]',
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}[/{id}][/deliveries]',
                 'rotators'      => '/rotators[/{id}/rules|/{id}/stats]',
