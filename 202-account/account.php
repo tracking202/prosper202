@@ -423,7 +423,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$mysql['user_keyword_searched_or_bidded'] = $db->real_escape_string((string)$_POST['user_keyword_searched_or_bidded']);
 				$mysql['user_referer'] = $db->real_escape_string((string)$_POST['user_referer']);
 				$mysql['cloak_referer'] = $db->real_escape_string((string)$_POST['cloak_referer']);
-				$mysql['user_pref_ad_settings'] = $db->real_escape_string((string)$_POST['user_pref_ad_settings']);
 				$mysql['user_pref_dynamic_bid'] = $db->real_escape_string((string)$_POST['user_bid']);
 				$mysql['user_tracking_domain'] = $db->real_escape_string(trim((string)($_POST['user_tracking_domain'] ?? '')));
 				$mysql['user_pref_privacy'] = $db->real_escape_string((string)$_POST['user_pref_privacy']);
@@ -465,7 +464,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your settings could not be saved. Nothing you see below has changed'
 						. ($consentSaved && !empty($_POST['consent_form']) ? ' apart from your Data & communication choice' : '') . '; try again.'];
 				} else {
-					$_SESSION['user_pref_ad_settings'] = $mysql['user_pref_ad_settings'];
 					//set the  session's user_timezone
 					$_SESSION['user_timezone'] = $postedTimezone;
 					//try to set non expiring cache for values that are used in redirects

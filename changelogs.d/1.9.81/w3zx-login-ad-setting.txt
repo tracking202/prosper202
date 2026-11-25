@@ -1,0 +1,2 @@
+-- Fixed: The home page's Special offers panel was hidden after every sign-in, whatever the account's ad setting, because it read a session copy that only a save of Personal Settings wrote. It reads the account's stored setting on each visit now, so Show All Ads shows it and Hide All Ads hides it, a change made through the API or on another browser included.
+app: Fixed: Special offers on the home page follows your ad setting after you sign in.

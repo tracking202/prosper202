@@ -26,6 +26,10 @@ $gs_has_campaign = $gs_user_id > 0 && $gs_count("SELECT COUNT(*) AS c FROM 202_a
 $gs_has_tracker  = $gs_user_id > 0 && $gs_count("SELECT COUNT(*) AS c FROM 202_trackers WHERE user_id=" . $gs_user_id) > 0;
 $gs_all_done = $gs_has_traffic && $gs_has_campaign && $gs_has_tracker;
 
+$showOffers = \Prosper202\User\AdSettings::showsHomeOffers(
+    \Prosper202\User\AdSettings::forUser(new \Prosper202\Database\Connection($db), (int) ($_SESSION['user_id'] ?? 0))
+);
+
 $base = get_absolute_url();
 $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
 
@@ -133,7 +137,7 @@ echo p202_alerts_home_panel($db, (int) ($_SESSION['user_id'] ?? 0), $base, time(
             </script>
         <?php } ?>
 
-        <?php if (isset($_SESSION['user_pref_ad_settings']) && $_SESSION['user_pref_ad_settings'] != 'hide_all') { ?>
+        <?php if ($showOffers) { ?>
             <section class="p202-panel" id="special-offers">
                 <div class="p202-panel__head">
                     <h2 class="p202-panel__title">Special offers</h2>
