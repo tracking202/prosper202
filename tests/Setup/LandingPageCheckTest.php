@@ -284,6 +284,10 @@ final class LandingPageCheckTest extends TestCase
         self::assertSame(WebhookGuard::LOOKUP_SECONDS, $given[0]);
         self::assertLessThanOrEqual(4.8, $given[1], 'the first hop took 5.2 of the 10 seconds');
         self::assertGreaterThan(4.4, $given[1]);
+        // curl has what is left, to the millisecond, set after CURLOPT_TIMEOUT so it is the one curl keeps.
+        self::assertLessThanOrEqual(4_800, $this->sent[1][CURLOPT_TIMEOUT_MS]);
+        self::assertGreaterThan(4_400, $this->sent[1][CURLOPT_TIMEOUT_MS]);
+        self::assertSame(CURLOPT_TIMEOUT_MS, array_key_last($this->sent[1]));
     }
 
     public function testARedirectToAnInternalAddressIsNotFollowed(): void

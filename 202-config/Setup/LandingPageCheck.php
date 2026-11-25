@@ -92,8 +92,9 @@ final class LandingPageCheck
                     : 'Your page redirected to ' . $where . ', which was not followed: ') . $e->getMessage());
             }
 
-            $left = (int) ceil($deadline - microtime(true));
-            if ($left < 1) {
+            $remaining = $deadline - microtime(true);
+            $left = (int) ceil($remaining);
+            if ($remaining < 0.001) {
                 return self::error('Checking your page took more than ' . self::TIMEOUT . ' seconds (looking up its host'
                     . ($redirects > 0 ? ' and following ' . $redirects . ' redirects' : '') . '), so it was stopped. Try again.');
             }
@@ -102,7 +103,11 @@ final class LandingPageCheck
             } catch (\UnexpectedValueException $e) {
                 return self::error('Your page was not fetched: ' . $e->getMessage());
             }
-            $answer = ($this->transport)(self::curlOptions($target, $left, $proxy));
+            $options = self::curlOptions($target, $left, $proxy);
+            // The lookup came out of TIMEOUT. curl keeps whichever of
+            // CURLOPT_TIMEOUT and CURLOPT_TIMEOUT_MS is set last: this one, to the millisecond.
+            $options[CURLOPT_TIMEOUT_MS] = max(1, (int) floor($remaining * 1000));
+            $answer = ($this->transport)($options);
 
             $status = $answer['status'];
             if ($status === 0) {

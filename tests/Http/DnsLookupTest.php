@@ -235,14 +235,17 @@ final class DnsLookupTest extends TestCase
             [$this->fakeNameserver(['records' => self::records(), 'silent' => ['AAAA']])],
             [],
             1,
-            0.3,
+            5.0,
             2,
             null
         );
 
+        // A Slack notice's two seconds: the A answer is not held for the AAAA's whole try.
         $started = microtime(true);
-        self::assertSame(['93.184.216.34'], $lookup->addresses('hooks.example.com', 5.0));
-        self::assertLessThan(1.2, microtime(true) - $started, 'two tries of 0.3 s at the AAAA');
+        self::assertSame(['93.184.216.34'], $lookup->addresses('hooks.example.com', 2.0));
+        $took = microtime(true) - $started;
+        self::assertGreaterThan(DnsLookup::GRACE_SECONDS - 0.05, $took, 'the AAAA had its grace');
+        self::assertLessThan(DnsLookup::GRACE_SECONDS + 0.4, $took, 'and no more: it took ' . round($took, 2) . ' s');
     }
 
     /**
@@ -434,5 +437,224 @@ final class DnsLookupTest extends TestCase
     private static function property(object $object, string $name): mixed
     {
         return (new \ReflectionProperty($object, $name))->getValue($object);
+    }
+    /**
+     * resolv.conf's own timeout (5 s) is as long as the whole lookup may
+     * take: a dead first nameserver must not use it all, or the second,
+     * which answers, is never asked.
+     */
+    public function testADeadFirstNameserverLeavesTheSecondItsShare(): void
+    {
+        $lookup = new DnsLookup(
+            [$this->silentNameserver(), $this->fakeNameserver(['records' => self::records()])],
+            [],
+            1,
+            5.0,
+            2,
+            null
+        );
+
+        $started = microtime(true);
+        self::assertSame(['93.184.216.34', '2606:2800:220:1::1'], $lookup->addresses('hooks.example.com', 5.0));
+        $took = microtime(true) - $started;
+        self::assertGreaterThan(2.4, $took, 'the first had half of the five seconds');
+        self::assertLessThan(3.2, $took, 'and the second answered at once: it took ' . round($took, 2) . ' s');
+    }
+
+    /**
+     * A server failure on one search candidate goes on to the next, as
+     * res_nsearch() does (ndots:5, as in Kubernetes); a lookup whose every
+     * answer was a server failure says so, and is tried again later.
+     */
+    public function testAServerFailureOnOneSearchNameGoesOnToTheNext(): void
+    {
+        $records = self::records() + ['hooks.example.com.svc.cluster.local' => ['rcode' => 2]];
+        $server = $this->fakeNameserver(['records' => $records]);
+        $lookup = new DnsLookup([$server], ['svc.cluster.local'], 5, 2.0, 2, null);
+
+        self::assertSame(['93.184.216.34', '2606:2800:220:1::1'], $lookup->addresses('hooks.example.com', 5.0));
+
+        $lookup = new DnsLookup(
+            [$this->fakeNameserver(['records' => ['hooks.example.com' => ['rcode' => 2]]])],
+            [],
+            1,
+            2.0,
+            2,
+            null
+        );
+        $started = microtime(true);
+        try {
+            $lookup->addresses('hooks.example.com', 5.0);
+            self::fail('a server failure read as an answer');
+        } catch (DnsLookupFailed $e) {
+            self::assertStringStartsWith(
+                'hooks.example.com was not looked up: the nameservers in /etc/resolv.conf answered with a server'
+                    . ' failure',
+                $e->getMessage()
+            );
+        }
+        self::assertLessThan(1.0, microtime(true) - $started, 'a failure is an answer, not a wait');
+    }
+
+    /** use-vc asks over TCP only, no-aaaa asks A alone, single-request one query at a time. */
+    public function testTheOptionsThatChangeWhatIsSentAreHonoured(): void
+    {
+        $log = $this->tempFile('');
+        $server = $this->fakeNameserver(['records' => self::records(), 'log' => $log]);
+        $asked = static function () use ($log): array {
+            $lines = file($log, FILE_IGNORE_NEW_LINES) ?: [];
+            file_put_contents($log, '');
+            sort($lines);
+
+            return $lines;
+        };
+
+        $tcp = new DnsLookup([$server], [], 1, 2.0, 2, null, false, true);
+        self::assertSame(['93.184.216.34', '2606:2800:220:1::1'], $tcp->addresses('hooks.example.com', 5.0));
+        self::assertSame(['tcp hooks.example.com A', 'tcp hooks.example.com AAAA'], $asked());
+
+        $v4 = new DnsLookup([$server], [], 1, 2.0, 2, null, false, false, true);
+        self::assertSame(['93.184.216.34'], $v4->addresses('hooks.example.com', 5.0));
+        self::assertSame(['udp hooks.example.com A'], $asked());
+
+        $single = new DnsLookup([$server], [], 1, 2.0, 2, null, true);
+        self::assertSame(['93.184.216.34', '2606:2800:220:1::1'], $single->addresses('hooks.example.com', 5.0));
+        self::assertSame(['udp hooks.example.com A', 'udp hooks.example.com AAAA'], $asked());
+
+        $read = DnsLookup::fromResolvConf(
+            "nameserver 192.0.2.53\noptions single-request-reopen use-vc no-aaaa\n",
+            null
+        );
+        self::assertTrue(self::property($read, 'oneAtATime'));
+        self::assertTrue(self::property($read, 'tcpOnly'));
+        self::assertTrue(self::property($read, 'noAaaa'));
+        $plain = DnsLookup::fromResolvConf("nameserver 192.0.2.53\noptions rotate edns0\n", null);
+        self::assertFalse(self::property($plain, 'oneAtATime'));
+        self::assertFalse(self::property($plain, 'tcpOnly'));
+        self::assertFalse(self::property($plain, 'noAaaa'));
+    }
+
+    /** With no search or domain line, the host name's own domain is searched, as glibc does; and every domain is kept. */
+    public function testTheSearchListDefaultsToTheHostsOwnDomain(): void
+    {
+        $lookup = DnsLookup::fromResolvConf("nameserver 192.0.2.53\n", null, 'web1.Corp.Example');
+        self::assertSame(['corp.example'], self::property($lookup, 'search'));
+        self::assertSame([], self::property(DnsLookup::fromResolvConf('', null, 'web1'), 'search'));
+        $dot = DnsLookup::fromResolvConf("search .\n", null, 'web1.corp.example');
+        self::assertSame([], self::property($dot, 'search'));
+
+        $many = DnsLookup::fromResolvConf(
+            "search a.example b.example c.example d.example e.example f.example g.example\n",
+            null
+        );
+        self::assertCount(7, self::property($many, 'search'), 'glibc 2.26 and later keep them all');
+    }
+
+    /** LOCALDOMAIN replaces the search list and RES_OPTIONS adds options, as res_init() reads them. */
+    public function testTheEnvironmentOverridesResolvConf(): void
+    {
+        $conf = $this->tempFile("nameserver 192.0.2.53\nsearch corp.example\noptions ndots:2\n");
+        $was = [getenv('LOCALDOMAIN'), getenv('RES_OPTIONS')];
+        try {
+            putenv('LOCALDOMAIN=one.example two.example');
+            putenv('RES_OPTIONS=ndots:4 use-vc');
+            $lookup = DnsLookup::system($conf, null);
+            self::assertNotNull($lookup);
+            self::assertSame(['one.example', 'two.example'], self::property($lookup, 'search'));
+            self::assertSame(4, self::property($lookup, 'ndots'));
+            self::assertTrue(self::property($lookup, 'tcpOnly'));
+        } finally {
+            putenv($was[0] === false ? 'LOCALDOMAIN' : 'LOCALDOMAIN=' . $was[0]);
+            putenv($was[1] === false ? 'RES_OPTIONS' : 'RES_OPTIONS=' . $was[1]);
+        }
+    }
+
+    /** Where the socket functions are disabled, the C library answers, not an Error out of the guard. */
+    public function testDisabledSocketFunctionsLeaveTheLookupToTheCLibrary(): void
+    {
+        if (!function_exists('proc_open')) {
+            self::markTestSkipped('needs proc_open');
+        }
+        $conf = $this->tempFile("nameserver 192.0.2.53\n");
+        $script = 'require ' . var_export(dirname(__DIR__, 2) . '/vendor/autoload.php', true) . ';'
+            . ' echo var_export(\Prosper202\Http\DnsLookup::system(' . var_export($conf, true)
+            . ', null) === null, true);';
+        $functions = ['stream_socket_client', 'stream_select', 'stream_socket_recvfrom', 'stream_set_blocking'];
+        foreach ($functions as $function) {
+            $out = [];
+            exec(escapeshellarg(PHP_BINARY) . ' -d disable_functions=' . $function . ' -r ' . escapeshellarg($script)
+                . ' 2>&1', $out, $status);
+            self::assertSame(0, $status, implode("\n", $out));
+            self::assertSame(['true'], $out, 'with ' . $function . ' disabled');
+        }
+    }
+
+    /** A hosts file that is there and cannot be read is a failed lookup, not "not listed": DNS would answer instead. */
+    public function testAHostsFileThatCannotBeReadIsAFailure(): void
+    {
+        $lookup = new DnsLookup([$this->silentNameserver()], [], 1, 1.0, 1, sys_get_temp_dir());
+        try {
+            $lookup->addresses('intranet.example.com', 1.0);
+            self::fail('an unreadable hosts file read as empty');
+        } catch (DnsLookupFailed $e) {
+            self::assertSame(
+                'intranet.example.com was not looked up: ' . sys_get_temp_dir() . ' could not be read.',
+                $e->getMessage()
+            );
+        }
+        $none = new DnsLookup(
+            [$this->fakeNameserver(['records' => self::records()])],
+            [],
+            1,
+            1.0,
+            1,
+            sys_get_temp_dir() . '/p202-no-such-hosts'
+        );
+        self::assertSame(
+            ['93.184.216.34', '2606:2800:220:1::1'],
+            $none->addresses('hooks.example.com', 2.0),
+            'no file: DNS'
+        );
+    }
+
+    /**
+     * Aliases are read once each and followed at most MAX_CNAME_HOPS: a
+     * reply carrying thousands, listed backwards, is read in moments, and
+     * a chain longer than that gives no address.
+     */
+    public function testALongAliasChainIsReadInLinearTime(): void
+    {
+        $label = static fn (int $i): string => "\x01n\x03" . str_pad((string) ($i % 1000), 3, '0', STR_PAD_LEFT)
+            . "\x02" . str_pad((string) intdiv($i, 1000), 2, '0', STR_PAD_LEFT) . "\x00";
+        $reply = static function (int $links) use ($label): string {
+            $question = "\x05hooks\x07example\x03com\x00";
+            $rr = static fn (string $owner, int $type, string $data): string
+                => $owner . pack('nnNn', $type, 1, 60, strlen($data)) . $data;
+            $answers = [$rr("\xC0\x0C", 5, $label(0))];
+            for ($i = 0; $i < $links - 1; $i++) {
+                $answers[] = $rr($label($i), 5, $label($i + 1));
+            }
+            $answers[] = $rr($label($links - 1), 1, "\xC6\x33\x64\x07");
+
+            return pack('nnnnnn', 7, 0x8180, 1, count($answers), 0, 0) . $question . pack('nn', 1, 1)
+                . implode('', array_reverse($answers));
+        };
+
+        self::assertSame(['198.51.100.7'], DnsLookup::parse($reply(15), 'hooks.example.com')['addresses'] ?? null);
+        $tooLong = DnsLookup::parse($reply(17), 'hooks.example.com');
+        self::assertSame([], $tooLong['addresses'] ?? null, 'past the hop cap');
+
+        $started = microtime(true);
+        $parsed = DnsLookup::parse($reply(2_600), 'hooks.example.com');
+        self::assertSame([], $parsed['addresses'] ?? null);
+        self::assertLessThan(0.3, microtime(true) - $started, 'one pass over the records');
+    }
+
+    /** A label holding a dot is not two labels: "a.example" in one label is not the name a.example. */
+    public function testALabelHoldingADotIsNotTwoLabels(): void
+    {
+        $packet = pack('nnnnnn', 7, 0x8180, 1, 1, 0, 0) . "\x09a.example\x00" . pack('nn', 1, 1)
+            . "\xC0\x0C" . pack('nnNn', 1, 1, 60, 4) . "\x5D\xB8\xD8\x22";
+        self::assertNull(DnsLookup::parse($packet, 'a.example'));
     }
 }
