@@ -14,5 +14,32 @@
     {"stored": "ALLEN(US)", "values": ["ALLEN(US)"], "everyone": false, "normalized": "ALLEN(US)", "writer": "a value that begins with ALL is not ALL"},
     {"stored": "Mall", "values": ["Mall"], "everyone": false, "normalized": "Mall", "writer": "nor is one that contains it"},
     {"stored": "mobile,tablet", "values": ["mobile", "tablet"], "everyone": false, "normalized": "mobile,tablet", "writer": "the page"}
+  ],
+  "countries_about": "A country criterion against one visitor, from Germany (GeoIP: country Germany, country_code DE): CriterionMatcher::criterion() in the PHP tree (tests/Rotator/CountryCriterionValuesTest.php), rotatorDestination() in go-cli (p202 rotator test; go-cli/cmd/verify_test.go).",
+  "countries_visitor": {"country": "Germany", "country_code": "DE"},
+  "countries": [
+    {"stored": "Germany(DE)", "statement": "is", "matches": true, "why": "the page and the API since 1.9.80"},
+    {"stored": "DE", "statement": "is", "matches": true, "why": "a bare code, as rows were stored before the writers wrote Name(CC): the redirects match it by its code"},
+    {"stored": "de", "statement": "is", "matches": true, "why": "a bare code in lower case"},
+    {"stored": "fr, de", "statement": "is", "matches": true, "why": "codes in a list, as sent"},
+    {"stored": "Germany(de)", "statement": "is", "matches": true, "why": "a code in brackets in lower case"},
+    {"stored": "Deutschland(DE)", "statement": "is", "matches": true, "why": "compared by the code, whatever name GeoIP gives"},
+    {"stored": "Germany (DE)", "statement": "is", "matches": true, "why": "a space before the brackets"},
+    {"stored": "(DE)", "statement": "is", "matches": true, "why": "brackets with no name"},
+    {"stored": "France(FR)", "statement": "is", "matches": false, "why": "another country"},
+    {"stored": "France(FR)", "statement": "is_not", "matches": true, "why": "is not another country"},
+    {"stored": "DE", "statement": "is_not", "matches": false, "why": "is not a bare code of the visitor's country"},
+    {"stored": "France(FR),Germany(DE)", "statement": "is_not", "matches": false, "why": "is not a list holding the visitor's country"},
+    {"stored": "Germany", "statement": "is", "matches": false, "why": "a name alone names no code: compared whole with Germany(DE), it never matches"},
+    {"stored": "Germany", "statement": "is_not", "matches": true, "why": "is not a name alone"},
+    {"stored": "DEU", "statement": "is", "matches": false, "why": "three letters are no code"},
+    {"stored": "Germany(DEU)", "statement": "is", "matches": false, "why": "nor are three in brackets"},
+    {"stored": "Germany( DE )", "statement": "is", "matches": false, "why": "spaces inside the brackets: no code (p202 rotator test read DE before 1.9.81)"},
+    {"stored": "Germany(DE) x", "statement": "is", "matches": false, "why": "brackets that do not end the value: no code (p202 rotator test read DE before 1.9.81)"},
+    {"stored": "Germany(DE)(FR)", "statement": "is", "matches": false, "why": "the brackets that end it name FR"},
+    {"stored": "Germany(DE)", "statement": "isnt", "matches": false, "why": "a statement the redirects do not read matches no visitor (p202 rotator test read it as is before 1.9.81)"},
+    {"stored": "Germany(DE)", "statement": "", "matches": false, "why": "nor does no statement"},
+    {"stored": "France(FR)", "statement": "IS_NOT", "matches": false, "why": "statements are read as written"},
+    {"stored": "ALL", "statement": "isnt", "matches": true, "why": "ALL matches every visitor whatever the statement"}
   ]
 }

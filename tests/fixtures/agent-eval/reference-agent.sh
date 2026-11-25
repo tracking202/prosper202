@@ -863,6 +863,21 @@ EOF
             "$(printf '%s' "$entry" | jq -r '.url')" \
             "$(if [ "$(printf '%s' "$entry" | jq -r '.secret_stored')" = true ]; then printf 'stored'; else printf 'not stored yet: set it with `p202 user prefs update <user_id> --cb-key ...`'; fi)"
         ;;
+    *"eval-optimizer profile"*)
+        # A Campaign optimizer's break-even CPC (optimize.json): the id from
+        # the role's reports, since campaign list is Setup's, then report
+        # breakeven, which reads the payout from the reports too.
+        id=$(p202 --profile eval-optimizer report breakdown --breakdown campaign --json | jq -r '[.data[] | select(.name=="EVAL Optimizer Offer")][0].id // empty')
+        if [ -z "$id" ]; then
+            printf 'The eval-optimizer reports have no EVAL Optimizer Offer (`p202 --profile eval-optimizer report breakdown --breakdown campaign`), so there is nothing to price.\n'
+        elif out=$(p202 --profile eval-optimizer report breakeven --aff-campaign-id "$id" --json 2>&1); then
+            printf 'Per `p202 --profile eval-optimizer report breakeven --aff-campaign-id %s`, the most a click on EVAL Optimizer Offer can cost and still break even (payout x conversions per click): %s.\n' \
+                "$id" "$(printf '%s' "$out" | jq -r '[.data[] | "\(.name) $\(.breakeven_cpc) (paying $\(.avg_cpc) now)"] | join(", ")')"
+        else
+            printf 'The eval-optimizer key was refused: %s Hint: %s\n' \
+                "$(printf '%s' "$out" | jq -r '.error.message')" "$(printf '%s' "$out" | jq -r '.error.hint')"
+        fi
+        ;;
     *"eval-viewer profile"*)
         # Run what was asked with the key asked for; a refusal is reported
         # with the hint it carries, not routed around with another key.

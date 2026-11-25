@@ -127,7 +127,13 @@ final class RemovedUserRoutesTest extends TestCase
         $auth = "\$auth->requirePersonalSettingsOf(\$db, PathId::of(\$ctx));\n                ";
         $guard = "\$liveUser(PathId::of(\$ctx));\n                ";
         $get = 'return $make()->getPreferences(';
-        $update = 'return $make()->updatePreferences(PathId::of($ctx), $payload);';
+        $update = "return \$make()->updatePreferences(\n"
+            . "                    PathId::of(\$ctx),\n"
+            . "                    \$payload,\n"
+            . "                    null,\n"
+            . "                    // The LTV › Settings values ask what the LTV Settings writes ask.\n"
+            . "                    static fn () => \\Api\\V3\\Support\\LtvAccess::require(\$auth, \$db, 'settings_write')\n"
+            . '                );';
         yield 'the guard removed' => [$auth . $guard . $get, $auth . $get];
         yield 'the guard before the authorization' => [$auth . $guard . $get, $guard . $auth . $get];
         yield 'the guard after the work' => [
