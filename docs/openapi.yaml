@@ -984,10 +984,11 @@ paths:
         affiliate's Affiliate IPN, and `jvzoo_vendor`, `?role=vendor`, for a
         product's JVZIPN v1 URL), Zaxaa (ZPN), PayKickstart (the
         product IPN, set under each product's IPN Integration tab) and
-        Shopify (the order and refund webhooks), on this
-        install's tracking base (user 1's tracking
-        domain or this server's name, and the install's path — the base
-        tracker links use), and whether the caller has stored the secret
+        Shopify (the order and refund webhooks), on the
+        caller's tracking base (the caller's own tracking domain, as the
+        page uses the signed-in user's, or the host this request arrived at
+        when none is set, and the install's path — the base tracker links
+        use), and whether the caller has stored the secret
         each is checked with (`secret_stored`; for PayKickstart,
         `keys_stored` counts its keys, one for each PayKickstart campaign).
         The secrets are never served.
@@ -13497,8 +13498,8 @@ paths:
         class the page builds its code with (`Prosper202\Setup\LandingPageCode`),
         byte for byte: the loader script for the page itself, and the ways out
         to the offer. The snippets start from `base_url`, the tracker link's base
-        (user 1's tracking domain, or the host this request arrived at when none
-        is set, plus the install directory) written scheme-relative (`//host/...`)
+        (the caller's own tracking domain, or the host this request arrived at
+        when none is set, plus the install directory) written scheme-relative (`//host/...`)
         as the page writes it, so they work on an http or an https landing page.
 
         A simple page (`landing_page_type` 0) links out to its own campaign:
