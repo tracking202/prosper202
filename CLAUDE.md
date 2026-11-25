@@ -259,8 +259,11 @@ skip duplicates (`p202 conversion import`) owes the same comparison.
 ### 16. On a public endpoint, identity is what the attacker cannot choose
 Split every value a security decision keys on into what the peer proved and
 what the request claimed.
-- Rate limits key on `REMOTE_ADDR`; the `X-Forwarded-For` value is for
-  display. A dedupe hash covers the full body. Aggregates over rows anyone
+- Rate limits key on `VisitorIp::fromServer()`: REMOTE_ADDR, or behind a
+  proxy `P202_TRUSTED_PROXIES` lists (`TrustedProxies`; Cloudflare's ranges
+  when unset), its X-Forwarded-For or Forwarded chain read from the right,
+  the two never merged (`ForwardedIpHeaderReadTest`). A dedupe hash covers
+  the full body. Aggregates over rows anyone
   can insert count only verified rows by default.
 - Host and scheme: ask who will follow the URL. Back to the requester:
   `TrackingBaseUrl::forRequest()` / `domainForResponse()`. Sent to someone

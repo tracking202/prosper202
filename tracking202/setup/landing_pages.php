@@ -160,6 +160,32 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$error['wrong_user'] = '<div class="error">You are not authorized to modify another users campaign</div>';
 	}
 
+	// An advanced page is not made simple while its links offer text ads: Get Links
+	// offers those only on an advanced page (AdvancedPageTextAds; PUT /landing-pages refuses it too).
+	$advancedMadeSimple = $editing == true && $postedType === '0' && $postedPageId !== null
+		&& !isset($error['wrong_user']) && (string) ($landing_page_row['landing_page_type'] ?? '') === '1';
+	if ($advancedMadeSimple) {
+		try {
+			$pageAds = (new \Prosper202\Setup\AdvancedPageTextAds(new \Prosper202\Database\Connection($db)))
+				->naming((int) $_SESSION['user_id'], (int) $postedPageId);
+		} catch (\Throwable $adsFailure) {
+			error_log('landing_pages.php: the text ads naming the landing page could not be read: '
+				. $adsFailure->getMessage());
+			$pageAds = null;
+			$error['save'] = '<div class="error">The landing page could not be saved, and nothing was changed.'
+				. ' Try again.</div>';
+		}
+		if ($pageAds !== null && $pageAds !== []) {
+			$one = count($pageAds) === 1;
+			$error['landing_page_type'] = '<div class="error">This advanced page\'s links offer '
+				. count($pageAds) . ' text ' . ($one ? 'ad' : 'ads') . ' ('
+				. htmlspecialchars(\Prosper202\Setup\AdvancedPageTextAds::names($pageAds), ENT_QUOTES, 'UTF-8')
+				. '), and a simple page offers none, so ' . ($one ? 'it' : 'they') . ' would be offered nowhere. '
+				. 'In Text Ads, point ' . ($one ? 'it' : 'each') . ' at another advanced page or at a campaign, '
+				. 'then make this page simple.</div>';
+		}
+	}
+
 	// Bot202 Facebook Pixel Assistant: a simple page's settings, refused here before anything is saved.
 	$fbpaSettings = \Prosper202\Setup\FacebookPixelAssistantSettings::fromForm(
 		($_POST['landing_page_type'] ?? '') === '0' ? $_POST : [],

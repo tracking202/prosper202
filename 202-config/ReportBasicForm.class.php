@@ -2965,7 +2965,7 @@ class ReportBasicForm
 
 	static function echoCell($str)
 	{
-		echo $str . "\t";
+		echo \Prosper202\Report\TsvCell::text($str) . \Prosper202\Report\TsvCell::SEPARATOR;
 	}
 
 	static function echoRow()

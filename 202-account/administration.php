@@ -687,6 +687,11 @@ $unsavedWarning = \Prosper202\Click\UnsavedClickRedirects::warning($unsavedClick
 if ($unsavedWarning !== null) {
     echo p202_flash('warn', $unsavedWarning);
 }
+// A proxy nobody listed in P202_TRUSTED_PROXIES (Prosper202\Http\UnlistedProxySighting).
+$proxyWarning = \Prosper202\Http\UnlistedProxySighting::warning(\Prosper202\Http\UnlistedProxySighting::read(ROOT_PATH));
+if ($proxyWarning !== null) {
+    echo p202_flash('warn', $proxyWarning);
+}
 ?>
 
 <div class="p202-tiles">
@@ -712,6 +717,7 @@ if ($unsavedWarning !== null) {
 					<div class="p202-strip__row"><span class="p202-strip__label">Memcache installed</span><span class="p202-strip__value">speeds up redirects</span><span class="p202-strip__aside"><?php echo $yesNo((bool) $memcacheInstalled); ?></span></div>
 					<div class="p202-strip__row"><span class="p202-strip__label">Memcache running</span><span class="p202-strip__value">check 202-config.php if installed but not running</span><span class="p202-strip__aside"><?php echo $yesNo((bool) $memcacheWorking); ?></span></div>
 					<div class="p202-strip__row"><span class="p202-strip__label">Clicks redirected unsaved</span><span class="p202-strip__value"><?php echo $e($unsavedClicksText); ?></span><span class="p202-strip__aside"><?php echo $yesNo($unsavedClicks['state'] === 'none', $unsavedClicksAside, $unsavedClicksAside); ?></span></div>
+					<div class="p202-strip__row"><span class="p202-strip__label">Trusted proxies</span><span class="p202-strip__value"><?php echo $e(\Prosper202\Http\TrustedProxies::summary()); ?></span></div>
 					<div class="p202-strip__row"><span class="p202-strip__label">BlazerCache</span><span class="p202-strip__value">redirects survive a MySQL outage; user agents parse faster</span><span class="p202-strip__aside"><?php echo $yesNo((bool) $memcacheWorking, 'Yes', 'Needs Memcache'); ?></span></div>
 					<div class="p202-strip__row"><span class="p202-strip__label">Keyword preference</span><span class="p202-strip__value">pick up the <?php echo $e(strtolower((string) ($pref_row['user_keyword_searched_or_bidded'] ?? ''))); ?> keyword</span><span class="p202-strip__aside"><a class="btn btn-secondary btn-sm" href="<?php echo $e(get_absolute_url() . '202-account/account.php#profile'); ?>">Change</a></span></div>
 				</div>

@@ -124,8 +124,14 @@ final class LegacyConversionRecordTest extends TestCase
      */
     public function testClientIpIsOneValidAddressOrNothing(array $server, string $expected): void
     {
-        // p202ClientIp() was folded into StoredVisitorIp (here with privacy off).
-        $ip = \Prosper202\Http\StoredVisitorIp::fromServer($server, false);
+        // p202ClientIp() was folded into StoredVisitorIp (here with privacy
+        // off), behind a listed proxy at 10.0.0.1 (VisitorIpTest has the rest).
+        putenv('P202_TRUSTED_PROXIES=10.0.0.1');
+        try {
+            $ip = \Prosper202\Http\StoredVisitorIp::fromServer($server, false);
+        } finally {
+            putenv('P202_TRUSTED_PROXIES');
+        }
         self::assertSame($expected, $ip);
         self::assertLessThanOrEqual(45, strlen($ip), 'must fit 202_conversion_logs.ip varchar(45)');
     }
@@ -135,25 +141,29 @@ final class LegacyConversionRecordTest extends TestCase
     {
         yield 'no proxy' => [['REMOTE_ADDR' => '203.0.113.9'], '203.0.113.9'];
         yield 'one hop' => [['HTTP_X_FORWARDED_FOR' => '198.51.100.7', 'REMOTE_ADDR' => '10.0.0.1'], '198.51.100.7'];
-        yield 'a chain keeps the leftmost hop' => [
-            ['HTTP_X_FORWARDED_FOR' => '198.51.100.7, 10.0.0.2, 10.0.0.3', 'REMOTE_ADDR' => '10.0.0.1'],
+        yield 'a chain: the hop the listed proxy appended' => [
+            ['HTTP_X_FORWARDED_FOR' => '203.0.113.66, 10.0.0.2, 198.51.100.7', 'REMOTE_ADDR' => '10.0.0.1'],
             '198.51.100.7',
         ];
         yield 'an IPv6 chain longer than the column' => [
             ['HTTP_X_FORWARDED_FOR' => '2001:db8:85a3:8d3:1319:8a2e:370:7348, 2001:db8:85a3:8d3:1319:8a2e:370:7349, 2001:db8::1', 'REMOTE_ADDR' => '10.0.0.1'],
-            '2001:db8:85a3:8d3:1319:8a2e:370:7348',
+            '2001:db8::1',
         ];
         yield 'garbage header falls back to the peer' => [
             ['HTTP_X_FORWARDED_FOR' => str_repeat('x', 200), 'REMOTE_ADDR' => '10.0.0.1'],
             '10.0.0.1',
         ];
-        yield 'an unknown hop falls back to the peer' => [
+        yield 'an unknown hop left of the client is never reached' => [
             ['HTTP_X_FORWARDED_FOR' => 'unknown, 198.51.100.7', 'REMOTE_ADDR' => '10.0.0.1'],
-            '10.0.0.1',
+            '198.51.100.7',
         ];
-        yield 'a port suffix is not an address' => [
+        yield 'a port suffix is dropped' => [
             ['HTTP_X_FORWARDED_FOR' => '198.51.100.7:8080', 'REMOTE_ADDR' => '10.0.0.1'],
-            '10.0.0.1',
+            '198.51.100.7',
+        ];
+        yield 'an unlisted peer: the peer' => [
+            ['HTTP_X_FORWARDED_FOR' => '198.51.100.7', 'REMOTE_ADDR' => '10.0.0.9'],
+            '10.0.0.9',
         ];
         yield 'nothing usable' => [['HTTP_X_FORWARDED_FOR' => 'nope', 'REMOTE_ADDR' => 'also nope'], ''];
         yield 'nothing at all' => [[], ''];

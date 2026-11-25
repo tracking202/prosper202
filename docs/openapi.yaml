@@ -14,6 +14,15 @@ info:
     ```
     API keys are managed via the `/users/{id}/api-keys` endpoints.
 
+    A page on the same origin may instead send the session cookie the
+    sign-in set, with no Authorization header. The session is read as the
+    pages read it, so switching the user off or changing their password ends
+    it on the next call. Every method but GET and HEAD sends the session's
+    token in an `X-P202-CSRF` header (`GET /me` answers it as
+    `auth.csrf_token`); a write without it is `403` and changes nothing. A
+    request with an Authorization header is always a key's, whatever cookie
+    it carries.
+
     ## Pagination
     List endpoints return paginated results:
     ```json
@@ -143,6 +152,7 @@ servers:
 
 security:
   - BearerAuth: []
+  - SessionCookie: []
 
 tags:
   - name: System
@@ -2345,6 +2355,12 @@ paths:
     put:
       tags: [Landing Pages]
       summary: Update a landing page
+      description: >-
+        An advanced page (landing_page_type 1) is not made simple while text
+        ads of text_ad_type 1 name it, since Get Links offers those only on an
+        advanced page: the 422 names each ad's text_ad_id under
+        landing_page_type. Point each at another advanced page, or make it a
+        campaign ad, first.
       operationId: updateLandingPage
       requestBody:
         required: true
@@ -2820,8 +2836,8 @@ paths:
         The account's live conversions grouped by campaign and by
         `match_method`, how each one's click was found: `click_id` (the
         request named it: a subid, ClickBank's tracking code, the API or an
-        upload line, an app install's token), `ad_click_id` (a global
-        postback with no SubID sent back an ad platform's click id that a
+        upload line, an app install's token), `ad_click_id` (a postback or
+        pixel with no SubID sent back an ad platform's click id that a
         click carries), `cookie` (a tracking cookie named it), `visitor_id` (the landing-page script's visitor id),
         `same_ip` (nothing named a click: the latest click from the
         visitor's address) or `unknown` (recorded before 1.9.79).
@@ -4247,6 +4263,62 @@ paths:
                       type: string
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /reports/payout:
+    get:
+      tags: [Reports]
+      summary: A campaign's payout
+      description: >-
+        The default payout of one of the account's campaigns, the figure
+        `p202 report losers`, `report winners`, `report breakeven` and
+        `campaign optimize` price a click with. GET /campaigns/{id} answers
+        it too but is Setup's (access_to_setup_section); this route asks
+        what the reports ask, so a Campaign optimizer reads it. For a role
+        without access_to_campaign_data the payout is null and the answer
+        says `masked: true`, as the reports' money. A campaign that is not
+        the account's, or is deleted, is a 404. Servers that serve it say
+        `features.report_payout` in /capabilities (1.9.81 and later).
+      operationId: reportPayout
+      parameters:
+        - name: aff_campaign_id
+          in: query
+          required: true
+          description: The campaign's internal id (a campaign breakdown row's `id`, or GET /campaigns for a role with Setup)
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: The campaign's payout
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [aff_campaign_id, aff_campaign_name, aff_campaign_payout, aff_campaign_currency]
+                    properties:
+                      aff_campaign_id:
+                        type: integer
+                      aff_campaign_name:
+                        type: string
+                      aff_campaign_payout:
+                        type: number
+                        nullable: true
+                        description: Null only in a masked answer
+                      aff_campaign_currency:
+                        type: string
+                        description: The currency the campaign pays in
+                  masked:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -9991,6 +10063,162 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /me:
+    get:
+      tags:
+      - System
+      summary: Who is signed in and what they may see and do
+      description: >-
+        One read for a client deciding which screens, buttons and money figures to show: the user,
+        the account's time zone and currency, the roles, every role permission and the flags derived
+        from them, the licence and sponsored-ads switches, the install version and the feature list.
+        Readable by any valid key, whatever its scope or role, so a role that may not read GET
+        /system/version still learns the version here. See documentation/api/30-me.md.
+      operationId: getMe
+      responses:
+        '200':
+          description: The caller's own facts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [user, account, roles, permissions, flags, scopes, switches, install, features, auth]
+                    properties:
+                      user:
+                        type: object
+                        properties:
+                          user_id:
+                            type: integer
+                          user_name:
+                            type: string
+                          user_email:
+                            type: string
+                          user_fname:
+                            type: string
+                          user_lname:
+                            type: string
+                      account:
+                        type: object
+                        properties:
+                          timezone:
+                            type: string
+                            description: The named zone every report reads hours and days in; UTC when unset or unknown.
+                          currency:
+                            type: string
+                            description: The code the account's money is in (USD when unset), as every page prints it.
+                      roles:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            role_id:
+                              type: integer
+                            role_name:
+                              type: string
+                      permissions:
+                        type: array
+                        description: Every role permission the user holds (202_permissions), sorted.
+                        items:
+                          type: string
+                      flags:
+                        type: object
+                        description: >-
+                          The gates the pages and routes apply, each true only when the routes behind it
+                          answer this caller: a flag whose route asks the key for a scope asks it too, so a
+                          read-only key's can_edit_campaigns is false whatever its role allows.
+                          can_see_money false means reports and records come back masked.
+                        additionalProperties:
+                          type: boolean
+                        properties:
+                          is_admin:
+                            type: boolean
+                          can_manage_admins:
+                            type: boolean
+                          can_see_money:
+                            type: boolean
+                          can_view_setup:
+                            type: boolean
+                          can_edit_campaigns:
+                            type: boolean
+                          can_delete_campaigns:
+                            type: boolean
+                          can_use_update_section:
+                            type: boolean
+                          can_delete_subids:
+                            type: boolean
+                          can_view_attribution:
+                            type: boolean
+                          can_manage_attribution:
+                            type: boolean
+                          can_edit_personal_settings:
+                            type: boolean
+                          can_manage_users:
+                            type: boolean
+                          can_view_settings:
+                            type: boolean
+                          can_use_api_integrations:
+                            type: boolean
+                          can_see_vip_perks:
+                            type: boolean
+                      scopes:
+                        type: array
+                        items:
+                          type: string
+                        description: The calling key's scopes; ["*"] for full access.
+                      switches:
+                        type: object
+                        properties:
+                          licence:
+                            type: string
+                            enum: [licensed, not_licensed, unconfirmed]
+                            description: >-
+                              What the licence-gated surfaces (the Go CLI, connecting an AI assistant)
+                              answer now, as GET /capabilities' cli does. unconfirmed is a refusal because
+                              Tracking202 gave no answer within the grace period. When the install cannot
+                              read whose key counts, the gates let the CLI through, and this is licensed.
+                          sponsored_ads:
+                            type: string
+                            enum: [show_all, hide_login, hide_all]
+                            description: Personal Settings' ad setting.
+                      install:
+                        type: object
+                        properties:
+                          version:
+                            type: string
+                            description: The version of the code this install runs.
+                          schema_version:
+                            type: string
+                            description: The version the database was last upgraded to (unknown without a version row).
+                          api_version:
+                            type: string
+                            enum: [v3]
+                      features:
+                        type: array
+                        description: The names of the features GET /capabilities advertises as on.
+                        items:
+                          type: string
+                      auth:
+                        type: object
+                        properties:
+                          method:
+                            type: string
+                            enum: [api_key, session]
+                            description: >-
+                              How this request was signed in: a key in the Authorization header, or the
+                              pages' session cookie.
+                          csrf_token:
+                            type: string
+                            nullable: true
+                            description: >-
+                              For a session, the token every request but GET and HEAD sends in the
+                              X-P202-CSRF header. Null for a key.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /system/metrics:
     get:
       tags:
@@ -14312,6 +14540,13 @@ components:
       type: http
       scheme: bearer
       description: API key from /users/{id}/api-keys
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: PHPSESSID
+      description: >-
+        The session cookie the sign-in sets, for a page on the same origin. Every method but GET and HEAD
+        also sends the session's token in the X-P202-CSRF header (GET /me answers it as auth.csrf_token).
 
   # ─── Shared parameters ──────────────────────────────────────────────
 
@@ -16748,7 +16983,7 @@ components:
         it (a subid or sid, ClickBank's tracking code, the API's or an upload
         line's click id, an app install's token); ad_click_id an ad platform's
         click id (gclid, gbraid, wbraid, ttclid, msclkid, fbclid, oppref) that a
-        global postback with no SubID sent back and a click carries (one
+        postback or pixel with no SubID sent back and a click carries (one
         visitor's latest click on one campaign); cookie a tracking cookie
         naming it; visitor_id the landing-page script's visitor id, on the
         click it was last seen on; same_ip the latest click from the
@@ -19159,7 +19394,7 @@ components:
           description: >-
             The postback parameters the account's networks send an ad click id
             back in, comma-separated (aff_sub3), at most 5; "" for none. Read
-            by the global postback when its SubID is empty or unfilled, and
+            by gpb.php, pb.php, gpx.php and upx.php when the SubID is empty or unfilled, and
             looked up among this account's clicks as every kind of ad click
             id (match_method ad_click_id). gclid, gbraid, wbraid, msclkid,
             fbclid, ttclid and oppref are read under their own names without being

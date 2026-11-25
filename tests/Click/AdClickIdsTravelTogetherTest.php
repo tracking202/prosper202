@@ -53,11 +53,10 @@ final class AdClickIdsTravelTogetherTest extends TestCase
             . ' 1.9.79 added apart (AdClickIdColumns::of())'],
         '202-config/Conversion/TrafficSourcePixels.php' => [1, 'clickTokens() reads the ids 1.9.79 added apart'
             . ' (AdClickIdColumns::of())'],
+        '202-config/Click/AdClickIdColumns.php' => [1, 'rowJoin() picks the click\'s one 202_google row by the'
+            . ' gclid, the second column of the table\'s key; the ids beside it are read with sql()'],
         '202-config/Click/MysqlClickRepository.php' => [2, "writeGoogleRow(): the rows a database the 1.9.79"
             . " or 1.9.80 upgrade has not reached takes"],
-        'tracking202/static/gpb.php' => [1, "the gclid's token value, read with the click; the others are read"
-            . ' apart (AdClickIdColumns::of())'],
-        'tracking202/static/upx.php' => [1, 'as gpb.php'],
         '202-config/OfflineConversion/Format.php' => [3, 'the offline conversion import files: Google takes the'
             . ' gclid, gbraid and wbraid, Microsoft the msclkid, and neither imports a ttclid or an fbclid'],
         '202-config/OfflineConversion/OfflineExport.php' => [1, 'reads the ids the import files carry'

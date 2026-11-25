@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\DataEngine;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\AdClickIdColumns;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Tables\ClickTables;
 use Prosper202\DataEngine\ClickRollupSql;
@@ -363,7 +364,21 @@ final class ClickRollupSqlTest extends TestCase
         $sql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_time >= 1 AND 2c.click_time <= 2');
 
         self::assertStringContainsString("\nFROM 202_clicks AS 2c\nLEFT OUTER JOIN 202_clicks_record AS 2cr", $sql);
-        self::assertDoesNotMatchRegularExpression('/\b(FORCE|USE|IGNORE)\s+(INDEX|KEY)\b/i', $sql);
+        // The one hint is the 202_google row's own key (AdClickIdColumns::rowJoin()), not 202_clicks'.
+        $google = AdClickIdColumns::rowJoin('2gg', '2c.click_id');
+        self::assertStringContainsString($google, $sql);
+        self::assertDoesNotMatchRegularExpression('/\b(FORCE|USE|IGNORE)\s+(INDEX|KEY)\b/i', str_replace($google, '', $sql));
+    }
+
+    /**
+     * The UTM ids are one 202_google row's, joined once per click: a plain
+     * join wrote whichever row came last (GoogleRowsReadOncePerClickIntegrationTest).
+     */
+    public function testTheUtmIdsAreOneGoogleRowsJoinedOnce(): void
+    {
+        self::assertSame(1, substr_count($this->sql, AdClickIdColumns::rowJoin('2gg', '2c.click_id')));
+        self::assertSame(1, preg_match_all('/\bJOIN\s+`?202_google\b/i', $this->sql));
+        self::assertStringNotContainsString('{GOOGLE_ROW}', $this->sql);
     }
 
     /** A hint naming a key the table lacks fails every rollup: "Key 'click_id' doesn't exist". */

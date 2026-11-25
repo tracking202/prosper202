@@ -43,8 +43,11 @@ final class AccountCreationPaths
         try {
             // The pages' and the installer's connections run under the empty
             // sql_mode (connect.php, SchemaInstaller), the API's under the
-            // server's strict default.
-            self::mode($db, '');
+            // server's strict default. Every path makes its rows under the
+            // strict one: a row valid there is valid under either, and a path
+            // that leaves out a NOT NULL column with no default is refused
+            // there (NewUserInsertsNameEveryRequiredColumnTest).
+            self::mode($db, 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION');
             $made['installer'] = InstallAccount::create($conn, [
                 'email' => "$prefix-installer@example.com", 'name' => "$prefix-installer", 'pass_hash' => 'x',
                 'timezone' => 'UTC', 'registered' => time(), 'install_hash' => '', 'user_hash' => '',
@@ -54,7 +57,8 @@ final class AccountCreationPaths
             $made['settings-users'] = p202_account_save_user($conn, null, [
                 'user_fname' => 'A', 'user_lname' => 'B', 'user_email' => "$prefix-settings@example.com",
                 'user_name' => "$prefix-settings", 'user_time_register' => time(), 'user_timezone' => 'UTC',
-                'user_pass' => 'x', 'install_hash' => '', 'user_hash' => '', 'user_active' => 1,
+                'user_pass' => 'x', 'user_dash_email' => "$prefix-settings@example.com", 'install_hash' => '',
+                'user_hash' => '', 'user_active' => 1,
             ], 2);
 
             $made['repository'] = (new MysqlUserRepository($conn))->create([
@@ -62,7 +66,6 @@ final class AccountCreationPaths
                 'email' => "$prefix-repository@example.com", 'timezone' => 'UTC', 'active' => 1,
             ]);
 
-            self::mode($db, 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION');
             $created = (new UsersController($db))->create([
                 'user_name' => "$prefix-api", 'user_email' => "$prefix-api@example.com", 'user_pass' => 'a-password-1',
             ]);
