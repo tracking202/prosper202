@@ -12645,8 +12645,10 @@ paths:
       description: |
         Needs the `ltv:read` scope. Newest first, as the LTV Settings tab's Log shows it, with the last
         attempt's response body or error (`last_response_body`, e.g. "curl: …" or "blocked: …", stored cut to 1,000
-        bytes). `next_attempt_at` is set while a delivery is pending. The minutely cron job sends what is due; a
-        delivery is retried with backoff and fails after `meta.max_attempts`, which marks the webhook dead. One
+        bytes, with the webhook's secret and any credential-shaped value, such as an Authorization or Cookie header,
+        shown as "[removed]"). `next_attempt_at` is set while a delivery is pending. The minutely cron job sends
+        what is due; a delivery is retried with backoff and fails after `meta.max_attempts`, which marks the
+        webhook dead. One
         still unsent 7 days after it was queued is not sent: it is `failed` with 0 attempts and a
         `last_response_body` of "expired: …". One due while its webhook is dead is held, never tried: `failed`, its
         attempts as they were, "held: …"; `PUT /ltv/webhooks/{id}` sends it again. Never the webhook's secret, and
