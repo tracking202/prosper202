@@ -137,6 +137,19 @@ if ($user_result2 === false) {
 }
 $user_row2 = p202FetchRow($user_result2, $user_sql);
 
+// The user being edited, as the form shows them: the edit form carries the
+// version of this row (ShownSettings), and its save reads it again under that
+// user's settings lock and goes on only when it is what the page showed.
+$editedUserRow = static function (int $userId) use ($db): ?array {
+    $conn = new \Prosper202\Database\Connection($db);
+    $stmt = $conn->prepareWrite(
+        'SELECT user_fname,user_lname,user_name,user_id,user_email,user_time_register,user_active,role_id'
+        . ' FROM 202_users LEFT JOIN 202_user_role USING (user_id) WHERE user_id = ? AND user_deleted != 1 LIMIT 1'
+    );
+    $conn->bind($stmt, 'i', [$userId]);
+    return $conn->fetchOne($stmt);
+};
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	// validate token
 	if (!AUTH::check_csrf_token()) {
@@ -149,6 +162,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		// The form posts the id it was opened for; a mismatch with the
 		// address means the two were not the same form.
 		$error['user_role'] = 'This form was opened for a different user. Open the user again from the list.';
+    } elseif ($editing) {
+        p202_account_require_shown(
+            $db,
+            $editUserId,
+            'edited_user',
+            static fn (): array => ['user' => $editedUserRow($editUserId)],
+            '202-account/user-management.php?edit_user_id=' . $editUserId
+        );
 	}
 	$mysql['user_fname'] = $db->real_escape_string(trim((string)($_POST['user_fname'] ?? '')));
 	if (empty($mysql['user_fname'])) {
@@ -359,10 +380,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 $editingRow = null;
 if ($editing == true) {
     try {
-        $editConn = new \Prosper202\Database\Connection($db);
-        $edit_stmt = $editConn->prepareWrite('SELECT user_fname,user_lname,user_name,user_id,user_email,user_time_register,user_active,role_id FROM 202_users LEFT JOIN 202_user_role USING (user_id) WHERE user_id = ? AND user_deleted != 1 LIMIT 1');
-        $editConn->bind($edit_stmt, 'i', [$editUserId]);
-        $editingRow = $editConn->fetchOne($edit_stmt);
+        $editingRow = $editedUserRow($editUserId);
     } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception) {
         // Read as no row, it said the user was removed.
         p202_account_flash('bad', 'That user could not be read just now. Try again.');
@@ -432,6 +450,7 @@ echo p202_account_render_flashes($extra);
 					<?php echo p202_account_token_field(); ?>
 					<?php if ($editing) { ?>
 						<input type="hidden" name="user_id" value="<?php echo $e($editUserId); ?>">
+                        <?php echo p202_account_shown_field('edited_user', ['user' => $editingRow]); ?>
 					<?php } ?>
 					<div class="row g-3">
 						<div class="col-sm-6">

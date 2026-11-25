@@ -139,6 +139,72 @@ function p202_account_token_field(): string
         . htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8') . '">';
 }
 
+/** The sentence a settings save gets when the page showed values that have changed since. */
+const P202_ACCOUNT_SHOWN_STALE = 'These settings were changed in another window or session after this page'
+    . ' opened, so nothing was saved. The page now shows what is saved: make your change again.';
+
+/**
+ * The hidden field a settings form carries: the version of the values it
+ * shows (Prosper202\User\ShownSettings). $values are exactly what
+ * p202_account_require_shown()'s $read answers for the same form.
+ *
+ * @param array<array-key, mixed> $values
+ */
+function p202_account_shown_field(string $form, array $values): string
+{
+    return \Prosper202\User\ShownSettings::field($form, $values);
+}
+
+/**
+ * The guard in front of a settings save: hold the account's settings lock for
+ * the rest of the request, read the form's values again under it, and go on
+ * only when they are the values the page showed. Otherwise nothing is saved:
+ * the page is reloaded at $reloadTo with a flash saying why.
+ *
+ * Answers the values read under the lock. A save that changes part of a
+ * stored value (a key added to a list) builds on these, never on a read made
+ * before the lock, which another save may have overtaken.
+ *
+ * @param callable(): array<array-key, mixed> $read
+ * @return array<array-key, mixed>
+ */
+function p202_account_require_shown(
+    \mysqli $db,
+    int $userId,
+    string $form,
+    callable $read,
+    string $reloadTo,
+    string $stale = P202_ACCOUNT_SHOWN_STALE
+): array {
+    try {
+        \Prosper202\User\ShownSettings::hold($db, $userId);
+    } catch (\Prosper202\User\SettingsSaveBusy $busy) {
+        error_log('202-account: ' . $busy->getMessage());
+        p202_account_flash(
+            'bad',
+            'Another save of these settings is still running, so nothing was saved. Try again in a moment.'
+        );
+        p202_account_redirect($reloadTo);
+    } catch (\Throwable $failed) {
+        error_log('202-account: the settings lock for ' . $form . ' could not be taken: ' . $failed->getMessage());
+        p202_account_flash('bad', 'Your settings could not be saved just now; nothing changed. Try again.');
+        p202_account_redirect($reloadTo);
+    }
+    try {
+        $current = $read();
+    } catch (\Throwable $failed) {
+        error_log('202-account: the settings of ' . $form . ' could not be read again: ' . $failed->getMessage());
+        p202_account_flash('bad', 'Your settings could not be saved just now; nothing changed. Try again.');
+        p202_account_redirect($reloadTo);
+    }
+    if (!\Prosper202\User\ShownSettings::isCurrent($form, $current, $_POST)) {
+        p202_account_flash('warn', $stale);
+        p202_account_redirect($reloadTo);
+    }
+
+    return $current;
+}
+
 /**
  * Queue a flash for the next page this session renders.
  *

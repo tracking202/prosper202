@@ -49,6 +49,15 @@ final class RefreshState
         return $this->licenseKey !== '';
     }
 
+    /**
+     * A digest of the stored credentials, for the settings form's version
+     * (ShownSettings): it changes with either, and gives neither away.
+     */
+    public function credentialsFingerprint(): string
+    {
+        return hash('sha256', strlen($this->accountId) . ':' . $this->accountId . ':' . $this->licenseKey);
+    }
+
     public function credentials(): ?Credentials
     {
         return $this->accountIdStored() && $this->licenseKeyStored()
