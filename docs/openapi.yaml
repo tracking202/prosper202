@@ -7463,7 +7463,8 @@ paths:
         Already on, it keeps the time it started (`every_campaign_since`).
         A campaign with no goals of its own that pays for none keeps
         recording other `event=` postbacks as plain conversions; an event
-        this goal takes is counted by the goal there, tracked, not paid.
+        this goal takes (its trigger, `where` conditions holding) is counted
+        by the goal there, tracked, not paid.
         Body `{}`. Asks `manage_attribution_models`, like the account goal's
         other writes. Stageable.
       operationId: setGoalEveryCampaign

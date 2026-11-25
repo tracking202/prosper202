@@ -91,10 +91,12 @@ pay for it. `DELETE` turns it off; it then counts only where it is set.
 
 A campaign that never chose goals (it has none of its own and pays for none)
 keeps recording an `event=` postback as one plain, paid conversion, as before.
-With a goal on every campaign, only the events that goal takes (its trigger,
-or a goal it waits for) are counted by goals there: a `purchase` that goal
-takes becomes a tracked outcome, not a paid conversion, until the campaign
-pays for the goal. A campaign that has goals of its own, or pays for one,
+With a goal on every campaign, only the events that goal takes (its trigger
+event with its `where` conditions holding, or a goal it waits for) are counted
+by goals there: a `purchase` that goal takes becomes a tracked outcome, not a
+paid conversion, until the campaign pays for the goal. Whether the goal then
+reaches an outcome (a count, a window, a goal it waits for) is the goal's own
+rule, and an event it takes that reaches none records nothing. A campaign that has goals of its own, or pays for one,
 counts every event by its goals.
 
 A share starts when it is made: events received before it are not

@@ -47,12 +47,12 @@ final class EveryCampaignPlainConversionsIntegrationTest extends TestCase
     }
 
     /** @return array<string, mixed>|null */
-    private static function postback(int $click, string $name, string $eventId): ?array
+    private static function postback(int $click, string $name, string $eventId, array $extra = []): ?array
     {
         return p202RecordWebEvent(
             self::$db,
             $click,
-            ['event' => $name, 'event_id' => $eventId],
+            ['event' => $name, 'event_id' => $eventId] + $extra,
             \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID,
             ['browser' => false]
         );
@@ -79,6 +79,19 @@ final class EveryCampaignPlainConversionsIntegrationTest extends TestCase
         $this->accountGoalOnEveryCampaign();
 
         self::assertSame('recorded', self::postback(2001, 'purchase', 'p1')['status'] ?? null);
+    }
+
+    public function testAnEventTheEveryCampaignGoalsPredicateRefusesStaysAPlainConversion(): void
+    {
+        $id = $this->goals->create(1, GoalScope::ACCOUNT, 0,
+            GoalDefinition::parse(['name' => 'Big purchase', 'trigger' => ['event' => 'purchase', 'where' => [['prop' => 'plan', 'op' => 'eq', 'value' => 'pro']]],
+                'value' => ['type' => 'fixed', 'amount' => '10']]), $this->clock);
+        (new GoalsController(self::$db, 1))->setEveryCampaign($id, []);
+
+        $props = static fn (string $plan): array => ['event_props' => (string) json_encode(['plan' => $plan])];
+        self::assertSame('no_goals', self::postback(2001, 'purchase', 'p1', $props('free'))['status'] ?? null, 'the predicate refuses it');
+        self::assertSame('no_goals', self::postback(2001, 'purchase', 'p2')['status'] ?? null, 'no property at all');
+        self::assertSame('recorded', self::postback(2001, 'purchase', 'p3', $props('pro'))['status'] ?? null, 'the predicate holds');
     }
 
     public function testAnEventAPrerequisiteOfTheEveryCampaignGoalTakesIsEvaluated(): void
