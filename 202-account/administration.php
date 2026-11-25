@@ -39,7 +39,7 @@ if (!isset($userObj) || !$userObj->hasPermission('access_to_settings')) {
 
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string) $_SESSION['user_own_id']);
-$user_sql = "SELECT 2u.user_name as username, maxmind_isp, user_time_register, 2up.user_auto_database_optimization_days FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
+$user_sql = "SELECT 2u.user_name as username, maxmind_isp, user_time_register, 2up.user_auto_database_optimization_days FROM 202_users AS 2u LEFT JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = _mysqli_query($db, $user_sql);
 if ($user_results === false) {
     record_mysql_error($user_sql);
@@ -646,6 +646,7 @@ if ($tsOwners['error'] !== null) {
 }
 echo p202_postback_queue_notice($db, (int) ($_SESSION['user_own_id'] ?? $_SESSION['user_id'] ?? 0), get_absolute_url());
 echo p202_restore_notice(p202_restore_notices($db), $self, (string) ($_SESSION['token'] ?? ''));
+echo p202_reclick_backfill_notice($db);
 $unsavedWarning = \Prosper202\Click\UnsavedClickRedirects::warning($unsavedClicks);
 if ($unsavedWarning !== null) {
     echo p202_flash('warn', $unsavedWarning);
