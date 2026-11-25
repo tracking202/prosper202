@@ -380,7 +380,9 @@ final class Processor
         // A refund takes back at most what its sale recorded (a sale is
         // reversed once): one stating more (a fee, a mismatched payment) is
         // capped there and answered 200 naming both amounts, which the log
-        // keeps, since a provider retries a refusal for days.
+        // keeps, since a provider retries a refusal for days. The writer
+        // applies the cap under the click's lock (cap_at_sale): this read
+        // comes before it, and a sale still committing reads as none (R4CE).
         $amount = $n->amount;
         $by = $amount ?? 'its full amount';
         if ($amount !== null && $sale !== null && abs(Amount::toUnits($amount)) > $sale['units']) {
@@ -397,6 +399,7 @@ final class Processor
             'reversal' => true,
             'reversal_ref' => $ref,
             'reverses_carried_value' => $carriedPath,
+            'cap_at_sale' => true,
             'use_pixel_payout' => $amount !== null,
             'payout' => $amount ?? '',
             'conv_time' => $time,
@@ -431,6 +434,18 @@ final class Processor
         }
         $taken = $carriedPath && $result['conv_id'] > 0 ? $this->carriedTaken($result['conv_id'], $owner) : null;
         if ($result['recorded']) {
+            // A sale that committed after the read above: the writer found it
+            // under the lock and capped the refund there.
+            if (
+                $sale === null && $taken === null && $n->amount !== null
+                && $provider->source() !== ConversionSource::SHOPIFY
+            ) {
+                $stored = $this->storedReversal($result['conv_id'], $owner);
+                if (abs(Amount::toUnits($n->amount)) > $stored['sale'] && $stored['reversed'] === $stored['sale']) {
+                    $by = self::units($stored['sale']) . ', the whole sale: this ' . $n->event . ' states ' . $n->amount
+                        . ', more than the sale recorded';
+                }
+            }
             if ($provider->source() === ConversionSource::SHOPIFY && $result['payout'] !== '' && $amount !== null) {
                 $actual = abs(Amount::toUnits($result['payout']));
                 if ($actual !== abs(Amount::toUnits($amount))) {

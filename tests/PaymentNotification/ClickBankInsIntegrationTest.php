@@ -7,6 +7,8 @@ namespace Tests\PaymentNotification;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\ClickRecord;
 use Prosper202\Click\MysqlClickRepository;
+use Prosper202\Conversion\Ledger\MatchMethod;
+use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\ClickBank\ClickBankAdapter;
@@ -806,6 +808,92 @@ final class ClickBankInsIntegrationTest extends TestCase
         $again = $this->post(['attemptCount' => 2] + $refund, self::FIRST_KEY);
         self::assertOutcome(OutcomeKind::DUPLICATE, 200, $again);
         self::assertCount(2, self::conversions());
+    }
+
+    /**
+     * A refund that reads its sale while the sale is still being written:
+     * this test holds the click's lock with the sale written and not yet
+     * committed, the refund runs in a child process and reads no sale, and
+     * the sale commits once the server shows the child waiting on the lock.
+     * Capped before the lock, by what the refund had read, it took back all
+     * of its 50.00 and left the click at -12.38 (R4CE).
+     */
+    public function testARefundArrivingWithItsSaleNeverTakesTheClickBelowZero(): void
+    {
+        self::requireScratch();
+        $refund = ClickBankAdapterTest::body(ClickBankAdapterTest::sale([
+            'transactionType' => 'RFND', 'totalAccountAmount' => '-50.00',
+            'trackingCodes' => [(string) self::CLICK], 'transactionTime' => self::stated(time()),
+        ]), self::FIRST_KEY);
+        $bodyFile = (string) tempnam(sys_get_temp_dir(), 'p202-cb-refund');
+        file_put_contents($bodyFile, $refund);
+
+        $holder = new \mysqli(
+            (string) getenv('P202_TEST_DB_HOST'),
+            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+            (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+        );
+        $holder->query("SET SESSION sql_mode='STRICT_TRANS_TABLES'");
+        $conn = new Connection($holder);
+        $child = null;
+        try {
+            $conn->transaction(function () use ($conn, $bodyFile, &$child): void {
+                self::assertNotNull((new MysqlConversionLedger($conn))->lockClick(self::CLICK));
+                (new MysqlConversionRepository($conn))->recordInTransaction(self::FIRST, [
+                    'click_id' => self::CLICK, 'transaction_id' => 'CWOGBZLN', 'payout' => '37.62',
+                    'source' => 'clickbank', 'pixel_type' => 2, 'conv_time' => time() - 60,
+                ], MatchMethod::CLICK_ID);
+                $child = self::waitingNotification($bodyFile);
+            });
+        } finally {
+            $holder->close();
+        }
+        [$proc, $pipes] = $child;
+        $out = trim((string) stream_get_contents($pipes[1]));
+        $err = (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $exit = proc_close($proc);
+        @unlink($bodyFile);
+        self::assertSame(0, $exit, "exit $exit\n$out$err");
+        $outcome = json_decode($out, true, 3, JSON_THROW_ON_ERROR);
+
+        self::assertSame(OutcomeKind::REVERSED->name, $outcome['kind'], $outcome['message']);
+        self::assertSame('Reversed transaction CWOGBZLN on click ' . self::CLICK . ' by 37.62, the whole sale: this'
+            . ' RFND states 50.00, more than the sale recorded.', $outcome['message']);
+        self::assertSame(['37.62000', '-37.62000'], array_column(self::conversions(), 'click_payout'));
+        self::assertSame('0.00000', self::clickPayout());
+    }
+
+    /** @return array{resource, array<int, resource>} the child delivering $bodyFile, once it waits on a lock */
+    private static function waitingNotification(string $bodyFile): array
+    {
+        $proc = proc_open(
+            [
+                PHP_BINARY, '-d', 'display_errors=stderr', '-d', 'error_log=',
+                __DIR__ . '/fixtures/clickbank-notification-runner.php', $bodyFile,
+            ],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes
+        );
+        self::assertIsResource($proc);
+        $thread = trim((string) fgets($pipes[1]));
+        self::assertMatchesRegularExpression('/\A[1-9][0-9]*\z/', $thread, 'the runner names its connection');
+        $deadline = microtime(true) + 15;
+        do {
+            $waiting = self::requireScratch()->query('SELECT COUNT(*) FROM information_schema.INNODB_TRX'
+                . " WHERE trx_mysql_thread_id = $thread AND trx_state = 'LOCK WAIT'");
+            self::assertInstanceOf(\mysqli_result::class, $waiting);
+            if ((int) $waiting->fetch_row()[0] === 1) {
+                return [$proc, $pipes];
+            }
+            // The server refreshes INNODB_TRX only once it has gone 0.1s unread.
+            usleep(250000);
+        } while (microtime(true) < $deadline);
+        self::fail("The refund on connection $thread never waited for a lock: "
+            . stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]));
     }
 
     public function testARefundIsDatedWhenClickBankSaysItHappened(): void
