@@ -733,10 +733,37 @@ try {
         // ── Reports ──────────────────────────────────────────────────────
         // Overview and Analyze ask for no permission; a role without
         // access_to_campaign_data gets them masked ($campaignFigures).
-        $router->group('/reports', function (Router $r) use ($crud, $queryParams, $campaignFigures, $reportFigures) {
+        // A breakdown's goal funnel (`goals`) names the account's goals and
+        // counts their outcomes, which GET /goals/{id}/outcomes answers: it
+        // asks what that route asks (goals:read, Setup), and its counts are
+        // masked with the clicks and leads.
+        $breakdownFigures = [...$reportFigures, ...\Api\V3\Support\CampaignFigures::GOAL_FUNNEL];
+        $router->group('/reports', function (Router $r) use (
+            $crud,
+            $queryParams,
+            $campaignFigures,
+            $reportFigures,
+            $breakdownFigures,
+            $auth,
+            $setupSection
+        ) {
             $cls = \Api\V3\Controllers\ReportsController::class;
             $r->get('/summary',    fn() => $campaignFigures($crud($cls)->summary($queryParams), $reportFigures));
-            $r->get('/breakdown',  fn() => $campaignFigures($crud($cls)->breakdown($queryParams), $reportFigures));
+            $r->get('/breakdown', function () use (
+                $crud,
+                $cls,
+                $queryParams,
+                $campaignFigures,
+                $breakdownFigures,
+                $auth,
+                $setupSection
+            ) {
+                if (($queryParams['goals'] ?? '') !== '') {
+                    $auth->requireScope('goals:read');
+                    $setupSection();
+                }
+                return $campaignFigures($crud($cls)->breakdown($queryParams), $breakdownFigures);
+            });
             $r->get('/timeseries', fn() => $campaignFigures($crud($cls)->timeseries($queryParams), $reportFigures));
             $r->get('/daypart',    fn() => $campaignFigures($crud($cls)->daypart($queryParams), $reportFigures));
             $r->get('/weekpart',   fn() => $campaignFigures($crud($cls)->weekpart($queryParams), $reportFigures));

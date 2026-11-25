@@ -71,6 +71,13 @@ final class CampaignFigures
      */
     public const array GOAL_OUTCOME = ['value', 'payout', 'amount'];
 
+    /**
+     * A breakdown's goal funnel's counts: the clicks that reached a step,
+     * reached it and every step before, and were lost on the way, hidden as
+     * the report's clicks and leads are. The rates stay, as the report's do.
+     */
+    public const array GOAL_FUNNEL = ['reached', 'continued', 'drop_off'];
+
     private function __construct()
     {
     }

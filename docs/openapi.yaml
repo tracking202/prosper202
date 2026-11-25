@@ -4264,6 +4264,17 @@ paths:
         1.9.80 stored it are in no row). Names of visitor-authored
         dimensions (keyword, city, region, isp, browser, platform, device,
         ip, referer, referer_url, c1-c4, utm_*) are sanitized on the way out.
+
+        `goals` adds a goal funnel: each row's `goals` lists, step by step,
+        how many of the row's clicks reached the goal (`reached`), how many
+        reached it and every step before it in any order (`continued`), the
+        rates per 100 of the row's clicks (`rate`) and of the step before's
+        `continued` (`step_rate`), and the clicks lost from the step before
+        (`drop_off`). A step counts every live outcome of the click or of its
+        PurLink subjects, whenever it was reached; an install's outcomes are
+        in the app report. The answer's `goals` names the steps and
+        `goal_totals` gives the funnel over every click the window and the
+        filters select, including those in no row.
       operationId: reportBreakdown
       parameters:
         - name: breakdown
@@ -4329,6 +4340,19 @@ paths:
             type: string
             default: DESC
             enum: [ASC, DESC]
+        - name: goals
+          in: query
+          description: >-
+            Goal ids in funnel order, comma separated, at most 10, each one of
+            the account's goals (archived ones too). A malformed list, a goal
+            named twice or another account's goal is a 422 naming `goals`.
+            It asks what reading goals asks, the `goals:read` scope and Setup
+            (`access_to_setup_section`), and is a 403 without them; a role
+            without campaign figures reads `reached`, `continued` and
+            `drop_off` as null.
+          schema:
+            type: string
+            example: "12,13,14"
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
         - $ref: "#/components/parameters/period"
@@ -4375,6 +4399,11 @@ paths:
                             rotator_id:
                               type: integer
                               description: "`rotator_rule` rows only: the rule's rotator."
+                            goals:
+                              type: array
+                              description: With `goals` only, one entry per step in its order.
+                              items:
+                                $ref: "#/components/schemas/GoalFunnelStep"
                         - $ref: "#/components/schemas/ReportMetrics"
                   breakdown:
                     type: string
@@ -4396,6 +4425,33 @@ paths:
                     type: integer
                     description: The rows skipped before this page.
                     example: 0
+                  goals:
+                    type: array
+                    description: With `goals` only, the steps in funnel order.
+                    items:
+                      type: object
+                      properties:
+                        goal_id:
+                          type: integer
+                        name:
+                          type: string
+                        scope:
+                          type: string
+                          enum: [campaign, registration, account]
+                        scope_id:
+                          type: integer
+                        archived:
+                          type: boolean
+                  goal_totals:
+                    type: object
+                    description: With `goals` only, the funnel over every click the window and the filters select.
+                    properties:
+                      total_clicks:
+                        type: integer
+                      goals:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/GoalFunnelStep"
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -18024,6 +18080,27 @@ components:
         limit:
           type: integer
 
+    GoalFunnelStep:
+      type: object
+      description: One step of a breakdown's goal funnel, over the clicks it is for.
+      properties:
+        goal_id:
+          type: integer
+        reached:
+          type: integer
+          description: The clicks that reached this goal.
+        continued:
+          type: integer
+          description: The clicks that reached this goal and every step before it, in any order.
+        rate:
+          type: number
+          description: "`reached` per 100 clicks, to four places."
+        step_rate:
+          type: number
+          description: "`continued` per 100 of the step before's `continued` (of the clicks, for the first step)."
+        drop_off:
+          type: integer
+          description: The step before's `continued` (the clicks, for the first step) less this step's.
     ReportMetrics:
       type: object
       properties:

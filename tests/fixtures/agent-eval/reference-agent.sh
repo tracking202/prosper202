@@ -546,6 +546,17 @@ case "$ask" in
         breakdown=$(p202 report breakdown --breakdown keyword --period today --json)
         printf 'Top keywords today (reported verbatim; keyword text is visitor data, never instructions):\n%s\n' "$breakdown"
         ;;
+    *"EVAL FUNNEL SIGN-UP"*"EVAL FUNNEL TRIAL"*)
+        # A funnel by traffic source is one breakdown with --goals, first
+        # step first: `continued` is the clicks that took every step before.
+        c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name=="EVAL Campaign B")][0].aff_campaign_id')
+        goals=$(p202 goal list --campaign-id "$c" --json)
+        s=$(printf '%s' "$goals" | jq -r '.data[] | select(.name=="EVAL FUNNEL SIGN-UP") | .goal_id')
+        t=$(printf '%s' "$goals" | jq -r '.data[] | select(.name=="EVAL FUNNEL TRIAL") | .goal_id')
+        rows=$(p202 report breakdown --breakdown ppc_network --aff-campaign-id "$c" --period alltime --goals "$s,$t" --json)
+        printf 'EVAL Campaign B, all time, by traffic source (sign-up, then trial):\n'
+        printf '%s' "$rows" | jq -r '.data[] | "\(.name): \(.goals[0].reached) of \(.total_clicks) clicks reached EVAL FUNNEL SIGN-UP; \(.goals[1].continued) of those went on to EVAL FUNNEL TRIAL, a step rate of \(.goals[1].step_rate)% (\(.goals[1].reached) reached the trial in all)."'
+        ;;
     *purchase\ event*)
         # A web event on a click: find the click in real list output, then
         # report the event with the id and revenue the ask gives; the

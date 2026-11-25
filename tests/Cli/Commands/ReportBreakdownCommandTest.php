@@ -207,6 +207,41 @@ class ReportBreakdownCommandTest extends TestCase
         self::assertNull(ReportBreakdownCommand::moreRowsNote($page(50, [])));
     }
 
+    /**
+     * A funnel's steps are columns numbered by step, so two goals that share
+     * a name (an account's and a campaign's) keep a column each; an answer
+     * without a funnel is left as it is.
+     */
+    public function testAFunnelsStepsAreNumberedColumns(): void
+    {
+        $step = static fn (int $id, int $reached): array => [
+            'goal_id' => $id, 'reached' => $reached, 'continued' => $reached,
+            'rate' => 50.0, 'step_rate' => 50.0, 'drop_off' => 1,
+        ];
+        $table = ReportBreakdownCommand::withGoalColumns([
+            'data' => [['id' => 7, 'name' => 'search', 'goals' => [$step(12, 3), $step(30, 2)]]],
+            'goals' => [['goal_id' => 12, 'name' => 'Sign-up'], ['goal_id' => 30, 'name' => 'Sign-up']],
+        ]);
+
+        $row = $table['data'][0];
+        self::assertArrayNotHasKey('goals', $row);
+        self::assertSame(3, $row['1. Sign-up reached']);
+        self::assertSame(2, $row['2. Sign-up reached']);
+        self::assertSame(1, $row['2. Sign-up drop-off']);
+        self::assertCount(2 + 8, $row);
+
+        $plain = ['data' => [['id' => 7, 'name' => 'search']]];
+        self::assertSame($plain, ReportBreakdownCommand::withGoalColumns($plain));
+    }
+
+    public function testHasGoalsOptionWithoutDefault(): void
+    {
+        $opt = $this->command->getDefinition()->getOption('goals');
+
+        $this->assertNull($opt->getDefault());
+        $this->assertTrue($opt->isValueRequired());
+    }
+
     public function testAllFilterOptionsHaveNoDefault(): void
     {
         $def = $this->command->getDefinition();
