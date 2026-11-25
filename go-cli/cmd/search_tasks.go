@@ -168,6 +168,8 @@ var searchTasks = []searchTask{
 		Phrases: []string{"nested report", "group by several dimensions"}},
 	{Run: "p202 dashboard",
 		Phrases: []string{"overall performance", "how are we doing", "performance today", "profit and roi"}},
+	{Run: "p202 report summary --aff-campaign-id 1,4",
+		Phrases: []string{"combined total", "several campaigns together", "total for a set of campaigns"}},
 
 	// Analyze: each page is one breakdown dimension.
 	{Run: "p202 report breakdown --breakdown keyword", Pages: []string{"Analyze › Keywords"}},
