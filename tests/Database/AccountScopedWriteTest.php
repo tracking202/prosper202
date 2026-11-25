@@ -7,6 +7,7 @@ namespace Tests\Database;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\AssembledStrings;
 use Tests\Support\CallsBefore;
+use Tests\Support\LocalStringValue;
 use Tests\Support\SourceScan;
 use Tests\Support\SqlJoinScan;
 
@@ -52,7 +53,10 @@ use Tests\Support\SqlJoinScan;
  * WHERE …";` — joined in source order up to the first other use of the
  * variable, passing over the INSERT or REPLACE the same builder is given in
  * its other branch (the pages' `if ($editing) { UPDATE … SET } else { INSERT
- * … SET }` shape).
+ * … SET }` shape). A bare local variable in a write is read as the string
+ * it holds only where LocalStringValue vouches for it: one `$x = <string
+ * chain>;` in a block enclosing the read, and nothing after it but reads
+ * (testALocalIsReadOnlyInTheShapeItCanVouchFor).
  *
  * What it refuses by name rather than reads (each fails unless listed): a
  * table built at runtime (a variable, a constant it cannot resolve) or not
@@ -63,8 +67,8 @@ use Tests\Support\SqlJoinScan;
  * with a hole whose name says it is a clause (`$where`).
  *
  * What it does not see: a statement whose first word is not literal
- * (`$verb . ' FROM …'`); a variable's value (`$set`, `$scope`: such a
- * write is listed); whether the value a user-id name holds is the session's
+ * (`$verb . ' FROM …'`); a variable's value in any other shape (`$scope`, a
+ * parameter: such a write is listed); whether the value a user-id name holds is the session's
  * (it is trusted by its name, as AccountScopedJoinTest trusts it); whether a
  * conditional append runs on the same path as the statement it finishes;
  * whether a guard is handed the id the write uses; and the upgrade ladder
@@ -286,8 +290,6 @@ final class AccountScopedWriteTest extends TestCase
         ],
         '202-config/Destinations/DestinationQueue.php' => [
             'no user_id tie | 202_destination_deliveries | delivery_id = ? AND status = \'pending\' AND attempts = ?' => 'the queue worker\'s claim of a delivery its due() read chose',
-            'table built at runtime | {202_destination_deliveries{$set} AND status IN (\'failed\', \'withheld\') AND delivery_id = ?} | UPDATE {202_destination_deliveries{$set} AND status IN (\'failed\', \'withheld\') AND delivery_id = ?}' => 'tied: $set, assigned just above, holds `WHERE user_id = ? AND destination_id = ?`; a variable the scan does not follow',
-            'table built at runtime | {202_destination_deliveries{$set} AND status = ? AND created_at >= ? ORDER BY delivery_id LIMIT {self::RESEND_BATCH}} | UPDATE {202_destination_deliveries{$set} AND status = ? AND created_at >= ? ORDER BY delivery_id LIMIT {self::RESEND_BATCH}}' => 'tied: $set, assigned just above, holds `WHERE user_id = ? AND destination_id = ?`; a variable the scan does not follow',
             'no user_id tie | 202_destination_deliveries | delivery_id = ? AND status = \'pending\'' => 'the queue worker\'s own delivery, claimed above in sendDue()',
             'no user_id tie | 202_destination_deliveries | delivery_id = ?' => 'the queue worker\'s own delivery, claimed above in sendDue()',
         ],
@@ -313,9 +315,7 @@ final class AccountScopedWriteTest extends TestCase
             'owned through its parent | 202_identity_observations | click_id = ? AND signal_type IN ( ? , ? )' => 'a click its caller has shown is the account\'s (MysqlClickRepository under the click lock, ClickIdentity on the click path)',
         ],
         '202-config/Ltv/MysqlCompanyRepository.php' => [
-            'no user_id tie | 202_customers | {$changes}' => 'the rename\'s WHERE is the local $changes, `company_id = ? AND user_id = ? AND …`, shared with the FOR UPDATE that locks the same rows; the scanner reads literals and class constants, not a variable\'s value',
-            'no user_id tie | 202_customers | {$still}' => 'the blank clear\'s WHERE is the local $still, `user_id = ? AND company_id IS NULL AND customer_id IN (…)`, shared with the FOR UPDATE that locks the same rows; the scanner reads literals and class constants, not a variable\'s value',
-            'no user_id tie | 202_customers | {$drift}' => 'LtvMaintenance (cron): every account\'s customers, each from its own company (`co.user_id = c.user_id` in the join); the WHERE is the local $drift, `c.company IS NULL OR c.company <> co.name`, shared with the FOR UPDATE',
+            'OR in the WHERE | 202_customers | c.company IS NULL OR c.company <> co.name' => 'LtvMaintenance (cron): every account\'s customers, each from its own company (`co.user_id = c.user_id` in the join)',
         ],
         '202-config/Ltv/MysqlCustomerCrmRepository.php' => [
             'table built at runtime | {{$table}} | UPDATE {{$table}} SET {{$column}} = ? WHERE {{$column}} = ? {($hasUserId ? \' AND user_id = ?\' : \'\')}' => 'tied where the table has user_id; 202_clicks_tracking by the merge\'s source customer, which the merge locked first `WHERE customer_id IN (?, ?) AND user_id = ?`',
@@ -346,7 +346,8 @@ final class AccountScopedWriteTest extends TestCase
             'no user_id tie | 202_notification_pending | conv_id = ? AND pixel_id = ? AND destination = ? AND kind = \'reached\' AND status = \'pending\' AND attempts = 0' => 'notifications of a conversion its caller holds under the click lock for the account (onReplaced(userId, …)), read just above by conv_id',
             'no user_id tie | 202_notification_pending | notification_id = ? AND status = \'cancelled\' AND attempts = 0' => 'a notification read just above for the revived conversion, which its caller holds under the click lock',
             'no user_id tie | 202_notification_pending | conv_id = ? AND pixel_id = ? AND destination = ? AND kind = \'reached\' AND status = \'pending\' AND attempts = 0 #2' => 'notifications of a conversion its caller holds under the click lock for the account, read just above by conv_id',
-            'no user_id tie | 202_notification_pending | notification_id = ? AND status = \'pending\' AND attempts = ?' => 'the outbox worker\'s claim of a notification its due read chose',
+            'no user_id tie | 202_notification_pending | notification_id = ? AND status = \'pending\' AND attempts = ?' => 'the outbox worker\'s hold (consent withheld) of a notification its due read chose',
+            'no user_id tie | 202_notification_pending | notification_id = ? AND status = \'pending\' AND attempts = ? #2' => 'the outbox worker\'s claim of a notification its due read chose',
             'no user_id tie | 202_notification_pending | notification_id = ?' => 'the outbox worker\'s own notification, claimed above',
             'no user_id tie | 202_notification_pending | notification_id = ? #2' => 'the outbox worker\'s own notification, claimed above',
             'no user_id tie | 202_notification_pending | notification_id = ? #3' => 'a notification read just above for a conversion its caller holds under the click lock',
@@ -363,6 +364,9 @@ final class AccountScopedWriteTest extends TestCase
         '202-config/PaymentNotification/HeldNotifications.php' => [
             'no user_id tie | 202_held_payment_notifications | received_at < ?' => self::R_RETENTION,
         ],
+        '202-config/Rotator/CriterionRepair.php' => [
+            'owned through its parent | 202_rotator_rules_criteria | id = ? AND CAST ( value AS BINARY ) = CAST ( ? AS BINARY )' => 'the 1.9.81 upgrade\'s repair (functions-upgrade.php, before any account signs in): every account\'s criteria, each by the id its own read of the table chose, rewritten only where the value is still the one read',
+        ],
         '202-config/Setup/AccountPixels.php' => [
             'owned through its parent | 202_ppc_account_pixels | pixel_id = ? AND ppc_account_id = ?' => 'save()\'s caller has checked the account is the user\'s: tracking202/setup/ppc_accounts.php reads it `WHERE user_id = … AND ppc_account_id = …` and stops with wrong_user first; a pixel is written only by its id within that account',
             'owned through its parent | 202_ppc_account_pixels | pixel_id = ? AND ppc_account_id = ? #2' => 'save()\'s caller has checked the account is the user\'s: tracking202/setup/ppc_accounts.php reads it `WHERE user_id = … AND ppc_account_id = …` and stops with wrong_user first; a pixel is written only by its id within that account',
@@ -374,8 +378,8 @@ final class AccountScopedWriteTest extends TestCase
             'no user_id tie | 202_dirty_hours | id = {$delayed_row[\'id\']}' => 'the data engine\'s (cron) own queue and job rows',
             'no user_id tie | 202_dirty_hours | deleted = 1' => 'the data engine\'s (cron) own queue and job rows',
             'owned through its parent | 202_dataengine_job | time_from = \'{$from}\' AND time_to = \'{$to}\'' => 'the data engine\'s (cron) own queue and job rows',
-            'no WHERE read | 202_dataengine_job | UPDATE 202_dataengine_job SET processing = \'0\' {$job}' => 'the data engine\'s (cron) own queue and job rows',
-            'no WHERE read | 202_dataengine_job | UPDATE 202_dataengine_job SET processing = \'0\' , processed = \'1\' {$job}' => 'the data engine\'s (cron) own queue and job rows',
+            'owned through its parent | 202_dataengine_job | time_from = \'{$from}\' AND time_to = \'{$to}\' #2' => 'the data engine\'s (cron) own queue and job rows',
+            'owned through its parent | 202_dataengine_job | time_from = \'{$from}\' AND time_to = \'{$to}\' #3' => 'the data engine\'s (cron) own queue and job rows',
             'owned through its parent | 202_dataengine_job | time_from = \'{$upgrade_from}\' AND time_to = \'{$upgrade_to}\'' => 'the data engine\'s (cron) own queue and job rows',
         ],
         '202-config/functions-auth.php' => [
@@ -437,7 +441,7 @@ final class AccountScopedWriteTest extends TestCase
         ],
     ];
 
-    private const REVIEWED_CEILING = 137;
+    private const REVIEWED_CEILING = 135;
 
     private const STATEMENT_ENDS = ['ORDER', 'LIMIT'];
 
@@ -488,8 +492,13 @@ final class AccountScopedWriteTest extends TestCase
         foreach ($chains as $chain) {
             $byStart[$chain['start']] = $chain;
         }
+        $bodies = LocalStringValue::bodies($tokens);
         $out = [];
         foreach ($chains as $chain) {
+            if (self::target(SqlJoinScan::sqlTokens($chain['text'], $chain['holes'])) === null) {
+                continue;
+            }
+            $chain = self::withLocals($tokens, $bodies, $byStart, $chain);
             $holes = $chain['holes'];
             $sql = SqlJoinScan::sqlTokens($chain['text'], $holes);
             $target = self::target($sql);
@@ -525,6 +534,48 @@ final class AccountScopedWriteTest extends TestCase
                 $chain['text'] = str_replace("\x01{$index}\x02", $value, $chain['text']);
             }
         }
+
+        return $chain;
+    }
+
+    /**
+     * The chain with each operand that is a bare local variable read as the
+     * string it holds, where LocalStringValue can vouch for it; any other
+     * variable stays a hole.
+     *
+     * @param list<\PhpToken> $tokens
+     * @param list<array{fn: int, open: int, close: int}> $bodies
+     * @param array<int, array{line: int, text: string, holes: list<string>, start: int, end: int}> $byStart
+     * @param array{line: int, text: string, holes: list<string>, start: int, end: int} $chain
+     * @return array{line: int, text: string, holes: list<string>, start: int, end: int}
+     */
+    private static function withLocals(array $tokens, array $bodies, array $byStart, array $chain): array
+    {
+        $holes = $chain['holes'];
+        foreach ($chain['holes'] as $index => $hole) {
+            if (preg_match('/^\{?(\$[A-Za-z_]\w*)\}?$/', $hole, $m) !== 1) {
+                continue;
+            }
+            $value = null;
+            for ($k = $chain['start']; $k <= $chain['end']; $k++) {
+                if ($tokens[$k]->id !== T_VARIABLE || $tokens[$k]->text !== $m[1]) {
+                    continue;
+                }
+                $read = LocalStringValue::at($tokens, $bodies, $byStart, $k);
+                if (!isset($read['chain']) || ($value !== null && $value['start'] !== $read['chain']['start'])) {
+                    $value = null;
+                    break;
+                }
+                $value = $read['chain'];
+            }
+            if ($value === null) {
+                continue;
+            }
+            $text = '';
+            SqlJoinScan::append($text, $holes, $value);
+            $chain['text'] = str_replace("\x01{$index}\x02", $text, $chain['text']);
+        }
+        $chain['holes'] = $holes;
 
         return $chain;
     }
@@ -1819,6 +1870,114 @@ final class AccountScopedWriteTest extends TestCase
             self::scan("<?php\n" . $php . "\n")
         );
         self::assertSame($kinds, $found, $php);
+    }
+
+    /**
+     * The local-variable shapes: the one LocalStringValue reads, and one
+     * plant per shape it must refuse, each with the refusal it names. Each
+     * write is tied only through the variable, so a refused read is an
+     * untied write.
+     *
+     * @return array<string, array{0: string, 1: string, 2?: string}> the
+     *         method body; the refusal ('' for a shape that is read and
+     *         tied, 'reads …' for one read as an untied value); the
+     *         method's parameters
+     */
+    public static function localShapes(): array
+    {
+        $w = "\$w = 'id = ? AND user_id = ?';";
+        $write = "\$this->c->prepareWrite('UPDATE 202_ppc_networks SET ppc_network_name = ? WHERE ' . \$w);";
+
+        return [
+            'assigned once, read' => ["$w $write", ''],
+            'assigned once, interpolated' => ["$w \$this->c->prepareWrite(\"UPDATE 202_ppc_networks SET ppc_network_name = ? WHERE {\$w}\");", ''],
+            'read twice, in a nested block' => ["$w \$this->c->prepareWrite('SELECT 1 FROM 202_ppc_networks WHERE ' . \$w); if (\$x) { $write }", ''],
+            'an earlier value replaced' => ["\$w = \$this->rows(); foreach (\$w as \$r) { } $w $write", ''],
+            'reassigned after' => ["$w $write \$w = 'id = ?';", 'assigned again'],
+            'reassigned between: the later value is read' => ["$w \$w = 'id = ?'; $write", 'reads id = ?'],
+            'reassigned between: the later value is read, tied' => ["\$w = 'id = ?'; $w $write", ''],
+            'appended' => ["$w \$w .= ' OR 1'; $write", 'used otherwise'],
+            'incremented' => ["$w \$w++; $write", 'used otherwise'],
+            'assigned in an expression' => ["$w \$y = (\$w = 'id = ?'); $write", 'used otherwise'],
+            'destructured' => ["$w [\$w] = ['id = ?']; $write", 'used otherwise'],
+            'a foreach target' => ["$w foreach (['id = ?'] as \$w) { } $write", 'used otherwise'],
+            'a call argument (by reference)' => ["$w \$this->fill(\$w); $write", 'used otherwise'],
+            'unset' => ["$w unset(\$w); $write", 'used otherwise'],
+            'referenced after' => ["$w \$r = &\$w; \$r = 'id = ?'; $write", 'taken by reference'],
+            'referenced before' => ["\$r = &\$w; $w \$r = 'id = ?'; $write", 'taken by reference'],
+            'assigned by reference' => ["\$w = &\$this->where; $w $write", 'assigned by reference'],
+            'foreach by reference' => ["foreach (\$this->rows as &\$w) { } $w $write", 'taken by reference'],
+            'a closure\'s use by reference' => ["\$f = function () use (&\$w): void { \$w = 'id = ?'; }; $w \$f(); $write", 'taken by reference'],
+            'a closure\'s use by value' => ["$w \$f = function () use (\$w): void { }; $write", 'used otherwise'],
+            'global' => ["global \$w; $w $write", 'used otherwise'],
+            'static' => ["static \$w = ''; $w $write", 'used otherwise'],
+            'a by-reference parameter' => ["$w $write", 'taken by reference', '&$w'],
+            'extract()' => ["$w extract(\$this->vars); $write", 'extract()'],
+            'compact()' => ["$w \$v = compact('w'); $write", 'compact()'],
+            'parse_str()' => ["$w parse_str(\$q); $write", 'parse_str()'],
+            'variable variable' => ["$w \$n = 'w'; \$\$n = 'id = ?'; $write", '$$name'],
+            'dollar brace' => ["$w \${'w'} = 'id = ?'; $write", '$$name'],
+            'eval' => ["$w eval(\$code); $write", 'eval'],
+            'include' => ["$w include \$file; $write", 'include'],
+            'require' => ["$w require \$file; $write", 'require'],
+            'goto' => ["goto skip; $w skip: $write", 'goto'],
+            'an arrow function' => ["$w \$f = fn () => \$w; $write", 'an arrow function'],
+            'alternative syntax' => ["if (\$x): $w endif; $write", 'endif'],
+            'assigned in a branch' => ["if (\$x) { $w } $write", 'outside the block'],
+            'assigned in a braceless if' => ["if (\$x) $w $write", 'no `$w = …;` statement'],
+            'assigned in another case' => ["switch (\$x) { case 1: $w break; case 2: $write }", 'no `$w = …;` statement'],
+            'assigned before a case label' => ["switch (\$x) { case 1: foo(); $w case 2: $write }", 'case label'],
+            'assigned a call' => ["\$w = \$this->where(); $write", 'not a string chain'],
+            'assigned a ternary' => ["\$w = 'id = ? AND user_id = ?' . '' ?: 'id = ?'; $write", 'not a string chain'],
+            'only a parameter' => ["$write", 'no `$w = …;` statement', '$w'],
+            'read in a nested closure' => ["$w \$this->tx(function (): void { \$this->c->prepareWrite('UPDATE 202_ppc_networks SET ppc_network_name = ? WHERE ' . \$w); });", 'no `$w = …;` statement'],
+            'read at file scope' => ['', 'outside a function'],
+            'read with an index' => ["\$w = 'id = ? AND user_id = ?'; \$this->c->prepareWrite('UPDATE 202_ppc_networks SET ppc_network_name = ? WHERE ' . \$w[0]);", 'index'],
+        ];
+    }
+
+    /**
+     * @dataProvider localShapes
+     */
+    public function testALocalIsReadOnlyInTheShapeItCanVouchFor(string $body, string $refusal, string $params = ''): void
+    {
+        $source = $refusal === 'outside a function'
+            ? "<?php\n\$w = 'id = ? AND user_id = ?';\n\$c->prepareWrite('UPDATE 202_ppc_networks SET ppc_network_name = ? WHERE ' . \$w);\n"
+            : "<?php\nfinal class Planted {\n    public function f($params): void { $body }\n}\n";
+        $findings = array_map(static fn (array $f): string => $f['key'], self::scan($source));
+        if ($refusal === '') {
+            self::assertSame([], $findings, $source);
+
+            return;
+        }
+        if (str_starts_with($refusal, 'reads ')) {
+            self::assertSame(['no user_id tie | 202_ppc_networks | ' . substr($refusal, 6)], $findings, $source);
+
+            return;
+        }
+        if ($refusal === 'index') {
+            // `$w[0]` is not a bare variable: the hole is never followed.
+            self::assertSame(['no user_id tie | 202_ppc_networks | {$w[0]}'], $findings, $source);
+
+            return;
+        }
+        self::assertSame(['no user_id tie | 202_ppc_networks | {$w}'], $findings, $source);
+        $tokens = \PhpToken::tokenize($source);
+        $byStart = [];
+        foreach (SqlJoinScan::chains($source) as $chain) {
+            $byStart[$chain['start']] = $chain;
+        }
+        $use = null;
+        foreach ($tokens as $k => $tok) {
+            $prev = $tokens[$k - 1]->text ?? '';
+            if ($tok->text === '$w' && ($prev === '.' || ($k > 1 && $tokens[$k - 2]->text === '.'))) {
+                $use = $k;
+            }
+        }
+        self::assertNotNull($use, 'the planted read was not found');
+        $read = LocalStringValue::at($tokens, LocalStringValue::bodies($tokens), $byStart, (int) $use);
+        self::assertArrayHasKey('refused', $read, $source);
+        self::assertStringContainsString($refusal, $read['refused'], $source);
     }
 
     /**
