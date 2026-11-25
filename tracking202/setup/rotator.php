@@ -329,7 +329,7 @@ $redirectRow = static function (array $redirect) use ($campaignOptions, $pageOpt
 		. p202_setup_options($pageOptions, (string) ($redirect['redirect_lp'] ?? ''), 'Choose a landing page') . '</select></label>'
 		. '<label class="form-label small w-100" data-destination="url"' . ($type === 'url' ? '' : ' hidden') . '>URL<input type="url" class="form-control form-control-sm" data-rule-field="redirect_url" required placeholder="https://" value="' . p202_setup_e($redirect['redirect_url'] ?? '') . '"></label>'
 		. '</div>'
-		. '<div class="col-8 col-md-2" data-split-only><label class="form-label small w-100">Weight<input type="number" min="1" class="form-control form-control-sm" data-rule-field="weight" required value="' . p202_setup_e($redirect['weight'] ?? '') . '" placeholder="50"></label></div>'
+		. '<div class="col-8 col-md-2" data-split-only><label class="form-label small w-100">Weight<input type="number" min="0" class="form-control form-control-sm" data-rule-field="weight" required value="' . p202_setup_e($redirect['weight'] ?? '') . '" placeholder="50"></label></div>'
 		. '<div class="col-4 col-md-1" data-split-only><button type="button" class="btn btn-link btn-sm text-danger" data-p202-remove-row aria-label="Remove this destination"><i class="bi bi-x-lg"></i></button></div>'
 		. '</div>';
 };

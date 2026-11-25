@@ -183,6 +183,36 @@ final class RedirectorRulesSaveIntegrationTest extends TestCase
         self::assertSame($before, self::snapshot());
     }
 
+    /**
+     * 6CRO: a destination weighted 0 (one the API wrote, pausing it in a
+     * split) is shown in the editor as 0, with 0 a weight the field takes,
+     * and the rule posted back as shown is saved with it. The field's
+     * min="1" refused the form, and the save's array_filter() read "0" as a
+     * missing field and answered ERROR, so the rule could not be saved from
+     * the page at all.
+     */
+    public function testADestinationWeighted0IsShownAndSavedAsTheApiStoresIt(): void
+    {
+        self::q('UPDATE 202_rotator_rules SET splittest = 1 WHERE id = ' . self::KEPT);
+        $paused = self::insert('INSERT INTO 202_rotator_rules_redirects SET rule_id = ' . self::KEPT
+            . ", redirect_url = 'https://paused.example/', weight = '0', name = 'URL: <a href=https://paused.example/>link</a>'");
+
+        $page = self::page('tracking202/setup/rotator.php', ['rotator_id' => (string) self::ROTATOR]);
+        self::assertMatchesRegularExpression('/data-redirect-id="' . $paused . '".*?<input type="number" min="0"[^>]*value="0"/s', $page,
+            'the paused destination is shown weighted 0, in a field that takes 0');
+        self::assertStringContainsString('https://paused.example/ (weight 0)', html_entity_decode($page), 'and listed with it');
+
+        $post = self::post();
+        $post['data'][0]['redirects'] = [
+            ['id' => (string) self::KEPT, 'type' => 'campaign', 'value' => (string) self::OFFER, 'weight' => '100'],
+            ['id' => (string) $paused, 'type' => 'url', 'value' => 'https://paused.example/', 'weight' => '0'],
+        ];
+        self::assertSame('DONE', trim(self::save($post)));
+        $weights = self::requireScratch()->query('SELECT id, weight FROM 202_rotator_rules_redirects WHERE rule_id = ' . self::KEPT . ' ORDER BY id');
+        self::assertInstanceOf(\mysqli_result::class, $weights);
+        self::assertSame([[(string) self::KEPT, '100'], [(string) $paused, '0']], $weights->fetch_all(), 'both kept by id, the paused one at 0');
+    }
+
     /** JK3D: a default_type the page does not know is refused before any write (it ran `UPDATE 202_rotators SET `). */
     public function testAnUnknownDefaultTypeWritesNothing(): void
     {
