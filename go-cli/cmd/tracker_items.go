@@ -281,10 +281,12 @@ func (r *itemsRun) add(answer map[string]interface{}) {
 	}
 }
 
-// finish renders every item's answer and ends as a partial failure when an
-// item was not done, naming what was, so a caller that reads only the error
-// still knows which items not to send again.
-func (r *itemsRun) finish() error {
+// renderAnswers renders every item's answer and ends as a partial failure
+// when an item was not done, naming what was, so a caller that reads only the
+// error still knows which items not to send again. (Not "finish":
+// TestEncodingErrorsReachTheCaller reads a method by its name in the package,
+// and rankCorpus.finish returns no error.)
+func (r *itemsRun) renderAnswers() error {
 	summary := map[string]int{}
 	for _, s := range []string{r.verb, "staged", "error", "unconfirmed", "not_attempted"} {
 		summary[s] = r.counts[s]
@@ -376,7 +378,7 @@ func runTrackerItemsCreate(cmd *cobra.Command, entity crudEntity, raw string) er
 		}
 		run.add(answer)
 	}
-	return run.finish()
+	return run.renderAnswers()
 }
 
 // runTrackerItemsUpdate is `tracker update --items`: one PUT per item, as
@@ -451,7 +453,7 @@ func runTrackerItemsUpdate(cmd *cobra.Command, entity crudEntity, raw string) er
 		answer["status"], answer["tracker"] = "updated", obj
 		run.add(answer)
 	}
-	return run.finish()
+	return run.renderAnswers()
 }
 
 func crudFieldNamed(entity crudEntity, name string) crudField {
