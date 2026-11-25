@@ -312,8 +312,14 @@ try {
         exit;
     }
 
-    // Authenticate
-    $auth = Auth::fromRequest($headers, $db);
+    // Authenticate: the key in the Authorization header, or, for a request
+    // that bears none, the pages' signed-in session (SessionSignIn: the
+    // user's standing and session generation read now, and every write
+    // carries the session's token in X-P202-CSRF).
+    $signedInBySession = \Api\V3\SessionSignIn::applies($headers, $_COOKIE);
+    $auth = $signedInBySession
+        ? \Api\V3\SessionSignIn::authenticate($method, $headers, $db)
+        : Auth::fromRequest($headers, $db);
     $userId = $auth->userId();
     RequestContext::setActorUserId($userId);
     RequestContext::setApiKeyRef($auth->apiKeyRef());
@@ -321,6 +327,11 @@ try {
     // The key that authenticated removes itself, and only itself, whatever
     // its scope: so before the limits, the CLI licence gate and the scopes.
     if ($path === '/connect/revoke' && $method === 'POST') {
+        if ($signedInBySession) {
+            // It removes the key a request bears; a session bears none.
+            Bootstrap::errorResponse('This request is signed in by its session and bears no key to revoke. Send the key in the Authorization header.', 400);
+            exit;
+        }
         // Its watchers end first, best effort, as on every key delete. The MCP
         // server's own give-back finds none, at the cost of one short call.
         if (!(new \Api\V3\Support\AiWatchers())->stopBeforeDelete($db, $userId, Auth::bearerKey($headers))) {
@@ -415,7 +426,7 @@ try {
     // the int cast leaves unchanged, or a 404. Read as (int) $ctx['id'],
     // DELETE /campaigns/2e0 deleted campaign 2 (PathIdsAreReadStrictlyTest).
     $buildRouters = function (array $payload, array $queryParams, int $actorUserId)
-        use ($db, $auth, $stateStore, $crudMap): array {
+        use ($db, $auth, $stateStore, $crudMap, $signedInBySession): array {
         // Controller factories — instantiated lazily by the router handlers.
         $crud = fn(string $class) => new $class($db, $actorUserId);
 
@@ -508,7 +519,7 @@ try {
         // /conversions routes, whose GET /conversions/{id} would otherwise
         // answer GET /conversions/postback-code. SetupRoutesPermissionTest
         // holds all of this.
-        $router->group('', function (Router $r) use ($crud, $queryParams, $payload, $auth, $stateStore) {
+        $router->group('', function (Router $r) use ($crud, $queryParams, $payload, $auth, $stateStore, $signedInBySession) {
             $code = \Api\V3\Controllers\SetupCodeController::class;
             $r->get('/landing-pages/{id}/code', fn($ctx) => $crud($code)->landingPageCode(PathId::of($ctx), $queryParams));
             // "Check my page": fetches the page and keeps the answer. Not stageable (it changes no setup), and no preview.
@@ -517,7 +528,8 @@ try {
                 PathId::of($ctx),
                 $queryParams,
                 $payload,
-                new \Api\V3\Support\LandingPageCheckLimit($stateStore, $auth->apiKeyRef())
+                // A session is counted by its user: a key's ref is a hex digest, so the two never share a count.
+                new \Api\V3\Support\LandingPageCheckLimit($stateStore, $signedInBySession ? 'session:' . $auth->userId() : $auth->apiKeyRef())
             ));
             // The postback token rides in the URLs only for a key that may write conversions.
             $r->get('/conversions/postback-code', fn() => $crud($code)->postbackCode($queryParams, null, $auth->hasScope('conversions:write')));
@@ -965,6 +977,18 @@ try {
 
             return $answer;
         });
+
+        // ── Who is signed in ────────────────────────────────────────────
+        // The user, the account's zone and currency, the roles, the
+        // permissions and the flags the pages and routes gate on, the
+        // licence and ad switches, the install version (which GET
+        // /system/version answers to admins only) and the feature list:
+        // what a dashboard decides its screens by. The caller's own facts,
+        // so no scope and no role (Auth::isScopeExemptPath()).
+        $router->get('/me', fn() => (new \Api\V3\Controllers\MeController($db, $auth))->me(
+            $signedInBySession ? 'session' : 'api_key',
+            $signedInBySession ? \Api\V3\SessionSignIn::csrfToken() : null
+        ));
 
         // ── Server-side sync planning (admin + read scope) ─────────────
         $router->group('/sync', function (Router $r) use ($crud, $queryParams, $payload) {
@@ -2066,7 +2090,7 @@ try {
         $db,
         $userId,
         static fn (): string => ApiUsage::clientKind(
-            ScopeRefusal::keySource($db, Auth::bearerKey($headers), $userId) === ScopeRefusal::AI_CONNECTION,
+            !$signedInBySession && ScopeRefusal::keySource($db, Auth::bearerKey($headers), $userId) === ScopeRefusal::AI_CONNECTION,
             (string) ($_SERVER['HTTP_USER_AGENT'] ?? '')
         ),
         $method,

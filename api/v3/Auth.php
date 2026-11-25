@@ -295,6 +295,10 @@ final readonly class Auth
             // Clients probe these to discover what they may do.
             return true;
         }
+        if ($first === 'me' && count($segments) === 1) {
+            // Who the caller is and what it may do: any valid key reads it.
+            return true;
+        }
         if ($first === 'system' && ($segments[1] ?? '') === 'health') {
             return true; // answered before authentication
         }
@@ -589,6 +593,44 @@ final readonly class Auth
         $stmt->close();
 
         return $granted;
+    }
+
+    /**
+     * Every legacy role permission this key's user holds, sorted: what
+     * hasPermission() answers true for, in one read. Same failure rule: a
+     * lookup that fails is a 500, never an empty list.
+     *
+     * @return list<string>
+     */
+    public function permissions(\mysqli $db): array
+    {
+        $stmt = $db->prepare(
+            'SELECT DISTINCT p.permission_description FROM 202_user_role ur
+             JOIN 202_role_permission rp ON rp.role_id = ur.role_id
+             JOIN 202_permissions p ON p.permission_id = rp.permission_id
+             WHERE ur.user_id = ?'
+        );
+        if (!$stmt) {
+            throw new AuthException('Authorization unavailable', 500);
+        }
+        self::bind($stmt, 'i', $this->userId);
+        if (!self::execute($stmt)) {
+            $stmt->close();
+            throw new AuthException('Authorization unavailable', 500);
+        }
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new AuthException('Authorization unavailable', 500);
+        }
+        $permissions = [];
+        while ($row = $result->fetch_row()) {
+            $permissions[] = (string) $row[0];
+        }
+        $stmt->close();
+        sort($permissions, SORT_STRING);
+
+        return $permissions;
     }
 
     /**
