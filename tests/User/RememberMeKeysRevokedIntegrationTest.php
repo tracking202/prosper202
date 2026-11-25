@@ -515,7 +515,7 @@ final class RememberMeKeysRevokedIntegrationTest extends TestCase
             (new MysqlUserRepository(new Connection($db)))->update($user, ['user_pass' => $password]);
         };
         $store = static function (\mysqli $db, int $user, string $password): void {
-            \Prosper202\User\PasswordChange::store(new Connection($db), $user, \hash_user_pass($password), false);
+            \Prosper202\User\PasswordChange::store(new Connection($db), $user, \hash_user_pass($password));
         };
 
         return [
@@ -569,7 +569,7 @@ final class RememberMeKeysRevokedIntegrationTest extends TestCase
     {
         try {
             $hash = \hash_user_pass('x-password');
-            \Prosper202\User\PasswordChange::store(new Connection(self::$db), 990899, $hash, false);
+            \Prosper202\User\PasswordChange::store(new Connection(self::$db), 990899, $hash);
             $threw = null;
         } catch (\RuntimeException $e) {
             $threw = $e->getMessage();
