@@ -243,6 +243,7 @@ final class WebhookDispatcher
                 } catch (\Throwable $e) {
                     [$success, $statusCode, $responseBody] = [false, null, 'error: ' . $e->getMessage()];
                 }
+                $responseBody = DeliveryReason::redact($responseBody, (string) ($delivery['webhook_secret'] ?? ''));
                 $repo->recordAttempt($deliveryId, $webhookId, $success, $statusCode, $responseBody);
 
                 if ($success) {
