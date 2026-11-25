@@ -1,0 +1,4 @@
+-- Fixed: The cloaked-link hop (tracking202/redirect/cl2.php) sent any q on to the visitor as a script's location, a refresh and a link, with no sign-in, so a cl2.php link carrying a javascript: URL ran script in the admin's origin when a signed-in owner opened it. It now sends on only an absolute http or https URL and answers anything else with the 404 page.
+app: Fixed: The cloaked-link page sends visitors on only to http and https links.
+-- Fixed: safe_url(), which keeps links in Visitors, Spy and the click history to http and https, read the scheme from the bytes as sent, so java<tab>script: or a javascript: URL after a control character passed it, and a landing page's referer could store script that ran when the owner opened Visitors or Spy. It now reads the scheme as a browser does, after removing every control character and space (Prosper202\Http\LinkScheme).
+app: Fixed: Visitors and Spy no longer show a link that a visitor can make run script.

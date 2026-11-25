@@ -374,7 +374,7 @@ To change **your own** password the server also needs the current one; pipe both
 printf '%s\n%s\n' "$CURRENT" "$NEW" | p202 user update <your id> --current-password --set-password --json
 ```
 
-Without `--current-password`, a piped change of your own password fails with a `422` naming `current_password` and a hint saying this. An admin resetting another user's password does not send it. Who may change whom follows Account › User management ([Users API](../documentation/api/14-users.md#who-may-act-on-whom)).
+Without `--current-password`, a piped change of your own password fails with a `422` naming `current_password` and a hint saying this. A new email of your own needs it too (`--user-email new@example.com --current-password`, the current password as the one line of stdin). An admin changing another user's password or email does not send it. Who may change whom follows Account › User management ([Users API](../documentation/api/14-users.md#who-may-act-on-whom)).
 
 ### Generate an API key
 

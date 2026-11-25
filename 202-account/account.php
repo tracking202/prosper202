@@ -338,6 +338,41 @@ $p202RecordConsentChoices = static function () use ($db): bool {
 	return $saved;
 };
 
+// The current-password check a change of the password or the email makes:
+// 'ok', 'missing', 'wrong', or 'unread' when the stored hash could not be
+// read (not a wrong password, and not counted as one). Wrong answers count
+// toward one limit for both forms, and the session ends at it: someone
+// holding a session they shouldn't (shared machine, ridden cookie) must not
+// guess the password toward a takeover, nor point the lost-password mail at
+// an address of their own. The token is checked before this is called, so a
+// forged cross-site POST cannot force anyone out.
+$p202CurrentPasswordCheck = static function (int $userId, mixed $posted) use ($db): string {
+    if (!is_string($posted) || $posted === '') {
+        return 'missing';
+    }
+    try {
+        $passConn = new \Prosper202\Database\Connection($db);
+        $verify_stmt = $passConn->prepareWrite('SELECT user_pass FROM 202_users WHERE user_id = ? LIMIT 1');
+        $passConn->bind($verify_stmt, 'i', [$userId]);
+        $stored = $passConn->fetchOne($verify_stmt);
+    } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception) {
+        return 'unread';
+    }
+    if (!$stored || !verify_user_pass($posted, (string) ($stored['user_pass'] ?? ''))['valid']) {
+        $_SESSION['pw_change_fails'] = (int) ($_SESSION['pw_change_fails'] ?? 0) + 1;
+        if ($_SESSION['pw_change_fails'] >= AUTH::MAX_PASSWORD_REAUTH_FAILS) {
+            // As the sign-out: this browser's remember-me key goes too.
+            AUTH::signOut();
+            header('location: ' . get_absolute_url() . '202-login.php');
+            exit;
+        }
+        return 'wrong';
+    }
+    // The legitimate owner: clear the failure counter.
+    unset($_SESSION['pw_change_fails']);
+    return 'ok';
+};
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	$submittedEmail = isset($_POST['user_email']) ? trim((string)$_POST['user_email']) : $currentUserEmail;
@@ -357,6 +392,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if (check_email_address($submittedEmail) == false) {
 			$error['user_email'] = 'Please enter a valid email address.';
 		}
+        // A new address takes the current password, as a new password does:
+        // the lost-password page mails its reset to this address. The row
+        // checked is the one whose email the save below writes.
+        if (!isset($error['user_email']) && $submittedEmail !== $currentUserEmail) {
+            $emailOwnerId = (int) ($canPersonal ? $_SESSION['user_id'] : $_SESSION['user_own_id']);
+            $emailPasswordCheck = $p202CurrentPasswordCheck($emailOwnerId, $_POST['email_current_password'] ?? null);
+            if ($emailPasswordCheck === 'missing') {
+                $error['email_current_password'] = 'Enter your current password to change your email.';
+            } elseif ($emailPasswordCheck === 'unread') {
+                $error['email_current_password'] = 'Unable to verify your current password at this time.';
+            } elseif ($emailPasswordCheck === 'wrong') {
+                $error['email_current_password'] = 'Your current password was typed incorrectly.';
+            }
+        }
 
 		if ($canPersonal) {
 			//check user_email
@@ -913,45 +962,13 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 	}
 
 	//check to to see if old user_pass is correct
-	if (!isset($_POST['user_pass']) || empty($_POST['user_pass'])) {
+    $passwordCheck = $p202CurrentPasswordCheck((int) ($_SESSION['user_own_id'] ?? 0), $_POST['user_pass'] ?? null);
+    if ($passwordCheck === 'missing') {
 		$passErrors['user_pass'] = 'You must enter your current password.';
-	} else {
-		$stored = null;
-		$verified = false;
-        try {
-            $passConn = new \Prosper202\Database\Connection($db);
-            $verify_stmt = $passConn->prepareWrite('SELECT user_pass FROM 202_users WHERE user_id = ? LIMIT 1');
-            $passConn->bind($verify_stmt, 'i', [(int) ($_SESSION['user_own_id'] ?? 0)]);
-            $stored = $passConn->fetchOne($verify_stmt);
-            $verified = true;
-        } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception) {
-            // Said below; not counted as a wrong password.
-        }
-		if (!$verified) {
-			// Could not read the stored hash: say so, and do not count it as
-			// a wrong password (it is not one).
-			$passErrors['user_pass'] = 'Unable to verify your current password at this time.';
-		} elseif (!$stored || !verify_user_pass((string) $_POST['user_pass'], (string) ($stored['user_pass'] ?? ''))['valid']) {
-			$passErrors['user_pass'] = 'Your old password was typed incorrectly.';
-
-			// Count wrong current-password attempts within this session (the
-			// token was checked above, so a forged cross-site POST can't
-			// force-logout the victim). Too many almost always means someone
-			// is poking at a session they shouldn't have, so tear it down and
-			// force a fresh login rather than letting them keep guessing
-			// toward an account takeover.
-			$_SESSION['pw_change_fails'] = (int) ($_SESSION['pw_change_fails'] ?? 0) + 1;
-			if ($_SESSION['pw_change_fails'] >= AUTH::MAX_PASSWORD_REAUTH_FAILS) {
-				// As the sign-out: this browser's remember-me key goes too.
-				AUTH::signOut();
-				header('location: ' . get_absolute_url() . '202-login.php');
-				exit;
-			}
-		} else {
-			// Correct current password — this is the legitimate owner, so
-			// clear the failure counter.
-			unset($_SESSION['pw_change_fails']);
-		}
+    } elseif ($passwordCheck === 'unread') {
+        $passErrors['user_pass'] = 'Unable to verify your current password at this time.';
+    } elseif ($passwordCheck === 'wrong') {
+        $passErrors['user_pass'] = 'Your old password was typed incorrectly.';
 	}
 
 	//if no user_pass errors
@@ -1175,6 +1192,13 @@ echo p202_account_render_flashes($extraFlashes);
 						<div class="form-text">Password resets go here.</div>
 						<?php echo p202_account_field_error($profileErrors, 'user_email'); ?>
 					</div>
+
+                    <div class="mb-3">
+                        <label class="form-label" for="email_current_password">Current password</label>
+                        <input type="password" class="form-control<?php echo p202_account_invalid($profileErrors, 'email_current_password'); ?>" id="email_current_password" name="email_current_password" autocomplete="current-password">
+                        <div class="form-text">Needed only when you change your email.</div>
+                        <?php echo p202_account_field_error($profileErrors, 'email_current_password'); ?>
+                    </div>
 
 					<?php if ($canPersonal) { ?>
 						<div class="row g-3 mb-3">

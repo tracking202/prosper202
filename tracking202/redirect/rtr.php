@@ -515,7 +515,7 @@ if ($rule['aff_campaign_cloaking'] == 1) {
 	// A re-click keeps the one its cl.php and pci.php links were handed out with.
 	$click_id_public = $reClick !== null && $reClick['click_id_public'] !== '' && $reClick['click_id_public'] !== '0'
 		? $reClick['click_id_public']
-		: random_int(1,9) . $click_id . random_int(1,9);
+		: \Prosper202\Click\PublicClickIdKey::forNewClick($db, (int) $click_id);
 	$mysql['click_id_public'] = $click_id_public;
 } else { 
 	$mysql['click_cloaking'] = 0; 

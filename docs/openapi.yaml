@@ -7751,7 +7751,10 @@ paths:
         manage even when it is you; `user_timezone` is Personal Settings', so
         your own needs the `access_to_personal_settings` permission. A new
         `user_pass` (8-72 characters) is re-hashed; changing your own needs
-        `current_password` too (422 naming it when missing or wrong).
+        `current_password` too (422 naming it when missing or wrong), and so
+        does changing your own `user_email` to another address, since the
+        lost-password page mails its reset there. Your email as stored, sent
+        back in a GET body, needs none.
       operationId: updateUser
       requestBody:
         required: true
@@ -16533,6 +16536,11 @@ components:
           description: The redirect of that rule the click was sent to.
         click_id_public:
           type: string
+          description: >-
+            The id the click's cloaked link (cl.php?pci=) and way out (pci.php?pci=)
+            carry, as text. From 1.9.80 a new click's is 19 digits, a 1, the click id
+            in twelve digits and a keyed suffix, so it names no other click; a click
+            from before keeps the old, shorter id. Empty or 0 for a click given none.
         click_cloaking:
           type: integer
         click_in:
@@ -19104,7 +19112,9 @@ components:
           type: string
           format: email
           maxLength: 100
-          description: Another account's email is a 422.
+          description: >-
+            Another account's email is a 422. Changing your own to another
+            address needs `current_password`.
         user_pass:
           type: string
           minLength: 8
@@ -19118,8 +19128,10 @@ components:
         current_password:
           type: string
           description: >-
-            Required with `user_pass` when you change your own password;
-            not sent when resetting another user's.
+            Your password as it is now. Required with `user_pass` when you
+            change your own password, and with `user_email` when you change
+            your own email to another address (422 naming it when missing or
+            wrong); not sent when an admin changes another user's.
         user_timezone:
           type: string
           description: >-

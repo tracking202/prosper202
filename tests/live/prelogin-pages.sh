@@ -158,24 +158,35 @@ has "$OUT/pr-again.html" 'This reset link does not work' "the same link again is
 restore
 
 # ─────────────────────────────────────────────────────────────────────
-say "the license-key page: the session token before any write"
+say "the license-key page: the session token before any write, and the owner before a saved key is replaced"
 LJAR=$(mktemp)
+# A saved key that does not validate, as an expired one is. The page reads
+# and writes user 1's key.
+mysql_q "$DB" -e "UPDATE 202_users SET p202_customer_api_key='u7-saved-key-QWXZ' WHERE user_id=$USER_ID"
 get "$LJAR" "api-key-required.php" "$OUT/lk.html"
+has "$OUT/lk.html" 'A license key is saved, but it does not validate' "the page says a key is saved"
+hasnt "$OUT/lk.html" 'u7-saved' "and shows none of it (it printed the first 8 and last 4 characters)"
+hasnt "$OUT/lk.html" 'QWXZ' "not its end either"
 submit "$LJAR" "$OUT/lk.html" api_key "api-key-required.php" "$OUT/lk-notoken.html" api_key=u7-not-a-key token=
 flash "$OUT/lk-notoken.html" 'Your session has expired. Please reload the page and try again.' "a key posted without the token is refused in words (it used to be checked and saved)"
 submit "$LJAR" "$OUT/lk.html" api_key "api-key-required.php" "$OUT/lk-empty.html" "api_key= "
 flash "$OUT/lk-empty.html" 'Please enter your API key.' "an empty key is refused in words"
-eq "$(Q "SELECT IFNULL(p202_customer_api_key, '') FROM 202_users WHERE user_id=$USER_ID")" "$ORIG_LICENSE" "no refusal changed the saved license key"
-# With the token, the license service decides; the page must say what it
-# decided and the row must agree with the page (the service answers "Key
-# valid" to any key at the time of writing, so either answer is possible).
-submit "$LJAR" "$OUT/lk.html" api_key "api-key-required.php" "$OUT/lk-checked.html" api_key=u7-not-a-key
+submit "$LJAR" "$OUT/lk.html" api_key "api-key-required.php" "$OUT/lk-noproof.html" api_key=u7-not-a-key
+flash "$OUT/lk-noproof.html" 'A license key is already saved. To replace it, sign in with an account that can change Settings' "a visitor's key does not replace a saved one (any key the service accepted did)"
+hasnt "$OUT/lk-noproof.html" 'could not be checked with Tracking202' "and the license service is not asked"
+submit "$LJAR" "$OUT/lk.html" api_key "api-key-required.php" "$OUT/lk-wrong.html" api_key=u7-not-a-key "owner_user_name=$P202_USER" owner_user_pass=not-the-password
+flash "$OUT/lk-wrong.html" 'Your username or password is incorrect.' "a wrong owner's password is refused in words"
+eq "$(Q "SELECT IFNULL(p202_customer_api_key, '') FROM 202_users WHERE user_id=$USER_ID")" "u7-saved-key-QWXZ" "no refusal changed the saved license key"
+# With the owner's password, the license service decides; the page must say
+# what it decided and the row must agree with the page (the service answers
+# "Key valid" to any key at the time of writing, so either answer is possible).
+submit "$LJAR" "$OUT/lk.html" api_key "api-key-required.php" "$OUT/lk-checked.html" api_key=u7-not-a-key "owner_user_name=$P202_USER" "owner_user_pass=$P202_PASS"
 STORED=$(Q "SELECT IFNULL(p202_customer_api_key, '') FROM 202_users WHERE user_id=$USER_ID")
 if grep -qF 'License key saved' "$OUT/lk-checked.html"; then
   eq "$STORED" "u7-not-a-key" "the service accepted the key; the page says saved and the key is stored"
 else
   flash "$OUT/lk-checked.html" 'Invalid API key; check it and retry.' "the service rejected the key, and the page says so"
-  eq "$STORED" "$ORIG_LICENSE" "and the saved key is unchanged"
+  eq "$STORED" "u7-saved-key-QWXZ" "and the saved key is unchanged"
 fi
 restore
 

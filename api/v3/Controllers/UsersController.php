@@ -235,12 +235,15 @@ class UsersController
     private const PASSWORD_MAX = 72;
 
     /**
-     * $actorUserId is who is asking. Changing your own password needs
-     * `current_password`, as Personal settings asks for it
-     * (202-account/account.php): an API key, or a session, that is not the
-     * password must not be enough to take over the sign-in. Setting another
-     * user's password is the admin's reset (user-management.php), which the
-     * route has already authorized, and asks for no current password.
+     * $actorUserId is who is asking. Changing your own password, or your own
+     * email to another address, needs `current_password`, as Personal
+     * settings asks for both (202-account/account.php): an API key, or a
+     * session, that is not the password must not be enough to take over the
+     * sign-in, and the lost-password page mails a reset to the stored email.
+     * The email as stored, sent back in a GET body, needs none. Setting
+     * another user's password or email is the admin's (user-management.php),
+     * which the route has already authorized, and asks for no current
+     * password.
      */
     public function update(int $id, array $payload, ?int $actorUserId = null): array
     {
@@ -248,7 +251,8 @@ class UsersController
         // A GET body sent back carries these; with the account's own values
         // they change nothing, with any other they were ignored as though
         // written.
-        $readOnly = \Api\V3\Support\PayloadKeys::changedReadOnly($payload, self::READ_ONLY, $this->get($id)['data']);
+        $stored = $this->get($id)['data'];
+        $readOnly = \Api\V3\Support\PayloadKeys::changedReadOnly($payload, self::READ_ONLY, $stored);
         if ($readOnly !== []) {
             throw new ValidationException('Read-only field', $readOnly);
         }
@@ -258,11 +262,19 @@ class UsersController
         $types = '';
 
         $switchesOff = false;
+        $changesOwnEmail = false;
         foreach ($this->profileFields($payload, $id) as $f => [$t, $value]) {
             $sets[] = "$f = ?";
             $binds[] = $value;
             $types .= $t;
             $switchesOff = $switchesOff || ($f === 'user_active' && !\Prosper202\User\UserStanding::isActive($value));
+            $changesOwnEmail = $changesOwnEmail
+                || ($f === 'user_email' && $actorUserId === $id && $value !== (string) ($stored['user_email'] ?? ''));
+        }
+        if ($changesOwnEmail) {
+            $alsoPassword = array_key_exists('user_pass', $payload) && $payload['user_pass'] !== '';
+            $what = $alsoPassword ? 'email and password' : 'email';
+            $this->requireCurrentPassword($id, $payload['current_password'] ?? null, $what);
         }
 
         $changesPassword = false;
@@ -272,8 +284,8 @@ class UsersController
                 throw new ValidationException('Invalid password', ['user_pass' => 'Must be a string']);
             }
             self::checkPasswordLength($password);
-            if ($actorUserId === $id) {
-                $this->requireCurrentPassword($id, $payload['current_password'] ?? null);
+            if ($actorUserId === $id && !$changesOwnEmail) {
+                $this->requireCurrentPassword($id, $payload['current_password'] ?? null, 'password');
             }
             $sets[] = 'user_pass = ?';
             $binds[] = \hash_user_pass($password);
@@ -435,17 +447,17 @@ class UsersController
     }
 
     /**
-     * The password check Personal settings makes before a change: a 422
-     * naming current_password when it is missing or wrong. A stored hash
-     * that cannot be read is a 500, never "wrong password" (error pattern
-     * #11).
+     * The password check Personal settings makes before a change of the
+     * password or the email: a 422 naming current_password when it is
+     * missing or wrong. A stored hash that cannot be read is a 500, never
+     * "wrong password" (error pattern #11). $what names the change.
      */
-    private function requireCurrentPassword(int $userId, mixed $current): void
+    private function requireCurrentPassword(int $userId, mixed $current, string $what): void
     {
         if (!is_string($current) || $current === '') {
             throw new ValidationException(
-                'Changing your own password needs your current password',
-                ['current_password' => 'Required when you change your own password']
+                "Changing your own $what needs your current password",
+                ['current_password' => "Required when you change your own $what"]
             );
         }
         $stmt = $this->prepare('SELECT user_pass FROM 202_users WHERE user_id = ? LIMIT 1');

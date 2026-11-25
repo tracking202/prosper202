@@ -390,7 +390,7 @@ $cloaking_on = false;
 if (\Prosper202\Click\ClickCloaking::isOn($tracker_row)) {
 	$cloaking_on = true;
 	$mysql['click_cloaking'] = 1;
-	$click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);
+	$click_id_public = \Prosper202\Click\PublicClickIdKey::forNewClick($db, (int) $click_id); // names no neighbour
 	$mysql['click_id_public'] = (string) $click_id_public;
 } else {
 	$mysql['click_cloaking'] = 0;

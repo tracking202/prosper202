@@ -71,6 +71,44 @@ func TestUserUpdateNamesCurrentPasswordWhenTheServerAsksForIt(t *testing.T) {
 	}
 }
 
+// Your own email takes the current password as your own password does:
+// sent with --current-password, and asked for by name when the server wants it.
+func TestUserUpdateSendsTheCurrentPasswordWithAnEmailChange(t *testing.T) {
+	_, seen := goalServer(t, 200, `{"data":{"user_id":2}}`)
+	answerPrompts(t, "old-secret-1\n")
+
+	if _, _, err := executeCommand("user", "update", "2", "--user-email", "new@example.com", "--current-password"); err != nil {
+		t.Fatalf("user update: %v", err)
+	}
+	if len(*seen) != 1 {
+		t.Fatalf("requests = %+v, want one", *seen)
+	}
+	body := (*seen)[0].Body
+	if body["current_password"] != "old-secret-1" || body["user_email"] != "new@example.com" {
+		t.Errorf("body = %v, want the email and the current password", body)
+	}
+}
+
+func TestUserUpdateNamesCurrentPasswordWhenAnEmailChangeNeedsIt(t *testing.T) {
+	_, seen := goalServer(t, 422, `{"error":true,"status":422,"message":"Changing your own email needs your current password",`+
+		`"field_errors":{"current_password":"Required when you change your own email"}}`)
+	answerPrompts(t, "")
+
+	_, _, err := executeCommand("user", "update", "2", "--user-email", "new@example.com")
+	if err == nil {
+		t.Fatal("want the 422")
+	}
+	if code := exitCodeForError(err); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if hint := hintFor(err); !strings.Contains(hint, "--current-password") {
+		t.Errorf("hint = %q, want --current-password named", hint)
+	}
+	if len(*seen) != 1 {
+		t.Errorf("requests = %d, want exactly one (no retry without an answer)", len(*seen))
+	}
+}
+
 func TestUserUpdatePasswordFlagMisuseIsRefusedBeforeAnyRequest(t *testing.T) {
 	cases := []struct {
 		args  []string
@@ -78,7 +116,7 @@ func TestUserUpdatePasswordFlagMisuseIsRefusedBeforeAnyRequest(t *testing.T) {
 		want  string
 	}{
 		{[]string{"user", "update", "2", "--set-password", "--user-pass", "x12345678"}, "", "both set the password"},
-		{[]string{"user", "update", "2", "--current-password"}, "old-secret-1\n", "only needed with a new password"},
+		{[]string{"user", "update", "2", "--current-password"}, "old-secret-1\n", "only needed with a new password or email"},
 		{[]string{"user", "update", "2", "--set-password"}, "\n", "empty password"},
 	}
 	for _, tc := range cases {
