@@ -22,6 +22,12 @@ use Tests\TestCase;
  *    serving a clone) still serves it, so every runnable script under tests/
  *    answers any SAPI but the CLI with a 404 before it does anything else.
  *
+ * build/ is held to the same: its release tools and the Docker config writer
+ * (write-config.php writes 202-config.php from the environment, before the
+ * setup wizard has run) are runnable scripts too. The image sends only the two
+ * files its Dockerfile copies out of the docroot by name, and removes build/
+ * from the docroot after its `COPY .`.
+ *
  * Runnable is read from a file's top-level statements in order. declare,
  * namespace and use statements, class-like and named-function declarations,
  * and a load (require/include) whose path is written from __DIR__ and stays in
@@ -39,11 +45,28 @@ final class TestScriptsAreNotServedTest extends TestCase
 
     private const GUARD = "if (PHP_SAPI !== 'cli') {\n    http_response_code(404);\n    exit;\n}";
 
+    /** The directories whose scripts are read. */
+    private const DIRECTORIES = ['tests', 'build'];
+
+    /**
+     * Gitignored paths under build/ (.gitignore): a developer's staging config
+     * and debug output, which no checkout CI reads holds. The staging copy is
+     * the sample, mounted as 202-config.php.
+     */
+    private const LOCAL_ONLY = ['build/staging-config.php', 'build/debug/', 'build/logs/'];
+
     /** Scripts that run under a web SAPI on purpose, with what a request for one can do. */
     private const RUN_BY_A_WEB_SERVER = [
         'tests/fixtures/agent-eval/ci/router.php' => "php -S's router for the eval instance and the upgrade check"
             . ' (install-instance.sh, upgrade-equals-install.sh), so it runs under cli-server. Requested as a page,'
             . ' the most it does is run the index.php of a directory the web root serves anyway.',
+        'build/test-install-config.php' => 'the test-install stack mounts it as 202-config.php, so it runs under'
+            . ' every page there. Requested on its own it does what a request for 202-config.php does: connects'
+            . ' to the database it names and answers nothing.',
+        'build/staging-config.sample.php' => 'copied to build/staging-config.php, which the staging stack mounts'
+            . ' as 202-config.php. Requested on its own it does what a request for 202-config.php does.',
+        'build/release-manifest.php' => "returns the release's ship and exclude lists to ReleaseTree::load();"
+            . ' requested, it answers an empty 200.',
     ];
 
     /** @var array<string, array{kind: string, line: int, what: string}>|null */
@@ -60,6 +83,13 @@ final class TestScriptsAreNotServedTest extends TestCase
         // Floors: the walk read the suite, and the reading found the runners.
         self::assertGreaterThan(500, $kinds['inert'] ?? 0, 'the walk read the test suite');
         self::assertGreaterThanOrEqual(25, $kinds['guarded'] ?? 0, 'the reading found the runners');
+        $guardedInBuild = array_filter(
+            self::verdicts(),
+            static fn (array $verdict, string $path): bool => $verdict['kind'] === 'guarded'
+                && str_starts_with($path, 'build/'),
+            ARRAY_FILTER_USE_BOTH
+        );
+        self::assertArrayHasKey('build/scripts/write-config.php', $guardedInBuild, 'the reading read build/');
 
         $unguarded = [];
         foreach (self::verdicts() as $path => $verdict) {
@@ -71,8 +101,8 @@ final class TestScriptsAreNotServedTest extends TestCase
         self::assertSame(
             [],
             $unguarded,
-            "A script under tests/ acts before it refuses a web request. Wherever a checkout is the web root, "
-            . "tests/ is served and a request runs it with no sign-in. Make this its first statement (after "
+            "A script under tests/ or build/ acts before it refuses a web request. Wherever a checkout is the web "
+            . "root, both are served and a request runs it with no sign-in. Make this its first statement (after "
             . "declare, namespace and use):\n\n" . self::GUARD . "\n\nwith \\PHP_SAPI and \\http_response_code in a "
             . 'file that declares a namespace or imports a function or constant.'
         );
@@ -100,7 +130,7 @@ final class TestScriptsAreNotServedTest extends TestCase
             }
         }
 
-        self::assertSame([], $shipped, 'build/release-manifest.php ships a runnable script from tests/');
+        self::assertSame([], $shipped, 'build/release-manifest.php ships a runnable script from tests/ or build/');
     }
 
     public function testTheImageLeavesTestsOut(): void
@@ -113,7 +143,7 @@ final class TestScriptsAreNotServedTest extends TestCase
 
         $files = 0;
         $inContext = [];
-        foreach (self::filesUnderTests() as $path) {
+        foreach (self::filesUnder('tests') as $path) {
             $files++;
             if (!self::dockerIgnores($patterns, $path)) {
                 $inContext[] = $path;
@@ -132,10 +162,78 @@ final class TestScriptsAreNotServedTest extends TestCase
         }
     }
 
+    public function testTheImageLeavesBuildOutOfTheDocroot(): void
+    {
+        $patterns = self::dockerignore((string) file_get_contents(self::REPO . '/.dockerignore'));
+        $copies = self::dockerfileCopies();
+        $copiedByName = [];
+        foreach ($copies as [$sources, $destination]) {
+            foreach ($sources as $source) {
+                if (str_starts_with($source, 'build/')) {
+                    $copiedByName[$source] = $destination;
+                }
+            }
+        }
+        self::assertArrayHasKey('build/scripts/docker-entrypoint.sh', $copiedByName, 'the COPY lines were read');
+        self::assertArrayHasKey('build/scripts/write-config.php', $copiedByName, 'the COPY lines were read');
+        foreach ($copiedByName as $source => $destination) {
+            self::assertFalse(
+                $destination === '/var/www/html' || str_starts_with($destination, '/var/www/html/'),
+                "the Dockerfile copies {$source} into the docroot ({$destination})"
+            );
+        }
+
+        $files = 0;
+        $sent = [];
+        foreach (self::filesUnder('build') as $path) {
+            $files++;
+            if (!self::dockerIgnores($patterns, $path) && !isset($copiedByName[$path])) {
+                $sent[] = $path;
+            }
+        }
+        self::assertGreaterThan(10, $files, 'the walk read build/');
+        self::assertSame(
+            [],
+            $sent,
+            '.dockerignore sends these to the image build, and the app stage would serve them'
+        );
+
+        // What .dockerignore lets through for the COPY lines reaches the
+        // docroot with `COPY .` too, so the stage that copies the checkout
+        // removes build/ after it, before another stage begins.
+        $lines = file(self::REPO . '/Dockerfile', FILE_IGNORE_NEW_LINES) ?: [];
+        $copiedAt = null;
+        $removed = false;
+        foreach ($lines as $line) {
+            if (preg_match('/^FROM\s/i', $line) === 1) {
+                $copiedAt = null;
+            } elseif (preg_match('#^COPY\s+(--\S+\s+)*\.\s+/var/www/html/?$#', $line) === 1) {
+                $copiedAt = $line;
+                $removed = false;
+            } elseif ($copiedAt !== null && preg_match('#^RUN rm -rf /var/www/html/build/?$#', $line) === 1) {
+                $removed = true;
+            }
+        }
+        self::assertNotNull($copiedAt, "the last stage's COPY . /var/www/html was read");
+        self::assertTrue(
+            $removed,
+            'the stage that copies the checkout into /var/www/html must then RUN rm -rf /var/www/html/build'
+        );
+
+        // The entrypoint runs the config writer where the image put it: under
+        // set -e, a path the image does not hold stops the container.
+        $entrypoint = (string) file_get_contents(self::REPO . '/build/scripts/docker-entrypoint.sh');
+        self::assertStringContainsString(
+            'php ' . $copiedByName['build/scripts/write-config.php'] . ' ',
+            $entrypoint,
+            'the entrypoint runs write-config.php from another path than the one the Dockerfile copies it to'
+        );
+    }
+
     public function testNoFileUnderTestsHasAnotherExtensionAHostMayRunAsPhp(): void
     {
         $other = array_values(array_filter(
-            self::filesUnderTests(),
+            [...self::filesUnder('tests'), ...self::filesUnder('build')],
             static fn (string $path): bool => preg_match('/\.(?:phtml|pht|phar|php\d)$/i', $path) === 1
         ));
 
@@ -341,32 +439,40 @@ final class TestScriptsAreNotServedTest extends TestCase
             return self::$verdicts;
         }
         $verdicts = [];
-        foreach (self::filesUnderTests() as $path) {
-            if (strtolower(pathinfo($path, PATHINFO_EXTENSION)) !== 'php') {
-                continue;
+        foreach (self::DIRECTORIES as $directory) {
+            foreach (self::filesUnder($directory) as $path) {
+                if (strtolower(pathinfo($path, PATHINFO_EXTENSION)) !== 'php') {
+                    continue;
+                }
+                $source = file_get_contents(self::REPO . '/' . $path);
+                if ($source === false) {
+                    throw new \RuntimeException("Could not read {$path}");
+                }
+                $verdicts[$path] = self::verdict(self::REPO . '/' . $path, $source);
             }
-            $source = file_get_contents(self::REPO . '/' . $path);
-            if ($source === false) {
-                throw new \RuntimeException("Could not read {$path}");
-            }
-            $verdicts[$path] = self::verdict(self::REPO . '/' . $path, $source);
         }
 
         return self::$verdicts = $verdicts;
     }
 
-    /** @return list<string> repo-relative paths of every file under tests/ */
-    private static function filesUnderTests(): array
+    /** @return list<string> repo-relative paths of every file under $directory */
+    private static function filesUnder(string $directory): array
     {
         $root = (string) realpath(self::REPO);
         $files = [];
         $walk = new \RecursiveIteratorIterator(new \RecursiveCallbackFilterIterator(
-            SourceScan::tree($root . '/tests'),
+            SourceScan::tree($root . '/' . $directory),
             static fn (\SplFileInfo $entry): bool => $entry->getFilename() !== 'node_modules'
         ));
         foreach ($walk as $file) {
-            if ($file->isFile()) {
-                $files[] = substr($file->getPathname(), strlen($root) + 1);
+            $path = substr($file->getPathname(), strlen($root) + 1);
+            $local = array_filter(
+                self::LOCAL_ONLY,
+                static fn (string $ignored): bool => $path === $ignored
+                    || (str_ends_with($ignored, '/') && str_starts_with($path, $ignored))
+            );
+            if ($file->isFile() && $local === []) {
+                $files[] = $path;
             }
         }
         sort($files);
@@ -794,6 +900,21 @@ final class TestScriptsAreNotServedTest extends TestCase
     private static function dockerfileCopySources(): array
     {
         $sources = [];
+        foreach (self::dockerfileCopies() as [$copied]) {
+            foreach ($copied as $source) {
+                if ($source !== '.') {
+                    $sources[] = $source;
+                }
+            }
+        }
+
+        return $sources;
+    }
+
+    /** @return list<array{0: list<string>, 1: string}> each build-context COPY's sources and destination */
+    private static function dockerfileCopies(): array
+    {
+        $copies = [];
         foreach (file(self::REPO . '/Dockerfile', FILE_IGNORE_NEW_LINES) ?: [] as $line) {
             if (preg_match('/^COPY\s+(.*)$/', $line, $m) !== 1 || str_contains($m[1], '--from=')) {
                 continue;
@@ -802,14 +923,14 @@ final class TestScriptsAreNotServedTest extends TestCase
                 preg_split('/\s+/', trim($m[1])) ?: [],
                 static fn (string $arg): bool => !str_starts_with($arg, '--')
             ));
-            foreach (array_slice($args, 0, -1) as $source) {
-                if ($source !== '.') {
-                    $sources[] = $source;
-                }
+            $destination = array_pop($args);
+            if ($destination === null || $args === []) {
+                throw new \RuntimeException("This test does not read the Dockerfile line '{$line}'");
             }
+            $copies[] = [$args, rtrim($destination, '/')];
         }
 
-        return $sources;
+        return $copies;
     }
 
     /** @return array{0: int, 1: string} status and body */

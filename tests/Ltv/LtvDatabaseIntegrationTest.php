@@ -1711,6 +1711,37 @@ CHILD;
     }
 
     /**
+     * GET /ltv/customers?updated_since= answers the customers whose row was
+     * written since that time, through the writes that change what the list
+     * shows: a revenue event (the totals) and a CRM update. It used to be
+     * dropped, and every customer came back as though filtered.
+     */
+    public function testUpdatedSinceListsTheCustomersWrittenSinceThen(): void
+    {
+        $ltv = new \Api\V3\Controllers\LtvController(self::$db, 1);
+        $ids = [];
+        foreach (['quiet', 'buyer', 'renamed'] as $ref) {
+            $ids[$ref] = (int) $ltv->upsertCustomer(['customer_ref' => $ref])['data']['customer_id'];
+        }
+        self::$db->query('UPDATE 202_customers SET updated_at = 1000000000');
+        $since = time();
+        $ltv->recordRevenue(['customer_id' => $ids['buyer'], 'amount' => 20, 'idempotency_key' => 'since-1']);
+        $ltv->patchCustomer($ids['renamed'], ['first_name' => 'Rena']);
+
+        $listed = static function (array $answer): array {
+            $ids = array_map('intval', array_column($answer['data'], 'customer_id'));
+            sort($ids);
+
+            return $ids;
+        };
+        $changed = $ltv->customers(['updated_since' => (string) $since]);
+        self::assertSame([$ids['buyer'], $ids['renamed']], $listed($changed));
+        self::assertSame(2, $changed['pagination']['total'], 'the total counts the same rows');
+        self::assertCount(3, $ltv->customers([])['data'], 'without it, every customer');
+        self::assertSame([], $listed($ltv->customers(['updated_since' => (string) ($since + 3600)])));
+    }
+
+    /**
      * docs/openapi.yaml's customer schemas name every key the answers carry,
      * each with the JSON type it is served as, and no key they do not carry.
      * A customer with no custom field value answered custom_fields as [], a

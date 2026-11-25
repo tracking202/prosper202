@@ -44,6 +44,8 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
     private const PAGE = '202-account/api-integrations.php';
     private const NOT_FOUND = 'That network was not found; nothing was changed.';
     private const NOT_YOURS = 'That DNI network is not one of yours, or it was removed.';
+    /** The runner's session secret for ShownSettings, so a version can be made here. */
+    private const SHOWN_SECRET = 'a0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9f';
 
     /** @var array<string, string> the account's integration secrets as seeded; ipqs_api_key is left unsaved */
     private const SECRETS = [
@@ -159,7 +161,7 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
      * What a page printed, run as $user, with the hosted service unreachable.
      *
      * @param array<string, string> $get
-     * @param array<string, string> $post a POST's fields, when it is one
+     * @param array<string, mixed> $post a POST's fields, when it is one
      */
     private static function page(string $page, array $get = [], array $post = [], int $user = self::USER): string
     {
@@ -170,6 +172,9 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
             'P202_TEST_SESSION_DIR' => self::$sessions,
             'P202_TEST_GET' => (string) json_encode((object) $get),
             'P202_TEST_POST' => (string) json_encode((object) $post),
+            'P202_TEST_SHOWN_SECRET' => self::SHOWN_SECRET,
+            // A settings form posts the version of what it showed: open the page first, as a browser does.
+            'P202_TEST_OPEN_FIRST' => $post === [] ? '' : (string) json_encode((object) $get),
             'https_proxy' => $closed, 'HTTPS_PROXY' => $closed, 'http_proxy' => $closed, 'HTTP_PROXY' => $closed,
             'all_proxy' => '', 'ALL_PROXY' => '', 'no_proxy' => '', 'NO_PROXY' => '',
         ] + getenv();
@@ -259,13 +264,21 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
     public function testAnEditThatKeepsTheKeyKeepsOnlyTheAccountsOwn(): void
     {
         $theirs = self::stored(self::OTHER);
-        $out = self::page(self::PAGE, [], self::edit(self::OTHER, 'their'));
+        $out = self::page(self::PAGE, ['edit_dni_network' => (string) self::OTHER], self::edit(self::OTHER, 'their'));
         self::assertStringContainsString(self::NOT_FOUND, $out, 'another account\'s key is not kept for this one');
         self::assertSame($theirs, self::stored(self::OTHER));
         self::assertNoKey($out, 'the refused edit');
 
         $mine = self::stored(self::USER);
-        $out = self::page(self::PAGE, [], self::edit(self::USER, 'their'));
+        // The hosted service is unreachable here, so the page renders no network form to post from:
+        // the edit carries the version of the network as the edit form shows it.
+        $_SESSION['p202_shown_secret'] = self::SHOWN_SECRET;
+        $shown = \Prosper202\User\ShownSettings::version('dni_network', [
+            'network' => DniNetworks::oneFor(self::requireScratch(), self::USER, self::USER),
+        ]);
+        unset($_SESSION['p202_shown_secret']);
+        $edit = self::edit(self::USER, 'their') + ['p202_shown' => ['dni_network' => $shown]];
+        $out = self::page(self::PAGE, ['edit_dni_network' => (string) self::USER], $edit);
         $different = 'A different network needs its own API key: paste it to save the change.';
         self::assertStringContainsString($different, $out, 'a saved key is not sent to another network');
         self::assertSame($mine, self::stored(self::USER));

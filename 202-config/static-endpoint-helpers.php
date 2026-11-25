@@ -215,6 +215,57 @@ if (!function_exists('p202FireTrafficSourcePixels')) {
     }
 }
 
+if (!function_exists('p202ConversionPixelTokens')) {
+    /**
+     * The replaceTokens() tokens gpb.php and upx.php hand the click's traffic
+     * source pixels: the click's values as stored. replaceTokens() URL-encodes
+     * each, so a value SQL-escaped first reached the network altered
+     * (O'Brien as O%5C%27Brien, HRR9). The referer is URL-encoded once
+     * before that, as TrafficSourcePixels::clickTokens() gives it to the
+     * queued postbacks.
+     *
+     * @param array<string, mixed> $click p202PostbackClickSql()'s row
+     * @param array<string, string> $adClickIds AdClickIdColumns::of()
+     * @return array<string, scalar>
+     */
+    function p202ConversionPixelTokens(
+        int $clickId,
+        array $click,
+        array $adClickIds,
+        string $cpc,
+        string $payout
+    ): array {
+        $text = static fn (string $column): string => (string) ($click[$column] ?? '');
+
+        return [
+            'subid' => (string) $clickId,
+            't202kw' => $text('keyword'),
+            'c1' => $text('c1'),
+            'c2' => $text('c2'),
+            'c3' => $text('c3'),
+            'c4' => $text('c4'),
+            'gclid' => $text('gclid'),
+            'gbraid' => $adClickIds['gbraid'],
+            'wbraid' => $adClickIds['wbraid'],
+            'ttclid' => $adClickIds['ttclid'],
+            'msclkid' => $adClickIds['msclkid'],
+            'fbclid' => $adClickIds['fbclid'],
+            'oppref' => $adClickIds['oppref'],
+            'utm_source' => $text('utm_source'),
+            'utm_medium' => $text('utm_medium'),
+            'utm_campaign' => $text('utm_campaign'),
+            'utm_term' => $text('utm_term'),
+            'utm_content' => $text('utm_content'),
+            'cpc' => round((float) $cpc, 2),
+            'cpc2' => $cpc,
+            'timestamp' => time(),
+            'payout' => $payout,
+            'random' => mt_rand(1000000, 9999999),
+            'referer' => urlencode($text('site_url_address')),
+        ];
+    }
+}
+
 if (!function_exists('p202ConversionMayTrack')) {
     /**
      * Whether this conversion request's visitor may be sent the click's
@@ -637,6 +688,11 @@ if (!function_exists('p202RecordConversion')) {
             // the click carried from before the ledger (its legacy baseline).
             $data['reverses_carried_value'] = true;
         }
+        if (!empty($log['reversal']) && !empty($log['cap_at_sale'])) {
+            // A reversal stating more than its sale takes back the whole sale,
+            // capped by the writer under the click lock (R4CE).
+            $data['cap_at_sale'] = true;
+        }
         if (!empty($log['notify_traffic_source'])) {
             // Queue the click's traffic-source server postbacks with the row
             // (NotificationOutbox), in its transaction; they are sent after
@@ -832,13 +888,7 @@ if (!function_exists('p202ClickByAdClickId')) {
      *
      * Null when the SubID is not missing or the request sends no ad click
      * id: the caller answers as it always has. Otherwise the click, or the
-     * request ends here: no click carries the id (404), the clicks carrying
-     * it do not say which one converted (409, the reason only in the inbound
-     * log of the account every one of them is of, or unattributed when they
-     * span accounts: the request is not authenticated yet), the 1.9.80 upgrade has
-     * not run, so the lookup is missing or not yet filled (503), or the
-     * lookup failed (500, so a sender that retries failures does). The ids'
-     * values go to no log.
+     * request ends here with p202FindClickByAdClickId()'s refusal.
      *
      * An id under its own name may find any account's click; one in a listed
      * parameter only a click of the account listing it (`owners`, which the
@@ -851,11 +901,46 @@ if (!function_exists('p202ClickByAdClickId')) {
      */
     function p202ClickByAdClickId(mysqli $db, array $request, string $endpoint): ?array
     {
+        $found = p202FindClickByAdClickId($db, $request, $endpoint);
+        if ($found === null || !isset($found['refused'])) {
+            return $found;
+        }
+        if ($found['refused']['retry_after'] !== null) {
+            header('Retry-After: ' . $found['refused']['retry_after']);
+        }
+        p202RespondJsonError($found['refused']['status'], $found['refused']['message']);
+    }
+
+    /**
+     * p202ClickByAdClickId()'s lookup, answering instead of responding, for
+     * a caller that cannot end the request with it (a pixel, whose visitor
+     * is owed the same answer whatever the lookup found).
+     *
+     * Null when the SubID is not missing or the request sends no ad click
+     * id. Otherwise the click, or `refused`: the answer p202ClickByAdClickId()
+     * ends the request with. No click carries the id (404), the clicks
+     * carrying it do not say which one converted (409, the reason only in
+     * the inbound log of the account every one of them is of, or
+     * unattributed when they span accounts: the request is not authenticated
+     * yet), the 1.9.80 upgrade has not run, so the lookup is missing or not
+     * yet filled (503, retried after `retry_after` seconds), or the lookup
+     * failed (500, so a sender that retries failures does). The ids' values
+     * go to no log.
+     *
+     * @param array<array-key, mixed> $request
+     * @return array{click_id: int, owners: list<int>|null}
+     *         |array{refused: array{status: int, message: string, retry_after: int|null}}
+     *         |null
+     */
+    function p202FindClickByAdClickId(mysqli $db, array $request, string $endpoint): ?array
+    {
         foreach (['subid', 'sid'] as $name) {
             if (!\Prosper202\Conversion\UnfilledPlaceholder::isMissing($request[$name] ?? null)) {
                 return null;
             }
         }
+        $refused = static fn (int $status, string $message): array
+            => ['refused' => ['status' => $status, 'message' => $message, 'retry_after' => null]];
         $conn = \Prosper202\Repository\LookupRepositoryFactory::connection($db);
         $sent = \Prosper202\Click\ClickByAdClickId::sent($request);
         $unreadable = $sent['unreadable'];
@@ -893,10 +978,14 @@ if (!function_exists('p202ClickByAdClickId')) {
                 );
             }
         } catch (\Throwable $lookupError) {
-            p202AdClickIdLookupPending($db, $endpoint, $lookupError->getMessage());
+            $pending = p202AdClickIdLookupPendingRefusal($db, $endpoint, $lookupError->getMessage());
+            if ($pending !== null) {
+                return $pending;
+            }
             error_log($endpoint . ': the click could not be looked up by the ad click id sent: '
                 . $lookupError->getMessage());
-            p202RespondJsonError(500, 'Failed to look the click up by the ad click id sent');
+
+            return $refused(500, 'Failed to look the click up by the ad click id sent');
         }
         $status = $found['status'] ?? \Prosper202\Click\ClickByAdClickId::NONE;
         if ($status === \Prosper202\Click\ClickByAdClickId::AMBIGUOUS) {
@@ -908,7 +997,8 @@ if (!function_exists('p202ClickByAdClickId')) {
             if (($found['account'] ?? null) !== null) {
                 $log?->account($found['account']);
             }
-            p202RespondJsonError(409, 'SubID not found, and the ad click id sent does not name one click.'
+
+            return $refused(409, 'SubID not found, and the ad click id sent does not name one click.'
                 . ' No conversion was recorded. Fill in the SubID in the postback URL.');
         }
         if ($status === \Prosper202\Click\ClickByAdClickId::ONE && $found !== null && $found['click_id'] !== null) {
@@ -925,31 +1015,73 @@ if (!function_exists('p202ClickByAdClickId')) {
             return null;
         }
         // No click: until the upgrade has filled the lookup, that is not known yet.
-        p202AdClickIdLookupPending($db, $endpoint, 'no click was found');
-        if ($unreadable !== null) {
-            p202RespondJsonError(404, 'SubID not found, and ' . $unreadable . ' is not a click id');
+        $pending = p202AdClickIdLookupPendingRefusal($db, $endpoint, 'no click was found');
+        if ($pending !== null) {
+            return $pending;
         }
-        p202RespondJsonError(404, 'SubID not found, and no click of the last 30 days carries the '
+        if ($unreadable !== null) {
+            return $refused(404, 'SubID not found, and ' . $unreadable . ' is not a click id');
+        }
+
+        return $refused(404, 'SubID not found, and no click of the last 30 days carries the '
             . implode(', ', array_unique($names)) . ' sent');
     }
 
     /**
      * While the 1.9.80 upgrade has not run, the lookup by ad click id is
-     * missing or not yet filled: the request ends with a 503 naming the
-     * upgrade, which a sender retries, rather than an answer about the click.
-     * Returns when the upgrade has run.
+     * missing or not yet filled: the answer is a 503 naming the upgrade,
+     * which a sender retries, rather than an answer about the click. Null
+     * when the upgrade has run.
+     *
+     * @return array{refused: array{status: int, message: string, retry_after: int}}|null
      */
-    function p202AdClickIdLookupPending(mysqli $db, string $endpoint, string $what): void
+    function p202AdClickIdLookupPendingRefusal(mysqli $db, string $endpoint, string $what): ?array
     {
         $pending = \Prosper202\Database\SchemaVersion::pendingUpgrade($db, \Prosper202\Click\AdClickIdIndex::SINCE);
         if ($pending === null) {
-            return;
+            return null;
         }
         error_log($endpoint . ': a click cannot be found by its ad click id until the upgrade runs (' . $what
             . '); ' . $pending);
-        header('Retry-After: 600');
-        p202RespondJsonError(503, 'SubID not found, and this Prosper202 cannot find a click by its ad click id'
-            . ' until its database upgrade has run. Retry later.');
+
+        return ['refused' => [
+            'status' => 503,
+            'message' => 'SubID not found, and this Prosper202 cannot find a click by its ad click id'
+                . ' until its database upgrade has run. Retry later.',
+            'retry_after' => 600,
+        ]];
+    }
+}
+
+if (!function_exists('p202PixelClickByAdClickId')) {
+    /**
+     * The click a pixel request means when neither a SubID nor a cookie
+     * names one: p202FindClickByAdClickId()'s, as gpb.php finds it. A pixel
+     * answers its visitor the same whatever the lookup found, so a refusal
+     * does not end the request: it is logged (the inbound log's reason says
+     * why the ad click id did not settle the click) and null is returned,
+     * so the caller goes on to the same-IP fallback as it did before the
+     * lookup was asked.
+     *
+     * @param array<array-key, mixed> $get
+     * @return array{click_id: int, owners: list<int>|null}|null
+     */
+    function p202PixelClickByAdClickId(mysqli $db, array $get, string $endpoint): ?array
+    {
+        $found = p202FindClickByAdClickId($db, $get, $endpoint);
+        if ($found === null || !isset($found['refused'])) {
+            return $found;
+        }
+        error_log($endpoint . ': no click by the ad click id sent (' . $found['refused']['status'] . ')');
+        if ($found['refused']['status'] !== 409) {
+            // A 409 already gave the log its reason: which clicks carry the id, where that may be told.
+            \Prosper202\InboundLog\RequestLog::current()?->clickFoundBy(
+                'The SubID was not filled in, and the ad click id sent did not find the click: '
+                . $found['refused']['message'] . '.'
+            );
+        }
+
+        return null;
     }
 }
 
@@ -986,8 +1118,9 @@ if (!function_exists('p202ClickIdFromRequest')) {
      *
      * Each value is untrusted and must be an exact positive integer
      * (p202ParseClickId): "123.9" is not click 123. An empty value is absent
-     * and the next place is tried, which is what an unfilled [[subid]] in a
-     * template has always done. A value that is PRESENT and not a click id
+     * and the next place is tried, and so is a parameter that is blank or the
+     * network's unfilled macro (UnfilledPlaceholder: [[subid]], {aff_sub}),
+     * as gpb.php reads one. A value that is PRESENT and not a click id
      * is refused outright: the caller must not fall back to the IP lookup,
      * which behind a NAT would credit whichever click last came from that
      * address to a request whose own identity was garbage (the rule px.php
@@ -1018,7 +1151,11 @@ if (!function_exists('p202ClickIdFromRequest')) {
         $places[] = ['tracking202subid', \Prosper202\Http\ClickCookie::value($cookies, 'tracking202subid'), $cookie];
 
         foreach ($places as [$name, $value, $method]) {
-            if ($value === null || $value === '') {
+            // A parameter the network left as its macro ([[subid]], {aff_sub}) names nothing, as an empty one.
+            $missing = $method === $parameter
+                ? \Prosper202\Conversion\UnfilledPlaceholder::isMissing($value)
+                : $value === null || $value === '';
+            if ($missing) {
                 continue;
             }
             $value = is_string($value) ? $value : (is_int($value) ? $value : null);
@@ -1279,7 +1416,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
      * @param array{
      *     user_id?: int, campaign_id?: int, transaction_id?: string,
      *     use_pixel_payout?: bool, payout?: string, ip?: string, user_agent?: string,
-     *     source?: string, reversal?: bool, reversal_ref?: string, reverses_carried_value?: bool,
+     *     source?: string, reversal?: bool, reversal_ref?: string, reverses_carried_value?: bool, cap_at_sale?: bool,
      *     event_name?: string|null,
      *     conv_time?: int,
      *     notify_traffic_source?: bool,
@@ -1390,6 +1527,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
                 'reversal'        => !empty($opts['reversal']),
                 'reversal_ref'    => (string) ($opts['reversal_ref'] ?? ''),
                 'reverses_carried_value' => !empty($opts['reverses_carried_value']),
+                'cap_at_sale'     => !empty($opts['cap_at_sale']),
                 'event_name'      => (string) ($opts['event_name'] ?? ''),
                 'notify_traffic_source' => !empty($opts['notify_traffic_source']),
                 'currency'        => (string) ($opts['currency'] ?? ''),
