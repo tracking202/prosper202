@@ -77,6 +77,24 @@ $editId = null;
 $back = static fn (string $to): string => '202-account/attribution.php?view=' . $to;
 
 /**
+ * A model as its edit form shows it: the form carries the version of these
+ * (ShownSettings), and its save reads the model again under the account's
+ * settings lock and goes on only when they are what the page showed.
+ */
+$shownModel = static function (array $m): array {
+	$config = (array) ($m['weighting_config'] ?? []);
+	ksort($config);
+	return [
+		'model_id' => (int) $m['model_id'],
+		'model_name' => (string) $m['model_name'],
+		'model_type' => (string) $m['model_type'],
+		'lookback_days' => (string) $m['lookback_days'],
+		'weighting_config' => array_map(static fn (mixed $v): string => is_scalar($v) ? (string) $v : serialize($v), $config),
+		'is_default' => (bool) $m['is_default'],
+	];
+};
+
+/**
  * A model form's fields as the API's payload, typed the way the API reads
  * them: numbers that are not numbers are refused here, by field, rather
  * than passed on as strings the API would refuse with a less useful
@@ -194,6 +212,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 				$view = 'models';
 				$form = array_map(static fn ($v): string => is_string($v) ? $v : '', $_POST);
 				$editId = $action === 'update_model' ? $id : null;
+				if ($action === 'update_model') {
+					// A model removed since the page opened reads as changed: the reload says it is gone.
+					p202_account_require_shown($db, $userId, 'attribution_model', static function () use ($api, $id, $shownModel): array {
+						try {
+							return $shownModel($api->getModel($id)['data']);
+						} catch (NotFoundException) {
+							return [];
+						}
+					}, $back('models') . '&edit=' . $id);
+				}
 				$payload = $modelPayload($_POST, $errors);
 				if ($errors === []) {
 					$saved = $action === 'create_model' ? $api->createModel($payload) : $api->updateModel($id, $payload);
@@ -1057,7 +1085,13 @@ $modelSettings = static function (array $m): string {
 				<form class="p202-panel" id="model-form" method="post" action="<?php echo $h($pageUrl . '?view=models'); ?>">
 					<?php echo p202_account_token_field(); ?>
 					<input type="hidden" name="action" value="<?php echo $editing ? 'update_model' : 'create_model'; ?>">
-					<?php if ($editing) { ?><input type="hidden" name="id" value="<?php echo (int) $editId; ?>"><?php } ?>
+					<?php if ($editing) { ?><input type="hidden" name="id" value="<?php echo (int) $editId; ?>"><?php
+						foreach ($models as $m) {
+							if ((int) $m['model_id'] === $editId) {
+								echo p202_account_shown_field('attribution_model', $shownModel($m));
+							}
+						}
+					} ?>
 					<div class="p202-panel__head"><h3 class="p202-panel__title"><?php echo $editing ? 'Edit ' . $h($modelNames[(int) $editId] ?? 'model') : 'Add a model'; ?></h3><span class="p202-panel__sub"><?php echo $editing ? 'a change recomputes its credits' : 'computed for existing conversions within a minute'; ?></span></div>
 					<div class="p202-panel__body">
 						<?php if ($formError !== null) { ?><div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><?php echo $h($formError); ?></div></div><?php } ?>

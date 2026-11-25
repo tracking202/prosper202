@@ -108,6 +108,8 @@ final class ClickIdParametersPageIntegrationTest extends TestCase
                 'user_bid' => '0', 'user_pref_privacy' => 'disabled', 'user_pref_same_ip_fallback' => '0',
                 'cloak_referer' => 'origin', 'user_pref_ad_settings' => 'show_all',
             ], JSON_THROW_ON_ERROR);
+            // The profile form posts the version of what it showed: open the page first, as a browser does.
+            $env['P202_SU_OPEN_FIRST'] = '{}';
         }
         $proc = proc_open(
             [

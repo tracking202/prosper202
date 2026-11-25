@@ -60,6 +60,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 	}
 }
 
+// The stored values each settings form here shows (ShownSettings): its field
+// carries their version, and its save reads them again under the settings
+// lock of the row it writes and goes on only when they are what the page showed.
+$adminShownRows = [
+	'autocron' => ['auto_cron', (int) $_SESSION['user_id']],
+	'maxmind' => ['maxmind_isp', (int) $_SESSION['user_id']],
+	// User 1's row, where AutoOptimizeDatabase() reads it.
+	'auto_database_management' => ['user_auto_database_optimization_days', 1],
+];
+$adminShown = static function (string $form) use ($db, $adminShownRows): array {
+	if ($form === 'geoip') {
+		return ['credentials' => (new \Prosper202\GeoIp\RefreshStore(new \Prosper202\Database\Connection($db)))->read()->credentialsFingerprint()];
+	}
+	[$column, $userId] = $adminShownRows[$form];
+	$conn = new \Prosper202\Database\Connection($db);
+	$stmt = $conn->prepareWrite('SELECT ' . $column . ' FROM 202_users_pref WHERE user_id = ?');
+	$conn->bind($stmt, 'i', [$userId]);
+	$row = $conn->fetchOne($stmt);
+	return [$column => $row[$column] ?? null];
+};
+$adminRequireShown = static function (string $form, string $anchor) use ($db, $adminShown, $adminShownRows): void {
+	p202_account_require_shown($db, $adminShownRows[$form][1] ?? 1, $form, static fn (): array => $adminShown($form),
+		'202-account/administration.php#' . $anchor);
+};
+
 // A traffic source moved back or split from the panel:
 // TrafficSourceOwnersController's repair or split, behind the routes' checks
 // (functions-traffic-source-owners-ui.php).
@@ -80,6 +105,7 @@ if (isset($_POST['autocron'])) {
         p202_account_flash('bad', 'AutoCron is set On or Off, and the form sent neither, so nothing was changed.');
         p202_account_redirect('202-account/administration.php#autocron');
     }
+    $adminRequireShown('autocron', 'autocron');
     if ($turnOn) {
         $endpoint = 'register';
         // Whether this install has its own cron job: the last run a scheduler
@@ -153,6 +179,7 @@ if (isset($_POST['maxmind'])) {
         );
         p202_account_redirect('202-account/administration.php#maxmind');
     }
+    $adminRequireShown('maxmind', 'maxmind');
     if ($ispOn) {
         // Same resolution as getisp() in connect2.php: P202_GEO_DIR (persistent
         // volume on container deployments) or the in-docroot default.
@@ -194,6 +221,7 @@ if (isset($_POST['geoip_action'])) {
     $geoipAction = (string) $_POST['geoip_action'];
     try {
         if ($geoipAction === 'save') {
+            $adminRequireShown('geoip', 'geoip');
             $account = trim((string) ($_POST['geoip_account_id'] ?? ''));
             $key = trim((string) ($_POST['geoip_license_key'] ?? ''));
             $stored = $geoipStore->read();
@@ -338,6 +366,7 @@ if (isset($_POST['auto_database_management'])) {
 	if (!ctype_digit($postedDays) || (int) $postedDays > 36500) {
 		$fieldErrors['auto_database_management'] = 'Enter a whole number of days, or 0 to keep all click data.';
 	} else {
+		$adminRequireShown('auto_database_management', 'database');
 		$mysql['auto_database_management'] = $db->real_escape_string((string) (int) $postedDays);
 		// User 1's row, where AutoOptimizeDatabase() reads it (as
 		// PUT /api/v3/system/retention writes it).
@@ -706,6 +735,7 @@ if ($unsavedWarning !== null) {
 			<div class="p202-panel__body">
 				<form method="post" action="<?php echo $e($self . '#database'); ?>">
 					<?php echo p202_account_token_field(); ?>
+					<?php echo p202_account_shown_field('auto_database_management', $adminShown('auto_database_management')); ?>
 					<label class="form-label" for="auto_erase_clicks_date">Delete click data older than</label>
 					<div class="input-group">
 						<input type="number" class="form-control<?php echo p202_account_invalid($fieldErrors, 'auto_database_management'); ?>" id="auto_erase_clicks_date" name="auto_database_management" min="0" max="36500" step="1" value="<?php echo $e($autoDays); ?>">
@@ -744,6 +774,7 @@ if ($unsavedWarning !== null) {
 			<div class="p202-panel__body">
 				<form method="post" action="<?php echo $e($self . '#autocron'); ?>">
 					<?php echo p202_account_token_field(); ?>
+					<?php echo p202_account_shown_field('autocron', $adminShown('autocron')); ?>
 					<div class="d-flex gap-3 mb-2" role="radiogroup" aria-label="AutoCron">
 						<div class="form-check"><input class="form-check-input" type="radio" name="autocron" id="autocron_on" value="1"<?php echo $autoCronOn ? ' checked' : ''; ?>><label class="form-check-label" for="autocron_on">On</label></div>
 						<div class="form-check"><input class="form-check-input" type="radio" name="autocron" id="autocron_off" value="0"<?php echo $autoCronOn ? '' : ' checked'; ?>><label class="form-check-label" for="autocron_off">Off</label></div>
@@ -755,6 +786,7 @@ if ($unsavedWarning !== null) {
                 <form method="post" action="<?php echo $e($self . '#autocron'); ?>" class="mt-3"
                     id="autocron_no_own_job_form">
                     <?php echo p202_account_token_field(); ?>
+                    <?php echo p202_account_shown_field('autocron', $adminShown('autocron')); ?>
                     <input type="hidden" name="autocron" value="1">
                     <input type="hidden" name="autocron_no_own_job" value="1">
                     <button class="btn btn-outline-secondary btn-sm" type="submit">
@@ -773,6 +805,7 @@ if ($unsavedWarning !== null) {
 			<div class="p202-panel__body">
 				<form method="post" action="<?php echo $e($self . '#maxmind'); ?>">
 					<?php echo p202_account_token_field(); ?>
+					<?php echo p202_account_shown_field('maxmind', $adminShown('maxmind')); ?>
 					<div class="d-flex gap-3 mb-2" role="radiogroup" aria-label="ISP and carrier lookup">
 						<div class="form-check"><input class="form-check-input" type="radio" name="maxmind" id="maxmind_on" value="true"<?php echo $maxmindOn ? ' checked' : ''; ?>><label class="form-check-label" for="maxmind_on">On</label></div>
 						<div class="form-check"><input class="form-check-input" type="radio" name="maxmind" id="maxmind_off" value="false"<?php echo $maxmindOn ? '' : ' checked'; ?>><label class="form-check-label" for="maxmind_off">Off</label></div>
@@ -853,6 +886,7 @@ if ($unsavedWarning !== null) {
                         <div class="p202-disclosure__body">
                             <form method="post" action="<?php echo $e($self . '#geoip'); ?>">
                                 <?php echo p202_account_token_field(); ?>
+                                <?php echo p202_account_shown_field('geoip', $adminShown('geoip')); ?>
                                 <input type="hidden" name="geoip_action" value="save">
                                 <div class="row g-3">
                                     <div class="col-12 col-md-5">

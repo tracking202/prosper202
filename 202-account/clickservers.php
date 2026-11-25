@@ -72,6 +72,8 @@ template_top('ClickServer Management');
 				<?php echo p202_account_token_field(); ?>
 				<input type="hidden" name="update_clickserver_api_key" value="1">
 				<input type="hidden" name="return_to" value="clickservers">
+				<?php // The version account.php's save compares with (ShownSettings). ?>
+				<?php echo p202_account_shown_field('clickserver_api_key', ['clickserver_api_key' => $user_row['clickserver_api_key'] ?? null]); ?>
 				<label class="visually-hidden" for="clickserver_api_key">ClickServer API key</label>
 				<input type="text" class="form-control form-control-sm w-auto" id="clickserver_api_key" name="clickserver_api_key" required autocomplete="off" spellcheck="false" placeholder="ClickServer API key">
 				<button class="btn btn-secondary btn-sm" type="submit">Save key</button>
