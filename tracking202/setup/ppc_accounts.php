@@ -94,6 +94,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if (empty($ppc_network_name)) {
 			$error['ppc_network_name'] = 'Type in the name the traffic source.';
 		}
+        $tooLong = \Prosper202\Setup\FieldLength::refusal(
+            'ppc_network_name',
+            (string) $_POST['ppc_network_name'],
+            'The traffic source name'
+        );
+        if ($tooLong !== null) {
+            $error['ppc_network_name'] = $tooLong;
+        }
 
 		if (empty($error)) {
 			$mysql['ppc_network_name'] = $db->real_escape_string((string)$_POST['ppc_network_name']);
@@ -190,6 +198,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if ($ppc_account_name == '' && $do_edit_ppc_account == '1') {
 			$error['ppc_account_name'] = 'What is the username for this account?';
 		}
+        $tooLong = \Prosper202\Setup\FieldLength::refusal(
+            'ppc_account_name',
+            (string) $_POST['ppc_account_name'],
+            'The account name'
+        );
+        if ($tooLong !== null) {
+            $error['ppc_account_name'] = $tooLong;
+        }
 
 		$ppc_network_id = trim((string) $_POST['ppc_network_id']);
 		if ($ppc_network_id == '') {
@@ -680,7 +696,7 @@ if ($error) {
 					<?php } ?>
 					<div class="mb-3">
 						<label class="form-label" for="ppc_network_name">Traffic source name</label>
-						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'ppc_network_name'); ?>" id="ppc_network_name" name="ppc_network_name" value="<?php echo p202_setup_e($sourceFormName); ?>" maxlength="255" required<?php echo $sourceIsPrimary ? ' autofocus' : ''; ?>>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'ppc_network_name'); ?>" id="ppc_network_name" name="ppc_network_name" value="<?php echo p202_setup_e($sourceFormName); ?>" maxlength="<?php echo \Prosper202\Setup\FieldLength::of('ppc_network_name'); ?>" required<?php echo $sourceIsPrimary ? ' autofocus' : ''; ?>>
 						<?php echo p202_setup_feedback($error, 'ppc_network_name'); ?>
 					</div>
 					<?php if ($network_editing) {
@@ -739,7 +755,7 @@ if ($error) {
 					</div>
 					<div class="mb-3">
 						<label class="form-label" for="ppc_account_name">Account username</label>
-						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'ppc_account_name'); ?>" id="ppc_account_name" name="ppc_account_name" value="<?php echo p202_setup_e($accountName); ?>" maxlength="255" required<?php echo $editing ? ' autofocus' : ''; ?>>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'ppc_account_name'); ?>" id="ppc_account_name" name="ppc_account_name" value="<?php echo p202_setup_e($accountName); ?>" maxlength="<?php echo \Prosper202\Setup\FieldLength::of('ppc_account_name'); ?>" required<?php echo $editing ? ' autofocus' : ''; ?>>
 						<div class="form-text">The name you know the account by at the traffic source.</div>
 						<?php echo p202_setup_feedback($error, 'ppc_account_name'); ?>
 					</div>
