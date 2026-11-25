@@ -435,7 +435,7 @@ final class MysqlWebhookRepository
     {
         foreach ($rows as $i => $row) {
             if (isset($row['last_response_body'])) {
-                $rows[$i]['last_response_body'] = DeliveryReason::redact((string) $row['last_response_body']);
+                $rows[$i]['last_response_body'] = DeliveryReason::redactSafely((string) $row['last_response_body']);
             }
         }
 

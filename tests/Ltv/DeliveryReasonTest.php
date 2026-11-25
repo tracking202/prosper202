@@ -82,4 +82,28 @@ final class DeliveryReasonTest extends TestCase
         self::assertStringEndsWith('é…', $long);
         self::assertSame(str_repeat('é', 300), DeliveryReason::line(str_repeat('é', 300), 1000));
     }
+
+    public function testRedactSafelyHandlesAnAnswerOfAnySizeWithoutThrowing(): void
+    {
+        foreach ([str_repeat('a', 2_000_000), 'Bearer ' . str_repeat('A', 2_000_000), str_repeat("\xff", 100_000)] as $answer) {
+            $out = DeliveryReason::redactSafely($answer, self::SECRET);
+            self::assertLessThanOrEqual(DeliveryReason::SCAN_BYTES, strlen($out));
+            self::assertStringNotContainsString(self::SECRET, $out);
+        }
+    }
+
+    public function testRedactSafelyTakesTheSecretOutBeforeItCutsTheAnswer(): void
+    {
+        $answer = str_repeat('x', DeliveryReason::SCAN_BYTES - 5) . self::SECRET . ' tail';
+
+        self::assertStringNotContainsString(substr(self::SECRET, 0, 4), DeliveryReason::redactSafely($answer, self::SECRET));
+    }
+
+    public function testRedactSafelyAgreesWithRedactOnAnOrdinaryAnswer(): void
+    {
+        $answer = 'invalid token: expired; Authorization: Bearer abc.def; api_key=zzz';
+
+        self::assertSame(DeliveryReason::redact($answer), DeliveryReason::redactSafely($answer));
+        self::assertSame(DeliveryReason::redactSafely($answer), DeliveryReason::redactSafely(DeliveryReason::redactSafely($answer)));
+    }
 }

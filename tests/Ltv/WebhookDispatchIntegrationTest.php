@@ -491,6 +491,34 @@ final class WebhookDispatchIntegrationTest extends TestCase
         self::assertCount(1, self::receiver()->requests());
     }
 
+    /** A receiver's huge answer is stored cut and redacted, and the run goes on to the next delivery. */
+    public function testAHugeAnswerIsStoredRedactedAndDoesNotStopTheRun(): void
+    {
+        $huge = self::hook('https://huge.example.com/hook');
+        $healthy = self::hook(LocalWebhookReceiver::url(200));
+        self::queue();
+        $base = self::receiver()->base();
+        $send = static function (array $d) use ($base): array {
+            if ((string) $d['webhook_url'] === 'https://huge.example.com/hook') {
+                return [false, 200, str_repeat('a', 2_000_000)];
+            }
+
+            return LocalWebhookReceiver::send($base, $d);
+        };
+
+        $report = self::dispatch($send);
+
+        self::assertSame(1, $report['delivered'], WebhookDispatcher::summary($report));
+        self::assertSame(1, $report['failed']);
+        $byHook = [];
+        foreach (self::deliveries() as $row) {
+            $byHook[(int) $row['webhook_id']] = $row;
+        }
+        self::assertSame('1', $byHook[$huge['webhookId']]['attempts']);
+        self::assertSame(1000, strlen($byHook[$huge['webhookId']]['last_response_body']));
+        self::assertSame('delivered', $byHook[$healthy['webhookId']]['status']);
+    }
+
     public function testTheLockKeepsASecondRunOut(): void
     {
         self::hook(LocalWebhookReceiver::url(200));

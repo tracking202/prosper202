@@ -52,6 +52,31 @@ final class DeliveryReason
             ?? throw new \RuntimeException('The delivery answer could not be redacted.');
     }
 
+    /** What is stored in place of an answer that could not be redacted. */
+    public const WITHHELD = 'answer withheld: could not be redacted';
+
+    /** How much of an answer is looked at for credentials; the rest is dropped. */
+    public const SCAN_BYTES = 8192;
+
+    /**
+     * redact() for an answer of any size, never throwing: the webhook's
+     * secret is taken out of the whole answer, the rest is cut to
+     * SCAN_BYTES, and an answer the patterns cannot handle is replaced by
+     * WITHHELD, never kept raw.
+     */
+    public static function redactSafely(string $text, string $secret = ''): string
+    {
+        try {
+            if (strlen($secret) >= 8) {
+                $text = str_replace($secret, self::REMOVED, $text);
+            }
+
+            return self::redact(mb_strcut(mb_scrub($text, 'UTF-8'), 0, self::SCAN_BYTES, 'UTF-8'));
+        } catch (\Throwable) {
+            return self::WITHHELD;
+        }
+    }
+
     /**
      * The answer as the Log's one line: valid UTF-8, every run of
      * whitespace and control characters one space, cut to $max characters
