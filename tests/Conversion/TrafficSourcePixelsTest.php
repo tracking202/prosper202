@@ -6,6 +6,7 @@ namespace Tests\Conversion;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Attribution\WebhookGuard;
+use Prosper202\Conversion\AdPlatformConsent;
 use Prosper202\Conversion\TrafficSourcePixels;
 use Prosper202\Database\Connection;
 use Prosper202\Notifications\PostbackSender;
@@ -64,7 +65,7 @@ final class TrafficSourcePixelsTest extends TestCase
         $out = TrafficSourcePixels::fire(new Connection($db), 3, ['p202_goal' => 'Sale'], function (string $url) use (&$fetched): bool {
             $fetched[] = $url;
             return true;
-        }, false);
+        }, false, consent: AdPlatformConsent::given());
 
         self::assertSame(['https://s2s.test/a?g=Sale', 'https://s2s.test/b'], $fetched);
         self::assertSame('', $out['markup'], 'nothing is rendered where no browser will load it');
@@ -96,7 +97,7 @@ final class TrafficSourcePixelsTest extends TestCase
         $log = (string) tempnam(sys_get_temp_dir(), 'p202-pixels-log');
         $previous = ini_set('error_log', $log);
         try {
-            $out = TrafficSourcePixels::fire(new Connection($db), 3, ['subid' => '12'], $sender->send(...), false);
+            $out = TrafficSourcePixels::fire(new Connection($db), 3, ['subid' => '12'], $sender->send(...), false, consent: AdPlatformConsent::given());
         } finally {
             ini_set('error_log', (string) $previous);
         }
@@ -127,7 +128,7 @@ final class TrafficSourcePixelsTest extends TestCase
         ]);
         $db->whenQueryContainsReturnRows('user_account_currency', [['user_account_currency' => 'EUR']]);
 
-        $out = TrafficSourcePixels::fire(new Connection($db), 3, ['subid' => '12', 'payout' => '24.5', 'transactionid' => 'ORDER-9', TrafficSourcePixels::EVENT_ID => 'ORDER-9'], static fn (): bool => true, true, true, static fn (): bool => true);
+        $out = TrafficSourcePixels::fire(new Connection($db), 3, ['subid' => '12', 'payout' => '24.5', 'transactionid' => 'ORDER-9', TrafficSourcePixels::EVENT_ID => 'ORDER-9'], static fn (): bool => true, true, true, static fn (): bool => true, consent: AdPlatformConsent::given());
 
         self::assertSame(
             "<img src='https://www.facebook.com/tr?id=123456789012345&amp;ev=Purchase&amp;noscript=1&amp;cd%5Bvalue%5D=24.50&amp;cd%5Bcurrency%5D=EUR&amp;eid=ORDER-9' height='1' width='1' style='display:none' alt='' />\n"
@@ -155,7 +156,7 @@ final class TrafficSourcePixelsTest extends TestCase
                 ['pixel_id' => 8, 'pixel_code' => 'https://img.test/p?s=[[subid]]', 'pixel_type_id' => 1],
             ]);
 
-            return TrafficSourcePixels::fire(new Connection($db), 3, ['subid' => '12', 'payout' => '5'], null, true, false, $mayTrack);
+            return TrafficSourcePixels::fire(new Connection($db), 3, ['subid' => '12', 'payout' => '5'], null, true, false, $mayTrack, consent: AdPlatformConsent::given());
         };
         $image = "<img src='https://img.test/p?s=12' height='0' width='0' style='display:none' />\n";
 
@@ -212,7 +213,7 @@ final class TrafficSourcePixelsTest extends TestCase
             ['pixel_id' => 7, 'pixel_code' => '123456789012345', 'pixel_type_id' => 6],
         ]);
 
-        $out = TrafficSourcePixels::fire(new Connection($db), 3, ['payout' => '5'], static fn (): bool => true, false);
+        $out = TrafficSourcePixels::fire(new Connection($db), 3, ['payout' => '5'], static fn (): bool => true, false, consent: AdPlatformConsent::given());
 
         self::assertSame('', $out['markup']);
         self::assertSame(1, $out['browser_skipped']);
@@ -228,7 +229,7 @@ final class TrafficSourcePixelsTest extends TestCase
         $log = (string) tempnam(sys_get_temp_dir(), 'p202-fb-log');
         $previous = ini_set('error_log', $log);
         try {
-            $out = TrafficSourcePixels::fire(new Connection($db), 3, ['payout' => '5'], static fn (): bool => true, true, true, static fn (): bool => true);
+            $out = TrafficSourcePixels::fire(new Connection($db), 3, ['payout' => '5'], static fn (): bool => true, true, true, static fn (): bool => true, consent: AdPlatformConsent::given());
         } finally {
             ini_set('error_log', (string) $previous);
         }
@@ -260,7 +261,7 @@ final class TrafficSourcePixelsTest extends TestCase
             ['pixel_id' => 7, 'pixel_code' => '123456789012345', 'pixel_type_id' => 6],
         ]);
 
-        $out = TrafficSourcePixels::fire(new Connection($db), 3, ['payout' => '24.5', 'transactionid' => 'T'], static fn (): bool => true, true, true, static fn (): bool => true);
+        $out = TrafficSourcePixels::fire(new Connection($db), 3, ['payout' => '24.5', 'transactionid' => 'T'], static fn (): bool => true, true, true, static fn (): bool => true, consent: AdPlatformConsent::given());
 
         self::assertStringContainsString('ev=Purchase', $out['markup']);
         self::assertStringNotContainsString('cd%5B', $out['markup']);

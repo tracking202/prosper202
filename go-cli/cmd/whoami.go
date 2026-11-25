@@ -16,11 +16,13 @@ import (
 var errNoPrincipal = errors.New("no principal in the capabilities response")
 
 // principal is who the configured key acts as: the `principal` block of
-// GET /capabilities (the key's user, roles and scopes).
+// GET /capabilities (the key's user, roles and scopes, and which parts of
+// Customer LTV its scope and role let it use; nil from a server before it).
 type principal struct {
-	UserID int      `json:"user_id"`
-	Roles  []string `json:"roles"`
-	Scopes []string `json:"scopes"`
+	UserID int             `json:"user_id"`
+	Roles  []string        `json:"roles"`
+	Scopes []string        `json:"scopes"`
+	LTV    map[string]bool `json:"ltv"`
 }
 
 // fetchPrincipal reads the principal through the ordinary request path, so a
@@ -56,7 +58,9 @@ var whoamiCmd = &cobra.Command{
 	Short: "Show the user, roles and scopes the configured API key acts as",
 	Long: "Asks the server who the configured key belongs to: its user id and username, the\n" +
 		"user's roles, and the key's scopes (`*` is full access; `read`, `campaigns:write`\n" +
-		"and the like narrow it). Fails with exit 2 when the server refuses the key.\n\n" +
+		"and the like narrow it). `ltv` says which parts of Customer LTV the key's scope and\n" +
+		"the user's role let it use (`p202 ltv --help`). Fails with exit 2 when the server\n" +
+		"refuses the key.\n\n" +
 		"  p202 whoami\n" +
 		"  p202 whoami --profile staging --json",
 	Args: cobra.NoArgs,
@@ -73,6 +77,9 @@ var whoamiCmd = &cobra.Command{
 			"user_id": p.UserID,
 			"roles":   p.Roles,
 			"scopes":  p.Scopes,
+		}
+		if p.LTV != nil {
+			out["ltv"] = p.LTV
 		}
 		if profile, name, perr := configpkg.LoadProfileWithName(""); perr == nil {
 			out["profile"] = name

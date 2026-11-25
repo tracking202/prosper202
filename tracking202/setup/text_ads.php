@@ -89,6 +89,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	
 	$text_ad_display_url = trim((string) $_POST['text_ad_display_url']);
 	if (empty($text_ad_display_url)) { $error['text_ad_display_url'] = '<div class="error">What is your ad display URL?</div>'; }
+
+    // The value saved is the one posted, so that is the one measured.
+    $lengthLabels = [
+        'text_ad_name' => 'The ad nickname',
+        'text_ad_headline' => 'The headline',
+        'text_ad_description' => 'The description',
+        'text_ad_display_url' => 'The display URL',
+    ];
+    foreach ($lengthLabels as $lengthField => $lengthLabel) {
+        $postedText = (string) ($_POST[$lengthField] ?? '');
+        $tooLong = \Prosper202\Setup\FieldLength::refusal($lengthField, $postedText, $lengthLabel);
+        if ($tooLong !== null && !isset($error[$lengthField])) {
+            $error[$lengthField] = '<div class="error">' . htmlspecialchars($tooLong, ENT_QUOTES, 'UTF-8') . '</div>';
+        }
+    }
 	
 
 	
@@ -455,23 +470,23 @@ if ($error) {
 
 					<div class="mb-3">
 						<label class="form-label" for="text_ad_name">Ad nickname</label>
-						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'text_ad_name'); ?>" id="text_ad_name" name="text_ad_name" value="<?php echo p202_setup_e($form['text_ad_name']); ?>" maxlength="255" required>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'text_ad_name'); ?>" id="text_ad_name" name="text_ad_name" value="<?php echo p202_setup_e($form['text_ad_name']); ?>" maxlength="<?php echo \Prosper202\Setup\FieldLength::of('text_ad_name'); ?>" required>
 						<div class="form-text">How you find this ad among the others in reports.</div>
 						<?php echo p202_setup_feedback($error, 'text_ad_name'); ?>
 					</div>
 					<div class="mb-3">
 						<label class="form-label" for="text_ad_headline">Headline</label>
-						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'text_ad_headline'); ?>" id="text_ad_headline" name="text_ad_headline" value="<?php echo p202_setup_e($form['text_ad_headline']); ?>" required>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'text_ad_headline'); ?>" id="text_ad_headline" name="text_ad_headline" value="<?php echo p202_setup_e($form['text_ad_headline']); ?>" maxlength="<?php echo \Prosper202\Setup\FieldLength::of('text_ad_headline'); ?>" required>
 						<?php echo p202_setup_feedback($error, 'text_ad_headline'); ?>
 					</div>
 					<div class="mb-3">
 						<label class="form-label" for="text_ad_description">Description</label>
-						<textarea class="form-control<?php echo p202_setup_invalid($error, 'text_ad_description'); ?>" id="text_ad_description" name="text_ad_description" rows="2" required><?php echo p202_setup_e($form['text_ad_description']); ?></textarea>
+						<textarea class="form-control<?php echo p202_setup_invalid($error, 'text_ad_description'); ?>" id="text_ad_description" name="text_ad_description" rows="2" maxlength="<?php echo \Prosper202\Setup\FieldLength::of('text_ad_description'); ?>" required><?php echo p202_setup_e($form['text_ad_description']); ?></textarea>
 						<?php echo p202_setup_feedback($error, 'text_ad_description'); ?>
 					</div>
 					<div class="mb-3">
 						<label class="form-label" for="text_ad_display_url">Display URL</label>
-						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'text_ad_display_url'); ?>" id="text_ad_display_url" name="text_ad_display_url" value="<?php echo p202_setup_e($form['text_ad_display_url']); ?>" required>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'text_ad_display_url'); ?>" id="text_ad_display_url" name="text_ad_display_url" value="<?php echo p202_setup_e($form['text_ad_display_url']); ?>" maxlength="<?php echo \Prosper202\Setup\FieldLength::of('text_ad_display_url'); ?>" required>
 						<?php echo p202_setup_feedback($error, 'text_ad_display_url'); ?>
 					</div>
 
