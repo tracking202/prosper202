@@ -1,0 +1,5 @@
+-- Fixed: Every GET /ltv/* read refuses a query parameter it does not take with a 422 naming it and the ones it takes. Each read used to drop what it did not know, so GET /ltv/customers?updated_since=... answered every customer as though filtered, and a misspelled limt=5 read as the default page.
+app: Fixed: The LTV API reads refuse a parameter they do not take instead of answering as though it were not sent.
+-- New: GET /ltv/customers takes updated_since (a unix time), for the customers written since then; deleted_since is refused, since the list answers live customers only.
+app: New: GET /ltv/customers can list only the customers changed since a time (updated_since).
+-- Fixed: p202 ltv abm --company no longer sends --limit or --offset, which one company's detail does not page; both CLIs refuse them with --company.

@@ -359,16 +359,24 @@ var ltvAbmCmd = &cobra.Command{
 	Short: "ABM account view — companies ranked by engagement with scores, depth metrics, revenue and MRR",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		params := map[string]string{}
-		if err := collectLtvPaging(cmd, params); err != nil {
+		company := getStringFlagOrDefault(cmd, "ltv", "company")
+		path := "ltv/abm"
+		if company != "" {
+			// One company's detail is not paged, and the server refuses
+			// limit and offset there rather than ignore them.
+			for _, f := range []string{"limit", "offset"} {
+				if cmd.Flags().Changed(f) {
+					return validationError("--%s pages the company list; it does nothing with --company", f).
+						WithHint("Drop --company to page the ranked list, or drop --%s to show %q.", f, company)
+				}
+			}
+			params["name"] = company
+			path = "ltv/abm/company"
+		} else if err := collectLtvPaging(cmd, params); err != nil {
 			return err
 		}
 		if v := getStringFlagOrDefault(cmd, "ltv", "days"); v != "" {
 			params["days"] = v
-		}
-		path := "ltv/abm"
-		if company := getStringFlagOrDefault(cmd, "ltv", "company"); company != "" {
-			params["name"] = company
-			path = "ltv/abm/company"
 		}
 		return ltvGet(path, params)
 	},
