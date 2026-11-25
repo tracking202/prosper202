@@ -929,71 +929,99 @@ class AUTH
      * (the sign-in page, logged_in_with_remember()) reads nothing again and
      * answers false. A session that already claims a sign-in is not replaced:
      * connect.php reads its user and ends it if that user may not act.
+     *
+     * A cookie the database refuses (malformed, no account or no key, a
+     * signature that does not verify, a key expired, deleted or held by a
+     * user who may not act) is cleared on this response: kept, it was read
+     * again on every signed-out request until it expired, and a key deleted
+     * by a switch-off or a password change made elsewhere left every other
+     * browser doing that for 14 days. A cookie whose read failed is kept for
+     * a request that can read it, so an outage signs nobody out.
      */
     public static function remember_me_on_logged_out()
     {
-        if (!self::$rememberMeTried && isset($_COOKIE['remember_me']) && !self::sessionClaimsSignIn()) {
-            self::$rememberMeTried = true;
-            $parts = explode('-', (string) $_COOKIE['remember_me']);
-            if (count($parts) !== 3) {
-                return false;
-            }
-            [$user_id, $auth_key, $hash] = $parts;
-            if (!empty($user_id) && !empty($auth_key) && !empty($hash)) {
-                try {
-                    $secret = self::get_user_secret_key($user_id, false);
-                } catch (\RuntimeException $e) {
-                    // Not verified, so not signed in; the cookie is kept for
-                    // a request that can read the key.
-                    error_log('remember-me: ' . $e->getMessage());
-                    return false;
-                }
-                // No such user, or none with a key: anyone can send that
-                // cookie, so it is refused without a log line per request.
-                if ($secret === null) {
-                    return false;
-                }
-                $expected = hash_hmac('sha256', $user_id . '-' . $auth_key, $secret);
-                if (!hash_equals($expected, (string) $hash)) {
-                    return false;
-                }
-
-                $database = DB::getInstance();
-                $db = $database->getConnection();
-                $mysql = [
-                    'user_id' => $db->real_escape_string($user_id),
-                    'auth_key' => $db->real_escape_string($auth_key)
-                ];
-                $sql = '
-					SELECT
-						*
-                  	FROM
-                  		202_auth_keys 2a, 202_users 2u
-                 	WHERE
-                 	    2a.expires > UNIX_TIMESTAMP()
-                 	AND
-                 		2a.user_id = "' . $mysql['user_id'] . '"
-                  	AND
-                  		2a.auth_key = "' . $mysql['auth_key'] . '"
-                  	AND
-                  	    2u.user_id = 2a.user_id
-                    AND
-                        2u.user_deleted = 0
-					AND
-						2u.user_active = 1
-                	LIMIT 1';
-                $user_result = _mysqli_query($sql);
-                // _mysqli_query() returns false on a query failure; guard before
-                // fetch_assoc() so a transient DB error during remember-me restore
-                // doesn't fatal on false->fetch_assoc().
-                $user_row = ($user_result instanceof mysqli_result) ? $user_result->fetch_assoc() : null;
-                if ($user_row) {
-                    self::begin_user_session($user_row);
-                    self::writeSessionValue('user_cirrus_link', $user_row['user_api_key'] ?? null);
-                    return true;
-                }
-            }
+        if (self::$rememberMeTried || !isset($_COOKIE['remember_me']) || self::sessionClaimsSignIn()) {
+            return false;
         }
+        self::$rememberMeTried = true;
+
+        $cookie = $_COOKIE['remember_me'];
+        $parts = is_string($cookie) ? explode('-', $cookie) : [];
+        if (count($parts) !== 3) {
+            return self::refuseRememberMeCookie();
+        }
+        [$user_id, $auth_key, $hash] = $parts;
+        if ($user_id === '' || $auth_key === '' || $hash === '') {
+            return self::refuseRememberMeCookie();
+        }
+        try {
+            $secret = self::get_user_secret_key($user_id, false);
+        } catch (\RuntimeException $e) {
+            // Not verified, so not signed in; the cookie is kept for a
+            // request that can read the key.
+            error_log('remember-me: ' . $e->getMessage());
+            return false;
+        }
+        // No such user, or none with a key: anyone can send that cookie, so
+        // it is refused without a log line per request.
+        if ($secret === null) {
+            return self::refuseRememberMeCookie();
+        }
+        $expected = hash_hmac('sha256', $user_id . '-' . $auth_key, $secret);
+        if (!hash_equals($expected, $hash)) {
+            return self::refuseRememberMeCookie();
+        }
+
+        $database = DB::getInstance();
+        $db = $database->getConnection();
+        $mysql = [
+            'user_id' => $db->real_escape_string($user_id),
+            'auth_key' => $db->real_escape_string($auth_key)
+        ];
+        $sql = '
+			SELECT
+				*
+          	FROM
+          		202_auth_keys 2a, 202_users 2u
+         	WHERE
+         	    2a.expires > UNIX_TIMESTAMP()
+         	AND
+         		2a.user_id = "' . $mysql['user_id'] . '"
+          	AND
+          		2a.auth_key = "' . $mysql['auth_key'] . '"
+          	AND
+          	    2u.user_id = 2a.user_id
+            AND
+                2u.user_deleted = 0
+			AND
+				2u.user_active = 1
+        	LIMIT 1';
+        $user_result = _mysqli_query($sql);
+        // A failed read (logged by _mysqli_query()) is not a refusal: the
+        // cookie is kept for a request that can read the key.
+        if (!$user_result instanceof mysqli_result) {
+            return false;
+        }
+        $user_row = $user_result->fetch_assoc();
+        if ($user_row === false) {
+            error_log('remember-me: the key of user ' . (int) $user_id . ' was read, and its row could not be fetched');
+            return false;
+        }
+        // Expired, deleted (a sign-out, a switch-off, a new password), or its
+        // user may not act: the database refused it.
+        if ($user_row === null) {
+            return self::refuseRememberMeCookie();
+        }
+        self::begin_user_session($user_row);
+        self::writeSessionValue('user_cirrus_link', $user_row['user_api_key'] ?? null);
+
+        return true;
+    }
+
+    /** A remember-me cookie that can never sign in: cleared, and not signed in. */
+    private static function refuseRememberMeCookie(): bool
+    {
+        self::forgetRememberMeCookie();
 
         return false;
     }

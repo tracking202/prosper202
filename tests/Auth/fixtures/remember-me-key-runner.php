@@ -14,9 +14,16 @@
  *                   the SELECT of the secret key failing
  *   cookie_no_account, cookie_no_key
  *                   the same cookie check with nothing failing
+ *   cookie          remember_me_on_logged_out() with the cookie in
+ *                   P202_RMK_COOKIE, and P202_RMK_FAIL naming the statement
+ *                   that fails: secret_read (the secret key's SELECT),
+ *                   key_read (the 202_auth_keys SELECT), key_fetch (that
+ *                   SELECT answers, and its row cannot be fetched), or none
  * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_RMK_USER (the user id)
  *
- * Prints what the call answered (KEY <key>, THREW <message>, ANSWERED <x>).
+ * Prints what the call answered (KEY <key>, THREW <message>, ANSWERED <x>),
+ * and for the cookie scenarios whether the cookie is still the request's
+ * (COOKIE kept, COOKIE cleared).
  */
 
 declare(strict_types=1);
@@ -94,21 +101,29 @@ $db = new mysqli(
 $GLOBALS['db'] = $db;
 $userId = (int) getenv('P202_RMK_USER');
 
-$GLOBALS['fails'] = match ($scenario) {
-    'read_fails', 'cookie_check', 'fetch_fails' => '/^\s*SELECT\s+secret_key\b/i',
-    'write_fails' => '/^\s*UPDATE\s+202_users\s+SET\s+secret_key\b/i',
+$fail = $scenario === 'cookie' ? (string) getenv('P202_RMK_FAIL') : '';
+$GLOBALS['fails'] = match (true) {
+    in_array($scenario, ['read_fails', 'cookie_check', 'fetch_fails'], true), $fail === 'secret_read'
+        => '/^\s*SELECT\s+secret_key\b/i',
+    $scenario === 'write_fails' => '/^\s*UPDATE\s+202_users\s+SET\s+secret_key\b/i',
+    $fail === 'key_read', $fail === 'key_fetch' => '/\b202_auth_keys\s+2a\b/i',
     default => '',
 };
-$GLOBALS['fetchFails'] = $scenario === 'fetch_fails';
+$GLOBALS['fetchFails'] = $scenario === 'fetch_fails' || $fail === 'key_fetch';
 
-if (in_array($scenario, ['cookie_check', 'cookie_no_account', 'cookie_no_key'], true)) {
+if (in_array($scenario, ['cookie_check', 'cookie_no_account', 'cookie_no_key', 'cookie'], true)) {
     $_SESSION = [];
-    $_COOKIE['remember_me'] = $userId . '-somekey-somehash';
+    $_COOKIE['remember_me'] = $scenario === 'cookie'
+        ? (string) getenv('P202_RMK_COOKIE')
+        : $userId . '-somekey-somehash';
     try {
         $answer = AUTH::remember_me_on_logged_out();
         echo 'ANSWERED ', var_export($answer, true), "\n";
     } catch (\Throwable $e) {
         echo 'THREW ', get_class($e), ': ', $e->getMessage(), "\n";
+    }
+    if ($scenario === 'cookie') {
+        echo 'COOKIE ', isset($_COOKIE['remember_me']) ? 'kept' : 'cleared', "\n";
     }
     exit(0);
 }
