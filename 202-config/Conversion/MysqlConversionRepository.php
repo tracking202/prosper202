@@ -159,6 +159,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *        under the transaction_id, the reversal nets against the click's
      *        legacy baseline, the value it carried from before the ledger;
      *        each transaction_id is taken back from it once),
+     *        cap_at_sale (true = a reversal stating more than the sale it
+     *        reverses takes back the whole sale; applied under the click lock),
      *        once_per_click (true = record only while the click is not yet a
      *        lead; checked under the click lock),
      *        once_per_click_unkeyed (true = the same check, applied only when
@@ -585,6 +587,12 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             // A refund is in its sale's currency, as every reversal is.
             $money = ['currency' => $stamped ? $this->rowMoney((int) $reverses['conv_id'])['currency'] : RowCurrency::UNKNOWN];
         } elseif ($reverses !== null) {
+            // Capped here, under the click's lock: a caller's own read of the
+            // sale, made before the lock, misses a sale still committing (R4CE).
+            $saleUnits = abs(Amount::toUnits((string) $reverses['click_payout']));
+            if (!empty($data['cap_at_sale']) && $explicitPayout !== null && abs($explicitPayout) > $saleUnits) {
+                $explicitPayout = $saleUnits;
+            }
             $money = $this->reversalMoney(
                 $explicitPayout,
                 Amount::toUnits((string) $reverses['click_payout']),
@@ -789,7 +797,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 $eventName ?? '',
                 Amount::fromUnits($amountUnits),
                 $dedupeKey,
-                $transactionId
+                $transactionId,
+                null,
+                $consentWithheld
             );
         }
 

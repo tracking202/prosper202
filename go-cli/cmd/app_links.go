@@ -93,7 +93,7 @@ var appLinkCmd = &cobra.Command{
 
 // ── Notification outbox ─────────────────────────────────────────────
 
-var appNotificationStatuses = []string{"pending", "sent", "failed", "cancelled", "suppressed"}
+var appNotificationStatuses = []string{"pending", "sent", "failed", "cancelled", "suppressed", "withheld"}
 var appNotificationKinds = []string{"reached", "correction", "retraction"}
 
 var appNotificationsCmd = &cobra.Command{
@@ -102,7 +102,8 @@ var appNotificationsCmd = &cobra.Command{
 	Long: "Lists the notification outbox rows for app installs, newest first: the postback URL, its\n" +
 		"kind (reached, correction, retraction) and status — pending (waiting or backing off),\n" +
 		"sent, failed (attempts ran out; last_error says why), cancelled (replaced before it went\n" +
-		"out) or suppressed (a correction the traffic source has no correction URL for).\n" +
+		"out), suppressed (a correction the traffic source has no correction URL for) or\n" +
+		"withheld (the visitor refused consent, so nothing is sent about the install).\n" +
 		"meta.summary counts every status under the same filters.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		params := map[string]string{}

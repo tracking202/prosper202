@@ -92,12 +92,14 @@ final class PublicIntake
     }
 
     /**
-     * The soft per-peer limit: answers 429 with Retry-After and exits when
-     * the peer is over it.
+     * The soft per-client limit: answers 429 with Retry-After and exits when
+     * the client is over it.
      *
-     * Behind a TLS-terminating proxy the peer is the proxy, so the ceiling is
-     * an aggregate one; that is the price of never keying on a header an
-     * attacker chooses. softIpRateLimit() fails open itself; the catch here
+     * The client is VisitorIp's: behind a proxy listed in
+     * P202_TRUSTED_PROXIES the device that proxy saw; behind one nobody
+     * listed the proxy itself, so the ceiling is an aggregate one, the price
+     * of never keying on a header an attacker chooses.
+     * softIpRateLimit() fails open itself; the catch here
      * covers building the store, whose directory is named by the install
      * the configuration's database is (every caller has loaded it).
      */

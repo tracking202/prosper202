@@ -79,6 +79,10 @@ final class ScopeCoverageTest extends TestCase
         $this->assertTrue(Auth::isScopeExemptPath('/versions'));
         $this->assertTrue(Auth::isScopeExemptPath('/'));
         $this->assertTrue(Auth::isScopeExemptPath('/system/health'));
+        // The caller's own facts, and only the one path: nothing under /me is.
+        $this->assertTrue(Auth::isScopeExemptPath('/me'));
+        $this->assertFalse(Auth::isScopeExemptPath('/me/keys'));
+        $this->assertNull(Auth::scopeAreaForPath('/me/keys'), 'so the dispatcher refuses a route added there without an area');
 
         // Everything else under /system is admin data and stays scoped.
         $this->assertFalse(Auth::isScopeExemptPath('/system/metrics'));

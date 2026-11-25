@@ -44,6 +44,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if (empty($aff_network_name)) {
 		$error['aff_network_name'] = '<div class="error">Type in the name of your campaign\'s category.</div>';
 	}
+    $tooLong = \Prosper202\Setup\FieldLength::refusal(
+        'aff_network_name',
+        (string) $_POST['aff_network_name'],
+        'The category name'
+    );
+    if ($tooLong !== null) {
+        $error['aff_network_name'] = '<div class="error">'
+            . htmlspecialchars($tooLong, ENT_QUOTES, 'UTF-8') . '</div>';
+    }
 
 	//if editing, check to make sure the own the network they are editing
 	if ($editing == true) {
@@ -225,7 +234,7 @@ if ($error) {
 					<?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>
 					<div class="mb-3">
 						<label class="form-label" for="aff_network_name">Category name</label>
-						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'aff_network_name'); ?>" id="aff_network_name" name="aff_network_name" value="<?php echo p202_setup_e($formName); ?>" maxlength="255" required<?php echo $categories === [] || $editing ? ' autofocus' : ''; ?>>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'aff_network_name'); ?>" id="aff_network_name" name="aff_network_name" value="<?php echo p202_setup_e($formName); ?>" maxlength="<?php echo \Prosper202\Setup\FieldLength::of('aff_network_name'); ?>" required<?php echo $categories === [] || $editing ? ' autofocus' : ''; ?>>
 						<?php echo p202_setup_feedback($error, 'aff_network_name'); ?>
 					</div>
 					<div class="p202-form-actions">

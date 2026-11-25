@@ -1,0 +1,2 @@
+-- Fixed: A password-reset link could set two passwords when it was submitted twice at once (two browsers, or two sessions): both submits passed the key check before either wrote, and both answered "Your password has been reset.", leaving whichever committed last. The write now consumes the key only while it is still the user's and inside its three days, so the second submit stores nothing and is told the link was already used.
+app: Fixed: A password-reset link now sets one password even when it is submitted twice at once.

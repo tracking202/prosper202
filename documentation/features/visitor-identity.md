@@ -82,9 +82,10 @@ goal event of the click refuses, no conversion of that click is sent to a
 [offline conversion file](offline-conversions.md), whatever a later request
 or a later visit of the same click carries, a click-through or a conversion
 that consents included; one already sent stays sent. A refusal is read on
-its own click only: a new ad click starts fresh. Your reports
-still count those conversions; traffic source pixels and postbacks, the Meta
-Purchase pixel and the conversion webhooks to your own endpoints are not
+its own click only: a new ad click starts fresh. The same holds for the
+click's traffic source: none of its pixels (the Meta Purchase pixel
+included) fires and none of its postbacks is sent. Your reports still count
+those conversions, and the conversion webhooks to your own endpoints are not
 changed by this. [Destinations](destinations.md#privacy-and-personal-data)
 lists which requests can carry a refusal and which cannot.
 

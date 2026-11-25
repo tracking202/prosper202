@@ -80,6 +80,11 @@ services:
       # fills in both values.
       SERVICE_FQDN_WEB_80:
       SERVICE_URL_WEB:
+      # Whose X-Forwarded-For names the visitor (TrustedProxies). No host
+      # port is published, so only Coolify's proxy on the private Docker
+      # network reaches this container; `cloudflare` keeps Cloudflare's hop
+      # believed when it proxies the domain too.
+      P202_TRUSTED_PROXIES: ${P202_TRUSTED_PROXIES:-cloudflare,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7}
     volumes: *app-volumes
     depends_on: *app-depends
     healthcheck:

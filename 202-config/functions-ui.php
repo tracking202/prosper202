@@ -206,6 +206,39 @@ function p202_flash(string $kind, string $text): string
 }
 
 /**
+ * The one way a page offers to sign out: a form that POSTs the session's
+ * token to 202-account/signout.php, which signs out on nothing else. A GET
+ * signed out, so a link or an image on any other site could sign a person
+ * out (SignOutIsPostedTest holds every reference to the page to this).
+ *
+ * $base is get_absolute_url() and $token the session's ($_SESSION['token']);
+ * a token that is not a string posts as none, which the page refuses with
+ * the button again. $icon is a p202_chrome_icon() name drawn beside the
+ * label.
+ */
+function p202_signout_form(
+    string $base,
+    mixed $token,
+    string $label,
+    string $buttonClass,
+    string $formClass = '',
+    string $buttonId = '',
+    string $icon = ''
+): string {
+    $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
+    $inner = $icon !== ''
+        ? p202_chrome_icon($icon) . '<span>' . $e($label) . '</span>'
+        : $e($label);
+
+    return '<form method="post" action="' . $e($base . '202-account/signout.php') . '"'
+        . ($formClass !== '' ? ' class="' . $e($formClass) . '"' : '') . ' data-p202-signout>'
+        . '<input type="hidden" name="token" value="' . $e(is_string($token) ? $token : '') . '">'
+        . '<button type="submit" class="' . $e($buttonClass) . '"'
+        . ($buttonId !== '' ? ' id="' . $e($buttonId) . '"' : '') . '>'
+        . $inner . '</button></form>';
+}
+
+/**
  * What a report page says beside figures costed from the spend ledger
  * (DataEngine::spendLedger(), ReportSummaryForm::getSpendLedger(), a REST
  * report's spend_ledger): how far the spend data reaches, and the spend in
@@ -271,6 +304,30 @@ function p202_postback_queue_notice(\mysqli $db, int $userId, string $base): str
     return '<div class="alert alert-warning p202-flash" role="status" data-p202-postback-queue><i class="bi bi-exclamation-triangle"></i>'
         . '<div class="p202-flash__body">' . $e($backlog['warning'])
         . ' <a class="alert-link" href="' . $e(rtrim($base, '/') . '/202-account/administration.php#autocron') . '">Open Settings</a></div></div>';
+}
+
+/**
+ * Settings' warning that the re-click backfill is stopped at a click that
+ * fails (Prosper202\Click\ReClickBackfill::stopNotice()): since when, in
+ * the page's zone, and why it waits. '' while it is not stopped. A read that
+ * fails says so, rather than reading as a walk under way.
+ */
+function p202_reclick_backfill_notice(\mysqli $db, ?\DateTimeZone $zone = null): string
+{
+    try {
+        $progress = (new \Prosper202\Click\ReClickBackfill(new \Prosper202\Database\Connection($db)))->progress();
+    } catch (\Throwable $e) {
+        error_log('Settings: the re-click backfill could not be read: ' . $e->getMessage());
+
+        return p202_flash('bad', 'Whether the re-click backfill is stopped could not be checked just now; the'
+            . ' server\'s error log says why ("Settings: the re-click backfill could not be read").');
+    }
+    $notice = \Prosper202\Click\ReClickBackfill::stopNotice(
+        $progress,
+        $zone ?? new \DateTimeZone(date_default_timezone_get())
+    );
+
+    return $notice === null ? '' : p202_flash('warn', $notice);
 }
 
 /**

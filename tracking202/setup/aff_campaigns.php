@@ -126,6 +126,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 	if (empty($aff_campaign_name)) {
 		$error['aff_campaign_name'] = '<div class="error">What is the name of this campaign.</div>';
 	}
+    $tooLong = \Prosper202\Setup\FieldLength::refusal('aff_campaign_name', $aff_campaign_name, 'The campaign name');
+    if ($tooLong !== null) {
+        $error['aff_campaign_name'] = '<div class="error">'
+            . htmlspecialchars($tooLong, ENT_QUOTES, 'UTF-8') . '</div>';
+    }
 
 	$aff_campaign_url = trim((string) $_POST['aff_campaign_url']);
 	if (empty($aff_campaign_url)) {

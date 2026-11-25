@@ -123,6 +123,32 @@ jobs:
             exit 1
           fi
 
+      # build/ holds release tools and write-config.php, which answers a request
+      # by writing 202-config.php from the container's environment. The image
+      # keeps the config writer outside the docroot and leaves build/ out of it
+      # (TestScriptsAreNotServedTest reads the Dockerfile and .dockerignore).
+      - name: Check the image leaves build/ out of the docroot
+        run: |
+          state=$(docker run --rm --entrypoint sh prosper202-ci -c \
+            'if [ ! -f /var/www/html/index.php ]; then echo no-app; elif [ -e /var/www/html/build ]; then echo shipped; elif [ ! -f /usr/local/lib/prosper202/write-config.php ]; then echo no-writer; else echo absent; fi')
+          echo "build/ in the image: $state"
+          if [ "$state" != absent ]; then
+            echo "::error::the image's docroot holds build/, or the image lacks the app or its config writer: $state" >&2
+            exit 1
+          fi
+
+      # The entrypoint runs write-config.php from where the image keeps it; under
+      # set -e a path the image does not hold stops the container at boot.
+      - name: Check the entrypoint writes 202-config.php from the environment
+        run: |
+          written=$(docker run --rm --env MYSQL_ROOT_PASSWORD=ci-only --env DB_HOST=ci-db prosper202-ci \
+            cat /var/www/html/202-config.php | grep -cF "\$dbhost = 'ci-db';" || true)
+          echo "202-config.php lines naming the environment's host: $written"
+          if [ "$written" != 1 ]; then
+            echo "::error::the entrypoint did not write 202-config.php from the environment" >&2
+            exit 1
+          fi
+
       - name: Boot and serve a request
         run: |
           docker run --detach --name p202 --publish 127.0.0.1:8080:80 prosper202-ci
@@ -141,5 +167,15 @@ jobs:
             http://127.0.0.1:8080/tests/Install/fixtures/schema-installer-runner.php || true)
           if [ "$runner" != 404 ]; then
             echo "::error::a request for a test runner answered $runner, not 404" >&2
+            exit 1
+          fi
+          # This container started with no database environment, so it has no
+          # 202-config.php: a served write-config.php would write one.
+          writer=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            http://127.0.0.1:8080/build/scripts/write-config.php || true)
+          config=$(docker exec p202 sh -c 'if [ -e /var/www/html/202-config.php ]; then echo written; else echo absent; fi')
+          echo "build/scripts/write-config.php answered $writer; 202-config.php: $config"
+          if [ "$writer" != 404 ] || [ "$config" != absent ]; then
+            echo "::error::a request for build/scripts/write-config.php answered $writer and 202-config.php is $config" >&2
             exit 1
           fi

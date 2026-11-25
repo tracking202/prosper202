@@ -5,12 +5,32 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Controller;
+use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
+use Prosper202\Database\Connection;
+use Prosper202\Setup\TrafficSourceAccountWrite;
 
 class PpcAccountsController extends Controller
 {
     protected function tableName(): string { return '202_ppc_accounts'; }
     protected function primaryKey(): string { return 'ppc_account_id'; }
+
+    #[\Override]
+    protected function listSearchColumns(): array
+    {
+        return ['ppc_account_name'];
+    }
+
+    #[\Override]
+    protected function listSortFields(): array
+    {
+        return [
+            'ppc_account_id' => 'ppc_account_id',
+            'ppc_account_name' => 'ppc_account_name',
+            'ppc_network_id' => 'ppc_network_id',
+        ];
+    }
+
     protected function deletedColumn(): ?string { return 'ppc_account_deleted'; }
 
     protected function fields(): array
@@ -20,6 +40,38 @@ class PpcAccountsController extends Controller
             'ppc_network_id'      => ['type' => 'i', 'required' => true, 'range' => self::MEDIUMINT_UNSIGNED],
             'ppc_account_default' => ['type' => 'i', 'range' => self::TINYINT_UNSIGNED],
         ];
+    }
+
+    /**
+     * Each write takes the account, then its sources, in the lock order the
+     * traffic source repair and split share (TrafficSourceAccountWrite), and
+     * asks again under the lock whether the source it puts the account on is
+     * a live one of this user's: assertLinksOwned() read it before the lock,
+     * and a repair may have moved it to another user since. An update that
+     * leaves the account on the source it is on is not asked.
+     */
+    #[\Override]
+    protected function writeRow(?array $current, array $clean, callable $write): mixed
+    {
+        $accountId = $current === null ? null : (int) $current['ppc_account_id'];
+        $sourceId = array_key_exists('ppc_network_id', $clean) ? (int) $clean['ppc_network_id'] : null;
+
+        return TrafficSourceAccountWrite::run(
+            new Connection($this->db),
+            $accountId === null ? [] : [$accountId],
+            $sourceId === null ? [] : [$sourceId],
+            function (array $sources, array $onSources) use ($accountId, $sourceId, $write): mixed {
+                $moves = $sourceId !== null && ($accountId === null || ($onSources[$accountId] ?? 0) !== $sourceId);
+                if ($moves && !TrafficSourceAccountWrite::ownsLive($sources, (int) $sourceId, $this->userId)) {
+                    throw new ValidationException('Validation failed', [
+                        'ppc_network_id' => "traffic source $sourceId is not one of yours, or it was removed"
+                            . ' (GET /ppc-networks lists them)',
+                    ]);
+                }
+
+                return $write();
+            }
+        );
     }
 
     #[\Override]

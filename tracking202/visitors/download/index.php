@@ -21,14 +21,20 @@ $reportView = p202_report_view_begin();
 	
 //get stuff: the Visitors list, as click_history.php reads it (a name only
 //when it is the click's own account's, CLAUDE.md #27)
-	$command = "SELECT 2c.click_id, 2c.click_time, 2c.click_alp, text_ad_name, aff_campaign_name, aff_campaign_id_public, landing_page_nickname, ppc_network_name, ppc_account_name, " . \Prosper202\DataEngine\IpAddressSql::address('2i', '2i6') . " AS ip_address, keyword, 2c.click_out, click_lead, click_filtered, click_id_public, click_cloaking, 2c.click_referer_site_url_id, click_landing_site_url_id, click_outbound_site_url_id, click_cloaking_site_url_id, click_redirect_site_url_id,	2b.browser_name, 2p.platform_name, 2d.device_name, 202_device_types.type_name, 2cy.country_name, 2cy.country_code, 2rg.region_name, 202_locations_city.city_name, 2is.isp_name, 
+// The 202_google values once per click (AdClickIdColumns): the ad ids as GET /clicks
+// reads them, the UTM values from the click's one row. A plain join lists the click once per row.
+	$googleColumns = [];
+	foreach (array_keys(\Prosper202\Click\ClickRecord::AD_CLICK_IDS) as $adClickId) {
+		$googleColumns[] = \Prosper202\Click\AdClickIdColumns::sql($adClickId, '2c.click_id') . ' AS ' . $adClickId;
+	}
+	$googleColumns[] = '2uca.utm_campaign, 2uco.utm_content, 2um.utm_medium, 2us.utm_source, 2ut.utm_term';
+	$command ="SELECT 2c.click_id, 2c.click_time, 2c.click_alp, text_ad_name, aff_campaign_name, aff_campaign_id_public, landing_page_nickname, ppc_network_name, ppc_account_name, " . \Prosper202\DataEngine\IpAddressSql::address('2i', '2i6') . " AS ip_address, keyword, 2c.click_out, click_lead, click_filtered, click_id_public, click_cloaking, 2c.click_referer_site_url_id, click_landing_site_url_id, click_outbound_site_url_id, click_cloaking_site_url_id, click_redirect_site_url_id,	2b.browser_name, 2p.platform_name, 2d.device_name, 202_device_types.type_name, 2cy.country_name, 2cy.country_code, 2rg.region_name, 202_locations_city.city_name, 2is.isp_name, 
 2su.site_url_address AS referer,2sd.site_domain_host AS referer_host,
 2cl.site_url_address AS landing,2cld.site_domain_host AS landing_host,
 2co.site_url_address AS outbound,2cod.site_domain_host AS outbound_host,
 2cc.site_url_address AS cloaking,2ccd.site_domain_host AS cloaking_host,
 2credir.site_url_address AS redirect,2credird.site_domain_host AS redirect_host,
-gclid, 2g.gbraid, 2g.wbraid, 2g.ttclid, 2g.msclkid, 2g.fbclid, 2g.oppref,
-2uca.utm_campaign,2uco.utm_content,2um.utm_medium,2us.utm_source,2ut.utm_term
+" . implode(",\n", $googleColumns) . "
 FROM 202_dataengine AS 2c
 LEFT JOIN 202_clicks_record USING (click_id) 
 LEFT JOIN 202_clicks_site AS 2cs ON (2c.click_id = 2cs.click_id) 
@@ -57,12 +63,12 @@ LEFT JOIN 202_site_domains AS 2sd ON (2su.site_domain_id = 2sd.site_domain_id)
 LEFT JOIN 202_site_domains as 2cld ON (2cld.site_domain_id = 2cl.site_domain_id) 
 LEFT JOIN 202_site_domains as 2cod ON (2cod.site_domain_id = 2co.site_domain_id) 
 LEFT JOIN 202_site_domains as 2ccd ON (2ccd.site_domain_id = 2cc.site_domain_id) 
-LEFT JOIN 202_site_domains as 2credird ON (2credird.site_domain_id = 2credir.site_domain_id) 
-LEFT JOIN 202_google as 2g ON (2g.click_id = 2c.click_id )
-LEFT JOIN 202_utm_campaign AS 2uca ON (2g.utm_campaign_id = 2uca.utm_campaign_id) 
-LEFT JOIN 202_utm_content AS 2uco ON (2g.utm_content_id = 2uco.utm_content_id) 
-LEFT JOIN 202_utm_medium AS 2um ON (2g.utm_medium_id = 2um.utm_medium_id) 
-LEFT JOIN 202_utm_source AS 2us ON (2g.utm_source_id = 2us.utm_source_id) 
+LEFT JOIN 202_site_domains as 2credird ON (2credird.site_domain_id = 2credir.site_domain_id)
+" . \Prosper202\Click\AdClickIdColumns::rowJoin('2g', '2c.click_id') . "
+LEFT JOIN 202_utm_campaign AS 2uca ON (2g.utm_campaign_id = 2uca.utm_campaign_id)
+LEFT JOIN 202_utm_content AS 2uco ON (2g.utm_content_id = 2uco.utm_content_id)
+LEFT JOIN 202_utm_medium AS 2um ON (2g.utm_medium_id = 2um.utm_medium_id)
+LEFT JOIN 202_utm_source AS 2us ON (2g.utm_source_id = 2us.utm_source_id)
 LEFT JOIN 202_utm_term AS 2ut ON (2g.utm_term_id = 2ut.utm_term_id) ";
 	$db_table = "2c";
 	$query = query($command);
@@ -70,167 +76,15 @@ LEFT JOIN 202_utm_term AS 2ut ON (2g.utm_term_id = 2ut.utm_term_id) ";
 
 //run query
 	$click_sql = $query['click_sql'];
-	$click_result = $db->query($click_sql) or record_mysql_error($click_sql); 
-	//echo $click_sql;	
-//html escape vars
-	$html['from'] = htmlentities((string) $query['from'], ENT_QUOTES, 'UTF-8');
-	$html['to'] = htmlentities((string) $query['to'], ENT_QUOTES, 'UTF-8'); 
-	$html['rows'] = htmlentities((string) $query['rows'], ENT_QUOTES, 'UTF-8'); 
+	$click_result = $db->query($click_sql) or record_mysql_error($click_sql);
 
 //set the timezone for the user, to display dates in their timezone
 	AUTH::set_timezone($_SESSION['user_timezone']);
-	
-	echo 	"Subid" . "\t" . 
-			"Date" . "\t" . 
-			"Browser" . "\t" . 
-			"OS"  . "\t" . 
-			"PPC Network"  . "\t" . 
-			"PPC account"  . "\t" . 
-			"Click Real/Filtered"  . "\t" . 
-			"IP Address"  . "\t" .
-			"ISP/Carrier"  . "\t" .
-			"Country"  . "\t" .
-			"Country Code"  . "\t" .
-			"City"  . "\t" . 
-			"Offer/LP"  . "\t" . 
-			"Text Ad"  . "\t" . 
-			"Referer" . "\t" . 
-			"Landing" . "\t" . 
-			"Outbound" . "\t" . 
-			"Cloaked Referer" . "\t" . 
-			"Redirect" . "\t" . 
-			"Keyword" . "\t" .
-	        "gclid" . "\t" .
-            "gbraid" . "\t" .
-            "wbraid" . "\t" .
-            "ttclid" . "\t" .
-            "msclkid" . "\t" .
-            "fbclid" . "\t" .
-            "oppref" . "\t" .
-	        "utm_campaign" . "\t" .
-	        "utm_content" . "\t" .
-	        "utm_medium" . "\t" .
-	        "utm_source" . "\t" .
-	        "utm_term" . "\n";
-	
-// A value as the visitor sent it, on one line and in one column: a tab or a
-// line break in it moved every column after it.
-$cell = static fn (mixed $value): string => str_replace(["\t", "\r", "\n"], ' ', (string) $value);
 
-//now display all the clicks
+// Every cell through one function (TsvCell): a tab or a line break a
+// visitor sent moved every column after it.
+	echo \Prosper202\Report\VisitorsDownload::header();
+	$trackingBase = \Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER);
 	while ($click_row = $click_result->fetch_array(MYSQLI_ASSOC)) {
-								
-		$mysql['click_id'] = $db->real_escape_string($click_row['click_id']);
-		
-		
-			//Country GEO data
-
-			$html['location_country_code'] = htmlentities((string)($click_row['country_code'] ?? ''), ENT_QUOTES, 'UTF-8');   
-			$html['location_country_name'] = htmlentities((string)($click_row['country_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-			
-			//City GEO data
-			$html['location_city_name'] = htmlentities((string)($click_row['city_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-
-			$html['referer'] = htmlentities((string)($click_row['referer'] ?? ''), ENT_QUOTES, 'UTF-8');
-			$html['referer_host'] = htmlentities((string)($click_row['referer_host'] ?? ''), ENT_QUOTES, 'UTF-8');
-			
-			$html['landing'] = htmlentities((string)($click_row['landing'] ?? ''), ENT_QUOTES, 'UTF-8');
-			$html['landing_host'] = htmlentities((string)($click_row['landing_host'] ?? ''), ENT_QUOTES, 'UTF-8');
-			
-			$html['outbound'] = htmlentities((string)($click_row['outbound'] ?? ''), ENT_QUOTES, 'UTF-8');
-			$html['outbound_host'] = htmlentities((string)($click_row['outbound_host'] ?? ''), ENT_QUOTES, 'UTF-8');
-			
-//this is alittle different
-		if ($click_row['click_cloaking']) {
-			
-			//if not a landing page
-			if (!$click_row['click_alp']) { 
-				$html['cloaking'] = htmlentities(\Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/cl.php?pci=' . $click_row['click_id_public'] );
-				$html['cloaking_host'] = htmlentities(\Prosper202\Click\TrackingBaseUrl::requestHost($_SERVER));   
-			} else { 
-				//advanced lander
-				$html['cloaking'] = htmlentities(\Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/off.php?acip='. $click_row['aff_campaign_id_public'] . '&pci=' . $click_row['click_id_public'] );
-				$html['cloaking_host'] = htmlentities(\Prosper202\Click\TrackingBaseUrl::requestHost($_SERVER));   
-			}
-		} else {
-			$html['cloaking'] = '';
-			$html['cloaking_host'] = '';	
-		}
-
-		$html['redirect'] = htmlentities((string)($click_row['redirect'] ?? ''), ENT_QUOTES, 'UTF-8');   
-		$html['redirect_host'] = htmlentities((string)($click_row['redirect_host'] ?? ''), ENT_QUOTES, 'UTF-8');  
-		   
-
-		
-		$html['aff_campaign_id'] = htmlentities((string)($click_row['aff_campaign_id'] ?? ''), ENT_QUOTES, 'UTF-8');   
-		$html['landing_page_nickname'] = htmlentities((string)($click_row['landing_page_nickname'] ?? ''), ENT_QUOTES, 'UTF-8');   
-		$html['ppc_account_id'] = htmlentities((string)($click_row['ppc_account_id'] ?? ''), ENT_QUOTES, 'UTF-8');   
-		$html['text_ad_id'] = htmlentities((string)($click_row['text_ad_id'] ?? ''), ENT_QUOTES, 'UTF-8');   
-		$html['text_ad_name'] = htmlentities((string)($click_row['text_ad_name'] ?? ''), ENT_QUOTES, 'UTF-8'); 
-		$html['aff_campaign_name'] = htmlentities((string)($click_row['aff_campaign_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-		$html['aff_network_name'] = htmlentities((string)($click_row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-		$html['ppc_network_name'] = htmlentities((string)($click_row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-		$html['ppc_account_name'] = htmlentities((string)($click_row['ppc_account_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-		$html['ip_address'] = htmlentities((string)($click_row['ip_address'] ?? ''), ENT_QUOTES, 'UTF-8');
-		$html['isp_name'] = htmlentities((string)($click_row['isp_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-		$html['click_cpc'] = htmlentities((string) dollar_format($click_row['click_cpc'] ?? 0), ENT_QUOTES, 'UTF-8');
-		$html['keyword'] = htmlentities((string)($click_row['keyword'] ?? ''), ENT_QUOTES, 'UTF-8');
-		$html['click_lead'] = htmlentities((string)($click_row['click_lead'] ?? ''), ENT_QUOTES, 'UTF-8');
-		$html['click_filtered'] = htmlentities((string)($click_row['click_filtered'] ?? ''), ENT_QUOTES, 'UTF-8');      
-		$html['browser_name'] = htmlentities((string)($click_row['browser_name'] ?? ''), ENT_QUOTES, 'UTF-8');
-		$html['platform_name'] = htmlentities((string)($click_row['platform_name'] ?? ''), ENT_QUOTES, 'UTF-8');      
-				
-		$html['location'] = '';
-		if ($click_row['country_name'] ?? '') {
-			$origin = $click_row['country_name'];
-			if (($click_row['region_name'] ?? '') and (!is_numeric($click_row['region_name']))) {
-				$origin = $click_row['region_name'] . ', ' . $origin;
-			} if ($click_row['city_name'] ?? '') {
-				$origin = $click_row['city_name'] . ', ' . $origin;
-			}
-			
-			$html['origin'] = htmlentities((string) $origin, ENT_QUOTES, 'UTF-8');  
-		}  
-		
-		if ($click_row['click_filtered'] == '1') { 
-			$click_filtered = 'filtered';
-		} elseif ($click_row['click_lead'] == '1') {
-			$click_filtered = 'conversion';
-		} else {
-			$click_filtered = 'real';
-		}
-		
-	echo 	$click_row['click_id'] . "\t" . 
-			date('m/d/y g:ia', (int)$click_row['click_time']) . "\t" . 
-			$html['browser_name'] . "\t" . 
-			$html['platform_name']  . "\t" . 
-			$html['ppc_network_name']  . "\t" . 
-			$html['ppc_account_name']  . "\t" . 
-			$click_filtered  . "\t" . 
-			$html['ip_address']  . "\t" .
-			$html['isp_name']  . "\t" .
-			$html['location_country_name']  . "\t" .
-			$html['location_country_code']  . "\t" .
-			$html['location_city_name']  . "\t" .
-			$html['aff_campaign_name']  . "\t" . 
-			$html['text_ad_name']  . "\t" . 
-			$html['referer'] . "\t" . 
-			$html['landing'] . "\t" . 
-			$html['outbound'] . "\t" . 
-			$html['cloaking'] . "\t" . 
-			$html['redirect'] . "\t" . 
-			$html['keyword'] . "\t" .
-			$cell($click_row['gclid'] ?? '') . "\t" .
-            $cell($click_row['gbraid'] ?? '') . "\t" .
-            $cell($click_row['wbraid'] ?? '') . "\t" .
-            $cell($click_row['ttclid'] ?? '') . "\t" .
-            $cell($click_row['msclkid'] ?? '') . "\t" .
-            $cell($click_row['fbclid'] ?? '') . "\t" .
-            $cell($click_row['oppref'] ?? '') . "\t" .
-			$cell($click_row['utm_campaign'] ?? '') . "\t" .
-			$cell($click_row['utm_content'] ?? '') . "\t" .
-			$cell($click_row['utm_medium'] ?? '') . "\t" .
-			$cell($click_row['utm_source'] ?? '') . "\t" .
-			$cell($click_row['utm_term'] ?? '') . "\n";
-			
+		echo \Prosper202\Report\VisitorsDownload::row($click_row, $trackingBase);
 	}

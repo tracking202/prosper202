@@ -107,7 +107,7 @@ try {
     }
 
     $sent = (new NotificationOutbox(new Connection($db)))->sendDue(500);
-    printf("notifications: %d sent, %d retrying, %d failed\n", $sent['sent'], $sent['retrying'], $sent['failed']);
+    printf("notifications: %d sent, %d retrying, %d failed, %d held back for consent\n", $sent['sent'], $sent['retrying'], $sent['failed'], $sent['withheld']);
 
     if ($intake !== null && $intake['integrity']['failed'] > 0) {
         $fail($intake['integrity']['failed'] . ' install(s) could not be verified; see the error log');

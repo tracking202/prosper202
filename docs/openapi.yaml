@@ -14,6 +14,15 @@ info:
     ```
     API keys are managed via the `/users/{id}/api-keys` endpoints.
 
+    A page on the same origin may instead send the session cookie the
+    sign-in set, with no Authorization header. The session is read as the
+    pages read it, so switching the user off or changing their password ends
+    it on the next call. Every method but GET and HEAD sends the session's
+    token in an `X-P202-CSRF` header (`GET /me` answers it as
+    `auth.csrf_token`); a write without it is `403` and changes nothing. A
+    request with an Authorization header is always a key's, whatever cookie
+    it carries.
+
     ## Pagination
     List endpoints return paginated results:
     ```json
@@ -143,6 +152,7 @@ servers:
 
 security:
   - BearerAuth: []
+  - SessionCookie: []
 
 tags:
   - name: System
@@ -192,7 +202,11 @@ tags:
   - name: Forecast Events
     description: Calendar events (holidays, promotions) that event-aware forecasting shifts predictions around
   - name: LTV
-    description: Customer lifetime value — customers, companies, revenue, subscriptions, products, custom fields, webhooks and integrations (scopes `ltv:read` / `ltv:write`)
+    description: >-
+      Customer lifetime value — customers, companies, revenue, subscriptions, products, custom fields, webhooks and
+      integrations (scopes `ltv:read` / `ltv:write`). Every LTV read refuses a query parameter it does not take with
+      a 422 naming it and the ones it takes ("Unknown parameter(s): …"), rather than answer as though it were not
+      sent.
   - name: Sync
     description: Server-side sync between Prosper202 instances — plans, jobs, the change feed and the audit trail (admin, scopes `sync:read` / `sync:write`)
   - name: Destinations
@@ -984,10 +998,11 @@ paths:
         affiliate's Affiliate IPN, and `jvzoo_vendor`, `?role=vendor`, for a
         product's JVZIPN v1 URL), Zaxaa (ZPN), PayKickstart (the
         product IPN, set under each product's IPN Integration tab) and
-        Shopify (the order and refund webhooks), on this
-        install's tracking base (user 1's tracking
-        domain or this server's name, and the install's path — the base
-        tracker links use), and whether the caller has stored the secret
+        Shopify (the order and refund webhooks), on the
+        caller's tracking base (the caller's own tracking domain, as the
+        page uses the signed-in user's, or the host this request arrived at
+        when none is set, and the install's path — the base tracker links
+        use), and whether the caller has stored the secret
         each is checked with (`secret_stored`; for PayKickstart,
         `keys_stored` counts its keys, one for each PayKickstart campaign).
         The secrets are never served.
@@ -1651,6 +1666,15 @@ paths:
                               table the install lacks, or another error not tied
                               to the click's own data) in 10 runs over an hour
                               from the first of them and is stepped over.
+                          stopped_at:
+                            type: integer
+                            nullable: true
+                            description: >-
+                              Unix time of the first run that stopped at
+                              stalled_at_click_id, for an error of any kind;
+                              null while nothing fails, and for a stop that
+                              began before the upgrade to 1.9.81. Settings and
+                              the cron job's output show it with the note.
                           failed_runs:
                             type: integer
                             description: >-
@@ -1690,10 +1714,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
-        - name: filter[aff_network_id]
+        - $ref: "#/components/parameters/listFilter"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
           in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
           schema:
-            type: integer
+            type: string
+            enum: [aff_campaign_id, aff_campaign_name, aff_campaign_payout, aff_network_id]
+        - $ref: "#/components/parameters/listSortDir"
       responses:
         "200":
           description: Paginated campaign list
@@ -1785,6 +1817,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [aff_network_id, aff_network_name]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated affiliate network list
@@ -1875,6 +1919,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [ppc_network_id, ppc_network_name]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated PPC network list
@@ -1965,6 +2021,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [ppc_account_id, ppc_account_name, ppc_network_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated PPC account list
@@ -2055,6 +2123,25 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - name: q
+          in: query
+          description: >-
+            Only trackers whose campaign's name contains this text, in any
+            case. % and _ are matched as themselves. At most 255 characters.
+          schema:
+            type: string
+            maxLength: 255
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [tracker_id, aff_campaign_id, ppc_account_id, landing_page_id, text_ad_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated tracker list
@@ -2285,6 +2372,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [landing_page_id, landing_page_nickname, landing_page_url, aff_campaign_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated landing page list
@@ -2331,6 +2430,12 @@ paths:
     put:
       tags: [Landing Pages]
       summary: Update a landing page
+      description: >-
+        An advanced page (landing_page_type 1) is not made simple while text
+        ads of text_ad_type 1 name it, since Get Links offers those only on an
+        advanced page: the 422 names each ad's text_ad_id under
+        landing_page_type. Point each at another advanced page, or make it a
+        campaign ad, first.
       operationId: updateLandingPage
       requestBody:
         required: true
@@ -2374,6 +2479,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [text_ad_id, text_ad_name, aff_campaign_id, landing_page_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated text ad list
@@ -2806,8 +2923,8 @@ paths:
         The account's live conversions grouped by campaign and by
         `match_method`, how each one's click was found: `click_id` (the
         request named it: a subid, ClickBank's tracking code, the API or an
-        upload line, an app install's token), `ad_click_id` (a global
-        postback with no SubID sent back an ad platform's click id that a
+        upload line, an app install's token), `ad_click_id` (a postback or
+        pixel with no SubID sent back an ad platform's click id that a
         click carries), `cookie` (a tracking cookie named it), `visitor_id` (the landing-page script's visitor id),
         `same_ip` (nothing named a click: the latest click from the
         visitor's address) or `unknown` (recorded before 1.9.79).
@@ -4307,6 +4424,62 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /reports/payout:
+    get:
+      tags: [Reports]
+      summary: A campaign's payout
+      description: >-
+        The default payout of one of the account's campaigns, the figure
+        `p202 report losers`, `report winners`, `report breakeven` and
+        `campaign optimize` price a click with. GET /campaigns/{id} answers
+        it too but is Setup's (access_to_setup_section); this route asks
+        what the reports ask, so a Campaign optimizer reads it. For a role
+        without access_to_campaign_data the payout is null and the answer
+        says `masked: true`, as the reports' money. A campaign that is not
+        the account's, or is deleted, is a 404. Servers that serve it say
+        `features.report_payout` in /capabilities (1.9.81 and later).
+      operationId: reportPayout
+      parameters:
+        - name: aff_campaign_id
+          in: query
+          required: true
+          description: The campaign's internal id (a campaign breakdown row's `id`, or GET /campaigns for a role with Setup)
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: The campaign's payout
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [aff_campaign_id, aff_campaign_name, aff_campaign_payout, aff_campaign_currency]
+                    properties:
+                      aff_campaign_id:
+                        type: integer
+                      aff_campaign_name:
+                        type: string
+                      aff_campaign_payout:
+                        type: number
+                        nullable: true
+                        description: Null only in a masked answer
+                      aff_campaign_currency:
+                        type: string
+                        description: The currency the campaign pays in
+                  masked:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   /reports/breakdown:
     get:
       tags: [Reports]
@@ -4673,6 +4846,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [id, name, public_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated rotator list
@@ -7609,6 +7794,27 @@ paths:
       summary: List users
       description: Admin only.
       operationId: listUsers
+      parameters:
+        - name: q
+          in: query
+          description: >-
+            Only users whose user name, first name, last name or email
+            contains this text, in any case. % and _ are matched as
+            themselves. At most 255 characters.
+          schema:
+            type: string
+            maxLength: 255
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [user_id, user_name, user_fname, user_lname, user_email, user_time_register]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: User list
@@ -8967,15 +9173,17 @@ paths:
         failed attempt), `sent`, `failed` (attempts ran out, or the sender
         refused the URL, or a redirect it answered with, as an address it
         never calls: a refusal is final, sent no further, and `last_error`
-        says why in either case), `cancelled` (replaced before it went out) or
+        says why in either case), `cancelled` (replaced before it went out),
         `suppressed` (a correction or retraction for a pixel with no
-        correction URL). `meta.summary` counts every status under the same
+        correction URL) or `withheld` (the visitor refused consent, so
+        nothing is sent about the install; `last_error` says where).
+        `meta.summary` counts every status under the same
         filters except `status`. Web clicks' postbacks go through the same
         outbox and are not listed here.
       operationId: listAppNotifications
       parameters:
         - {name: registration_id, in: query, schema: {type: integer}}
-        - {name: status, in: query, schema: {type: string, enum: [pending, sent, failed, cancelled, suppressed]}}
+        - {name: status, in: query, schema: {type: string, enum: [pending, sent, failed, cancelled, suppressed, withheld]}}
         - {name: kind, in: query, schema: {type: string, enum: [reached, correction, retraction]}}
         - $ref: "#/components/parameters/timeFrom"
         - $ref: "#/components/parameters/timeTo"
@@ -9006,6 +9214,7 @@ paths:
                           failed: {type: integer}
                           cancelled: {type: integer}
                           suppressed: {type: integer}
+                          withheld: {type: integer}
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -10016,6 +10225,22 @@ paths:
                             items:
                               type: string
                             description: '"*" is full access; read, write, stage and <area>:<action> narrow it.'
+                          ltv:
+                            type: object
+                            description: >-
+                              Which parts of Customer LTV this key's scope and its user's role let it
+                              use, as the /ltv routes would answer. See documentation/api/17-capabilities.md.
+                            properties:
+                              read:
+                                type: boolean
+                              settings_read:
+                                type: boolean
+                              crm_write:
+                                type: boolean
+                              incoming:
+                                type: boolean
+                              settings_write:
+                                type: boolean
                       server:
                         type: object
                         additionalProperties: true
@@ -10029,6 +10254,162 @@ paths:
                               database server knows about zones; the only value this server sends. Older
                               servers probed MySQL's zone tables and could send fallback-only (daypart and
                               weekpart then counted UTC hours) or unknown.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /me:
+    get:
+      tags:
+      - System
+      summary: Who is signed in and what they may see and do
+      description: >-
+        One read for a client deciding which screens, buttons and money figures to show: the user,
+        the account's time zone and currency, the roles, every role permission and the flags derived
+        from them, the licence and sponsored-ads switches, the install version and the feature list.
+        Readable by any valid key, whatever its scope or role, so a role that may not read GET
+        /system/version still learns the version here. See documentation/api/30-me.md.
+      operationId: getMe
+      responses:
+        '200':
+          description: The caller's own facts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [user, account, roles, permissions, flags, scopes, switches, install, features, auth]
+                    properties:
+                      user:
+                        type: object
+                        properties:
+                          user_id:
+                            type: integer
+                          user_name:
+                            type: string
+                          user_email:
+                            type: string
+                          user_fname:
+                            type: string
+                          user_lname:
+                            type: string
+                      account:
+                        type: object
+                        properties:
+                          timezone:
+                            type: string
+                            description: The named zone every report reads hours and days in; UTC when unset or unknown.
+                          currency:
+                            type: string
+                            description: The code the account's money is in (USD when unset), as every page prints it.
+                      roles:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            role_id:
+                              type: integer
+                            role_name:
+                              type: string
+                      permissions:
+                        type: array
+                        description: Every role permission the user holds (202_permissions), sorted.
+                        items:
+                          type: string
+                      flags:
+                        type: object
+                        description: >-
+                          The gates the pages and routes apply, each true only when the routes behind it
+                          answer this caller: a flag whose route asks the key for a scope asks it too, so a
+                          read-only key's can_edit_campaigns is false whatever its role allows.
+                          can_see_money false means reports and records come back masked.
+                        additionalProperties:
+                          type: boolean
+                        properties:
+                          is_admin:
+                            type: boolean
+                          can_manage_admins:
+                            type: boolean
+                          can_see_money:
+                            type: boolean
+                          can_view_setup:
+                            type: boolean
+                          can_edit_campaigns:
+                            type: boolean
+                          can_delete_campaigns:
+                            type: boolean
+                          can_use_update_section:
+                            type: boolean
+                          can_delete_subids:
+                            type: boolean
+                          can_view_attribution:
+                            type: boolean
+                          can_manage_attribution:
+                            type: boolean
+                          can_edit_personal_settings:
+                            type: boolean
+                          can_manage_users:
+                            type: boolean
+                          can_view_settings:
+                            type: boolean
+                          can_use_api_integrations:
+                            type: boolean
+                          can_see_vip_perks:
+                            type: boolean
+                      scopes:
+                        type: array
+                        items:
+                          type: string
+                        description: The calling key's scopes; ["*"] for full access.
+                      switches:
+                        type: object
+                        properties:
+                          licence:
+                            type: string
+                            enum: [licensed, not_licensed, unconfirmed]
+                            description: >-
+                              What the licence-gated surfaces (the Go CLI, connecting an AI assistant)
+                              answer now, as GET /capabilities' cli does. unconfirmed is a refusal because
+                              Tracking202 gave no answer within the grace period. When the install cannot
+                              read whose key counts, the gates let the CLI through, and this is licensed.
+                          sponsored_ads:
+                            type: string
+                            enum: [show_all, hide_login, hide_all]
+                            description: Personal Settings' ad setting.
+                      install:
+                        type: object
+                        properties:
+                          version:
+                            type: string
+                            description: The version of the code this install runs.
+                          schema_version:
+                            type: string
+                            description: The version the database was last upgraded to (unknown without a version row).
+                          api_version:
+                            type: string
+                            enum: [v3]
+                      features:
+                        type: array
+                        description: The names of the features GET /capabilities advertises as on.
+                        items:
+                          type: string
+                      auth:
+                        type: object
+                        properties:
+                          method:
+                            type: string
+                            enum: [api_key, session]
+                            description: >-
+                              How this request was signed in: a key in the Authorization header, or the
+                              pages' session cookie.
+                          csrf_token:
+                            type: string
+                            nullable: true
+                            description: >-
+                              For a session, the token every request but GET and HEAD sends in the
+                              X-P202-CSRF header. Null for a key.
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -10502,6 +10883,18 @@ paths:
         schema:
           type: string
         description: Events carrying this tag in their comma-separated list
+      - $ref: "#/components/parameters/listQ"
+      - name: sort
+        in: query
+        description: >-
+          A field to order the list by, ascending unless sort_dir says
+          otherwise; ties are ordered by the key. Any other value is a 422.
+          Without it the list keeps its own order.
+        schema:
+          type: string
+          enum: [event_id, event_date, event_name]
+      - $ref: "#/components/parameters/listSortDir"
+      - $ref: "#/components/parameters/listFilter"
       responses:
         '200':
           description: Events ordered by `event_date`
@@ -10967,6 +11360,22 @@ paths:
           - subscribers
           - at_risk
         description: Only this segment; any other value is a 422 naming `segment`
+      - name: updated_since
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+        description: >-
+          Only the customers whose record was written at or after this unix time; every change to what the list shows
+          for a customer (its CRM fields, its totals, its subscriptions) writes the record. A value that is not a whole
+          number of 0 or more is a 422 naming `updated_since`.
+      - name: deleted_since
+        in: query
+        schema:
+          type: integer
+        description: >-
+          Not taken: the list answers live customers only, so a customer erased or merged into another since a time
+          cannot be listed. Sending it is a 422 naming `deleted_since`.
       responses:
         '200':
           description: Customers
@@ -11917,7 +12326,8 @@ paths:
       - LTV
       summary: Update a company
       description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
-        an `idempotency_key` field instead) and have no `dry_run` preview. Supply `name`, `domain` or both.
+        an `idempotency_key` field instead) and have no `dry_run` preview. Supply `name`, `domain` or both. A new `name`
+        queues a `customer.updated` webhook for each attached customer whose `company` it changes.
       operationId: ltvPatchCompany
       requestBody:
         required: true
@@ -11981,7 +12391,8 @@ paths:
       - LTV
       summary: Merge another company into this one
       description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
-        an `idempotency_key` field instead) and have no `dry_run` preview.
+        an `idempotency_key` field instead) and have no `dry_run` preview. Queues a `customer.updated` webhook for each
+        customer the merge moves.
       operationId: ltvMergeCompany
       parameters:
       - name: id
@@ -13568,8 +13979,8 @@ paths:
         class the page builds its code with (`Prosper202\Setup\LandingPageCode`),
         byte for byte: the loader script for the page itself, and the ways out
         to the offer. The snippets start from `base_url`, the tracker link's base
-        (user 1's tracking domain, or the host this request arrived at when none
-        is set, plus the install directory) written scheme-relative (`//host/...`)
+        (the caller's own tracking domain, or the host this request arrived at
+        when none is set, plus the install directory) written scheme-relative (`//host/...`)
         as the page writes it, so they work on an http or an https landing page.
 
         A simple page (`landing_page_type` 0) links out to its own campaign:
@@ -14335,6 +14746,13 @@ components:
       type: http
       scheme: bearer
       description: API key from /users/{id}/api-keys
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: PHPSESSID
+      description: >-
+        The session cookie the sign-in sets, for a page on the same origin. Every method but GET and HEAD
+        also sends the session's token in the X-P202-CSRF header (GET /me answers it as auth.csrf_token).
 
   # ─── Shared parameters ──────────────────────────────────────────────
 
@@ -14407,6 +14825,40 @@ components:
         type: integer
         default: 50
         maximum: 500
+    listQ:
+      name: q
+      in: query
+      description: >-
+        Only records whose name contains this text, in any case. % and _ are
+        matched as themselves. At most 255 characters. A list with no name
+        to search answers a 422.
+      schema:
+        type: string
+        maxLength: 255
+    listSortDir:
+      name: sort_dir
+      in: query
+      description: >-
+        asc (the default once sort is given) or desc, in either case. It
+        needs sort; given alone it is a 422.
+      schema:
+        type: string
+        enum: [asc, desc, ASC, DESC]
+    listFilter:
+      name: filter
+      in: query
+      style: deepObject
+      explode: true
+      description: >-
+        filter[<field>]=<value> keeps the records whose field holds the
+        value; a field the list does not hold, or a value its type cannot,
+        is a 422. A whole-number field takes up to 100 values separated by
+        commas (filter[aff_network_id]=1,4) and keeps a record holding any
+        of them; any other field's value is one value, commas included.
+      schema:
+        type: object
+        additionalProperties:
+          type: string
     offset:
       name: offset
       in: query
@@ -15641,7 +16093,7 @@ components:
 
     CampaignCreate:
       type: object
-      required: [aff_campaign_name, aff_campaign_url]
+      required: [aff_campaign_name, aff_campaign_url, aff_campaign_payout, aff_network_id]
       properties:
         aff_campaign_name:
           type: string
@@ -16105,7 +16557,7 @@ components:
           type: integer
         landing_page_nickname:
           type: string
-          maxLength: 255
+          maxLength: 50
         leave_behind_page_url:
           type: string
           maxLength: 255
@@ -16149,7 +16601,7 @@ components:
 
     LandingPageCreate:
       type: object
-      required: [landing_page_url, aff_campaign_id]
+      required: [landing_page_url, aff_campaign_id, landing_page_nickname]
       properties:
         landing_page_url:
           type: string
@@ -16164,7 +16616,7 @@ components:
           type: integer
         landing_page_nickname:
           type: string
-          maxLength: 255
+          maxLength: 50
         leave_behind_page_url:
           type: string
           maxLength: 255
@@ -16181,7 +16633,7 @@ components:
           type: integer
         landing_page_nickname:
           type: string
-          maxLength: 255
+          maxLength: 50
         leave_behind_page_url:
           type: string
           maxLength: 255
@@ -16229,16 +16681,16 @@ components:
           readOnly: true
         text_ad_name:
           type: string
-          maxLength: 255
+          maxLength: 100
         text_ad_headline:
           type: string
-          maxLength: 500
+          maxLength: 100
         text_ad_description:
           type: string
-          maxLength: 2000
+          maxLength: 100
         text_ad_display_url:
           type: string
-          maxLength: 2048
+          maxLength: 100
         aff_campaign_id:
           type: integer
         landing_page_id:
@@ -16259,20 +16711,20 @@ components:
 
     TextAdCreate:
       type: object
-      required: [text_ad_name]
+      required: [text_ad_name, text_ad_headline, text_ad_description, text_ad_display_url]
       properties:
         text_ad_name:
           type: string
-          maxLength: 255
+          maxLength: 100
         text_ad_headline:
           type: string
-          maxLength: 500
+          maxLength: 100
         text_ad_description:
           type: string
-          maxLength: 2000
+          maxLength: 100
         text_ad_display_url:
           type: string
-          maxLength: 2048
+          maxLength: 100
         aff_campaign_id:
           type: integer
         landing_page_id:
@@ -16290,16 +16742,16 @@ components:
       properties:
         text_ad_name:
           type: string
-          maxLength: 255
+          maxLength: 100
         text_ad_headline:
           type: string
-          maxLength: 500
+          maxLength: 100
         text_ad_description:
           type: string
-          maxLength: 2000
+          maxLength: 100
         text_ad_display_url:
           type: string
-          maxLength: 2048
+          maxLength: 100
         aff_campaign_id:
           type: integer
         landing_page_id:
@@ -16771,7 +17223,7 @@ components:
         it (a subid or sid, ClickBank's tracking code, the API's or an upload
         line's click id, an app install's token); ad_click_id an ad platform's
         click id (gclid, gbraid, wbraid, ttclid, msclkid, fbclid, oppref) that a
-        global postback with no SubID sent back and a click carries (one
+        postback or pixel with no SubID sent back and a click carries (one
         visitor's latest click on one campaign); cookie a tracking cookie
         naming it; visitor_id the landing-page script's visitor id, on the
         click it was last seen on; same_ip the latest click from the
@@ -18739,7 +19191,7 @@ components:
           nullable: true
         attempts:
           type: integer
-          description: Runs so far; a retryable webhook failure (no connection, timeout, 5xx, 408, 429) is retried after 1 and then 2 minutes, 3 runs in all.
+          description: Runs so far; a retryable webhook failure (no connection, timeout, 5xx, 408, 429, a host that does not resolve) is retried after 1 and then 2 minutes, 3 runs in all.
         last_error:
           type: string
           nullable: true
@@ -19261,7 +19713,7 @@ components:
           description: >-
             The postback parameters the account's networks send an ad click id
             back in, comma-separated (aff_sub3), at most 5; "" for none. Read
-            by the global postback when its SubID is empty or unfilled, and
+            by gpb.php, pb.php, gpx.php and upx.php when the SubID is empty or unfilled, and
             looked up among this account's clicks as every kind of ad click
             id (match_method ad_click_id). gclid, gbraid, wbraid, msclkid,
             fbclid, ttclid and oppref are read under their own names without being
@@ -19541,6 +19993,7 @@ components:
             case-insensitively; a value contradicting the link is `422`.
         app_key:
           type: string
+          maxLength: 255
           description: The App Store id (digits, no leading zero) or the package name
         app_name:
           type: string
@@ -20049,7 +20502,7 @@ components:
                   conversion_id: {type: integer, nullable: true}
                   payable: {type: boolean}
                   amount: {type: string, nullable: true}
-                  notify: {type: string, enum: [reached, suppressed, "off", none], description: "reached: announced to the traffic source (its server postbacks queued in the notification outbox); suppressed: a replacement of an outcome already announced, never announced twice; off: the campaign does not notify for this goal; none: not payable"}
+                  notify: {type: string, enum: [reached, suppressed, "off", none], description: "reached: announced to the traffic source (its server postbacks queued in the notification outbox); suppressed: not announced, either a replacement of an outcome already announced (never announced twice) or an outcome whose visitor refused consent (reason consent_withheld in notifications); off: the campaign does not notify for this goal; none: not payable"}
             notifications:
               type: array
               items:
@@ -20060,7 +20513,7 @@ components:
                   outcome_id: {type: integer}
                   kind: {type: string}
                   status: {type: string, enum: [queued, rendered, failed, not_sent, no_pixels, browser_only], description: "queued: the server-to-server postbacks are in the notification outbox, which the worker sends with retries; rendered: browser pixels were returned to the browser that asked"}
-                  reason: {type: string, nullable: true}
+                  reason: {type: string, nullable: true, description: "Why a notice was not_sent: replacement, no_click, no_traffic_source, or consent_withheld (the visitor refused consent, so no pixel or postback goes)"}
                   queued: {type: integer, description: "Server-to-server postbacks waiting in the notification outbox"}
                   browser_pixels: {type: integer}
                   browser_skipped: {type: integer}
@@ -21202,7 +21655,7 @@ components:
           enum: [reached, correction, retraction]
         status:
           type: string
-          enum: [pending, sent, failed, cancelled, suppressed]
+          enum: [pending, sent, failed, cancelled, suppressed, withheld]
         url:
           type: string
           description: The URL as filled when queued (empty for a suppressed correction)
