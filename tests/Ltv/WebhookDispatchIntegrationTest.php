@@ -264,6 +264,37 @@ final class WebhookDispatchIntegrationTest extends TestCase
         self::assertSame('??' . str_repeat('é', 499), $row['last_response_body']);
     }
 
+    /**
+     * A receiver that answers with what it was sent, or with its own sign-in
+     * failing, has its answer logged without the webhook's signing secret
+     * or a credential: the Log, the API and the CLI all show that column.
+     */
+    public function testAnAnswerIsLoggedWithoutTheSecretOrACredential(): void
+    {
+        $hook = self::hook(LocalWebhookReceiver::url(200));
+        self::queue();
+        $secret = $hook['secret'];
+
+        $report = self::dispatch(static fn (array $delivery): array => [
+            false,
+            401,
+            'bad signature, expected with ' . $secret . "\nAuthorization: Bearer receiver-token\n"
+                . 'X-P202-Signature: ' . \Prosper202\Ltv\MysqlWebhookRepository::signature(
+                    (string) $delivery['payload'],
+                    $secret
+                ),
+        ]);
+
+        self::assertSame(1, $report['failed'], WebhookDispatcher::summary($report));
+        [$row] = self::deliveries();
+        self::assertSame(
+            "bad signature, expected with [removed]\nAuthorization: [removed]\nX-P202-Signature: [removed]",
+            $row['last_response_body']
+        );
+        $api = self::repo()->deliveries(self::USER, (int) $row['webhook_id'], 25);
+        self::assertSame($row['last_response_body'], $api[0]['last_response_body']);
+    }
+
     public function testTheLastAttemptFailsTheDeliveryAndMarksTheWebhookDead(): void
     {
         $hook = self::hook(LocalWebhookReceiver::url(500));
@@ -458,6 +489,34 @@ final class WebhookDispatchIntegrationTest extends TestCase
         self::assertSame('error: the send broke', $throwsRow['last_response_body']);
         self::assertSame('delivered', $byHook[$healthy['webhookId']]['status']);
         self::assertCount(1, self::receiver()->requests());
+    }
+
+    /** A receiver's huge answer is stored cut and redacted, and the run goes on to the next delivery. */
+    public function testAHugeAnswerIsStoredRedactedAndDoesNotStopTheRun(): void
+    {
+        $huge = self::hook('https://huge.example.com/hook');
+        $healthy = self::hook(LocalWebhookReceiver::url(200));
+        self::queue();
+        $base = self::receiver()->base();
+        $send = static function (array $d) use ($base): array {
+            if ((string) $d['webhook_url'] === 'https://huge.example.com/hook') {
+                return [false, 200, str_repeat('a', 2_000_000)];
+            }
+
+            return LocalWebhookReceiver::send($base, $d);
+        };
+
+        $report = self::dispatch($send);
+
+        self::assertSame(1, $report['delivered'], WebhookDispatcher::summary($report));
+        self::assertSame(1, $report['failed']);
+        $byHook = [];
+        foreach (self::deliveries() as $row) {
+            $byHook[(int) $row['webhook_id']] = $row;
+        }
+        self::assertSame('1', $byHook[$huge['webhookId']]['attempts']);
+        self::assertSame(1000, strlen($byHook[$huge['webhookId']]['last_response_body']));
+        self::assertSame('delivered', $byHook[$healthy['webhookId']]['status']);
     }
 
     public function testTheLockKeepsASecondRunOut(): void
