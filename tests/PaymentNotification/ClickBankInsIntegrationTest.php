@@ -907,20 +907,22 @@ final class ClickBankInsIntegrationTest extends TestCase
     public function testAnotherRefundOfTheSameAmountIsAnotherPartialRefund(): void
     {
         $this->post([], self::FIRST_KEY);
+        // After the sale, so the answers carry no dating note.
+        $at = time();
         $first = [
-            'transactionType' => 'RFND', 'totalAccountAmount' => '-10.00',
-            'transactionTime' => '2026-10-24T09:00:00-06:00',
+            'transactionType' => 'RFND', 'totalAccountAmount' => '-10.00', 'transactionTime' => self::stated($at - 50),
         ];
+        $later = ['transactionTime' => self::stated($at - 40)] + $first;
         self::assertOutcome(OutcomeKind::REVERSED, 200, $this->post($first, self::FIRST_KEY));
 
-        $second = $this->post(['transactionTime' => '2026-10-25T09:00:00-06:00'] + $first, self::FIRST_KEY);
+        $second = $this->post($later, self::FIRST_KEY);
         self::assertOutcome(OutcomeKind::REVERSED, 200, $second);
         self::assertSame('Reversed transaction CWOGBZLN on click ' . self::CLICK . ' by 10.00.', $second->message);
         $chargeback = $this->post(['transactionType' => 'CGBK'] + $first, self::FIRST_KEY);
         self::assertOutcome(OutcomeKind::REVERSED, 200, $chargeback);
 
         // ClickBank's own retry of each is still that refund.
-        foreach ([$first, ['transactionTime' => '2026-10-25T09:00:00-06:00'] + $first, ['transactionType' => 'CGBK'] + $first] as $sent) {
+        foreach ([$first, $later, ['transactionType' => 'CGBK'] + $first] as $sent) {
             self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post(['attemptCount' => 2] + $sent, self::FIRST_KEY));
         }
         self::assertSame(
@@ -938,10 +940,12 @@ final class ClickBankInsIntegrationTest extends TestCase
     public function testTwoPartialRefundsThenOneOverWhatIsLeftTakesBackOnlyTheRest(): void
     {
         $this->post([], self::FIRST_KEY);
+        // After the sale, so the answers carry no dating note.
+        $at = time();
         $refunds = [
-            ['transactionType' => 'RFND', 'totalAccountAmount' => '-10.00', 'transactionTime' => '2026-10-24T09:00:00-06:00'],
-            ['transactionType' => 'RFND', 'totalAccountAmount' => '-15.00', 'transactionTime' => '2026-10-25T09:00:00-06:00'],
-            ['transactionType' => 'RFND', 'totalAccountAmount' => '-20.00', 'transactionTime' => '2026-10-26T09:00:00-06:00'],
+            ['transactionType' => 'RFND', 'totalAccountAmount' => '-10.00', 'transactionTime' => self::stated($at - 50)],
+            ['transactionType' => 'RFND', 'totalAccountAmount' => '-15.00', 'transactionTime' => self::stated($at - 40)],
+            ['transactionType' => 'RFND', 'totalAccountAmount' => '-20.00', 'transactionTime' => self::stated($at - 30)],
         ];
 
         self::assertOutcome(OutcomeKind::REVERSED, 200, $this->post($refunds[0], self::FIRST_KEY));
@@ -968,7 +972,7 @@ final class ClickBankInsIntegrationTest extends TestCase
             self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post(['attemptCount' => 2] + $sent, self::FIRST_KEY));
         }
         $fourth = $this->post(
-            ['transactionType' => 'RFND', 'totalAccountAmount' => '-1.00', 'transactionTime' => '2026-10-27T09:00:00-06:00'],
+            ['transactionType' => 'RFND', 'totalAccountAmount' => '-1.00', 'transactionTime' => self::stated($at - 20)],
             self::FIRST_KEY
         );
         self::assertOutcome(OutcomeKind::CONFLICT, 409, $fourth);

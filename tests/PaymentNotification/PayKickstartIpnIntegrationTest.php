@@ -390,8 +390,9 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         $later = self::fields(['event' => 'refund', 'amount' => '', 'transaction_time' => (string) (self::$now + 60)]);
         $rest = $this->post($later, self::KEY_1);
         self::assertOutcome(OutcomeKind::REVERSED, 200, $rest);
-        self::assertSame('Reversed transaction PK-TX-0001 on click ' . self::CLICK . ' by 36.5, all that was left of'
-            . ' the sale.', $rest->message);
+        // Its time is after the test's clock, so the answer goes on to say how it was dated.
+        self::assertStringStartsWith('Reversed transaction PK-TX-0001 on click ' . self::CLICK . ' by 36.5, all that'
+            . ' was left of the sale.', $rest->message);
         self::assertSame(['47.00000', '-10.50000', '-36.50000'], array_column(self::conversions(), 'click_payout'));
         self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post($later, self::KEY_1));
         self::assertCount(3, self::conversions());
@@ -788,7 +789,8 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         );
         $outcome = $this->post($second, self::KEY_1);
         self::assertOutcome(OutcomeKind::REVERSED, 200, $outcome);
-        self::assertSame('Reversed transaction PK-TX-0001 on click ' . self::CLICK . ' by 10.00.', $outcome->message);
+        // Its time is after the test's clock, so the answer goes on to say how it was dated.
+        self::assertStringStartsWith('Reversed transaction PK-TX-0001 on click ' . self::CLICK . ' by 10.00.', $outcome->message);
         self::assertSame(['47.00000', '-10.00000', '-10.00000'], array_column(self::conversions(), 'click_payout'));
 
         $rendered = ['amount' => '10', 'buyer_email' => 'changed@example.com', 'licenses' => 'LIC-1'] + $first;
