@@ -15571,7 +15571,7 @@ components:
 
     CampaignCreate:
       type: object
-      required: [aff_campaign_name, aff_campaign_url]
+      required: [aff_campaign_name, aff_campaign_url, aff_campaign_payout, aff_network_id]
       properties:
         aff_campaign_name:
           type: string
@@ -16035,7 +16035,7 @@ components:
           type: integer
         landing_page_nickname:
           type: string
-          maxLength: 255
+          maxLength: 50
         leave_behind_page_url:
           type: string
           maxLength: 255
@@ -16079,7 +16079,7 @@ components:
 
     LandingPageCreate:
       type: object
-      required: [landing_page_url, aff_campaign_id]
+      required: [landing_page_url, aff_campaign_id, landing_page_nickname]
       properties:
         landing_page_url:
           type: string
@@ -16094,7 +16094,7 @@ components:
           type: integer
         landing_page_nickname:
           type: string
-          maxLength: 255
+          maxLength: 50
         leave_behind_page_url:
           type: string
           maxLength: 255
@@ -16111,7 +16111,7 @@ components:
           type: integer
         landing_page_nickname:
           type: string
-          maxLength: 255
+          maxLength: 50
         leave_behind_page_url:
           type: string
           maxLength: 255
@@ -16159,16 +16159,16 @@ components:
           readOnly: true
         text_ad_name:
           type: string
-          maxLength: 255
+          maxLength: 100
         text_ad_headline:
           type: string
-          maxLength: 500
+          maxLength: 100
         text_ad_description:
           type: string
-          maxLength: 2000
+          maxLength: 100
         text_ad_display_url:
           type: string
-          maxLength: 2048
+          maxLength: 100
         aff_campaign_id:
           type: integer
         landing_page_id:
@@ -16189,20 +16189,20 @@ components:
 
     TextAdCreate:
       type: object
-      required: [text_ad_name]
+      required: [text_ad_name, text_ad_headline, text_ad_description, text_ad_display_url]
       properties:
         text_ad_name:
           type: string
-          maxLength: 255
+          maxLength: 100
         text_ad_headline:
           type: string
-          maxLength: 500
+          maxLength: 100
         text_ad_description:
           type: string
-          maxLength: 2000
+          maxLength: 100
         text_ad_display_url:
           type: string
-          maxLength: 2048
+          maxLength: 100
         aff_campaign_id:
           type: integer
         landing_page_id:
@@ -16220,16 +16220,16 @@ components:
       properties:
         text_ad_name:
           type: string
-          maxLength: 255
+          maxLength: 100
         text_ad_headline:
           type: string
-          maxLength: 500
+          maxLength: 100
         text_ad_description:
           type: string
-          maxLength: 2000
+          maxLength: 100
         text_ad_display_url:
           type: string
-          maxLength: 2048
+          maxLength: 100
         aff_campaign_id:
           type: integer
         landing_page_id:
@@ -19392,6 +19392,7 @@ components:
             case-insensitively; a value contradicting the link is `422`.
         app_key:
           type: string
+          maxLength: 255
           description: The App Store id (digits, no leading zero) or the package name
         app_name:
           type: string
