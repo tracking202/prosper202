@@ -646,7 +646,7 @@ final class ClickBankInsIntegrationTest extends TestCase
     public function testOtherTransactionTypesAreAcknowledgedAndLogged(): void
     {
         $this->post([], self::FIRST_KEY);
-        foreach (['CANCEL-REBILL', 'UNCANCEL-REBILL', 'SUBSCRIPTION-CHG', 'ABANDONED_ORDER'] as $type) {
+        foreach (['CANCEL-REBILL', 'UNCANCEL-REBILL', 'ABANDONED_ORDER'] as $type) {
             $outcome = $this->post(['transactionType' => $type], self::FIRST_KEY);
             self::assertOutcome(OutcomeKind::IGNORED, 200, $outcome);
             self::assertSame(self::FIRST, $outcome->accountId);
@@ -656,6 +656,48 @@ final class ClickBankInsIntegrationTest extends TestCase
             );
         }
         self::assertSame(['37.62000'], array_column(self::conversions(), 'click_payout'));
+    }
+
+    /**
+     * A product change can refund part of the last payment, and no article
+     * says whether its SUBSCRIPTION-CHG or a refund carries that money: it
+     * records nothing, and its answer, which Setup › Inbound Log keeps, says
+     * what it stated, whatever that is.
+     */
+    public function testAProductChangeRecordsNothingAndItsAnswerSaysWhatItStated(): void
+    {
+        self::q('DELETE FROM 202_inbound_log WHERE user_id = ' . self::FIRST);
+        $this->post([], self::FIRST_KEY);
+        $note = ' A product change can refund part of the last payment, and no ClickBank article says whether this'
+            . ' notification or a refund carries it, so nothing was taken back.';
+        $cases = [
+            ['-4.95', 'It states a totalAccountAmount of -4.95 under receipt CWOGBZLN.'],
+            [-4.95, 'It states a totalAccountAmount of -4.95 under receipt CWOGBZLN.'],
+            [null, 'It states no totalAccountAmount under receipt CWOGBZLN.'],
+            ['about five', 'It states a totalAccountAmount of about five under receipt CWOGBZLN.'],
+        ];
+        foreach ($cases as [$amount, $stated]) {
+            $order = ClickBankAdapterTest::sale([
+                'transactionType' => 'SUBSCRIPTION-CHG', 'trackingCodes' => [(string) self::CLICK],
+                'totalAccountAmount' => $amount,
+            ]);
+            if ($amount === null) {
+                unset($order['totalAccountAmount']);
+            }
+            $outcome = $this->deliver(ClickBankAdapterTest::body($order, self::FIRST_KEY));
+            self::assertOutcome(OutcomeKind::IGNORED, 200, $outcome);
+            self::assertSame('Verified. Prosper202 records sales and refunds; a SUBSCRIPTION-CHG notification records'
+                . ' nothing. ' . $stated . $note, $outcome->message);
+            $logged = self::requireScratch()->query('SELECT outcome, reason, transaction_id FROM 202_inbound_log'
+                . ' WHERE user_id = ' . self::FIRST . ' ORDER BY inbound_id DESC LIMIT 1');
+            self::assertInstanceOf(\mysqli_result::class, $logged);
+            self::assertSame(
+                ['outcome' => 'ignored', 'reason' => $outcome->message, 'transaction_id' => 'CWOGBZLN'],
+                $logged->fetch_assoc()
+            );
+        }
+        self::assertSame(['37.62000'], array_column(self::conversions(), 'click_payout'));
+        self::assertSame('37.62000', self::clickPayout());
     }
 
     public function testATestVersionOfAnotherTypeIsATest(): void

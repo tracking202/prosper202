@@ -88,7 +88,8 @@ final class Processor
         if ($notification->kind === NotificationKind::IGNORED) {
             return new Outcome(
                 OutcomeKind::IGNORED,
-                'Verified. Prosper202 records sales and refunds; a ' . $event . ' notification records nothing.',
+                'Verified. Prosper202 records sales and refunds; a ' . $event . ' notification records nothing.'
+                . ($provider instanceof DescribesIgnoredNotifications ? $provider->ignoredNote($request) : ''),
                 null,
                 $account
             );

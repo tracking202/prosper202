@@ -414,6 +414,44 @@ final class ClickBankAdapterTest extends TestCase
         }
     }
 
+    /**
+     * A product change records nothing and needs nothing of the order, but
+     * says what it stated (ignoredNote()); no other acknowledged type does,
+     * and a later order on the same adapter keeps none of an earlier one's.
+     */
+    public function testAProductChangeSaysWhatItStatedAndNoOtherIgnoredTypeDoes(): void
+    {
+        $adapter = new ClickBankAdapter();
+        $change = self::request(self::body(
+            self::sale(['transactionType' => 'SUBSCRIPTION-CHG', 'totalAccountAmount' => '-4.95']),
+            self::KEY_A
+        ));
+        self::assertNotNull($adapter->verify($change, [3 => [self::KEY_A]]));
+        $n = $adapter->parse($change);
+        self::assertSame([NotificationKind::IGNORED, 'CWOGBZLN', null], [$n->kind, $n->transactionId, $n->amount]);
+        self::assertSame(' It states a totalAccountAmount of -4.95 under receipt CWOGBZLN. A product change can refund'
+            . ' part of the last payment, and no ClickBank article says whether this notification or a refund carries'
+            . ' it, so nothing was taken back.', $adapter->ignoredNote($change));
+
+        $bare = self::request(
+            self::body(['transactionType' => 'SUBSCRIPTION-CHG', 'receipt' => "CW\u{00e9}"], self::KEY_A)
+        );
+        self::assertNotNull($adapter->verify($bare, [3 => [self::KEY_A]]));
+        self::assertNull($adapter->parse($bare)->transactionId);
+        self::assertStringStartsWith(
+            ' It states no totalAccountAmount. A product change',
+            $adapter->ignoredNote($bare)
+        );
+
+        $cancel = self::request(self::body(self::sale(['transactionType' => 'CANCEL-REBILL']), self::KEY_A));
+        self::assertNotNull($adapter->verify($cancel, [3 => [self::KEY_A]]));
+        self::assertNull($adapter->parse($cancel)->transactionId);
+        self::assertSame('', $adapter->ignoredNote($cancel));
+
+        $this->expectException(\LogicException::class);
+        $adapter->ignoredNote($change);
+    }
+
     public function testARebillIsASaleUnderItsOwnReceipt(): void
     {
         $n = self::parsed(self::sale(
