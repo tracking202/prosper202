@@ -515,7 +515,9 @@ class AUTH
         }
 
         $failed = 'Unable to read the license key of user ' . $userId;
-        $user_sql = "SELECT user_pref_ad_settings, p202_customer_api_key FROM 202_users_pref LEFT JOIN 202_users ON (202_users_pref.user_id = 202_users.user_id) WHERE 202_users_pref.user_id='" . $userId . "'";
+        // The key is a column of 202_users: read from the preferences row, a
+        // user with none had no key and every page sent them to enter one.
+        $user_sql = "SELECT p202_customer_api_key FROM 202_users WHERE user_id = '" . $userId . "'";
         try {
             $user_result = _mysqli_query($user_sql);
         } catch (\mysqli_sql_exception $e) {

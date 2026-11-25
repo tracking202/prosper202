@@ -251,6 +251,19 @@ function p202_account_sign_in_attempt_pill(mixed $stored): string
 }
 
 /**
+ * Make the user's 202_users_pref row if there is none, inside the caller's
+ * transaction. A user made outside the install, Account > Users and the API
+ * can have no row, and an UPDATE of it then stored nothing while the page
+ * said the setting was saved (J3AW). Every column but the key has a default.
+ */
+function p202_account_ensure_preferences_row(\Prosper202\Database\Connection $conn, int $userId): void
+{
+    $stmt = $conn->prepareWrite('INSERT IGNORE INTO `202_users_pref` (`user_id`) VALUES (?)');
+    $conn->bind($stmt, 'i', [$userId]);
+    $conn->executeUpdate($stmt);
+}
+
+/**
  * Save the profile form: the account row and the preferences row, in one
  * transaction.
  *
@@ -284,6 +297,7 @@ function p202_account_save_profile(\Prosper202\Database\Connection $conn, int $u
         $conn->bind($stmt, 'ssi', [$email, $timezone, $userId]);
         $conn->executeUpdate($stmt);
 
+        p202_account_ensure_preferences_row($conn, $userId);
         $stmt = $conn->prepareWrite('UPDATE `202_users_pref` SET ' . implode(', ', $assignments) . ' WHERE `user_id` = ?');
         $conn->bind($stmt, $types . 'i', [...array_values($prefSet), $userId]);
         $conn->executeUpdate($stmt);
@@ -315,6 +329,7 @@ function p202_account_save_currency(\Prosper202\Database\Connection $conn, int $
     // same two steps (Prosper202\User\CurrencyChange).
     $updates = \Prosper202\User\CurrencyChange::plan($conn, $userId, $currency, $storedCurrency, $rate);
     $conn->transaction(static function () use ($conn, $userId, $currency, $storedCurrency, $updates): void {
+        p202_account_ensure_preferences_row($conn, $userId);
         $stmt = $conn->prepareWrite('UPDATE `202_users_pref` SET `user_account_currency` = ? WHERE `user_id` = ?');
         $conn->bind($stmt, 'si', [$currency, $userId]);
         $conn->executeUpdate($stmt);
