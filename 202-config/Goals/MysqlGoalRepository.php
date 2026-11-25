@@ -417,13 +417,17 @@ final class MysqlGoalRepository
      * set with their archive time as the end of their span, so a replay
      * sees exactly what the incremental evaluation saw.
      *
+     * With $optedInOnly, the set the campaign chose for itself: its own
+     * goals and the goals it pays for by a row, not a goal that reaches it
+     * only as tracked or by counting on every campaign.
+     *
      * @return list<GoalSpec>
      */
-    public function specsForCampaign(int $userId, int $campaignId): array
+    public function specsForCampaign(int $userId, int $campaignId, bool $optedInOnly = false): array
     {
         $starts = [];
         $ends = [];
-        foreach ($this->campaignSet($userId, $campaignId) as $goalId => [$start, $end]) {
+        foreach ($this->campaignSet($userId, $campaignId, $optedInOnly) as $goalId => [$start, $end]) {
             $starts[$goalId] = $start;
             $ends[$goalId] = $end;
         }
@@ -456,14 +460,15 @@ final class MysqlGoalRepository
      * it by a campaign_goals row (paid or tracked, of any scope, another
      * campaign's own goal included) from the row's created_at; an account
      * goal that counts on every campaign from its every_campaign_since. A
-     * goal shared both ways keeps the earlier start.
+     * goal shared both ways keeps the earlier start. With $optedInOnly, only
+     * the campaign's own goals and the goals it pays for by a row.
      *
      * @return array<int, array{0: int, 1: int|null}>
      */
-    private function campaignSet(int $userId, int $campaignId): array
+    private function campaignSet(int $userId, int $campaignId, bool $optedInOnly = false): array
     {
         $stmt = $this->conn->prepareWrite(
-            "SELECT g.goal_id, g.scope, g.scope_id, g.archived_at, g.every_campaign_since, cg.created_at AS attached_at
+            "SELECT g.goal_id, g.scope, g.scope_id, g.archived_at, g.every_campaign_since, cg.created_at AS attached_at, cg.payable AS row_payable
              FROM 202_goals g
              LEFT JOIN 202_campaign_goals cg ON cg.goal_id = g.goal_id AND cg.campaign_id = ? AND cg.user_id = g.user_id
              WHERE g.user_id = ? AND ((g.scope = 'campaign' AND g.scope_id = ?) OR cg.campaign_id IS NOT NULL
@@ -475,6 +480,9 @@ final class MysqlGoalRepository
         foreach ($this->conn->fetchAll($stmt) as $row) {
             $goalId = (int) $row['goal_id'];
             $own = (string) $row['scope'] === GoalScope::CAMPAIGN->value && (int) $row['scope_id'] === $campaignId;
+            if ($optedInOnly && !$own && (int) ($row['row_payable'] ?? 0) !== 1) {
+                continue;
+            }
             if ($own) {
                 $start = 0;
             } else {

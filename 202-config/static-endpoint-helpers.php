@@ -1507,7 +1507,7 @@ if (!function_exists('p202RecordWebEvent')) {
         if (!is_int($now) || $now <= 0) {
             throw new \InvalidArgumentException('p202RecordWebEvent: at must be a positive Unix time');
         }
-        if (!$events->campaignEvaluatesGoals($click['user_id'], $click['campaign_id'], $now)) {
+        if (!$events->campaignEvaluatesEvent($click['user_id'], $click['campaign_id'], $now, \Prosper202\Goals\WebEvents::nameFrom($get))) {
             return ['status' => 'no_goals', 'event_name' => \Prosper202\Goals\WebEvents::nameFrom($get)];
         }
         if (p202ExtractReversal($get)['reversal']) {
@@ -1613,7 +1613,7 @@ if (!function_exists('p202RecordPurLinkWebEvent')) {
                 $subid,
                 $key,
                 function (int $user, int $click, int $campaign, string $payout) use ($conn, $events, $engine, $claims, $get, $now, &$event): array {
-                    if (!$events->campaignEvaluatesGoals($user, $campaign, $now)) {
+                    if (!$events->campaignEvaluatesEvent($user, $campaign, $now, \Prosper202\Goals\WebEvents::nameFrom($get))) {
                         throw new \Prosper202\Goals\PurLinkNoGoals();
                     }
                     if (p202ExtractReversal($get)['reversal']) {

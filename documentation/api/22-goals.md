@@ -89,6 +89,14 @@ campaign's clicks, campaigns made later included, reach it from that moment
 (`every_campaign_since`), tracked, and paid only where a campaign is set to
 pay for it. `DELETE` turns it off; it then counts only where it is set.
 
+A campaign that never chose goals (it has none of its own and pays for none)
+keeps recording an `event=` postback as one plain, paid conversion, as before.
+With a goal on every campaign, only the events that goal takes (its trigger,
+or a goal it waits for) are counted by goals there: a `purchase` that goal
+takes becomes a tracked outcome, not a paid conversion, until the campaign
+pays for the goal. A campaign that has goals of its own, or pays for one,
+counts every event by its goals.
+
 A share starts when it is made: events received before it are not
 evaluated for that campaign (a re-evaluation does not reach back past it
 either). Changing a share from paid to tracked or back keeps that start.

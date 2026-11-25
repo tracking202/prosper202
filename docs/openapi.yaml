@@ -7461,6 +7461,9 @@ paths:
         campaigns made later included; it is tracked on each, and paid only
         where a campaign pays for it (PUT /goals/{id}/campaigns/{campaignId}).
         Already on, it keeps the time it started (`every_campaign_since`).
+        A campaign with no goals of its own that pays for none keeps
+        recording other `event=` postbacks as plain conversions; an event
+        this goal takes is counted by the goal there, tracked, not paid.
         Body `{}`. Asks `manage_attribution_models`, like the account goal's
         other writes. Stageable.
       operationId: setGoalEveryCampaign
