@@ -7,6 +7,8 @@ namespace Tests\PaymentNotification;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\ClickRecord;
 use Prosper202\Click\MysqlClickRepository;
+use Prosper202\Conversion\Ledger\MatchMethod;
+use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use Prosper202\PaymentNotification\ClickBank\ClickBankAdapter;
@@ -646,7 +648,7 @@ final class ClickBankInsIntegrationTest extends TestCase
     public function testOtherTransactionTypesAreAcknowledgedAndLogged(): void
     {
         $this->post([], self::FIRST_KEY);
-        foreach (['CANCEL-REBILL', 'UNCANCEL-REBILL', 'SUBSCRIPTION-CHG', 'ABANDONED_ORDER'] as $type) {
+        foreach (['CANCEL-REBILL', 'UNCANCEL-REBILL', 'ABANDONED_ORDER'] as $type) {
             $outcome = $this->post(['transactionType' => $type], self::FIRST_KEY);
             self::assertOutcome(OutcomeKind::IGNORED, 200, $outcome);
             self::assertSame(self::FIRST, $outcome->accountId);
@@ -656,6 +658,48 @@ final class ClickBankInsIntegrationTest extends TestCase
             );
         }
         self::assertSame(['37.62000'], array_column(self::conversions(), 'click_payout'));
+    }
+
+    /**
+     * A product change can refund part of the last payment, and no article
+     * says whether its SUBSCRIPTION-CHG or a refund carries that money: it
+     * records nothing, and its answer, which Setup › Inbound Log keeps, says
+     * what it stated, whatever that is.
+     */
+    public function testAProductChangeRecordsNothingAndItsAnswerSaysWhatItStated(): void
+    {
+        self::q('DELETE FROM 202_inbound_log WHERE user_id = ' . self::FIRST);
+        $this->post([], self::FIRST_KEY);
+        $note = ' A product change can refund part of the last payment, and no ClickBank article says whether this'
+            . ' notification or a refund carries it, so nothing was taken back.';
+        $cases = [
+            ['-4.95', 'It states a totalAccountAmount of -4.95 under receipt CWOGBZLN.'],
+            [-4.95, 'It states a totalAccountAmount of -4.95 under receipt CWOGBZLN.'],
+            [null, 'It states no totalAccountAmount under receipt CWOGBZLN.'],
+            ['about five', 'It states a totalAccountAmount of about five under receipt CWOGBZLN.'],
+        ];
+        foreach ($cases as [$amount, $stated]) {
+            $order = ClickBankAdapterTest::sale([
+                'transactionType' => 'SUBSCRIPTION-CHG', 'trackingCodes' => [(string) self::CLICK],
+                'totalAccountAmount' => $amount,
+            ]);
+            if ($amount === null) {
+                unset($order['totalAccountAmount']);
+            }
+            $outcome = $this->deliver(ClickBankAdapterTest::body($order, self::FIRST_KEY));
+            self::assertOutcome(OutcomeKind::IGNORED, 200, $outcome);
+            self::assertSame('Verified. Prosper202 records sales and refunds; a SUBSCRIPTION-CHG notification records'
+                . ' nothing. ' . $stated . $note, $outcome->message);
+            $logged = self::requireScratch()->query('SELECT outcome, reason, transaction_id FROM 202_inbound_log'
+                . ' WHERE user_id = ' . self::FIRST . ' ORDER BY inbound_id DESC LIMIT 1');
+            self::assertInstanceOf(\mysqli_result::class, $logged);
+            self::assertSame(
+                ['outcome' => 'ignored', 'reason' => $outcome->message, 'transaction_id' => 'CWOGBZLN'],
+                $logged->fetch_assoc()
+            );
+        }
+        self::assertSame(['37.62000'], array_column(self::conversions(), 'click_payout'));
+        self::assertSame('37.62000', self::clickPayout());
     }
 
     public function testATestVersionOfAnotherTypeIsATest(): void
@@ -764,6 +808,92 @@ final class ClickBankInsIntegrationTest extends TestCase
         $again = $this->post(['attemptCount' => 2] + $refund, self::FIRST_KEY);
         self::assertOutcome(OutcomeKind::DUPLICATE, 200, $again);
         self::assertCount(2, self::conversions());
+    }
+
+    /**
+     * A refund that reads its sale while the sale is still being written:
+     * this test holds the click's lock with the sale written and not yet
+     * committed, the refund runs in a child process and reads no sale, and
+     * the sale commits once the server shows the child waiting on the lock.
+     * Capped before the lock, by what the refund had read, it took back all
+     * of its 50.00 and left the click at -12.38 (R4CE).
+     */
+    public function testARefundArrivingWithItsSaleNeverTakesTheClickBelowZero(): void
+    {
+        self::requireScratch();
+        $refund = ClickBankAdapterTest::body(ClickBankAdapterTest::sale([
+            'transactionType' => 'RFND', 'totalAccountAmount' => '-50.00',
+            'trackingCodes' => [(string) self::CLICK], 'transactionTime' => self::stated(time()),
+        ]), self::FIRST_KEY);
+        $bodyFile = (string) tempnam(sys_get_temp_dir(), 'p202-cb-refund');
+        file_put_contents($bodyFile, $refund);
+
+        $holder = new \mysqli(
+            (string) getenv('P202_TEST_DB_HOST'),
+            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+            (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+        );
+        $holder->query("SET SESSION sql_mode='STRICT_TRANS_TABLES'");
+        $conn = new Connection($holder);
+        $child = null;
+        try {
+            $conn->transaction(function () use ($conn, $bodyFile, &$child): void {
+                self::assertNotNull((new MysqlConversionLedger($conn))->lockClick(self::CLICK));
+                (new MysqlConversionRepository($conn))->recordInTransaction(self::FIRST, [
+                    'click_id' => self::CLICK, 'transaction_id' => 'CWOGBZLN', 'payout' => '37.62',
+                    'source' => 'clickbank', 'pixel_type' => 2, 'conv_time' => time() - 60,
+                ], MatchMethod::CLICK_ID);
+                $child = self::waitingNotification($bodyFile);
+            });
+        } finally {
+            $holder->close();
+        }
+        [$proc, $pipes] = $child;
+        $out = trim((string) stream_get_contents($pipes[1]));
+        $err = (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $exit = proc_close($proc);
+        @unlink($bodyFile);
+        self::assertSame(0, $exit, "exit $exit\n$out$err");
+        $outcome = json_decode($out, true, 3, JSON_THROW_ON_ERROR);
+
+        self::assertSame(OutcomeKind::REVERSED->name, $outcome['kind'], $outcome['message']);
+        self::assertSame('Reversed transaction CWOGBZLN on click ' . self::CLICK . ' by 37.62, the whole sale: this'
+            . ' RFND states 50.00, more than the sale recorded.', $outcome['message']);
+        self::assertSame(['37.62000', '-37.62000'], array_column(self::conversions(), 'click_payout'));
+        self::assertSame('0.00000', self::clickPayout());
+    }
+
+    /** @return array{resource, array<int, resource>} the child delivering $bodyFile, once it waits on a lock */
+    private static function waitingNotification(string $bodyFile): array
+    {
+        $proc = proc_open(
+            [
+                PHP_BINARY, '-d', 'display_errors=stderr', '-d', 'error_log=',
+                __DIR__ . '/fixtures/clickbank-notification-runner.php', $bodyFile,
+            ],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes
+        );
+        self::assertIsResource($proc);
+        $thread = trim((string) fgets($pipes[1]));
+        self::assertMatchesRegularExpression('/\A[1-9][0-9]*\z/', $thread, 'the runner names its connection');
+        $deadline = microtime(true) + 15;
+        do {
+            $waiting = self::requireScratch()->query('SELECT COUNT(*) FROM information_schema.INNODB_TRX'
+                . " WHERE trx_mysql_thread_id = $thread AND trx_state = 'LOCK WAIT'");
+            self::assertInstanceOf(\mysqli_result::class, $waiting);
+            if ((int) $waiting->fetch_row()[0] === 1) {
+                return [$proc, $pipes];
+            }
+            // The server refreshes INNODB_TRX only once it has gone 0.1s unread.
+            usleep(250000);
+        } while (microtime(true) < $deadline);
+        self::fail("The refund on connection $thread never waited for a lock: "
+            . stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]));
     }
 
     public function testARefundIsDatedWhenClickBankSaysItHappened(): void
@@ -962,6 +1092,89 @@ final class ClickBankInsIntegrationTest extends TestCase
     }
 
     /**
+     * No article says a refund carries the order's tracking codes, so one that
+     * names no click takes back the ClickBank sale under its receipt in the
+     * account whose key decrypted it (FindsReversedSalesByTransactionId).
+     */
+    public function testAReversalWithNoTrackingCodeTakesBackTheSaleUnderItsReceipt(): void
+    {
+        $this->post([], self::FIRST_KEY);
+        $this->post(['receipt' => 'SECONDSL', 'totalAccountAmount' => '20.00'], self::FIRST_KEY);
+        $refund = [
+            'transactionType' => 'RFND', 'trackingCodes' => [], 'totalAccountAmount' => '-37.62',
+            'transactionTime' => self::stated(time()),
+        ];
+
+        $outcome = $this->post($refund, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::REVERSED, 200, $outcome);
+        self::assertSame('Reversed transaction CWOGBZLN on click ' . self::CLICK . ' by 37.62.', $outcome->message);
+        self::assertSame(self::FIRST, $outcome->accountId);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->post(['attemptCount' => 2] + $refund, self::FIRST_KEY));
+
+        $bounced = ClickBankAdapterTest::sale(
+            ['transactionType' => 'INSF', 'receipt' => 'SECONDSL', 'trackingCodes' => []]
+        );
+        unset($bounced['totalAccountAmount']);
+        self::assertOutcome(
+            OutcomeKind::REVERSED,
+            200,
+            $this->deliver(ClickBankAdapterTest::body($bounced, self::FIRST_KEY))
+        );
+        self::assertSame(
+            ['37.62000', '20.00000', '-37.62000', '-20.00000'],
+            array_column(self::conversions(), 'click_payout')
+        );
+        self::assertSame('0.00000', self::clickPayout());
+    }
+
+    /**
+     * The sale a reversal with no tracking code takes back is a live ClickBank
+     * sale of the account whose key decrypted it; any other answers no_click,
+     * and a receipt on two clicks answers which one it cannot say.
+     */
+    public function testAReversalWithNoTrackingCodeFindsOnlyAVerifiedAccountsLiveClickBankSale(): void
+    {
+        $chargeback = ['transactionType' => 'CGBK', 'trackingCodes' => [], 'totalAccountAmount' => '-37.62'];
+        $this->post(['trackingCodes' => [(string) self::SECOND_CLICK], 'receipt' => 'SECONDR1'], self::SECOND_KEY);
+        $foreign = $this->post(['receipt' => 'SECONDR1'] + $chargeback, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::NO_CLICK, 200, $foreign);
+        self::assertSame('Verified. The CGBK notification of transaction SECONDR1 carries no tracking code or extclid'
+            . ' (the HopLink had no tid=[[subid]] or extclid=[[subid]]), so it names no click and there is no'
+            . ' ClickBank sale under it to reverse in the account whose secret key verified it.', $foreign->message);
+
+        $this->post(['receipt' => 'DELETED1'], self::FIRST_KEY);
+        self::conversionRepository()->softDelete((int) self::conversionIds()[0], self::FIRST);
+        $deleted = $this->post(['receipt' => 'DELETED1'] + $chargeback, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::NO_CLICK, 200, $deleted);
+
+        $this->post(['receipt' => 'POSTBK01'], self::FIRST_KEY);
+        self::q("UPDATE 202_conversion_logs SET source = 'postback' WHERE transaction_id = 'POSTBK01' AND click_id = "
+            . self::CLICK);
+        $postback = $this->post(['receipt' => 'POSTBK01'] + $chargeback, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::NO_CLICK, 200, $postback);
+
+        $other = self::CLICK + 1;
+        (new MysqlClickRepository(new Connection(self::requireScratch())))->recordClick(new ClickRecord(
+            clickId: $other,
+            userId: self::FIRST,
+            clickTime: time() - 600,
+            affCampaignId: self::FIRST,
+            clickPayout: '30.00',
+            recordsCampaignRows: false,
+        ));
+        $this->post([], self::FIRST_KEY);
+        $this->post(['trackingCodes' => [(string) $other]], self::FIRST_KEY);
+        $twice = $this->post($chargeback, self::FIRST_KEY);
+        self::assertOutcome(OutcomeKind::CONFLICT, 409, $twice);
+        self::assertSame('Transaction CWOGBZLN is recorded on more than one click, and this CGBK names none, so it'
+            . ' cannot say which sale it takes back; nothing was recorded.', $twice->message);
+
+        $rows = self::conversions();
+        self::assertSame([], array_values(array_filter(array_column($rows, 'reverses_conv_id'))));
+        self::assertCount(5, $rows);
+    }
+
+    /**
      * The answers about the click name ClickBank's tracking code, extclid and
      * the HopLink's variables, and no other provider's (ClickAnswersAreWordedByTheProviderTest).
      */
@@ -993,9 +1206,12 @@ final class ClickBankInsIntegrationTest extends TestCase
         );
         self::assertOutcome(OutcomeKind::UNKNOWN_CLICK, 404, $extclid);
 
-        self::assertSame('Verified. The RFND notification of transaction CWOGBZLN carries no tracking code or extclid'
-            . ' (the HopLink had no tid=[[subid]] or extclid=[[subid]]), so it names no click and there is no sale to'
-            . ' reverse.', $answers['a refund with no click']);
+        self::assertSame(
+            'Verified. The RFND notification of transaction CWOGBZLN carries no tracking code or extclid (the HopLink'
+            . ' had no tid=[[subid]] or extclid=[[subid]]), so it names no click and there is no ClickBank sale under'
+            . ' it to reverse in the account whose secret key verified it.',
+            $answers['a refund with no click']
+        );
         self::assertSame('There is no click ' . $missing . ' in the account whose secret key verified this'
             . ' notification; nothing was recorded. The click is the notification\'s tracking code or extclid, which'
             . ' the HopLink\'s tid=[[subid]] or extclid=[[subid]] carries when the buyer comes through a tracker of'

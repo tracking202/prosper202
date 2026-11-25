@@ -102,6 +102,10 @@ final class ConsentControlsForEveryUserIntegrationTest extends TestCase
     private static function request(array $env = [], string $page = self::PAGE): array
     {
         $env += ['P202_SU_USER' => (string) self::USER, 'P202_SU_SESSION_DIR' => self::$sessions];
+        if (isset($env['P202_SU_POST'])) {
+            // The profile form posts the version of what it showed: open the page first, as a browser does.
+            $env += ['P202_SU_OPEN_FIRST' => '{}'];
+        }
         $proc = proc_open(
             [PHP_BINARY, '-d', 'display_errors=stderr', __DIR__ . '/fixtures/session-user-runner.php', $page],
             [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],

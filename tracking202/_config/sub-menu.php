@@ -69,10 +69,10 @@ if ($p202Nav2 === 'setup' && isset($userObj) && !$userObj->hasPermission('access
         ['Browsers', 'tracking202/analyze/browsers.php', ['browsers.php']],
         ['Platforms', 'tracking202/analyze/platforms.php', ['platforms.php']],
         ['Custom Variables', 'tracking202/analyze/variables.php', ['variables.php']],
-        ['Customer LTV', 'tracking202/analyze/ltv.php', ['ltv.php']],
     ];
-    // The page asks for the permission; without it the entry is a dead end.
+    // The pages ask for the permission; without it each entry is a dead end.
     if (isset($userObj) && $userObj->hasPermission('access_to_campaign_data')) {
+        $p202StripItems[] = ['Customer LTV', 'tracking202/analyze/ltv.php', ['ltv.php']];
         $p202StripItems[] = ['Publishers', 'tracking202/analyze/publishers.php', ['publishers.php']];
     }
     // Gated like every other attribution link (202-config/template.php) and
