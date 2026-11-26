@@ -23,7 +23,9 @@ use Tests\Support\SourceScan;
  *  - A secret's value is read by a subscript that names a secret
  *    (ServedPreferences::SECRET and the PayKickstart form field; in full,
  *    also the DNI key and the account's own keys; a literal, `"$row[name]"`,
- *    or JVZooKey::COLUMN / PayKickstartKeys::COLUMN), and in full by any
+ *    or JVZooKey::COLUMN / PayKickstartKeys::COLUMN / ShopifyWebhookSecret::NAME),
+ *    a secret opened from the sealed store (`->open(` or `->openEach(`, on
+ *    whatever object), and in full by any
  *    subscript of $_POST, $_GET, $_REQUEST, $_COOKIE or a database row
  *    (`$user_row`, or a variable assigned a fetch) that is not one literal:
  *    `$user_row[$integration['field']]`.
@@ -54,8 +56,11 @@ final class IntegrationSecretsAreNotRenderedTest extends TestCase
         'install_hash', 'user_api_key', 'user_stats202_app_key', 'user_pass',
     ];
 
-    /** Class constants that name a secret column. */
+    /** Classes whose COLUMN (or, for a secret in the sealed store, NAME) constant names a secret. */
     private const COLUMN_CLASSES = ['JVZooKey', 'PayKickstartKeys', 'ShopifyWebhookSecret'];
+
+    /** The calls that hand back a secret opened from IntegrationSecretStore. */
+    private const STORE_OPENS = ['open', 'openEach'];
 
     /** @var array<string, string> callee => what it answers instead of the secret */
     private const SANITIZERS = [
@@ -71,6 +76,7 @@ final class IntegrationSecretsAreNotRenderedTest extends TestCase
         'DimensionSync::pushForUser' => 'how many dimensions it sent the optimizer',
         'getAllDniNetworks' => 'the hosted service\'s list of networks, asked with the install hash',
         'count' => 'how many',
+        'p202_account_shown_field' => 'an HMAC of what the form shows, under the session\'s secret (ShownSettings)',
     ];
 
     private const SINK_CALLS = ['printf', 'vprintf', 'print_r', 'var_dump', 'var_export', 'p202_account_flash'];
@@ -91,6 +97,10 @@ final class IntegrationSecretsAreNotRenderedTest extends TestCase
             '<?php echo $endpoint(\'Site key\', $lpo_site_key); ?>' => 'the Landing Page Optimizer\'s site key,'
                 . ' which the hosted service issues at pairing and the card shows to copy; the API answers it as'
                 . ' stored-only, and whether the page should too is left to its owner (backlog 03VE)',
+            'p202_account_flash(\'ok\', $keyOutcome === \'kept\' ? \'Nothing changed: your saved \''
+                . ' . $keyLabel . \' is kept.\''
+                => 'processApiKeyUpdate()\'s answer, \'saved\' or \'kept\', picks one of two fixed sentences; it is'
+                . ' tainted only because the save is handed the row read under the settings lock (ShownSettings)',
         ],
     ];
 
@@ -159,6 +169,9 @@ final class IntegrationSecretsAreNotRenderedTest extends TestCase
         yield 'a flash' => [$o . 'p202_account_flash(\'ok\', \'Saved \' . $_POST[\'cb_key\']);'];
         yield 'printf' => [$o . 'printf(\'%s\', $user_row[\'zaxaa_api_signature\']);'];
         yield 'die' => [$o . 'die($user_row[\'ipqs_api_key\']);'];
+        yield 'a secret opened from the store' => [$o . '$s = $store->open(1, ShopifyWebhookSecret::NAME, 1)?->current; echo $s;'];
+        yield 'every account\'s, opened' => [$o . 'foreach ($store->openEach(\'x\', 1) as $v) { echo $v->current; }'];
+        yield 'a store secret by its name' => [$o . 'echo $_POST[ShopifyWebhookSecret::NAME];'];
         yield 'a sanitizer\'s answer used beside the value' => [
             $o . 'echo SavedSecret::hint($x) . $user_row[\'cb_key\'];',
         ];
@@ -186,6 +199,7 @@ final class IntegrationSecretsAreNotRenderedTest extends TestCase
             $o . '$m[\'key\'] = $_POST[\'cb_key\']; $m[\'id\'] = 1; echo $m[\'id\'];',
         ];
         yield 'a posted value that is not a secret' => [$o . 'echo $e($_POST[\'dni_network_name\'] ?? \'\');'];
+        yield 'when the store\'s secret was set' => [$o . '$m = $store->marker(1, ShopifyWebhookSecret::NAME, 1); echo $m[\'set_at\'];'];
         yield 'how many keys' => [$o . '$pk = explode(",", $user_row[PayKickstartKeys::COLUMN]); echo count($pk);'];
         yield 'a foreach key' => [$o . '$stored = explode(",", $user_row[PayKickstartKeys::COLUMN]);'
             . ' foreach ($stored as $place => $key) { echo PayKickstartKeys::hint($key), $place; }'];
@@ -206,14 +220,16 @@ final class IntegrationSecretsAreNotRenderedTest extends TestCase
     /** @return list<string> */
     private static function secretNames(bool $strict): array
     {
-        return [...ServedPreferences::SECRET, 'paykickstart_ipn_secret_key', ...($strict ? self::MORE_SECRETS : [])];
+        return [...ServedPreferences::SECRET, ...ServedPreferences::SEALED, 'paykickstart_ipn_secret_key',
+            ...($strict ? self::MORE_SECRETS : [])];
     }
 
     /** @return array<string, string> served files that name an integration secret, and the page's endpoints */
     private static function filesThatNameASecret(): array
     {
         $names = implode('|', array_map('preg_quote', self::secretNames(false)));
-        $pattern = '/\b(?:' . $names . ')\b|\b(?:JVZooKey|PayKickstartKeys|ShopifyWebhookSecret)::COLUMN\b/';
+        $pattern = '/\b(?:' . $names . ')\b|\b(?:JVZooKey|PayKickstartKeys)::COLUMN\b|\bShopifyWebhookSecret::NAME\b'
+            . '|\bIntegrationSecretStore\b/';
 
         return array_filter(
             SourceScan::phpFiles(),
@@ -493,6 +509,10 @@ final class IntegrationSecretsAreNotRenderedTest extends TestCase
         array $tainted
     ): bool {
         $t = $tokens[$i];
+        if (is_array($t) && $t[0] === T_STRING && in_array($t[1], self::STORE_OPENS, true) && ($tokens[$i + 1] ?? null) === '('
+            && is_array($tokens[$i - 1] ?? null) && in_array($tokens[$i - 1][0], [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR], true)) {
+            return true;
+        }
         if (!is_array($t) || $t[0] !== T_VARIABLE) {
             return false;
         }
@@ -539,7 +559,8 @@ final class IntegrationSecretsAreNotRenderedTest extends TestCase
             $colon = $tokens[$j + 1] ?? null;
             $const = $tokens[$j + 2] ?? null;
 
-            return is_array($colon) && $colon[0] === T_DOUBLE_COLON && is_array($const) && $const[1] === 'COLUMN';
+            return is_array($colon) && $colon[0] === T_DOUBLE_COLON && is_array($const)
+                && in_array($const[1], ['COLUMN', 'NAME'], true);
         }
 
         return false;

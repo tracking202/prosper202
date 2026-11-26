@@ -175,8 +175,7 @@ var syncStatusCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("encoding output: %w", err)
 		}
-		render(payload)
-		return nil
+		return render(payload)
 	},
 }
 
@@ -209,8 +208,7 @@ var syncHistoryCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("encoding output: %w", err)
 		}
-		render(payload)
-		return nil
+		return render(payload)
 	},
 }
 
@@ -309,7 +307,9 @@ func executeSync(entityArg, fromProfile, toProfile string, opts syncOptions) err
 	if err != nil {
 		return fmt.Errorf("encoding output: %w", err)
 	}
-	render(payload)
+	if err := render(payload); err != nil {
+		return err
+	}
 	// --skip-errors goes on past a failed record; it does not make the sync
 	// a success. It exited 0 with records failed, which a script reads as
 	// everything synced. The results list each failure.
@@ -722,6 +722,9 @@ func firstFlag(cmd *cobra.Command, names ...string) string {
 	return ""
 }
 
+// syncPollInterval is the wait between the polls of a server-side job.
+var syncPollInterval = 250 * time.Millisecond
+
 func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOptions) (bool, error) {
 	orchestrator, err := api.NewFromProfile(fromProfile)
 	if err != nil {
@@ -775,11 +778,16 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 	// the whole sync a second time. But it must not vanish either — the
 	// rendered response is then the job-creation reply, not its outcome.
 	var pollErr error
+	// kickErr is the last request to run the server's worker, when it
+	// failed: with every kick failing, nothing in this run starts the job.
+	var kickErr error
+	var jobID, lastStatus string
+	var lastJobResp []byte
 	if parseErr == nil {
-		jobID := scalarString(obj["job_id"])
+		jobID = scalarString(obj["job_id"])
 		if jobID != "" {
 			for attempt := 0; attempt < 20; attempt++ {
-				_, _ = orchestrator.Post("sync/worker/run", map[string]interface{}{"limit": 10})
+				_, kickErr = orchestrator.Post("sync/worker/run", map[string]interface{}{"limit": 10})
 				jobResp, getErr := orchestrator.Get("sync/jobs/"+jobID, nil)
 				if getErr != nil {
 					pollErr = getErr
@@ -791,8 +799,11 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 					break
 				}
 				status := strings.ToLower(strings.TrimSpace(scalarString(jobObj["status"])))
+				lastStatus, lastJobResp = status, jobResp
 				if status == "succeeded" || status == "failed" || status == "partial" || status == "cancelled" {
-					render(jobResp)
+					if err := render(jobResp); err != nil {
+						return true, err
+					}
 					// The job's own outcome is the command's: a failed,
 					// partial or cancelled job exited 0 here, read by a
 					// script as a sync that happened.
@@ -806,9 +817,27 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 					}
 					return true, nil // server-side sync ran; the caller must not fall back
 				}
-				time.Sleep(250 * time.Millisecond)
+				time.Sleep(syncPollInterval)
 			}
 		}
+	}
+
+	if pollErr == nil && kickErr != nil {
+		if lastStatus == "running" {
+			output.Success(
+				"Warning: the request to run sync job %s failed (%v), but the server is running the job. "+
+					"The output below is the job as it stood, not its result — `p202 sync status` shows how it ended.",
+				jobID, kickErr)
+			if err := render(lastJobResp); err != nil {
+				return true, err
+			}
+			return true, nil // the job is running server-side; falling back would run the sync twice
+		}
+		return true, withHint(
+			fmt.Errorf("sync job %s is still queued: the last request to run the server's sync worker failed: %w", jobID, kickErr),
+			"The job stays queued on the --from profile's install (`p202 sync status` lists it). A queued job runs only when that install's sync worker runs: "+
+				"the next `p202 sync` from that install starts it, and so does `202-cronjobs/sync-worker.php` where the server's crontab runs it, which a default install's does not. "+
+				"Fix the cause above, then run the same sync again: it runs this job too, and records already synced are found on the target by their natural key, not created twice.")
 	}
 
 	if pollErr != nil {
@@ -817,7 +846,9 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 				"The output below is the job as queued, not its result — check `p202 sync status`.",
 			pollErr)
 	}
-	render(resp)
+	if err := render(resp); err != nil {
+		return true, err
+	}
 
 	// nilerr is right that an error was seen and nil is returned; that is
 	// deliberate here and the warning above says so.
@@ -871,6 +902,15 @@ func syncJobErrorHint(code string) string {
 			"a Prosper202 API does not, so check that install with `p202 --profile <name> system health` before running the same sync again."
 	case "sync_key_unreadable":
 		return "The job's stored API key could not be opened on the server. Run the same `p202 sync` again: it queues a new job with the profiles' keys."
+	case "sync_record_unusable":
+		return "The error names the record and what the sync needs changed on the source (a name it matches by, or a record it refers to that the target lacks). " +
+			"Change it and run the same sync again, or add --skip-errors to sync the rest."
+	case "sync_worker_lost":
+		return "The server process running the job ended before it finished, and the job is not tried again by itself; the job's `written` lists what it had written. " +
+			"Run the same `p202 sync` with --dry-run to see what is left, then without it to finish."
+	case "sync_internal":
+		return "The sync stopped on an error inside the server, not an answer from either instance; the error names the server's error log entry. " +
+			"Check that install's error log, then run the same sync again."
 	}
 	return ""
 }
@@ -911,7 +951,9 @@ func tryServerSyncRead(path, fromProfile, toProfile string) (bool, error) {
 
 		return false, nil //nolint:nilerr // probe-and-fall-back: a setup failure means server-side sync is unavailable, so the caller runs the client-side path
 	}
-	render(resp)
+	if err := render(resp); err != nil {
+		return true, err
+	}
 
 	return true, nil // server-side sync ran; the caller must not fall back
 }

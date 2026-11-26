@@ -81,17 +81,32 @@ try {
             $curl_arr = [];
 
             $options = $selfCallOptions;
+            $failed = 0;
+            $firstFailure = '';
+            // A call whose options curl refuses is not sent, and counts as
+            // failed, so the window is released for the next run rather than
+            // left claimed or marked done.
+            $start = static function (string $url) use ($master, $options, &$failed, &$firstFailure): void {
+                $ch = curl_init();
+                try {
+                    \Prosper202\Http\CurlOptions::set($ch, [CURLOPT_URL => $url] + $options);
+                } catch (\Prosper202\Http\CurlOptionRefused $e) {
+                    curl_close($ch);
+                    $failed++;
+                    if ($firstFailure === '') {
+                        $firstFailure = ' The first: ' . $url . ' was not sent: ' . $e->getMessage() . '.';
+                    }
+
+                    return;
+                }
+                curl_multi_add_handle($master, $ch);
+            };
 
             // start the first batch of requests
             for ($i = 0; $i < $rolling_window; $i++) {
-                $ch = curl_init();
-                $options[CURLOPT_URL] = $urls[$i];
-                curl_setopt_array($ch, $options);
-                curl_multi_add_handle($master, $ch);
+                $start($urls[$i]);
             }
 
-            $failed = 0;
-            $firstFailure = '';
             do {
                 while (($execrun = curl_multi_exec($master, $running)) == CURLM_CALL_MULTI_PERFORM);
                 if ($execrun != CURLM_OK)
@@ -117,10 +132,7 @@ try {
                     // start a new request (it's important to do this before removing the old
                     // one) so the rolling window keeps draining, success or failure.
                     if ($i < count($urls)) {
-                        $ch = curl_init();
-                        $options[CURLOPT_URL] = $urls[$i++];  // increment i
-                        curl_setopt_array($ch, $options);
-                        curl_multi_add_handle($master, $ch);
+                        $start($urls[$i++]);
                     }
 
                     // remove and close the completed handle so it does not leak across

@@ -290,7 +290,10 @@ final class UpgradePendingAnswerServedIntegrationTest extends TestCase
             . '. Open 202-config/upgrade.php on the site (signed in) to upgrade it.';
 
         [$status, $body] = self::get('/api/v3/ltv/breakdown?by=campaign');
-        self::assertSame([503, $sentence], [$status, $body['message'] ?? null]);
+        self::assertSame(
+            [503, $sentence, 'upgrade_pending'],
+            [$status, $body['message'] ?? null, $body['code'] ?? null]
+        );
         [$status, $body] = self::legacyReport();
         self::assertSame([503, $sentence], [$status, $body['msg'] ?? null]);
 
@@ -318,14 +321,20 @@ final class UpgradePendingAnswerServedIntegrationTest extends TestCase
             . '. Open 202-config/upgrade.php on the site (signed in) to upgrade it.';
 
         [$status, $answer, $retryAfter] = self::without($mode, $table, $method, $path, $headers, $body);
-        self::assertSame([503, $sentence], [$status, $answer['message'] ?? null]);
+        self::assertSame(
+            [503, $sentence, 'upgrade_pending'],
+            [$status, $answer['message'] ?? null, $answer['code'] ?? null]
+        );
         if ($path === '/api/v3/apps/installs') {
             self::assertSame('300', $retryAfter, 'the SDK waits as for the intake\'s other 503s');
         }
 
         self::deployedOver(PROSPER202_VERSION);
         [$status, $answer] = self::without($mode, $table, $method, $path, $headers, $body);
-        self::assertSame([500, $message], [$status, $answer['message'] ?? null]);
+        self::assertSame(
+            [500, $message, 'server_error'],
+            [$status, $answer['message'] ?? null, $answer['code'] ?? null]
+        );
     }
 
     /** @return iterable<string, array{string}> */
@@ -343,7 +352,10 @@ final class UpgradePendingAnswerServedIntegrationTest extends TestCase
         self::deployedOver($version);
 
         [$status, $body] = self::get('/api/v3/ltv/breakdown?by=campaign');
-        self::assertSame([500, 'Internal server error'], [$status, $body['message'] ?? null]);
+        self::assertSame(
+            [500, 'Internal server error', 'server_error'],
+            [$status, $body['message'] ?? null, $body['code'] ?? null]
+        );
         [$status, $body] = self::legacyReport();
         self::assertSame([500, 'Database error'], [$status, $body['msg'] ?? null]);
     }

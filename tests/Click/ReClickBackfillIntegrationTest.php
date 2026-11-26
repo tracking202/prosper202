@@ -289,7 +289,7 @@ final class ReClickBackfillIntegrationTest extends TestCase
         self::assertSame($once, $rows());
     }
 
-    /** A run stops at its deadline after a chunk, and the reports say how far the walk is. */
+    /** A run stops at its deadline after a chunk, and the reports say how far the walk is, with no warning. */
     public function testARunStopsAtItsDeadlineAndTheWalkSaysHowFarItIs(): void
     {
         $at = self::NOW - 86400;
@@ -307,6 +307,10 @@ final class ReClickBackfillIntegrationTest extends TestCase
         self::assertNull(self::recorded(self::LATER));
         $progress = $this->backfill()->progress();
         self::assertSame([99, 1], [$progress['percent'] ?? null, $progress['reclicked_clicks'] ?? null]);
+        self::assertNull(
+            ReClickBackfill::stopNotice($progress, new \DateTimeZone('UTC')),
+            'a walk under way that nothing stops is no warning'
+        );
 
         self::assertTrue($this->walk(self::NOW)['finished'] ?? null);
         self::assertSame((string) ($at + 3600), self::recorded(self::LATER));
@@ -536,9 +540,12 @@ final class ReClickBackfillIntegrationTest extends TestCase
             ],
             'an hour on: stepped over, 33 done, stopped at 34'
         );
-        $fields = ['failed_click_id', 'failed_runs', 'skipped_clicks', 'last_skipped_click_id'];
+        $fields = ['failed_click_id', 'failed_runs', 'skipped_clicks', 'last_skipped_click_id', 'stopped_at'];
         self::assertSame(
-            ['failed_click_id' => 34, 'failed_runs' => 1, 'skipped_clicks' => 1, 'last_skipped_click_id' => 32],
+            [
+                'failed_click_id' => 34, 'failed_runs' => 1, 'skipped_clicks' => 1, 'last_skipped_click_id' => 32,
+                'stopped_at' => self::NOW + ReClickBackfill::STEP_OVER_SECONDS,
+            ],
             array_intersect_key((array) $next, array_flip($fields))
         );
         self::assertSame(
@@ -853,6 +860,112 @@ final class ReClickBackfillIntegrationTest extends TestCase
         self::assertSame('written', $outcome, 'the next click\'s rows went in while the repair held its click');
         self::assertSame('repaired', $repaired);
         self::assertSame((string) (self::NOW - 86400 + 3600), self::recorded(self::NOT_A_LEAD));
+    }
+
+    /** The cron job's run at $now, as 202-cronjobs/index.php makes it: the line its output shows, or null. */
+    private function cron(int $now): ?string
+    {
+        $before = ini_get('error_log');
+        ini_set('error_log', $this->log);
+        try {
+            return $this->backfill($now)->runFromCron($now);
+        } finally {
+            ini_set('error_log', (string) $before);
+        }
+    }
+
+    /**
+     * A walk stopped at a click that fails says so where the owner looks:
+     * Settings' warning and the cron job's output, each with progress()'s
+     * note and when the stop began, the first run that stopped there for an
+     * error of any kind, kept through the runs after it. Once a run gets past
+     * the click, neither says anything. A stop older than the column says it
+     * has no time.
+     */
+    public function testAStoppedWalkIsShownWithWhenItStopped(): void
+    {
+        require_once dirname(__DIR__, 2) . '/202-config/functions-ui.php';
+        $at = self::NOW - 86400;
+        foreach ([61, 62] as $click) {
+            self::legacyReClicked($click, $at, 1, '3.00');
+        }
+        self::mark();
+        $refuse = static function (string $signal): void {
+            self::q('DROP TRIGGER IF EXISTS p202_test_record_refused');
+            self::q('CREATE TRIGGER p202_test_record_refused BEFORE INSERT ON 202_click_latest_visits FOR EACH ROW'
+                . ' BEGIN IF NEW.click_id = 62 THEN ' . $signal . '; END IF; END');
+        };
+        $utc = new \DateTimeZone('UTC');
+        $later = self::NOW + 600;
+        try {
+            $refuse("SIGNAL SQLSTATE 'HY000' SET MYSQL_ERRNO = 1205, MESSAGE_TEXT = 'the moment'");
+            $first = $this->cron(self::NOW);
+            $refuse("SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'refused by the test'");
+            $again = $this->cron($later);
+            $progress = $this->backfill($later)->progress();
+            $settings = p202_reclick_backfill_notice(self::$db, $utc);
+            $inNewYork = p202_reclick_backfill_notice(self::$db, new \DateTimeZone('America/New_York'));
+        } finally {
+            self::q('DROP TRIGGER IF EXISTS p202_test_record_refused');
+        }
+
+        self::assertSame(
+            [62, self::NOW, 1, $later],
+            [
+                $progress['stalled_at_click_id'] ?? null, $progress['stopped_at'] ?? null,
+                $progress['failed_runs'] ?? null, $progress['failing_since'] ?? null,
+            ],
+            'stopped since the first run, a lock wait; the click\'s own error a run later starts only its hour'
+        );
+        $since = 'The re-click backfill has been stopped since ' . gmdate('M j, Y g:ia', self::NOW) . ' UTC. ';
+        self::assertIsString($first);
+        self::assertStringStartsWith($since, $first);
+        self::assertStringContainsString('stopped at click 62', $first);
+        self::assertStringContainsString('so it is not stepped over', $first);
+        self::assertSame($since . ($progress['note'] ?? ''), $again);
+        self::assertStringContainsString('has failed with an error of its own in 1 run ', (string) $again);
+        self::assertStringContainsString('alert-warning', $settings);
+        self::assertStringContainsString(htmlspecialchars((string) $again, ENT_QUOTES, 'UTF-8'), $settings);
+        self::assertStringContainsString(
+            'stopped since ' . (new \DateTimeImmutable('@' . self::NOW))
+                ->setTimezone(new \DateTimeZone('America/New_York'))->format('M j, Y g:ia T') . '.',
+            $inNewYork,
+            'Settings says it in the page\'s zone'
+        );
+
+        self::q('UPDATE 202_reclick_backfill SET stopped_at = NULL');
+        self::assertStringContainsString(
+            'stopped since a run before the upgrade to 1.9.81, which started keeping when a stop began.',
+            (string) ReClickBackfill::stopNotice($this->backfill($later)->progress(), $utc)
+        );
+        self::q('UPDATE 202_reclick_backfill SET stopped_at = ' . self::NOW);
+
+        self::assertNull($this->cron($later + 60), 'past the click, the cron output says nothing');
+        self::assertSame('', p202_reclick_backfill_notice(self::$db, $utc), 'nor does Settings');
+        $state = $this->backfill()->state();
+        self::assertIsArray($state);
+        self::assertSame([null, null], [$state['failed_click_id'], $state['stopped_at']]);
+    }
+
+    /** A walk whose state cannot be read is not shown as one under way: Settings says it could not check. */
+    public function testSettingsSaysWhenTheWalkCannotBeRead(): void
+    {
+        require_once dirname(__DIR__, 2) . '/202-config/functions-ui.php';
+        self::legacyReClicked(71, self::NOW - 86400, 1, '3.00');
+        self::mark();
+        self::q('ALTER TABLE 202_reclick_backfill DROP COLUMN stopped_at');
+        $before = ini_get('error_log');
+        ini_set('error_log', $this->log);
+        try {
+            $settings = p202_reclick_backfill_notice(self::requireScratch(), new \DateTimeZone('UTC'));
+        } finally {
+            ini_set('error_log', (string) $before);
+            self::q('ALTER TABLE 202_reclick_backfill ADD COLUMN `stopped_at` int(10) unsigned DEFAULT NULL');
+        }
+
+        self::assertStringContainsString('alert-danger', $settings);
+        self::assertStringContainsString('could not be checked just now', $settings);
+        self::assertStringContainsString('Settings: the re-click backfill could not be read', $this->logged());
     }
 
     public function testAnInstallWithNoMarkerHasNothingToWalk(): void

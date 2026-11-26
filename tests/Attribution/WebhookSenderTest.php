@@ -7,6 +7,7 @@ namespace Tests\Attribution;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookSender;
+use Prosper202\Webhooks\StandardWebhook;
 
 /**
  * Delivery: the check runs again at send time and the connection goes to
@@ -68,6 +69,56 @@ final class WebhookSenderTest extends TestCase
         self::assertContains('Content-Type: text/csv; charset=utf-8', $headers);
     }
 
+    /**
+     * The export carries the Standard Webhooks headers too: a receiver's
+     * library verifies them with the export's secret, and every attempt at
+     * one job carries the same webhook-id, which no other job's shares.
+     */
+    public function testAReceiverVerifiesTheStandardHeadersAndEveryAttemptHasTheJobsId(): void
+    {
+        $body = "a,b\n1,2\n";
+        $named = [];
+        foreach (['k3y-k3y-k3y-k3y-k3y', StandardWebhook::newSecret()] as $secret) {
+            foreach ([1 => 1790000000, 2 => 1790000120] as $attempt => $at) {
+                $this->sent = [];
+                $this->sender(static fn (): array => ['93.184.216.34'], ['status' => 204, 'primary_ip' => '93.184.216.34'])
+                    ->send('https://hooks.example.com/p202', $secret, $body, 7, $attempt, $at);
+                $h = [];
+                foreach ($this->sent[0][CURLOPT_HTTPHEADER] as $line) {
+                    if (str_starts_with($line, 'webhook-')) {
+                        [$name, $value] = explode(': ', $line, 2);
+                        $h[$name] = $value;
+                    }
+                }
+                self::assertSame((string) $at, $h['webhook-timestamp']);
+                self::assertTrue(StandardWebhook::verify(
+                    StandardWebhook::libraryForm($secret),
+                    $h['webhook-id'],
+                    $h['webhook-timestamp'],
+                    $h['webhook-signature'],
+                    $body,
+                    $at + 10
+                ));
+                $named[$secret][$attempt] = $h['webhook-id'];
+            }
+            self::assertSame($named[$secret][1], $named[$secret][2], 'a retry is the same message');
+            self::assertSame(WebhookSender::exportMessageId($secret, 7), $named[$secret][1]);
+            self::assertNotSame($named[$secret][1], WebhookSender::exportMessageId($secret, 8), 'another job is another message');
+        }
+        self::assertNotSame(...array_column(array_values($named), 1));
+    }
+
+    public function testASecretThatCannotSignIsNotSent(): void
+    {
+        $result = $this->sender(static fn (): array => ['93.184.216.34'], ['status' => 204, 'primary_ip' => '93.184.216.34'])
+            ->send('https://hooks.example.com/p202', 'whsec_not base64!', 'x', 7, 1, 1790000000);
+
+        self::assertFalse($result->delivered);
+        self::assertFalse($result->retryable);
+        self::assertStringContainsString('webhook secret cannot sign', (string) $result->error);
+        self::assertSame([], $this->sent, 'no request was made');
+    }
+
     public function testAnIPv6AnswerIsPinnedInBrackets(): void
     {
         $this->sender(static fn (): array => ['2606:4700:4700::1111'], ['primary_ip' => '2606:4700:4700:0:0:0:0:1111'])
@@ -106,6 +157,80 @@ final class WebhookSenderTest extends TestCase
         self::assertFalse($result->retryable, 'a refused destination is not retried');
         self::assertStringContainsString('resolves to 169.254.169.254', (string) $result->error);
         self::assertSame(0, $sent, 'no request was made');
+    }
+
+    /**
+     * A resolver that answers nothing says nothing about the URL: one DNS
+     * hiccup at send time is retried like a timeout, with nothing sent.
+     */
+    public function testAHostThatDoesNotResolveIsNotSentAndIsRetried(): void
+    {
+        $result = $this->sender(static fn (): array => [])
+            ->send('https://hooks.example.com/', 'secretsecretsecret', 'x', 1, 1);
+        self::assertFalse($result->delivered);
+        self::assertTrue($result->retryable, 'a name that did not resolve may resolve on the next run');
+        self::assertNull($result->status);
+        self::assertStringContainsString('hooks.example.com does not resolve', (string) $result->error);
+        self::assertSame([], $this->sent, 'no request was made');
+    }
+
+    /**
+     * With an egress proxy in force the guard still resolves the host itself
+     * before any tunnel is asked for, so a name that does not resolve is
+     * retried with nothing sent, and a private answer stays final.
+     */
+    public function testWithAProxyInForceAnUnresolvedHostIsStillRetriedAndARefusedAddressIsNot(): void
+    {
+        \Prosper202\Http\EgressProxy::readStoredFrom(static fn (): \Prosper202\Http\StoredEgressProxy
+            => new \Prosper202\Http\StoredEgressProxy('http://192.0.2.10:3128', '', '', null));
+        try {
+            $unresolved = $this->sender(static fn (): array => [])
+                ->send('https://hooks.example.com/', 'secretsecretsecret', 'x', 1, 1);
+            self::assertFalse($unresolved->delivered);
+            self::assertTrue($unresolved->retryable, 'a name that did not resolve may resolve on the next run');
+            self::assertStringContainsString('hooks.example.com does not resolve', (string) $unresolved->error);
+
+            $private = $this->sender(static fn (): array => ['10.0.0.5'])
+                ->send('https://hooks.example.com/', 'secretsecretsecret', 'x', 1, 1);
+            self::assertFalse($private->retryable);
+            self::assertSame([], $this->sent, 'no request was made');
+
+            $sent = $this->sender(static fn (): array => ['93.184.216.34'], ['status' => 204, 'primary_ip' => '192.0.2.10'])
+                ->send('https://hooks.example.com/', 'secretsecretsecret', 'x', 1, 1);
+            self::assertTrue($sent->delivered, 'the connection is to the proxy, which is the expected peer');
+            self::assertSame('http://192.0.2.10:3128', $this->sent[0][CURLOPT_PROXY] ?? null, 'the request went through the proxy');
+        } finally {
+            \Prosper202\Http\EgressProxy::readStoredFrom(null);
+        }
+    }
+
+    /**
+     * Every refusal of the address itself stays final: the guard's verdict
+     * on a private, loopback, link-local or metadata answer, or on a URL
+     * that is not https, does not change on a later run.
+     *
+     * @return iterable<string, array{0: list<string>, 1: string}>
+     */
+    public static function refusedAddresses(): iterable
+    {
+        yield 'private' => [['10.0.0.5'], 'https://hooks.example.com/'];
+        yield 'loopback' => [['127.0.0.1'], 'https://hooks.example.com/'];
+        yield 'metadata' => [['169.254.169.254'], 'https://hooks.example.com/'];
+        yield 'one private among public' => [['93.184.216.34', '192.168.1.1'], 'https://hooks.example.com/'];
+        yield 'plain http' => [['93.184.216.34'], 'http://hooks.example.com/'];
+    }
+
+    /**
+     * @dataProvider refusedAddresses
+     * @param list<string> $answer
+     */
+    public function testARefusedAddressIsNotRetried(array $answer, string $url): void
+    {
+        $result = $this->sender(static fn (): array => $answer)->send($url, 'secretsecretsecret', 'x', 1, 1);
+        self::assertFalse($result->delivered);
+        self::assertFalse($result->retryable);
+        self::assertStringStartsWith('Not sent: ', (string) $result->error);
+        self::assertSame([], $this->sent);
     }
 
     public function testAConnectionThatLandedElsewhereIsNotDelivered(): void
@@ -226,6 +351,12 @@ final class WebhookSenderTest extends TestCase
         self::assertSame([null, null, 200, '{"ok":true}'], [$got['refused'], $got['strayed'], $got['status'], $got['body']]);
         self::assertSame(200, $posted['status']);
         [$get, $post] = $this->sent;
+        foreach ([&$get, &$post] as &$sent) {
+            // The time the lookup left, which the options cannot know.
+            self::assertLessThanOrEqual(WebhookSender::TIMEOUT * 1000, $sent[CURLOPT_TIMEOUT_MS]);
+            unset($sent[CURLOPT_TIMEOUT_MS]);
+        }
+        unset($sent);
         self::assertTrue($get[CURLOPT_HTTPGET]);
         self::assertArrayNotHasKey(CURLOPT_POST, $get);
         self::assertArrayNotHasKey(CURLOPT_POSTFIELDS, $get);

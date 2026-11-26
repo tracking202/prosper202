@@ -149,6 +149,17 @@ final class FacebookPixelAssistantIntegrationTest extends TestCase
         // Another account's page, and a visitor held back: nothing.
         self::assertSame('', FacebookPixelAssistantScript::forClick(new Connection(self::$db), self::OTHER, $mine, $other, 4242, true));
         self::assertSame('', FacebookPixelAssistantScript::forClick(new Connection(self::$db), self::USER, $mine, $account, 4242, false));
+
+        // A request of the click refused consent and it was kept (the tracking template's hit, an earlier visit):
+        // this page's request names no p202_consent, and is sent nothing either.
+        self::exec('DELETE FROM 202_click_consent_refusals WHERE click_id = 4242');
+        try {
+            \Prosper202\Identity\ConsentRefusal::record(new Connection(self::$db), 4242, $now);
+            self::assertSame('', FacebookPixelAssistantScript::forClick(new Connection(self::$db), self::USER, $mine, $account, 4242, true));
+            self::assertNotSame('', FacebookPixelAssistantScript::forClick(new Connection(self::$db), self::USER, $mine, $account, 4243, true), 'another click is not held back');
+        } finally {
+            self::exec('DELETE FROM 202_click_consent_refusals WHERE click_id = 4242');
+        }
     }
 
     public function testATypeSixPixelFiresAPurchaseOnTheConversion(): void
@@ -156,7 +167,7 @@ final class FacebookPixelAssistantIntegrationTest extends TestCase
         $account = $this->ids['account mine'];
         self::exec("INSERT INTO 202_ppc_account_pixels SET ppc_account_id = $account, pixel_type_id = 6, pixel_code = '123456789012345'");
 
-        $out = TrafficSourcePixels::fire(new Connection(self::$db), $account, ['payout' => '12', 'transactionid' => 'T1', TrafficSourcePixels::EVENT_ID => 'T1'], static fn (): bool => true, true, true, static fn (): bool => true);
+        $out = TrafficSourcePixels::fire(new Connection(self::$db), $account, ['payout' => '12', 'transactionid' => 'T1', TrafficSourcePixels::EVENT_ID => 'T1'], static fn (): bool => true, true, true, static fn (): bool => true, \Prosper202\Conversion\AdPlatformConsent::given());
 
         self::assertStringContainsString('https://www.facebook.com/tr?id=123456789012345&amp;ev=Purchase&amp;noscript=1&amp;cd%5Bvalue%5D=12.00&amp;cd%5Bcurrency%5D=EUR&amp;eid=T1', $out['markup']);
         self::assertSame([6], $out['types']);

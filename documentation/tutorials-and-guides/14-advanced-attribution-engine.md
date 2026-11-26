@@ -91,9 +91,12 @@ p202 attribution export download 7 --output last7.csv
 The minutely cron runs due exports (or `202-cronjobs/attribution-exports.php`
 on its own). A webhook must be `https` on a public address; the server checks
 every address the name resolves to, connects only to the one it checked, and
-never follows a redirect. Verify each delivery: `X-P202-Signature` is
-`sha256=` and the HMAC-SHA256 of `X-P202-Timestamp`, a dot and the body,
-under the secret shown once when you created the export. If your receiver is
+never follows a redirect. Verify each delivery with a
+[Standard Webhooks](https://www.standardwebhooks.com/) library and the secret
+shown once when you created the export: it checks `webhook-signature` against
+`webhook-id`, `webhook-timestamp` and the body. (Through 1.9.82 a delivery
+also carries `X-P202-Signature`, `sha256=` and the HMAC-SHA256 of
+`X-P202-Timestamp`, a dot and the body; 1.9.83 stops sending it.) If your receiver is
 on your own network, allow that network in `202-config.php`:
 
 ```php

@@ -6,6 +6,7 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\MysqliStatements;
+use Api\V3\Support\PageRows;
 use Api\V3\Support\ResponseSanitizer;
 
 /**
@@ -21,7 +22,8 @@ use Api\V3\Support\ResponseSanitizer;
  * rows per announcement, each sent, retried and failed on its own. `meta.summary` counts every matching row by status —
  * pending (waiting, or backing off after a failed attempt), sent, failed
  * (attempts ran out), cancelled (replaced before it went out) and
- * suppressed (a correction no correction URL could carry) — under the same
+ * suppressed (a correction no correction URL could carry) and withheld
+ * (its visitor refused consent, AdPlatformConsent) — under the same
  * filters except `status`, so the summary still says what the other states
  * hold when the list is narrowed to one.
  */
@@ -29,7 +31,7 @@ final class AppNotificationsController
 {
     use MysqliStatements;
 
-    public const STATUSES = ['pending', 'sent', 'failed', 'cancelled', 'suppressed'];
+    public const STATUSES = ['pending', 'sent', 'failed', 'cancelled', 'suppressed', 'withheld'];
     public const KINDS = ['reached', 'correction', 'retraction'];
 
     /** The outcome of an install that a conversion is, one per conversion. */
@@ -71,7 +73,7 @@ final class AppNotificationsController
             . $from . ' WHERE ' . implode(' AND ', $where)
             . ' ORDER BY n.notification_id DESC LIMIT ? OFFSET ?',
             'i' . $types . 'ii',
-            [$this->userId, ...$binds, $limit, $offset]
+            [$this->userId, ...$binds, PageRows::fetchLimit($limit), $offset]
         ) as $row) {
             foreach (['notification_id', 'conv_id', 'pixel_id', 'destination', 'attempts', 'next_attempt_at', 'created_at', 'registration_id', 'goal_id', 'install_row_id', 'campaign_id', 'sent_at'] as $int) {
                 $row[$int] = $row[$int] === null ? null : (int)$row[$int];
@@ -83,9 +85,11 @@ final class AppNotificationsController
             $row = ResponseSanitizer::cleanRowFields($row, ['url'], 4096);
             $rows[] = ResponseSanitizer::cleanRowFields($row, ['last_error', 'app_name', 'goal_name']);
         }
+        [$rows, $truncated] = PageRows::cut($rows, $limit);
 
         return [
             'data' => $rows,
+            'truncated' => $truncated,
             'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset],
             'meta' => ['summary' => $summary],
         ];

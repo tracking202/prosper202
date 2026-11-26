@@ -75,6 +75,7 @@ final class DryRunRoutesTest extends TestCase
             'POST /conversions/subids/delete',
             'POST /conversions/subids/reset',
             'POST /conversions/uploads',
+            'POST /conversions/uploads/{id}/undo',
             'POST /spend-ledger',
             'POST /system/retention/delete-before',
             'PUT /rotators/{id}/rules',

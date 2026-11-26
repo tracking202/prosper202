@@ -59,6 +59,7 @@
 - [System](api/15-system.md)
 - [Sync](api/16-sync.md)
 - [Capabilities](api/17-capabilities.md)
+- [Me: who is signed in](api/30-me.md)
 - [Legacy API (v1)](api/99-legacy-api.md)
 
 ### CLI Reference
@@ -97,10 +98,12 @@ A legacy PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 lis
 
 - [Multi-touch Attribution Engine](features/advanced-attribution-engine.md)
 - [The Prosper202 UI Standard](features/ui-standard.md)
+- [Integration secrets](features/integration-secrets.md) — the sealed store, the key kept outside the database (`P202_SECRETS_KEY`), rotation with an overlap, and which secrets are in it
 - [Visitor identity](features/visitor-identity.md) — how clicks are linked to one person, with first-party signals only
 - [Money-loss alerts](features/money-loss-alerts.md) — Slack, email or webhook when a steady campaign stops converting while it buys clicks, or passes a daily cost cap with no conversion
 - [PurLinks](features/purlinks.md) — landing page links straight to the offer with no tracker redirect, the click-out still recorded, and the deferred pixel
 - [Dynamic content](features/dynamic-content.md) — the visit's country, keyword, `c1` and other values in your page's text and form fields, and 1.9.56's `dcs` API
+- [Split tests](features/split-tests.md) — one variant per visitor on a landing page, picked by weight and recorded as the click's C4, so reports grouped by C4 compare the variants
 - [Currencies](features/conversion-currency.md) — each conversion keeps the currency it was recorded in; postback amounts on a campaign paid in another currency are converted at a kept daily rate; what changing the account's currency does
 - [Offline conversions for Google Ads and Microsoft Advertising](features/offline-conversions.md) — the import files, which conversions they send, and fetch URLs the platforms read on a schedule
 - [Destinations: conversions to your ad platforms, from your server](features/destinations.md) — GA4 Measurement Protocol and Google Ads click conversions (developer token and OAuth client setup), the delivery log, privacy and hashed data, test fires

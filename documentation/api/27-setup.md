@@ -8,6 +8,7 @@ the web UI:
 | ------ | ---- | -------------- |
 | `GET` | `/landing-pages/{id}/code` | Get LP Code (simple and advanced) |
 | `POST` | `/landing-pages/{id}/check` | Get LP Code's "Check my page": whether the page at the saved URL carries its code |
+| `GET` | `/{resource}/{id}/uses` | Where an offer, network, traffic source or account, landing page or text ad is used |
 | `GET` | `/conversions/postback-code` | Postback / Pixel |
 | `GET` | `/ppc-networks/{id}/variables` | Traffic Sources › variables |
 | `POST` | `/ppc-networks/{id}/variables` | |
@@ -39,8 +40,8 @@ through the real route, permission included), and the deletes preview with
 Built by `Prosper202\Setup\LandingPageCode`, the class Get LP Code builds its
 code with, so the strings are the page's byte for byte (a test holds them to
 what the page served before the class existed). Every snippet starts from
-`base_url`: the tracker link's base (user 1's tracking domain, or this
-server's name and port when none is set, plus the install directory) written
+`base_url`: the tracker link's base (the caller's own tracking domain, or the
+host the request arrived at when none is set, plus the install directory) written
 scheme-relative, `//track.example.com/`, as the page writes it — the code then
 works on an http or an https landing page.
 
@@ -132,6 +133,71 @@ that the answer is a `429` with `Retry-After`, `retry_after_seconds` and
  "rate_limit": {"limit": 10, "window_seconds": 60, "per": "api_key"}}
 ```
 
+## Where a Library record is used — `GET /{resource}/{id}/uses`
+
+A soft delete takes a record out of the Library and leaves everything that
+points at it pointing: a link keeps sending clicks to a deleted offer. So the
+Library records say what uses them, three ways, all from one reader and all
+the account's own live records (another account's rows that name an id never
+count, and a deleted landing page, text ad, offer, account or ad connection
+does not):
+
+- **A list's counts**: `?with=usage` on `/campaigns`, `/aff-networks`,
+  `/ppc-networks`, `/ppc-accounts`, `/landing-pages` and `/text-ads` adds a
+  `usage` object to each row. `/landing-pages` also takes `with=health` and
+  `with=last_seen`, in any combination (`with=usage,health,last_seen`). The fields are opt-in, so a row read for a
+  `PUT` body carries nothing the record does not have. Any other value, an
+  empty item or a repeat is a `422` naming `with`.
+- **One record's uses**: `GET /campaigns/{id}/uses` (and the same under the
+  other five) names them, the first 25 of each kind, lowest id first.
+- **A delete's dry run**: `DELETE /campaigns/{id}?dry_run=1` carries the
+  same object as `in_use_by`.
+
+| Resource | Kinds of use |
+| -------- | ------------ |
+| `campaigns` | `trackers`, `landing_pages`, `text_ads`, `rotators` (its default, or any rule's redirect) |
+| `aff-networks` | `campaigns` |
+| `ppc-networks` | `ppc_accounts` |
+| `ppc-accounts` | `trackers`, `ad_connections` |
+| `landing-pages` | `trackers`, `text_ads`, `rotators` |
+| `text-ads` | `trackers` |
+
+A rotator counts once however many of its redirects name the record.
+
+```json
+GET /campaigns?with=usage
+{"data": [{"aff_campaign_id": 7, "aff_campaign_name": "Spring offer", …,
+           "usage": {"trackers": 3, "landing_pages": 1, "text_ads": 0,
+                     "rotators": 1, "total": 5}}], …}
+
+GET /campaigns/7/uses
+{"data": {"resource": "campaigns", "id": 7, "total": 5, "uses": {
+  "trackers": {"count": 3, "records": [{"id": 41, "name": null, "path": "/trackers/41"}, …]},
+  "landing_pages": {"count": 1, "records": [{"id": 12, "name": "Spring LP", "path": "/landing-pages/12"}]},
+  "text_ads": {"count": 0, "records": []},
+  "rotators": {"count": 1, "records": [{"id": 3, "name": "Spring split", "path": "/rotators/3"}]}}}}
+```
+
+`health` on a landing page is its stored code check (above) for the URL it
+has now: `status`, `level` (`good`, `warn`, `bad` or `unchecked`), `label`
+(the words Setup › Landing Pages shows), `message` and `checked_at`. A page
+with no check of its present URL is `"status": "unchecked"` with a null
+`message` and `checked_at`. Reading it fetches nothing.
+
+`last_seen_at` on a landing page is when it last had a click, in unix
+seconds. Each click on the page notes its time once the click is stored, at
+most once a minute a page, so the answer can be up to 60 seconds behind the
+latest click, and a click recorded late never moves it back. A page with no
+click since the install was upgraded to 1.9.81 is `null`: the time starts
+then, and older clicks are not scanned for it.
+
+```json
+GET /landing-pages?with=last_seen
+{"data": [{"landing_page_id": 12, "landing_page_nickname": "Spring LP", …,
+           "last_seen_at": 1764150000},
+          {"landing_page_id": 13, …, "last_seen_at": null}], …}
+```
+
 ## Pixels and postback URLs — `GET /conversions/postback-code`
 
 What Postback / Pixel shows, built by `Prosper202\Setup\PostbackCode` (the
@@ -173,7 +239,8 @@ Some networks leave the sub id macro unfilled, so the global postback arrives
 as `gpb.php?subid={aff_sub}&amount=49.00` with the macro itself where the
 click's id should be, or with `subid=` empty. Until 1.9.80 that conversion was
 answered `SubID not found` and lost. Now `gpb.php` looks for the click by an
-**ad click id** the postback sends back instead: the `gclid`, `gbraid` or
+**ad click id** the postback sends back instead (and since 1.9.81 so do
+`pb.php`, `gpx.php` and `upx.php`; [below](#the-other-postbacks-and-pixels)): the `gclid`, `gbraid` or
 `wbraid` Google put on the ad click, Microsoft's `msclkid`, Meta's `fbclid`,
 TikTok's `ttclid` or OpenAI's `oppref` (ChatGPT ads), which every click keeps.
 
@@ -245,9 +312,24 @@ A conversion found this way is recorded with `match_method` `ad_click_id`
 ([Conversions](10-conversions.md#how-each-conversions-click-was-found)), so
 `GET /conversions?match_method=ad_click_id` lists them, and Setup › Inbound
 Log says which parameter found the click and how many clicks carry it, or
-why none was found. Only
-`gpb.php` does this; the pixels and `pb.php` read the SubID and cookies as
-before.
+why none was found.
+
+### The other postbacks and pixels
+
+Since 1.9.81 the per-campaign postback and the global pixels read an unfilled
+SubID the same way and look the click up by the same ad click ids:
+
+- **`pb.php`** answers as `gpb.php` does (`404`, `409` or `503`), and the
+  click must also be one of its own campaign's (`acip`), as a click its SubID
+  names must: `404 Unknown subid for this campaign` otherwise.
+- **`gpx.php` and `upx.php`** first try the visitor's tracking cookie, then
+  the ad click id, then, where your account has it on, the
+  [same-IP fallback](14-users.md#same-ip-fallback-user_pref_same_ip_fallback) as before. A pixel answers its
+  visitor the same either way, so an id that finds no click, or more than
+  one, records nothing by itself; the Inbound Log says why.
+- **`px.php` and `cb202.php`** are not asked: neither reads a SubID a network
+  fills. `px.php`'s click is the one the visitor's cookie names, and
+  ClickBank's tracking code is filled by Prosper202's own HopLink redirect.
 
 ## Postback authentication
 
@@ -417,6 +499,11 @@ the form checks it, a pixel that stops being a Postback keeps no correction
 URL, and a removed pixel is erased with its correction URL. Beyond the form:
 the type must be one `202_pixel_types` names, and a Postback's URLs must be
 http(s) — the only ones the postback sender calls.
+
+**A visitor who refused consent** (`p202_consent`) is sent none of an
+account's pixels, of any type, and none of its postbacks: the conversion
+counts, and its outbox rows are `withheld` with the reason
+([destinations.md](../features/destinations.md#privacy-and-personal-data)).
 
 **Where a postback goes.** This server sends a Postback pixel's URLs (and its
 correction URLs) itself, on behalf of whoever saved the pixel and of anyone

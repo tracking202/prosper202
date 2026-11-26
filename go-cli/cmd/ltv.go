@@ -20,7 +20,12 @@ var ltvCmd = &cobra.Command{
 		"engagement, subscriptions, companies, products) and the writes the API offers — customer and\n" +
 		"company records (`ltv customer`, `ltv company`), revenue, engagement events, subscriptions and\n" +
 		"products pushed from other systems, custom fields, outbound webhooks and integrations.\n\n" +
-		"LTV writes cannot be staged: under --staged they are refused before anything is sent.",
+		"LTV writes cannot be staged: under --staged they are refused before anything is sent.\n\n" +
+		"Each part asks a scope of the key and a permission of its user's role, as the LTV pages do:\n" +
+		"reads ltv:read and campaign data; webhooks and integrations, to read, also API integrations;\n" +
+		"customer, company and product writes ltv:write and Setup; revenue, events and subscriptions\n" +
+		"sent in ltv:write and campaign data; fields, webhooks and integrations, to write, ltv:write\n" +
+		"and API integrations. `p202 whoami` shows which parts this key may use (`ltv`).",
 }
 
 // Values the LTV endpoints accept: MysqlLtvRepository's breakdowns(),
@@ -178,7 +183,24 @@ func ltvGet(path string, params map[string]string) error {
 	if err != nil {
 		return ltvFilterError(err)
 	}
-	render(data)
+	return render(data)
+}
+
+// ltvGetPage is ltvGet for a read that pages with --limit and --offset and answers no pagination: under a table it
+// says when rows remain (notePagedRows).
+func ltvGetPage(cmd *cobra.Command, path string, params map[string]string) error {
+	c, err := api.NewFromConfig()
+	if err != nil {
+		return err
+	}
+	data, err := c.Get(path, params)
+	if err != nil {
+		return ltvFilterError(err)
+	}
+	if err := render(data); err != nil {
+		return err
+	}
+	notePagedRows(cmd, data)
 	return nil
 }
 
@@ -266,8 +288,7 @@ var ltvCustomersCmd = &cobra.Command{
 			if err != nil {
 				return ltvFilterError(err)
 			}
-			render(data)
-			return nil
+			return render(data)
 		}
 		rows, err := fetchAllRowsPaged(c, "ltv/customers", params, ltvMaxPage)
 		if err != nil {
@@ -280,8 +301,7 @@ var ltvCustomersCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("encoding %d customers: %w", len(rows), err)
 		}
-		render(encoded)
-		return nil
+		return render(encoded)
 	},
 }
 
@@ -296,7 +316,7 @@ var ltvBreakdownCmd = &cobra.Command{
 		if v := getStringFlagOrDefault(cmd, "ltv", "by"); v != "" {
 			params["by"] = v
 		}
-		return ltvGet("ltv/breakdown", params)
+		return ltvGetPage(cmd, "ltv/breakdown", params)
 	},
 }
 
@@ -350,7 +370,7 @@ var ltvProductsCmd = &cobra.Command{
 		if err := collectLtvPaging(cmd, params); err != nil {
 			return err
 		}
-		return ltvGet("ltv/products", params)
+		return ltvGetPage(cmd, "ltv/products", params)
 	},
 }
 
@@ -359,18 +379,26 @@ var ltvAbmCmd = &cobra.Command{
 	Short: "ABM account view — companies ranked by engagement with scores, depth metrics, revenue and MRR",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		params := map[string]string{}
-		if err := collectLtvPaging(cmd, params); err != nil {
+		company := getStringFlagOrDefault(cmd, "ltv", "company")
+		path := "ltv/abm"
+		if company != "" {
+			// One company's detail is not paged, and the server refuses
+			// limit and offset there rather than ignore them.
+			for _, f := range []string{"limit", "offset"} {
+				if cmd.Flags().Changed(f) {
+					return validationError("--%s pages the company list; it does nothing with --company", f).
+						WithHint("Drop --company to page the ranked list, or drop --%s to show %q.", f, company)
+				}
+			}
+			params["name"] = company
+			path = "ltv/abm/company"
+		} else if err := collectLtvPaging(cmd, params); err != nil {
 			return err
 		}
 		if v := getStringFlagOrDefault(cmd, "ltv", "days"); v != "" {
 			params["days"] = v
 		}
-		path := "ltv/abm"
-		if company := getStringFlagOrDefault(cmd, "ltv", "company"); company != "" {
-			params["name"] = company
-			path = "ltv/abm/company"
-		}
-		return ltvGet(path, params)
+		return ltvGetPage(cmd, path, params)
 	},
 }
 
@@ -391,13 +419,14 @@ var ltvEngagementCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(engagement)
+		if err := render(engagement); err != nil {
+			return err
+		}
 		nextOffer, err := c.Get(fmt.Sprintf("ltv/customers/%s/next-offer", args[0]), nil)
 		if err != nil {
 			return err
 		}
-		render(nextOffer)
-		return nil
+		return render(nextOffer)
 	},
 }
 

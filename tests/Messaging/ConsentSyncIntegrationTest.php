@@ -578,13 +578,78 @@ final class ConsentSyncIntegrationTest extends TestCase
         $first = ConsentPolicy::deliveryState($db, self::USER_ID)['version'];
         $this->assertGreaterThanOrEqual($before, $first, 'at least the Unix time of the change');
 
-        // The database comes back from a backup taken before that change.
+        // That change was made a minute ago and delivered; the receiver holds
+        // its version. Then the database comes back from an older backup.
+        $this->assertTrue($db->query('UPDATE 202_users_pref SET consent_version = consent_version - 60 WHERE user_id = ' . self::USER_ID));
+        $delivered = ConsentPolicy::deliveryState($db, self::USER_ID)['version'];
         $this->assertTrue($db->query('UPDATE 202_users_pref SET consent_version = 3, consent_acked_version = 3 WHERE user_id = ' . self::USER_ID));
         $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'email_marketing', 'denied', 'settings'));
-        $this->assertGreaterThanOrEqual($first, ConsentPolicy::deliveryState($db, self::USER_ID)['version']);
+        $this->assertGreaterThan($delivered, ConsentPolicy::deliveryState($db, self::USER_ID)['version'],
+            'above every version assigned before the backup, so the receiver does not ignore the denial');
         $this->assertTrue(ConsentPolicy::record($db, self::USER_ID, 'analytics', 'denied', 'settings'));
         $row = $db->query('SELECT consent_version, analytics_revoked_version FROM 202_users_pref WHERE user_id = ' . self::USER_ID)->fetch_row();
         $this->assertSame($row[0], $row[1], 'the revocation is the version of the denial');
+    }
+
+    /**
+     * Every writer of the version, from a version a restore set back and from
+     * one ahead of the clock (several changes in one second): a write that
+     * moves it moves it above the stored one and to at least the Unix time, a
+     * write that changes no consent leaves it, and the acknowledgement is
+     * only the receiver's to move.
+     *
+     * @dataProvider startingVersions
+     */
+    public function test_every_consent_writer_moves_the_version_forward(int $offsetFromNow): void
+    {
+        $db = self::$db;
+        $start = time() + $offsetFromNow;
+        $this->assertTrue($db->query("UPDATE 202_users_pref SET consent_version = $start, consent_acked_version = 3,"
+            . ' analytics_revoked_version = 0 WHERE user_id = ' . self::USER_ID));
+
+        $writes = [
+            'outside the EU/UK'        => [fn () => ConsentPolicy::rememberGeo($db, self::USER_ID, false), false, false],
+            'grant email'              => [fn () => ConsentPolicy::record($db, self::USER_ID, 'email_marketing', 'granted', 'settings'), true, false],
+            'first seen in the EU/UK'  => [fn () => ConsentPolicy::rememberGeo($db, self::USER_ID, true), true, true],
+            'seen in the EU/UK again'  => [fn () => ConsentPolicy::rememberGeo($db, self::USER_ID, true), false, false],
+            'grant analytics'          => [fn () => ConsentPolicy::record($db, self::USER_ID, 'analytics', 'granted', 'prompt'), true, false],
+            'grant analytics again'    => [fn () => ConsentPolicy::record($db, self::USER_ID, 'analytics', 'granted', 'settings'), true, false],
+            'deny analytics'           => [fn () => ConsentPolicy::record($db, self::USER_ID, 'analytics', 'denied', 'settings'), true, true],
+            'deny email'               => [fn () => ConsentPolicy::record($db, self::USER_ID, 'email_marketing', 'denied', 'settings'), true, false],
+        ];
+        foreach ($writes as $name => [$write, $moves, $revokes]) {
+            [$version, $acked, $revoked] = $this->versions();
+            $now = time();
+            $this->assertTrue($write(), $name);
+            [$after, $ackedAfter, $revokedAfter] = $this->versions();
+            if ($moves) {
+                $this->assertGreaterThan($version, $after, "$name: above the stored version");
+                $this->assertGreaterThanOrEqual($now, $after, "$name: at least the Unix time of the change");
+            } else {
+                $this->assertSame($version, $after, "$name: no consent changed, so no new version");
+            }
+            $this->assertSame($revokes ? $after : $revoked, $revokedAfter, "$name: the revocation mark");
+            $this->assertSame($acked, $ackedAfter, "$name: only the receiver's acknowledgement moves it");
+        }
+    }
+
+    /** @return array<string, array{int}> */
+    public static function startingVersions(): array
+    {
+        return [
+            'set back by a restored backup' => [-86400 * 30],
+            'ahead of the clock'            => [5],
+        ];
+    }
+
+    /** @return array{int, int, int} consent_version, consent_acked_version, analytics_revoked_version */
+    private function versions(): array
+    {
+        $result = self::$db->query('SELECT consent_version, consent_acked_version, analytics_revoked_version FROM 202_users_pref WHERE user_id = ' . self::USER_ID);
+        $this->assertNotFalse($result, (string) self::$db->error);
+        $row = $result->fetch_row();
+        $this->assertIsArray($row);
+        return array_map('intval', $row);
     }
 
     private function consentPending(): bool

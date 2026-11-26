@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Exception;
 
+use Api\V3\ErrorCode;
 use Api\V3\HttpException;
 use Prosper202\AdPlatforms\AdPlatformUnavailable;
 
@@ -57,5 +58,10 @@ final class UpstreamUnavailableException extends HttpException
     public function getDetails(): array
     {
         return $this->details;
+    }
+
+    protected function defaultErrorCode(): string
+    {
+        return ErrorCode::UPSTREAM_UNAVAILABLE;
     }
 }

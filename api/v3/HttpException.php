@@ -12,6 +12,8 @@ namespace Api\V3;
  */
 class HttpException extends \RuntimeException
 {
+    private ?string $namedCode = null;
+
     public function __construct(string $message, int $httpStatus = 500, ?\Throwable $previous = null)
     {
         parent::__construct($message, $httpStatus, $previous);
@@ -20,5 +22,27 @@ class HttpException extends \RuntimeException
     public function getHttpStatus(): int
     {
         return $this->getCode();
+    }
+
+    /** Names the answer's ErrorCode, more specific than its status's. */
+    public function coded(string $errorCode): static
+    {
+        if (!ErrorCode::isKnown($errorCode)) {
+            throw new \LogicException($errorCode . ' is not in ErrorCode');
+        }
+        $this->namedCode = $errorCode;
+
+        return $this;
+    }
+
+    /** The ErrorCode the answer carries: the one named, else the subclass's, else the status's. */
+    public function errorCode(): string
+    {
+        return $this->namedCode ?? $this->defaultErrorCode();
+    }
+
+    protected function defaultErrorCode(): string
+    {
+        return ErrorCode::forStatus($this->getHttpStatus());
     }
 }

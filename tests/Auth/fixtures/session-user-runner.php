@@ -29,7 +29,12 @@
  *       P202_SU_NAME, P202_SU_PASS, P202_SU_PERMISSION (call:may),
  *       P202_SU_GENERATION (the session generation a new signed-in session
  *       holds; none when unset), P202_SU_SESSION_ID (resume the session an
- *       earlier request left, as the same browser's next request)
+ *       earlier request left, as the same browser's next request),
+ *       P202_SU_SHOWN_SECRET (the session's ShownSettings secret),
+ *       P202_SU_OPEN_FIRST (a JSON object of GET values: before a POST, the
+ *       page is opened with them in a run of its own, and each settings
+ *       form's version it rendered is posted unless the POST names one; with
+ *       P202_SU_SESSION_ID the page is opened in that session)
  *
  * Prints what the page printed, then one line: "@@RESULT " and a JSON object
  * with the status, whether 202-access-denied.php answered, the session's id
@@ -63,6 +68,22 @@ if ($call === null && ($target === '' || !is_file($root . '/' . $target) || str_
 $host = (string) (getenv('P202_TEST_DB_HOST') ?: '127.0.0.1');
 $port = (string) (getenv('P202_TEST_DB_PORT') ?: '');
 $post = json_decode((string) (getenv('P202_SU_POST') ?: '{}'), true, 8, JSON_THROW_ON_ERROR);
+$shownSecret = (string) (getenv('P202_SU_SHOWN_SECRET') ?: '');
+$openFirst = (string) (getenv('P202_SU_OPEN_FIRST') ?: '');
+if ($openFirst !== '' && $post !== [] && !str_starts_with($target, 'call:')) {
+    $resuming = (string) getenv('P202_SU_SESSION_ID') !== '';
+    if ($resuming && $shownSecret !== '') {
+        fwrite(STDERR, "P202_SU_SHOWN_SECRET seeds a new session; a resumed one keeps the secret it has\n");
+        exit(2);
+    }
+    require_once dirname(__DIR__, 2) . '/Setup/fixtures/shown-versions.php';
+    // A resumed session is opened in itself, as the same browser would, and keeps the secret the page made.
+    $shownSecret = $shownSecret !== '' || $resuming ? $shownSecret : bin2hex(random_bytes(32));
+    $post = p202_runner_post_with_versions($post, p202_runner_shown_versions(__FILE__, $target, [
+        'P202_SU_POST' => '{}', 'P202_SU_GET' => $openFirst, 'P202_SU_OPEN_FIRST' => '',
+        'P202_SU_SHOWN_SECRET' => $shownSecret,
+    ]));
+}
 
 $path = '/' . ($call === null ? $target : '202-account/index.php');
 $_SERVER = array_merge($_SERVER, [
@@ -117,7 +138,7 @@ if ($resume !== '') {
         'account_owner_id' => $userId,
         'valid_key' => true,
         'token' => $runnerToken,
-    ];
+    ] + ($shownSecret !== '' ? ['p202_shown_secret' => $shownSecret] : []);
     // The generation the sign-in stored; none, as a session from before
     // 1.9.79 holds, unless one is given.
     $generation = getenv('P202_SU_GENERATION');

@@ -42,7 +42,8 @@ entry are in this file's git history.
 ### 1. Unchecked return values after fallible calls
 - Check every call that signals failure by its return value:
   `$stmt->execute()`, `prepare()`, `get_result()`, `store_result()`,
-  `$db->query()`, `_mysqli_query()`, `json_encode()`, Go's `json.Marshal`.
+  `$db->query()`, `_mysqli_query()`, `json_encode()`, `curl_setopt()`,
+  Go's `json.Marshal`.
   `if (!$stmt->execute()) { $stmt->close(); throw ...; }`. Inside a
   transaction an unchecked failure commits a partial operation.
 - The tell is a false that is indistinguishable from a legitimate empty
@@ -71,7 +72,8 @@ entry are in this file's git history.
   since a limit is no verdict on the code.
 - Checks: `UncheckedGetResultTest` (`StatementHelpers::resultOf()`),
   `MysqliQueryResultIsNotDiscardedTest`, `MysqliQueryResultIsTestedTest`
-  (every `_mysqli_query()` and `->query(` on `$db`, `$this->db`, `$db?->`).
+  (every `_mysqli_query()` and `->query(` on `$db`, `$this->db`, `$db?->`),
+  `CurlOptionsAreCheckedTest` (options only through `CurlOptions::set()`).
   The v3 API logs every 500 with `p202UncaughtLogLine()`.
 
 ### 2. Dead code referencing nonexistent schema
@@ -203,7 +205,8 @@ answer in `reference-agent.sh`: Agent Evals runs only after landing
   commit (`p202WithHeldCacheWrites()`). When a lookup's answer changes,
   change its key subject and pin the old key unserved. A namespace is a
   claim about whose values and when: `systemHash()` names the install
-  (directory and database) with no shared fallback
+  (directory, database and `InstallIdCache`'s id, so a reinstall in place
+  starts cold) with no shared fallback
   (`SystemHashNamesTheDatabaseTest`), and click-path keys carry the code
   version (`LookupRepositoryFactory::cacheNamespace()`,
   `CacheKeyNamespaceTest`). `Ipv6RowJoinIsGuardedTest` holds every join of
@@ -259,8 +262,11 @@ skip duplicates (`p202 conversion import`) owes the same comparison.
 ### 16. On a public endpoint, identity is what the attacker cannot choose
 Split every value a security decision keys on into what the peer proved and
 what the request claimed.
-- Rate limits key on `REMOTE_ADDR`; the `X-Forwarded-For` value is for
-  display. A dedupe hash covers the full body. Aggregates over rows anyone
+- Rate limits key on `VisitorIp::fromServer()`: REMOTE_ADDR, or behind a
+  proxy `P202_TRUSTED_PROXIES` lists (`TrustedProxies`; Cloudflare's ranges
+  when unset), its X-Forwarded-For or Forwarded chain read from the right,
+  the two never merged (`ForwardedIpHeaderReadTest`). A dedupe hash covers
+  the full body. Aggregates over rows anyone
   can insert count only verified rows by default.
 - Host and scheme: ask who will follow the URL. Back to the requester:
   `TrackingBaseUrl::forRequest()` / `domainForResponse()`. Sent to someone
@@ -447,9 +453,11 @@ A row of another account named by id reads as naming nothing.
   by the expression you select, count a none row by the same NULL, and give
   a row whose record is not the account's no action rather than a different
   one. Click-path reads go through `ClickPathReads`.
-- Writes too: every UPDATE and DELETE in served pages carries
-  `user_id = <the account>` in its own WHERE, or a listed check that runs
-  first (`AccountScopedWriteTest`; SQL only).
+- Writes too: every UPDATE and DELETE in served pages and in the classes
+  (`202-config/`, `api/v3/`) carries `user_id = <the account>` in its own
+  WHERE, or is listed with the check that runs first: a guard method the
+  test holds to running first (`CallsBefore`), or a reviewer's reason,
+  which only shrinks (`AccountScopedWriteTest`; SQL only).
 - When a fix closes a hole, ask what the hole left behind. A sign with two
   origins is a report, not a repair (`TrafficSourceOwners`: moved only on an
   admin's say-so, never in the upgrade). Only an act that is right
@@ -563,6 +571,11 @@ unconfirmed commit is `unconfirmed`, never `retryable` (#13).
   in their order (`TrafficSourceOwnersIntegrationTest`).
 - A confirmation carries what the operator was shown, and the server
   compares with that (`owner_user_id`, `repair_to_user_id`).
+- A read made before the lock decides nothing the lock protects. The
+  payment refunds capped at a sale read before the writer locked the click,
+  so a sale still committing read as none and its refund took the click
+  below 0 (R4CE). The writer applies the cap under the lock (`cap_at_sale`;
+  `ClickBankInsIntegrationTest` holds the lock while the refund waits).
 - Not seen: statements on the raw handle (`writeConnection()`), reads
   `isPlainRead()` does not recognise, and locks other than a click's.
 

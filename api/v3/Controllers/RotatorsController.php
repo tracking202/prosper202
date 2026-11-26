@@ -8,6 +8,8 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\ListQuery;
+use Api\V3\Support\PageRows;
 use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\QueryInt;
@@ -79,19 +81,55 @@ class RotatorsController
         return NeverMatches::account(new \Prosper202\Database\Connection($this->db), $this->userId);
     }
 
+    /** What a rotator list may be filtered by, as Controller::list() reads filters. */
+    private const array LIST_FIELDS = [
+        'id'               => ['type' => 'i'],
+        'public_id'        => ['type' => 'i'],
+        'name'             => ['type' => 's'],
+        'default_url'      => ['type' => 's'],
+        'default_campaign' => ['type' => 'i'],
+        'default_lp'       => ['type' => 'i'],
+        'auto_monetizer'   => ['type' => 's'],
+    ];
+
+    /** What `sort=` may name, each its own column. */
+    private const array LIST_SORTS = ['id' => 'id', 'name' => 'name', 'public_id' => 'public_id'];
+
     public function list(array $params): array
     {
         $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
         $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
 
-        $stmt = $this->prepare('SELECT COUNT(*) as total FROM 202_rotators WHERE user_id = ?');
-        $this->bind($stmt, 'i', $this->userId);
+        $where = ['user_id = ?'];
+        $binds = [$this->userId];
+        $types = 'i';
+        foreach (ListQuery::filters($params, self::LIST_FIELDS) as $field => $values) {
+            [$sql, $filterBinds, $filterTypes] = ListQuery::anyOf($field, $values, self::LIST_FIELDS[$field]['type']);
+            $where[] = $sql;
+            array_push($binds, ...$filterBinds);
+            $types .= $filterTypes;
+        }
+        $search = ListQuery::searchPattern($params);
+        if ($search !== null) {
+            [$sql, $searchBinds, $searchTypes] = ListQuery::searchCondition(['name'], $search);
+            $where[] = $sql;
+            array_push($binds, ...$searchBinds);
+            $types .= $searchTypes;
+        }
+        $orderBy = ListQuery::orderBy($params, self::LIST_SORTS, 'id') ?? 'id DESC';
+        $whereClause = implode(' AND ', $where);
+
+        $stmt = $this->prepare("SELECT COUNT(*) as total FROM 202_rotators WHERE $whereClause");
+        $this->bind($stmt, $types, ...$binds);
         $this->execute($stmt, 'Count query failed');
         $total = (int)$this->resultOf($stmt, 'Count query failed')->fetch_assoc()['total'];
         $stmt->close();
 
-        $stmt = $this->prepare('SELECT id, public_id, user_id, name, default_url, default_campaign, default_lp, auto_monetizer FROM 202_rotators WHERE user_id = ? ORDER BY id DESC LIMIT ? OFFSET ?');
-        $this->bind($stmt, 'iii', $this->userId, $limit, $offset);
+        $stmt = $this->prepare(
+            'SELECT id, public_id, user_id, name, default_url, default_campaign, default_lp, auto_monetizer'
+            . " FROM 202_rotators WHERE $whereClause ORDER BY $orderBy LIMIT ? OFFSET ?"
+        );
+        $this->bind($stmt, $types . 'ii', ...[...$binds, PageRows::fetchLimit($limit), $offset]);
         $this->execute($stmt, 'List query failed');
         $result = $this->resultOf($stmt, 'List query failed');
         $rows = [];
@@ -99,8 +137,9 @@ class RotatorsController
             $rows[] = $row;
         }
         $stmt->close();
+        [$rows, $truncated] = PageRows::cut($rows, $limit);
 
-        return ['data' => $rows, 'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset]];
+        return ['data' => $rows, 'truncated' => $truncated, 'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset]];
     }
 
     public function get(int $id): array
@@ -231,9 +270,44 @@ class RotatorsController
         }
     }
 
+    /**
+     * A new redirector. With `rules` (a set, as PUT /rotators/{id}/rules
+     * takes it, each rule without an id) the redirector and its rules are
+     * written in one transaction: a rule refused leaves no redirector.
+     */
     public function create(array $payload): array
     {
         \Api\V3\Support\PayloadKeys::refuseUnknown($payload, [...self::ROTATOR_FIELDS, 'public_id', ...self::READ_ONLY], 'a redirector');
+        if (!array_key_exists('rules', $payload)) {
+            $id = $this->insertRotator($payload);
+        } else {
+            $sent = $this->sentRules(null, $payload, true);
+            $fields = $payload;
+            unset($fields['rules']);
+            $id = $this->transaction(function () use ($fields, $sent): int {
+                $id = $this->insertRotator($fields);
+                // The row was just written for this account; the lock is the
+                // owner check every write of rules runs after.
+                $this->lockRotator($id);
+                $plan = $this->planRuleSet($id, $sent, static function (): void {
+                });
+                $this->writeRuleSet($id, $plan);
+
+                return $id;
+            });
+        }
+
+        // The rotator row exists; only the read-back can still fail.
+        try {
+            return $this->get($id);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException('rotator', $e);
+        }
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function insertRotator(array $payload): int
+    {
         self::refuseChangedReadOnly($payload, null, self::READ_ONLY);
         $name = self::ruleOrRotatorName($payload, 'name', true);
         $default = $this->destination($payload, self::DEFAULT_KEYS, false);
@@ -265,15 +339,10 @@ class RotatorsController
         $stmt = $this->prepare('INSERT INTO 202_rotators (public_id, user_id, name, default_url, default_campaign, default_lp) VALUES (?, ?, ?, ?, ?, ?)');
         $this->bind($stmt, 'iissii', $publicId, $this->userId, $name, $default['url'], $default['campaign'], $default['lp']);
         $this->execute($stmt, 'Create failed');
-        $id = $stmt->insert_id;
+        $id = (int) $stmt->insert_id;
         $stmt->close();
 
-        // The rotator row exists; only the read-back can still fail.
-        try {
-            return $this->get($id);
-        } catch (\Throwable $e) {
-            throw new WriteCommittedException('rotator', $e);
-        }
+        return $id;
     }
 
     public function update(int $id, array $payload): array
@@ -282,43 +351,71 @@ class RotatorsController
         // public_id is what the redirects resolve: it was ignored here, so a
         // caller who sent a new one believed the links had moved.
         $current = (array) $this->get($id)['data'];
-        self::refuseChangedReadOnly($payload, $current, [...self::READ_ONLY, 'public_id']);
-
-        $sets = [];
-        $binds = [];
-        $types = '';
-
-        if (array_key_exists('name', $payload)) {
-            $sets[] = 'name = ?';
-            $binds[] = self::ruleOrRotatorName($payload, 'name', true);
-            $types .= 's';
-        }
-        $namesDefault = array_intersect_key($payload, array_flip(self::DEFAULT_KEYS)) !== [];
-        $default = $this->plannedDefault($payload, $current);
-        if ($default !== null) {
-            $sets[] = 'default_url = ?, default_campaign = ?, default_lp = ?, auto_monetizer = NULL';
-            array_push($binds, $default['url'], $default['campaign'], $default['lp']);
-            $types .= 'sii';
-        }
-
-        if (empty($sets)) {
-            if ($namesDefault) {
+        $planned = $this->plannedFields($payload, $current);
+        if ($planned['values'] === []) {
+            if (array_intersect_key($payload, array_flip(self::DEFAULT_KEYS)) !== []) {
                 return $this->get($id); // the default restated, nothing else named
             }
             throw new ValidationException('No fields to update');
         }
+        $this->writeFields($id, $planned);
 
-        $binds[] = $id;
-        $types .= 'i';
-        $binds[] = $this->userId;
-        $types .= 'i';
+        return $this->get($id);
+    }
+
+    /**
+     * What an update's body changes on the redirector $current holds (as
+     * get() answers it), checked: its read-only keys held to $current's
+     * values, a name, a default (plannedDefault()). `values` holds the
+     * columns it writes, empty when it writes none.
+     *
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $current
+     * @return array{values: array<string, mixed>}
+     */
+    private function plannedFields(array $payload, array $current): array
+    {
+        self::refuseChangedReadOnly($payload, $current, [...self::READ_ONLY, 'public_id']);
+        $values = [];
+        if (array_key_exists('name', $payload)) {
+            $values['name'] = self::ruleOrRotatorName($payload, 'name', true);
+        }
+        $default = $this->plannedDefault($payload, $current);
+        if ($default !== null) {
+            $values += ['default_url' => $default['url'], 'default_campaign' => $default['campaign'],
+                'default_lp' => $default['lp'], 'auto_monetizer' => null];
+        }
+
+        return ['values' => $values];
+    }
+
+    /** @param array{values: array<string, mixed>} $planned plannedFields()'s */
+    private function writeFields(int $id, array $planned): void
+    {
+        $values = $planned['values'];
+        if ($values === []) {
+            return;
+        }
+        $sets = [];
+        $binds = [];
+        $types = '';
+        if (array_key_exists('name', $values)) {
+            $sets[] = 'name = ?';
+            $binds[] = $values['name'];
+            $types .= 's';
+        }
+        if (array_key_exists('default_url', $values)) {
+            $sets[] = 'default_url = ?, default_campaign = ?, default_lp = ?, auto_monetizer = NULL';
+            array_push($binds, $values['default_url'], $values['default_campaign'], $values['default_lp']);
+            $types .= 'sii';
+        }
+        array_push($binds, $id, $this->userId);
+        $types .= 'ii';
 
         $stmt = $this->prepare('UPDATE 202_rotators SET ' . implode(', ', $sets) . ' WHERE id = ? AND user_id = ?');
         $this->bind($stmt, $types, ...$binds);
         $this->execute($stmt, 'Update failed');
         $stmt->close();
-
-        return $this->get($id);
     }
 
     /**
@@ -974,60 +1071,110 @@ class RotatorsController
      * With $dryRun nothing is written: the answer is the set as it would be
      * stored, with what would change.
      *
+     * An empty set ({"rules": []}) removes every rule, so every visitor goes
+     * to the default. The body may also carry the redirector's own fields,
+     * as PUT /rotators/{id} takes them (name, default_*, and the read-only
+     * keys GET answers, held to their values): they are written in the same
+     * transaction, so the redirector and its rules change together or not
+     * at all, with the fields' problems and the rules' refused in one 422.
+     * The answer then carries the redirector as written (`rotator`, without
+     * its rules).
+     *
      * @param array<string, mixed> $payload
      * @param callable(): void $mayRemoveRules refuses a caller who may not remove a rule
      */
     public function setRules(int $rotatorId, array $payload, bool $dryRun, callable $mayRemoveRules): array
     {
-        PayloadKeys::refuseUnknown($payload, ['rules'], 'a redirector rule set');
-        $sent = $this->sentRules($rotatorId, $payload);
+        PayloadKeys::refuseUnknown($payload, ['rules', ...self::ROTATOR_FIELDS, 'public_id', ...self::READ_ONLY], 'a redirector rule set');
+        $sent = $this->sentRules($rotatorId, $payload, true);
+        $fields = $payload;
+        unset($fields['rules']);
 
         $account = $this->account();
 
         if ($dryRun) {
-            $plan = $this->planRuleSet($rotatorId, $sent, $mayRemoveRules);
+            [$current, $planned, $fieldErrors] = $this->plannedFieldsOf($rotatorId, $fields);
+            $plan = $this->planRuleSet($rotatorId, $sent, $mayRemoveRules, $fieldErrors);
             $rules = self::plannedRules($rotatorId, $plan['rules']);
+            $data = ['dry_run' => true, 'rotator_id' => $rotatorId, 'rules' => $rules, 'changes' => $plan['changes']];
+            if ($planned !== null) {
+                $rotator = $current;
+                unset($rotator['rules']);
+                $data['rotator'] = $planned['values'] + $rotator;
+            }
 
-            return ['data' => [
-                'dry_run' => true,
-                'rotator_id' => $rotatorId,
-                'rules' => $rules,
-                'changes' => $plan['changes'],
-            ]] + $this->ruleMeta($rules, $account);
+            return ['data' => $data] + $this->ruleMeta($rules, $account);
         }
 
-        $answer = $this->transaction(function () use ($mayRemoveRules, $rotatorId, $sent): array {
+        $answer = $this->transaction(function () use ($mayRemoveRules, $rotatorId, $sent, $fields): array {
             // Before the first plain read, so the set is planned from the
             // rules as the last writer left them.
             $this->lockRotator($rotatorId);
-            $plan = $this->planRuleSet($rotatorId, $sent, $mayRemoveRules);
+            [, $planned, $fieldErrors] = $this->plannedFieldsOf($rotatorId, $fields);
+            $plan = $this->planRuleSet($rotatorId, $sent, $mayRemoveRules, $fieldErrors);
+            if ($planned !== null) {
+                $this->writeFields($rotatorId, $planned);
+            }
             $this->writeRuleSet($rotatorId, $plan);
             // Read back under the lock: once it is let go, a writer waiting on
             // it can write before this answers, and the answer would pair that
             // writer's rules with this set's changes.
-            $rules = $this->get($rotatorId)['data']['rules'];
+            $rotator = (array) $this->get($rotatorId)['data'];
+            $data = ['dry_run' => false, 'rotator_id' => $rotatorId, 'rules' => $rotator['rules'], 'changes' => $plan['changes']];
+            if ($planned !== null) {
+                unset($rotator['rules']);
+                $data['rotator'] = $rotator;
+            }
 
-            return ['data' => ['dry_run' => false, 'rotator_id' => $rotatorId, 'rules' => $rules, 'changes' => $plan['changes']]];
+            return ['data' => $data];
         });
 
         return $answer + $this->ruleMeta($answer['data']['rules'], $account);
     }
 
     /**
-     * The rules a set's body sends, its shape checked before anything is read.
+     * A set's body's redirector fields planned: the redirector as it is,
+     * what the fields change (null when the body sends none), and their
+     * problems, which planRuleSet() refuses with the rules'.
+     *
+     * @param array<string, mixed> $fields
+     * @return array{0: array<string, mixed>, 1: array{values: array<string, mixed>}|null, 2: array<string, string>}
+     */
+    private function plannedFieldsOf(int $rotatorId, array $fields): array
+    {
+        $current = (array) $this->get($rotatorId)['data'];
+        if ($fields === []) {
+            return [$current, null, []];
+        }
+        try {
+            return [$current, $this->plannedFields($fields, $current), []];
+        } catch (ValidationException $e) {
+            return [$current, null, $e->getFieldErrors() === [] ? ['rotator' => $e->getMessage()] : $e->getFieldErrors()];
+        }
+    }
+
+    /**
+     * The rules a set's body sends, its shape checked before anything is
+     * read. $mayBeEmpty is the API's set, where an empty one removes every
+     * rule; Setup › Redirectors' save always has one. $rotatorId is null for
+     * a redirector being created.
      *
      * @param array<string, mixed> $payload
      * @return list<array<string, mixed>>
      */
-    private function sentRules(int $rotatorId, array $payload): array
+    private function sentRules(?int $rotatorId, array $payload, bool $mayBeEmpty = false): array
     {
         PayloadKeys::refuse(PayloadKeys::listErrors($payload, 'rules', [...self::RULE_FIELDS, ...self::RULE_READ_ONLY], 'a redirector rule'));
         $sent = $payload['rules'] ?? null;
-        if (!is_array($sent) || $sent === []) {
+        if (!is_array($sent) || (!$mayBeEmpty && $sent === [])) {
+            $stored = $rotatorId === null ? '' : ' (GET /rotators/' . $rotatorId . '/rules answers the set as stored)';
             throw new ValidationException('A rule set needs its rules', [
-                'rules' => 'Send every rule the redirector is to have, in the order they are tried (GET /rotators/'
-                    . $rotatorId . '/rules answers the set as stored). A set has at least one rule, as on '
-                    . 'Setup › Redirectors: to send every visitor to the default, set each rule\'s status to 0',
+                'rules' => $mayBeEmpty
+                    ? 'Send every rule the redirector is to have, as a list, in the order they are tried' . $stored
+                        . '; an empty list, [], removes every rule'
+                    : 'Send every rule the redirector is to have, in the order they are tried' . $stored
+                        . '. A set has at least one rule, as on Setup › Redirectors: to send every visitor to the '
+                        . 'default, set each rule\'s status to 0',
             ]);
         }
         if (count($sent) > self::MAX_RULES) {
@@ -1097,17 +1244,19 @@ class RotatorsController
     /**
      * The set sent, checked rule by rule against the redirector's rules, and
      * what it changes. Every rule's refusal is reported with the rule's
-     * place in front of it (`rules.1.redirects.0.redirect_campaign`).
+     * place in front of it (`rules.1.redirects.0.redirect_campaign`), with
+     * $alsoRefused, the problems of what the body sends beside the set.
      *
      * @param list<array<string, mixed>> $sent
      * @param callable(): void $mayRemoveRules
+     * @param array<string, string> $alsoRefused
      * @return array{rules: list<array<string, mixed>>, removed: list<array<string, mixed>>, changes: array<string, mixed>}
      */
-    private function planRuleSet(int $rotatorId, array $sent, callable $mayRemoveRules): array
+    private function planRuleSet(int $rotatorId, array $sent, callable $mayRemoveRules, array $alsoRefused = []): array
     {
         $this->rewritten = [];
         $current = $this->get($rotatorId)['data']['rules'];
-        $errors = [];
+        $errors = $alsoRefused;
         $planned = [];
         $kept = [];
         foreach ($sent as $i => $rule) {

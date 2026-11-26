@@ -163,20 +163,19 @@ class ClickServerKeyValidator
             error_log('ClickServerKeyValidator: curl_init() failed');
             return null;
         }
-
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query(['key' => $key]));
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT_MS, $connectTimeoutMs);
-        curl_setopt($ch, CURLOPT_TIMEOUT_MS, $timeoutMs);
-        // Verify the TLS certificate so the validation response cannot be forged
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, self::REQUEST_HEADERS);
-
-        $response = curl_exec($ch);
+        $response = \Prosper202\Http\FixedHostRoute::exec($ch, [
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => http_build_query(['key' => $key]),
+            CURLOPT_CONNECTTIMEOUT_MS => $connectTimeoutMs,
+            CURLOPT_TIMEOUT_MS => $timeoutMs,
+            // Verify the TLS certificate so the validation response cannot be forged
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_HTTPHEADER => self::REQUEST_HEADERS,
+        ]);
         $failed = curl_errno($ch) || $response === false;
         $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         $redirect = curl_getinfo($ch, CURLINFO_REDIRECT_URL);

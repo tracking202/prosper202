@@ -18,6 +18,7 @@ use Prosper202\Conversion\Ledger\ReversalException;
 use Prosper202\Conversion\Ledger\RowCurrency;
 use Prosper202\Conversion\Ledger\SourceRef;
 use Prosper202\Conversion\Ledger\SupersededReason;
+use Prosper202\Conversion\Ledger\TransactionSale;
 use Prosper202\Database\Connection;
 use Prosper202\DataEngine\ClickRollupSql;
 use Prosper202\Ltv\MysqlCustomerRepository;
@@ -159,6 +160,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *        under the transaction_id, the reversal nets against the click's
      *        legacy baseline, the value it carried from before the ledger;
      *        each transaction_id is taken back from it once),
+     *        cap_at_sale (true = a reversal stating more than the sale it
+     *        reverses takes back the whole sale; applied under the click lock),
      *        once_per_click (true = record only while the click is not yet a
      *        lead; checked under the click lock),
      *        once_per_click_unkeyed (true = the same check, applied only when
@@ -422,14 +425,17 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // id. It is its own row with its own key (never tx:<id>, which the
         // original holds), so a replay of the same reversal is a
         // duplicate and a second, different reversal of one sale is
-        // refused rather than netting the sale twice.
+        // refused rather than netting the sale twice. A payment platform's
+        // reversal takes back its own sale under the id, never another
+        // platform's (TransactionSale).
         $reverses = null;
         $reversesCarried = false;
         if ($transactionId !== null && ($wantsReversal || ($explicitPayout !== null && $explicitPayout < 0))) {
             $targetStmt = $this->conn->prepareWrite(
                 'SELECT conv_id, click_payout, deleted, source FROM 202_conversion_logs
-                 WHERE click_id = ? AND transaction_id = ? AND reverses_conv_id IS NULL
-                 ORDER BY conv_id LIMIT 1'
+                 WHERE click_id = ? AND transaction_id = ? AND reverses_conv_id IS NULL'
+                . TransactionSale::restriction('source', $source)
+                . ' ORDER BY ' . TransactionSale::order('', $source) . ' LIMIT 1'
             );
             $this->conn->bind($targetStmt, 'is', [$clickId, $transactionId]);
             $target = $this->conn->fetchOne($targetStmt);
@@ -460,7 +466,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         } elseif (isset($data['dedupe_key']) && $data['dedupe_key'] !== '') {
             $dedupeKey = (string) $data['dedupe_key'];
         } elseif ($transactionId !== null) {
-            $dedupeKey = DedupeKey::transaction($transactionId);
+            // tx:<id>, unless another payment platform's sale holds it here.
+            $dedupeKey = TransactionSale::key($this->conn, $clickId, $transactionId, $source);
         } elseif ($terms['mode'] === PayoutMode::ACCUMULATE && $payable) {
             // With no id of its own an accumulating row would double the
             // money on every retry, so it is the campaign's one plain
@@ -514,7 +521,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $otherStmt = $this->conn->prepareWrite(
                 'SELECT conv_id, dedupe_key FROM 202_conversion_logs
                  WHERE click_id = ? AND reverses_conv_id = ? AND deleted = 0'
-                . ($reversesCarried ? ' AND transaction_id = ?' : '') . ' ORDER BY conv_id LIMIT 1'
+                . ($reversesCarried ? ' AND transaction_id = ?' . TransactionSale::restriction('source', $source) : '')
+                . ' ORDER BY conv_id LIMIT 1'
             );
             $this->conn->bind(
                 $otherStmt,
@@ -585,6 +593,12 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             // A refund is in its sale's currency, as every reversal is.
             $money = ['currency' => $stamped ? $this->rowMoney((int) $reverses['conv_id'])['currency'] : RowCurrency::UNKNOWN];
         } elseif ($reverses !== null) {
+            // Capped here, under the click's lock: a caller's own read of the
+            // sale, made before the lock, misses a sale still committing (R4CE).
+            $saleUnits = abs(Amount::toUnits((string) $reverses['click_payout']));
+            if (!empty($data['cap_at_sale']) && $explicitPayout !== null && abs($explicitPayout) > $saleUnits) {
+                $explicitPayout = $saleUnits;
+            }
             $money = $this->reversalMoney(
                 $explicitPayout,
                 Amount::toUnits((string) $reverses['click_payout']),
@@ -789,7 +803,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 $eventName ?? '',
                 Amount::fromUnits($amountUnits),
                 $dedupeKey,
-                $transactionId
+                $transactionId,
+                null,
+                $consentWithheld
             );
         }
 
@@ -1609,6 +1625,98 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     private static function revenueGenerationSuffix(int $generation): string
     {
         return $generation === 0 ? '' : ':' . $generation;
+    }
+
+    /**
+     * Undo one revenue upload batch on one click: the batch's live rows on it
+     * are soft-deleted as softDeleteLocked() deletes a row (postbacks settled,
+     * revenue events voided with those of the reversals that stop netting),
+     * and the click is recomputed from what is left, so the value an earlier
+     * batch or conversion gave it, which the batch had superseded, counts
+     * again (ClickValueCalculator, rule 2). UploadBatchUndo runs it per click.
+     *
+     * One transaction, the click's lock first; a lock error is retried once.
+     * The report row is refreshed after the commit.
+     *
+     * @return int the rows removed: 0 when the click holds no live row of
+     *             the account's batch
+     */
+    public function undoUploadBatchOnClick(int $userId, int $batchId, int $clickId): int
+    {
+        $ledger = new MysqlConversionLedger($this->conn);
+        $sourceRef = SourceRef::uploadBatch($batchId);
+        // A click that is gone (click retention keeps its conversions) has no
+        // value to recompute or report row to refresh, and its rows of the
+        // batch are still removed.
+        $work = function (?array $click) use ($clickId, $userId, $ledger, $sourceRef): int {
+            $rowsStmt = $this->conn->prepareWrite(
+                'SELECT conv_id, customer_id, reverses_conv_id FROM 202_conversion_logs
+                 WHERE click_id = ? AND user_id = ? AND source = ? AND source_ref = ? AND deleted = 0
+                 ORDER BY conv_id FOR UPDATE'
+            );
+            $this->conn->bind($rowsStmt, 'iiss', [$clickId, $userId, ConversionSource::REVENUE_UPLOAD->value, $sourceRef]);
+            $rows = $this->conn->fetchAll($rowsStmt);
+            if ($rows === []) {
+                return 0;
+            }
+
+            if ($click !== null) {
+                $ledger->ensureManaged($clickId, $userId);
+            }
+
+            $affected = [];
+            foreach ($rows as $row) {
+                $convId = (int) $row['conv_id'];
+                $del = $this->conn->prepareWrite(
+                    'UPDATE 202_conversion_logs SET deleted = 1 WHERE conv_id = ? AND user_id = ? AND deleted = 0'
+                );
+                $this->conn->bind($del, 'ii', [$convId, $userId]);
+                if ($this->conn->executeUpdate($del) !== 1) {
+                    throw new LedgerIntegrityException('upload row ' . $convId . ' was locked live and not deleted');
+                }
+                $this->outbox()->onReplaced($userId, $convId, null);
+                $affected[] = $convId;
+                if ($row['reverses_conv_id'] !== null) {
+                    $affected[] = (int) $row['reverses_conv_id'];
+                }
+                $revStmt = $this->conn->prepareWrite(
+                    'SELECT conv_id FROM 202_conversion_logs WHERE click_id = ? AND reverses_conv_id = ?'
+                );
+                $this->conn->bind($revStmt, 'ii', [$clickId, $convId]);
+                foreach ($this->conn->fetchAll($revStmt) as $rev) {
+                    $affected[] = (int) $rev['conv_id'];
+                }
+            }
+
+            if ($click !== null) {
+                $ledger->recompute($clickId, (int) $click['aff_campaign_id'], $userId);
+            }
+            $ledger->enqueue(array_values(array_unique($affected)), 'counted_state');
+
+            foreach ($rows as $row) {
+                $convId = (int) $row['conv_id'];
+                $this->voidRevenueEvent($convId, $row['customer_id'] !== null ? (int) $row['customer_id'] : 0, $userId);
+                foreach ($this->liveReversalsOf($convId, $userId) as $reversal) {
+                    $this->voidRevenueEvent($reversal['conv_id'], $reversal['customer_id'], $userId);
+                }
+            }
+
+            return count($rows);
+        };
+
+        try {
+            $removed = $ledger->clickTransaction($clickId, $userId, $work);
+        } catch (Throwable $e) {
+            if (!self::isRetryableLockError($e)) {
+                throw $e;
+            }
+            $removed = $ledger->clickTransaction($clickId, $userId, $work);
+        }
+        if ($removed > 0) {
+            $this->refreshReportRollup($clickId);
+        }
+
+        return $removed;
     }
 
     /**

@@ -493,6 +493,14 @@ p202 conversion upload-revenue march.csv --dry-run --json
 #             "skipped_reasons":[{"reason":"the commission is not a number","lines":1}],
 #             "clicks":1,"total":"3.75000","totals":[{"click_id":940001,"total":"3.75000"}],"totals_unlisted":0,
 #             "lines":[...the lines not recorded...],"lines_unlisted":0}}
+
+# Take an upload back by its batch id (the dry run lists exactly the rows it removes).
+p202 conversion uploads --json                     # => {"data":[{"batch_id":7,"file_name":"march.csv",...,"undone_at":null}],"next_before":null}
+p202 conversion undo-upload 7 --dry-run --json
+# => {"data":{"dry_run":true,"would_remove":2,"amounts":[{"currency":"USD","amount":"11.00000"}],"clicks":2,
+#             "rows":[{"conv_id":31,"click_id":940001,"line":2,"payout":"5.00000","currency":"USD"},...],
+#             "click_values":[{"click_id":940001,"before":{"lead":true,"value":"5.00000"},"after":{"lead":true,"value":"9.00000"}}],...}}
+p202 conversion undo-upload 7 --force --json       # => {"data":{"dry_run":false,"removed":2,"clicks":2,...}}
 # lines and totals list at most 1,000 entries; clicks, total, skipped_reasons and the *_unlisted
 # counts are exact, so read them, not the length of a list.
 ```
@@ -946,6 +954,8 @@ p202 conversion delete-subids <file|-> [--dry-run] [--force] [--json]     # Dele
 p202 conversion reset-subids --aff-network-id N [--aff-campaign-id N] [--dry-run] [--force] [--json]
 p202 conversion upload-revenue <file.csv> [--subid-column H|N] [--amount-column H|N]
                        [--file-name S] [--dry-run] [--force] [--json]     # Upload Revenue Reports
+p202 conversion uploads [--limit N] [--before N] [--json]                 # the account's upload batches
+p202 conversion undo-upload <batch-id> [--dry-run] [--force] [--json]     # undo an upload by its batch id
 p202 conversion postback-url [--type simple|advanced] [--campaign N] [--amount S] [--subid S]
                        [--scheme http|https] [--json]                     # Postback / Pixel: the URL
 p202 conversion pixel  [--type simple|advanced|universal] [--iframe] [--campaign N]
@@ -1070,6 +1080,8 @@ p202 analytics         --group-by DIM [--period P | --days N]
                        [--sort METRIC] [--sort-dir ASC|DESC] [-l limit] [-o offset] [filters...] [--json]
 p202 report breakeven  --aff-campaign-id ID [-b dimension] [--max-cpc N]
                        [-l limit] [-o offset] [-p period] [filters...] [--json]
+                       # the payout is the reports' (GET /reports/payout): a Campaign
+                       # optimizer runs it, and the id is in report breakdown -b campaign
 p202 analytics         --group-by DIM --split-at YYYY-MM-DD|UNIX
                        [--days N | --time-from UNIX [--time-to UNIX]]
                        [--sort clicks|conversions|revenue[_per_day]] [--sort-dir ASC|DESC]
@@ -1292,8 +1304,9 @@ p202 ltv integrations list | create --provider P [--name S] [--config JSON | --c
   by default): `status`, `attempts`, `next_attempt_at` (pending only),
   `last_status_code` and `last_response_body` (the last response or error,
   e.g. `curl: …`, `blocked: …`, or `expired: …` for a delivery still unsent
-  7 days after it was queued, which is never sent); never the secret, never
-  the payload. The minutely cron job sends what is due, so a `pending`
+  7 days after it was queued, which is never sent; a credential in a
+  receiver's answer reads `[removed]`); never the secret, never the
+  payload. The minutely cron job sends what is due, so a `pending`
   delivery whose `next_attempt_at` is past waits for the next cron run. An
   unknown webhook id is a 404 whose hint names `p202 ltv webhooks list`.
 - `ltv webhooks revive` makes a dead webhook (one delivery failed 6 times)
@@ -1308,8 +1321,12 @@ p202 ltv integrations list | create --provider P [--name S] [--config JSON | --c
   and `held`. A 409 means a cron run was still sending after 20 seconds and
   nothing changed: run it again in a minute. The Landing Page Optimizer's
   pairing webhook needs no pairing again.
-- `ltv webhooks create` prints the signing secret once (`X-P202-Signature:
-  sha256=HMAC(body, secret)`); `webhooks list` never shows it. `--events`
+- `ltv webhooks create` prints the signing secret once (a `whsec_` secret a
+  Standard Webhooks library verifies `webhook-signature` with; through 1.9.82
+  also `X-P202-Signature: sha256=HMAC(body, secret)`); `webhooks list` never
+  shows it. `ltv webhooks rotate-secret <id> [--overlap-hours N]` prints a new
+  one once, and the old one still signs for N hours (default 24, 0 to 168);
+  the Landing Page Optimizer's webhook is refused (a 422 on `webhook_id`). `--events`
   takes the known names or `*` (every event, including future ones), and is
   always sent as a list. The server holds the same list: a name it never
   sends is a 422 naming `events.<i>` with the names, never a webhook that
@@ -1400,7 +1417,7 @@ Notes for agents:
 - If the API reports `sync_plan` and `async_jobs` capabilities, CLI auto-routes to server-side `/sync/*` endpoints.
 - If server capabilities are unavailable, CLI falls back to local diff/sync behavior.
 - When async jobs are enabled server-side, ensure the sync worker is running (`POST /sync/worker/run` or cron script `202-cronjobs/sync-worker.php`).
-- A server-side sync or diff calls both profiles' URLs from the `--from` profile's install, at public `https://` addresses only. A refused profile URL exits 1 with a hint naming the profile to repoint (`p202 --profile <name> config set-url https://…`) and `P202_WEBHOOK_ALLOW_NETWORKS`, the setting that admits an install on that server's own machine or network; it is not run from this machine instead. A job stopped by a refusal or by a cap carries `error_code` (`sync_url_refused`, `sync_url_unresolved`, `sync_limit`, `sync_key_unreadable`) and exits 5 with that reason's next step.
+- A server-side sync or diff calls both profiles' URLs from the `--from` profile's install, at public `https://` addresses only. A refused profile URL exits 1 with a hint naming the profile to repoint (`p202 --profile <name> config set-url https://…`) and `P202_WEBHOOK_ALLOW_NETWORKS`, the setting that admits an install on that server's own machine or network; it is not run from this machine instead. A job stopped by a refusal or by a cap carries `error_code` (`sync_url_refused`, `sync_url_unresolved`, `sync_limit`, `sync_key_unreadable`, `sync_record_unusable`, `sync_worker_lost`, `sync_internal`) and exits 5 with that reason's next step.
 - `tracker list --resolve-names` enriches FK IDs with companion name fields; IDs remain unchanged in output.
 
 ### System
@@ -1524,7 +1541,10 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
   `ad_connection_check`, `ad_campaign_list`, `ad_campaign_pause`,
   `ad_campaign_activate` and `ad_campaign_spend`, and `ad_spend` and
   `ad_spend_sync_status` (what ad platforms billed per ad, and each ChatGPT
-  Ads connection's hourly spend pull); `--read-only` and `--staged` leave out
+  Ads connection's hourly spend pull), and `ppc_account_pixel_list`,
+  `ppc_account_pixel_create`, `ppc_account_pixel_update` and
+  `ppc_account_pixel_delete` (a traffic source account's conversion pixels,
+  `p202 ppc-account pixel`); `--read-only` and `--staged` leave out
   `destination_test` and `ad_connection_check`. The destination tools, the
   check and the two spend tools are local only: the hosted server below
   refuses them.
@@ -1623,6 +1643,7 @@ Rules:
 | click update-cpc | Yes | Sets the same CPC on the clicks counted; a moved count writes nothing (exit 1) |
 | conversion mark-subids / delete-subids / reset-subids | Yes | A marked subid is answered `already_converted`; a cleared one clears nothing more |
 | conversion upload-revenue | Yes (same file) | Each upload is a new batch whose values replace the earlier batch's for its clicks |
+| conversion undo-upload | Yes | A batch already undone removes nothing more (`removed: 0`); after a failure part way, it deletes what is left |
 | --dry-run on the Update commands | Yes | None (the endpoint's own `?dry_run=1`) |
 | landing-page code, conversion postback-url / pixel | Yes | None (reads) |
 | landing-page check | Yes | The answer kept beside the page is replaced by the newer one |
@@ -1653,7 +1674,7 @@ Visitor-authored (or visitor-derived) fields returned by this CLI:
 | SubIDs `c1`--`c4` | Query parameters on the tracking link | `click get` (`c1`..`c4`), `report breakdown`/`analytics` by `c1`..`c4` |
 | UTM values | `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content` on the tracking link | `report breakdown`/`analytics` by `utm_source` .. `utm_content` |
 | Ad click ids | `gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid`, `oppref` on the tracking or landing URL | `click list`/`click get` (`gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid`, `oppref`; capped at 1,000 characters, not 512) |
-| IP addresses | The visitor's connection (or the `X-Forwarded-For` header the redirect honours) | `report breakdown`/`analytics` by `ip` |
+| IP addresses | The visitor's connection (or, behind Cloudflare or a proxy listed in `P202_TRUSTED_PROXIES`, the client its `X-Forwarded-For` or `Forwarded` header names) | `report breakdown`/`analytics` by `ip` |
 | Browser, platform, device names | Parsed from the visitor's user-agent string | `click list`/`click get` resolved names, `report breakdown`/`analytics` by `browser`/`platform`/`device` |
 | Region, city, ISP names | GeoIP resolution of the visitor's IP | `click list`/`click get`, `report breakdown`/`analytics` by `region`/`city`/`isp` |
 

@@ -23,7 +23,13 @@ declare(strict_types=1);
  *       P202_TEST_CONSTANTS (a JSON object of constants defined before the
  *       page runs, as 202-config.php may define them),
  *       P202_TEST_SERVER (a JSON object of $_SERVER values, laid over the
- *       request's: HTTPS, X-Forwarded-Proto, DOCUMENT_ROOT)
+ *       request's: HTTPS, X-Forwarded-Proto, DOCUMENT_ROOT),
+ *       P202_TEST_SHOWN_SECRET (the session's ShownSettings secret, so that
+ *       two runs give one version of one set of values),
+ *       P202_TEST_OPEN_FIRST (a JSON object of GET values: before a POST,
+ *       the page is opened with them in a run of its own, as a browser
+ *       opens it, and each settings form's version it rendered is added to
+ *       the POST unless the POST names one)
  * Prints the page's output; a page that dies prints what it printed first.
  */
 
@@ -52,6 +58,19 @@ $host = (string) (getenv('P202_TEST_DB_HOST') ?: '127.0.0.1');
 $port = (string) (getenv('P202_TEST_DB_PORT') ?: '');
 $get = json_decode((string) (getenv('P202_TEST_GET') ?: '{}'), true, 8, JSON_THROW_ON_ERROR);
 $post = json_decode((string) (getenv('P202_TEST_POST') ?: '{}'), true, 8, JSON_THROW_ON_ERROR);
+
+// A settings form posts the version of what it showed: open the page as a
+// browser would, under the same secret, and post what it rendered.
+$shownSecret = (string) (getenv('P202_TEST_SHOWN_SECRET') ?: '');
+$openFirst = (string) (getenv('P202_TEST_OPEN_FIRST') ?: '');
+if ($openFirst !== '' && $post !== [] && !$isFunction) {
+    require_once __DIR__ . '/shown-versions.php';
+    $shownSecret = $shownSecret !== '' ? $shownSecret : bin2hex(random_bytes(32));
+    $post = p202_runner_post_with_versions($post, p202_runner_shown_versions(__FILE__, $page, [
+        'P202_TEST_POST' => '{}', 'P202_TEST_GET' => $openFirst, 'P202_TEST_OPEN_FIRST' => '',
+        'P202_TEST_SHOWN_SECRET' => $shownSecret,
+    ]));
+}
 
 // The request.
 $path = '/' . ($isFunction ? 'tracking202/setup/runner.php' : $page);
@@ -85,7 +104,7 @@ $_SESSION = [
     'session_fingerprint' => hash_hmac('sha256', 'session_fingerprint|' . $_SERVER['HTTP_USER_AGENT'], session_id()),
     'valid_key' => true,
     'token' => 'p202pagerunnertoken',
-];
+] + ($shownSecret !== '' ? ['p202_shown_secret' => $shownSecret] : []);
 session_write_close();
 if (isset($post['token']) && $post['token'] === 'SESSION') {
     $_POST['token'] = 'p202pagerunnertoken';

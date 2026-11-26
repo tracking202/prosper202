@@ -203,6 +203,8 @@ final class UserDeletionPurgeTest extends TestCase
         '202_ppc_networks' => 'account setup, kept with the soft-deleted user',
         '202_landing_pages' => 'account setup, kept with the soft-deleted user',
         '202_landing_page_checks' => 'account setup: what the last code check of a kept landing page found',
+        '202_landing_page_last_seen' => 'the traffic record: when a kept landing page last had one of the kept clicks',
+        '202_landing_page_split_tests' => 'account setup: the split test of a kept landing page',
         '202_text_ads' => 'account setup, kept with the soft-deleted user',
         '202_trackers' => 'account setup, kept with the soft-deleted user',
         '202_rotators' => 'account setup, kept with the soft-deleted user',

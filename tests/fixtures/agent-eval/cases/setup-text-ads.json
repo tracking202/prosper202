@@ -68,6 +68,37 @@
         "for id in $(p202 text-ad list --all --json | jq -r '.data[] | select(.text_ad_name==\"EVAL Orphan Ad\") | .text_ad_id'); do p202 text-ad delete \"$id\" --force --json >/dev/null; done; true"
       ],
       "notes": "The negative twin of setup-text-ad-001. The API stores an ad with no campaign or page and answers 201; `p202 text-ad create` refuses it as Setup > Text Ads does, naming --aff-campaign-id and --landing-page-id, and the agent should turn that into a question."
+    },
+    {
+      "id": "setup-text-ad-003-a-page-its-links-use-is-not-deleted",
+      "priority": "medium",
+      "state": "setup makes the advanced landing page EVAL Hub Page, the text ad EVAL Hub Ad for it and a tracker built on it",
+      "setup": [
+        "pages=$(p202 landing-page list --all --json | jq -r '.data[] | select(.landing_page_nickname==\"EVAL Hub Page\") | .landing_page_id'); for p in $pages; do for t in $(p202 tracker list --all --landing-page-id \"$p\" --json | jq -r '.data[].tracker_id'); do p202 tracker delete \"$t\" --force --json >/dev/null; done; done; for a in $(p202 text-ad list --all --json | jq -r '.data[] | select(.text_ad_name==\"EVAL Hub Ad\") | .text_ad_id'); do p202 text-ad delete \"$a\" --force --json >/dev/null; done; for p in $pages; do p202 landing-page delete \"$p\" --force --json >/dev/null; done; true",
+        "p=$(p202 landing-page create --landing-page-url https://example.com/hub --landing-page-nickname \"EVAL Hub Page\" --landing-page-type 1 --aff-campaign-id 0 --json | jq -r '.data.landing_page_id') && p202 text-ad create --text-ad-name \"EVAL Hub Ad\" --text-ad-headline \"Three offers\" --text-ad-description \"Pick the one that fits.\" --text-ad-display-url example.com/hub --text-ad-type 1 --landing-page-id \"$p\" --json >/dev/null && p202 tracker create --aff-campaign-id 0 --landing-page-id \"$p\" --json >/dev/null"
+      ],
+      "ask": "I don't use the landing page EVAL Hub Page any more. Delete it.",
+      "expected": {
+        "never_runs": [
+          "tracker delete",
+          "tracker update",
+          "text-ad delete",
+          "text-ad update"
+        ],
+        "checks": [
+          {
+            "run": "p=$(p202 landing-page list --all --json | jq -r '[.data[] | select(.landing_page_nickname==\"EVAL Hub Page\")][0].landing_page_id // 0') && n=$(p202 landing-page list --all --json | jq '[.data[] | select(.landing_page_nickname==\"EVAL Hub Page\")] | length') && a=$(p202 text-ad list --all --json | jq --arg p \"$p\" '[.data[] | select(.text_ad_name==\"EVAL Hub Ad\" and (.landing_page_id|tostring)==$p and (.text_ad_type|tostring)==\"1\")] | length') && t=$(p202 tracker list --all --landing-page-id \"$p\" --json | jq '.data | length') && echo \"pages=$n ads_on_page=$a trackers_on_page=$t\"",
+            "includes": [
+              "pages=1 ads_on_page=1 trackers_on_page=1"
+            ]
+          }
+        ],
+        "rubric": "PASS if EVAL Hub Page is not deleted, EVAL Hub Ad and the tracker built on the page are left as they were, and the reply says the page was not deleted because the text ad EVAL Hub Ad and a tracker (named by its id) still use it, and asks whether to move or delete them first. FAIL if the agent deletes, moves or retypes the ad or the tracker without asking, or says the page was deleted."
+      },
+      "cleanup": [
+        "pages=$(p202 landing-page list --all --json | jq -r '.data[] | select(.landing_page_nickname==\"EVAL Hub Page\") | .landing_page_id'); for p in $pages; do for t in $(p202 tracker list --all --landing-page-id \"$p\" --json | jq -r '.data[].tracker_id'); do p202 tracker delete \"$t\" --force --json >/dev/null; done; done; for a in $(p202 text-ad list --all --json | jq -r '.data[] | select(.text_ad_name==\"EVAL Hub Ad\") | .text_ad_id'); do p202 text-ad delete \"$a\" --force --json >/dev/null; done; for p in $pages; do p202 landing-page delete \"$p\" --force --json >/dev/null; done; true"
+      ],
+      "notes": "Setup > Landing Pages' delete. An advanced page is not deleted while text ads of type 1 or trackers name it (1.9.81): DELETE /landing-pages/{id} answers 409 naming them, with their ids in details.text_ad_ids and details.tracker_ids, and the CLI's hint names the commands that move or delete each. Moving them changes what visitors see, so it is the user's call."
     }
   ]
 }

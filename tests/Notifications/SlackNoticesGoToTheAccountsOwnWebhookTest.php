@@ -23,11 +23,14 @@ final class SlackNoticesGoToTheAccountsOwnWebhookTest extends TestCase
             . ' and the notice says so to the install\'s owner; it is about no one account\'s change',
     ];
 
-    /** @var array<string, string> file => whose webhook its `new Slack()` is given */
-    private const OWN_SLACK = [
-        '202-login.php' => 'the signing-in account\'s own row (AUTH LOGIN_SELECT joins up.user_id = u.user_id)',
-        '202-cronjobs/index.php' => 'account 1\'s, for the install-wide Clear Old Clicks notice',
-        'tracking202/static/cb202.php' => 'the account ClickBank\'s test was for (ClickBankAdapter::slackWebhook())',
+    /**
+     * The served files whose notices are for an account other than the
+     * session's: file => the account expression its Slack::forAccount() names.
+     */
+    private const OTHER_ACCOUNT = [
+        '202-login.php' => "(int) \$user_row['user_id']",
+        '202-cronjobs/index.php' => '1',
+        'tracking202/static/cb202.php' => '$outcome->accountId',
     ];
 
     /** The pages that announce an account's changes, each through Slack::forAccount(). */
@@ -88,20 +91,23 @@ final class SlackNoticesGoToTheAccountsOwnWebhookTest extends TestCase
         self::assertSame(0, preg_match(self::USER_ONE, 'WHERE user_id = 12'));
     }
 
-    /** A page builds its notifier with Slack::forAccount(), never from a URL it read itself. */
-    public function testOnlyListedFilesBuildASlackFromAUrl(): void
+    /**
+     * A served file builds its notifier with Slack::forAccount(), never from
+     * a URL it read itself: the account's own webhook, and its notices
+     * queued (SlackNoticeQueue), so no request waits on Slack.
+     */
+    public function testNoServedFileBuildsASlackFromAUrl(): void
     {
         $found = [];
         foreach (SourceScan::phpFiles() as $path => $source) {
-            if (preg_match('/\bnew\s+\\\\?Slack\s*\(/i', $source) === 1 && !isset(self::OWN_SLACK[$path])) {
+            if (str_starts_with($path, 'tests/') || $path === '202-config/Slack.class.php') {
+                continue;
+            }
+            if (preg_match('/\bnew\s+\\\\?Slack\s*\(/i', $source) === 1) {
                 $found[] = $path;
             }
         }
         self::assertSame([], $found, 'use Slack::forAccount($db, $_SESSION[\'user_id\'])');
-        foreach (array_keys(self::OWN_SLACK) as $path) {
-            $source = (string) file_get_contents(SourceScan::repoRoot() . '/' . $path);
-            self::assertMatchesRegularExpression('/\bnew\s+Slack\s*\(/', $source, "$path is listed, builds no Slack");
-        }
     }
 
     public function testEachPageAsksForTheSessionAccountsOwnWebhook(): void
@@ -112,16 +118,32 @@ final class SlackNoticesGoToTheAccountsOwnWebhookTest extends TestCase
             self::assertStringContainsString('Slack::forAccount(', $files[$page], $page);
         }
         $calls = 0;
+        $otherSeen = [];
         foreach ($files as $path => $source) {
+            if (str_starts_with($path, 'tests/')) {
+                continue;
+            }
             $at = 0;
             while (($at = strpos($source, 'Slack::forAccount(', $at)) !== false) {
                 $end = strpos($source, ';', $at);
                 $call = substr($source, $at, $end === false ? null : $end - $at);
+                $at += 1;
+                if (isset(self::OTHER_ACCOUNT[$path])) {
+                    self::assertStringStartsWith(
+                        'Slack::forAccount($db, ' . self::OTHER_ACCOUNT[$path] . ')',
+                        $call,
+                        "$path: the account its notice is for"
+                    );
+                    $otherSeen[$path] = true;
+                    continue;
+                }
                 self::assertStringContainsString("\$_SESSION['user_id']", $call, "$path: the account is the session's");
                 $calls++;
-                $at += 1;
             }
         }
         self::assertGreaterThanOrEqual(count(self::PAGES), $calls);
+        foreach (array_keys(self::OTHER_ACCOUNT) as $path) {
+            self::assertArrayHasKey($path, $otherSeen, "$path is listed, asks for no account's Slack");
+        }
     }
 }

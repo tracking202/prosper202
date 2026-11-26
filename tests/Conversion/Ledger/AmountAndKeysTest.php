@@ -66,9 +66,11 @@ final class AmountAndKeysTest extends TestCase
             DedupeKey::upload(4, 17),
             DedupeKey::plainConversion(),
             DedupeKey::row(9),
+            DedupeKey::providerTransaction(ConversionSource::JVZOO, 'A-7731'),
         ];
         self::assertSame(
-            ['tx:A-7731', 'goal:12:2:3:e1', 'install', 'evt:install:5:e1', 'rev:9:1', 'legacy', 'up:4:17', 'conversion', 'row:9'],
+            ['tx:A-7731', 'goal:12:2:3:e1', 'install', 'evt:install:5:e1', 'rev:9:1', 'legacy', 'up:4:17', 'conversion', 'row:9',
+                'ptx:jvzoo:A-7731'],
             $keys
         );
     }
@@ -88,6 +90,8 @@ final class AmountAndKeysTest extends TestCase
             [DedupeKey::goal(1, 1, 1, '2:e'), DedupeKey::goal(1, 1, 12, 'e')],
             [DedupeKey::reversal(1, '2:3'), DedupeKey::reversal(12, '3')],
             [DedupeKey::event('click', 1, '2:x'), DedupeKey::event('click', 12, 'x')],
+            [DedupeKey::transaction('ptx:jvzoo:A'), DedupeKey::providerTransaction(ConversionSource::JVZOO, 'A')],
+            [DedupeKey::providerTransaction(ConversionSource::JVZOO, 'A'), DedupeKey::providerTransaction(ConversionSource::ZAXAA, 'A')],
         ];
         foreach ($pairs as [$a, $b]) {
             self::assertNotSame($a, $b);
@@ -103,6 +107,10 @@ final class AmountAndKeysTest extends TestCase
             DedupeKey::event('install', PHP_INT_MAX, $long),
             DedupeKey::reversal(PHP_INT_MAX, $long),
             DedupeKey::upload(PHP_INT_MAX, PHP_INT_MAX),
+            ...array_map(
+                static fn (ConversionSource $s): string => DedupeKey::providerTransaction($s, $long),
+                array_values(array_filter(ConversionSource::cases(), static fn (ConversionSource $s): bool => $s->isPaymentProvider()))
+            ),
         ] as $key) {
             self::assertLessThanOrEqual(DedupeKey::MAX_LENGTH, strlen($key));
         }
@@ -116,6 +124,8 @@ final class AmountAndKeysTest extends TestCase
             static fn () => DedupeKey::goal(0, 1, 1, 'e'),
             static fn () => DedupeKey::event('visitor', 1, 'e'),
             static fn () => DedupeKey::row(0),
+            static fn () => DedupeKey::providerTransaction(ConversionSource::POSTBACK, 'A'),
+            static fn () => DedupeKey::providerTransaction(ConversionSource::JVZOO, ''),
         ] as $i => $build) {
             try {
                 $build();

@@ -181,6 +181,22 @@ final class LandingPageCheckStore
     }
 
     /**
+     * How a status reads at a glance, for answers that draw no pill: good,
+     * warn, bad, or unchecked for no stored result (the pill's own levels).
+     */
+    public static function level(?string $status): string
+    {
+        return match ($status) {
+            LandingPageCheckResult::PRESENT, LandingPageCheckResult::LEGACY => 'good',
+            LandingPageCheckResult::MIXED, LandingPageCheckResult::OTHER_TRACKER,
+            LandingPageCheckResult::ERROR => 'warn',
+            LandingPageCheckResult::WRONG_ID, LandingPageCheckResult::COMMENTED,
+            LandingPageCheckResult::ABSENT => 'bad',
+            default => 'unchecked',
+        };
+    }
+
+    /**
      * How a status is shown in a list: the pill's classes and its words.
      *
      * @return array{0: string, 1: string}

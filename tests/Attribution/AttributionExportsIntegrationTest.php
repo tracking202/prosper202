@@ -41,6 +41,8 @@ final class AttributionExportsIntegrationTest extends TestCase
     private ?\Closure $onDeliver = null;
     /** @var list<array{status?: int, error?: string|null}> */
     private array $answers = [];
+    /** @var list<list<string>> what flaky.example.com resolves to, one answer per lookup */
+    private array $flaky = [];
 
     public static function setUpBeforeClass(): void
     {
@@ -60,7 +62,9 @@ final class AttributionExportsIntegrationTest extends TestCase
     /** @param (callable(): int)|null $clock */
     private function runner(?callable $clock = null): ExportRunner
     {
-        $guard = new WebhookGuard(static fn (string $host): array => ['hooks.example.com' => ['93.184.216.34'], 'rebind.example.com' => ['10.0.0.9']][$host] ?? [], '');
+        $guard = new WebhookGuard(fn (string $host): array => $host === 'flaky.example.com'
+            ? (array_shift($this->flaky) ?? [])
+            : (['hooks.example.com' => ['93.184.216.34'], 'rebind.example.com' => ['10.0.0.9']][$host] ?? []), '');
         $sender = new WebhookSender($guard, function (array $options): array {
             $this->deliveries[] = ['options' => $options];
             if ($this->onDeliver !== null) {
@@ -175,7 +179,9 @@ final class AttributionExportsIntegrationTest extends TestCase
         $this->scenario();
         $a = $this->api()->createExport(['webhook_url' => 'https://8.8.8.8/hook'])['data']['webhook_secret'];
         $b = $this->api()->createExport(['webhook_url' => 'https://8.8.8.8/hook'])['data']['webhook_secret'];
-        self::assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $a);
+        // A Standard Webhooks secret: whsec_ and the base64 of 32 random bytes.
+        self::assertMatchesRegularExpression('/^whsec_[A-Za-z0-9+\/]{43}=$/D', $a);
+        self::assertSame(32, strlen(\Prosper202\Webhooks\StandardWebhook::keyFor($a)));
         self::assertNotSame($a, $b);
     }
 
@@ -219,6 +225,36 @@ final class AttributionExportsIntegrationTest extends TestCase
         self::assertSame(0, $again['attempts']);
         $this->expectException(ConflictException::class);
         $this->api()->retryExport($id);
+    }
+
+    /**
+     * A resolver that answers nothing once (a DNS hiccup at send time) is not
+     * a verdict on the URL: the export is tried again, and delivered once the
+     * name resolves.
+     */
+    public function testAHostThatDoesNotResolveOnceIsTriedAgainAndDelivered(): void
+    {
+        $this->scenario();
+        $store = new ExportStore($this->conn);
+        $id = $store->insert(1, $this->defaultModelId(), null, 'campaign', $this->now - 86400, $this->now, 'https://flaky.example.com/h', 'secretsecretsecret', $this->now);
+
+        $this->flaky = [[], ['93.184.216.34']];
+        self::assertSame(1, $this->runner()->run(10)['retrying']);
+        $row = self::row($id);
+        self::assertSame('pending', $row['status'], 'an unresolved host is not a refusal');
+        self::assertSame('1', (string) $row['attempts']);
+        self::assertSame($this->now + 60, (int) $row['queued_at']);
+        self::assertStringContainsString('does not resolve', (string) $row['last_error']);
+        self::assertStringContainsString('tried again (attempt 2 of 3)', (string) $row['last_error']);
+        self::assertSame([], $this->deliveries, 'nothing was sent while the name did not resolve');
+
+        $this->now += 61;
+        self::assertSame(1, $this->runner()->run(10)['completed']);
+        $row = self::row($id);
+        self::assertSame('completed', $row['status']);
+        self::assertSame('2', (string) $row['attempts']);
+        self::assertCount(1, $this->deliveries);
+        self::assertSame(['flaky.example.com:443:93.184.216.34'], $this->deliveries[0]['options'][CURLOPT_RESOLVE]);
     }
 
     public function testARefusedDestinationFailsAtOnce(): void
@@ -446,6 +482,7 @@ final class AttributionExportsIntegrationTest extends TestCase
         yield 'decimal-spelled webhook' => [['webhook_url' => 'https://2130706433/h'], 'webhook_url'];
         yield 'secret without webhook' => [['webhook_secret' => 'abcdefghijklmnopqrstuvwxyz'], 'webhook_secret'];
         yield 'short secret' => [['webhook_url' => 'https://8.8.8.8/h', 'webhook_secret' => 'short'], 'webhook_secret'];
+        yield 'whsec_ secret that is not base64' => [['webhook_url' => 'https://8.8.8.8/h', 'webhook_secret' => 'whsec_not-base64-at-all!!'], 'webhook_secret'];
         yield 'run_at as a string' => [['run_at' => '1790000000'], 'run_at'];
         yield 'run_at years ahead' => [['run_at' => PHP_INT_MAX], 'run_at'];
         yield 'time as a string' => [['time_from' => '0'], 'time_from'];

@@ -116,7 +116,7 @@ class ApiClient
     private function send(string $method, string $url, ?string $encodedBody): array
     {
         $ch = curl_init();
-        curl_setopt_array($ch, [
+        $options = [
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => $this->timeout,
@@ -130,10 +130,15 @@ class ApiClient
                 'User-Agent: p202-cli/1.0',
             ],
             CURLOPT_CUSTOMREQUEST => $method,
-        ]);
-
+        ];
         if ($encodedBody !== null) {
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $encodedBody);
+            $options[CURLOPT_POSTFIELDS] = $encodedBody;
+        }
+        try {
+            \Prosper202\Http\CurlOptions::set($ch, $options);
+        } catch (\Prosper202\Http\CurlOptionRefused $e) {
+            curl_close($ch);
+            throw new \RuntimeException('HTTP request not sent: ' . $e->getMessage(), 0, $e);
         }
 
         $response = curl_exec($ch);

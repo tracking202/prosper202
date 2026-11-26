@@ -9,11 +9,11 @@ Manage traffic rotators with rules, criteria, and weighted redirects for split t
 | `GET` | `/rotators` | List rotators (paginated) |
 | `GET` | `/rotators/{id}` | Get rotator with all nested rules |
 | `GET` | `/rotators/{id}/stats` | The rotator's totals, each rule and its default over a window (needs `reports:read` too; see [Reports › Rotator stats](11-reports.md#rotator-stats)) |
-| `POST` | `/rotators` | Create a rotator |
+| `POST` | `/rotators` | Create a rotator, with its rules if `rules` is sent ([below](#a-redirector-and-its-rules-in-one-write)) |
 | `PUT` | `/rotators/{id}` | Update a rotator |
 | `DELETE` | `/rotators/{id}` | Delete rotator and all rules (cascading) |
 | `GET` | `/rotators/{id}/rules` | List rules for a rotator, in the order they are tried |
-| `PUT` | `/rotators/{id}/rules` | Replace the whole rule set, in order, in one transaction ([below](#replace-the-rule-set)) |
+| `PUT` | `/rotators/{id}/rules` | Replace the whole rule set, in order, in one transaction, with the rotator's own fields if sent ([below](#replace-the-rule-set)) |
 | `POST` | `/rotators/{id}/rules` | Create a rule (tried after the others) |
 | `PUT` | `/rotators/{id}/rules/{ruleId}` | Update a rule |
 | `DELETE` | `/rotators/{id}/rules/{ruleId}` | Delete a rule |
@@ -110,8 +110,12 @@ the set is written in one transaction: all of it, or nothing.
   value `ALL` matches every visitor) and at least one redirect. Each redirect
   of a rule with more than one needs a `weight`, and at least one weight above
   0: the redirects split such a rule's visitors by weight, whatever its
-  `splittest` says (see Rule Fields). A set has 1 to 200 rules, a rule at most
-  100 criteria and 100 redirects.
+  `splittest` says (see Rule Fields). A set has at most 200 rules, a rule at
+  most 100 criteria and 100 redirects.
+- **An empty set removes every rule**: `{"rules": []}` sends every visitor to
+  the default, in one write, which needs `remove_rotator_rule` (since 1.9.81;
+  before, it was a `422`). A body without `rules`, or with anything but a
+  list there, is still a `422`.
 - Every problem in the set is refused in one `422`, each named by its place
   (`rules.1.redirects.0.redirect_campaign`), with nothing written.
 
@@ -243,6 +247,28 @@ Earlier versions stored `0` there, which the redirect read as a campaign with
 no campaign: a URL or landing-page redirect made through the API sent the
 visitors its rule matched to an empty `Location`. The redirect now treats `0`
 as "none", so redirects saved that way work as written.
+
+### A redirector and its rules in one write
+
+Since 1.9.81 (advertised as `features.rotator_with_rules` in
+`GET /capabilities`):
+
+- `PUT /rotators/{id}/rules` also takes the redirector's own fields beside
+  `rules`: `name`, `default_url`, `default_campaign`, `default_lp`, and the
+  read-only `id`, `public_id`, `user_id` and `auto_monetizer` with the
+  redirector's own values, so `GET /rotators/{id}`'s `data`, edited, can be
+  sent back whole. The fields and the set are written in one transaction: the
+  redirector and its rules change together or not at all, and a problem in
+  either is refused in the same `422`. The answer adds `rotator`, the
+  redirector as written (or, with `?dry_run=1`, as it would be), without its
+  rules.
+- `POST /rotators` takes `rules`, a set as above with no ids: the redirector
+  and its rules are created in one transaction, and a rule refused creates no
+  redirector.
+
+A sync (`p202 sync`, the sync jobs) writes a redirector this way when the
+target advertises the feature, and in two steps (the redirector, then its
+set) when it does not.
 
 ## Example: Create Rotator with Rules
 

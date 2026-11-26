@@ -10,7 +10,10 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\NothingToUpdateException;
 use Api\V3\Exception\WriteCommittedException;
+use Api\V3\Support\PageRows;
 use Api\V3\Support\PayloadKeys;
+use Api\V3\Support\LibraryUsage;
+use Api\V3\Support\ListQuery;
 use Api\V3\Support\QueryInt;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\StatementHelpers;
@@ -399,11 +402,7 @@ abstract class Controller
      */
     protected static function isDate(string $value): bool
     {
-        if (preg_match('/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/D', $value, $m) !== 1) {
-            return false;
-        }
-
-        return (int) $m[1] >= 1000 && checkdate((int) $m[2], (int) $m[3], (int) $m[1]);
+        return \Api\V3\Support\CalendarDate::isValid($value);
     }
 
     /**
@@ -466,7 +465,7 @@ abstract class Controller
                 continue;
             }
             $this->stateStore()->incrementMetric('conflicts', 1);
-            throw new ConflictException(
+            throw (new ConflictException(
                 'Version mismatch',
                 [
                     'expected_version' => is_scalar($payload[$key]) ? trim((string) $payload[$key], '" ') : null,
@@ -474,7 +473,7 @@ abstract class Controller
                     'diff_hint' => "The body's $key is from an older read of this record. Re-fetch it (GET) and "
                         . "send your changes on that, or omit $key and send only the fields to change.",
                 ]
-            );
+            ))->coded(ErrorCode::VERSION_CONFLICT);
         }
     }
 
@@ -599,6 +598,24 @@ abstract class Controller
     // ─── Lifecycle Hooks ─────────────────────────────────────────────
 
     /**
+     * Run the row write of a create, update or delete ($write: its INSERT,
+     * UPDATE or delete statement). A controller whose write must take locks
+     * first, and check under them what it checked before, overrides this and
+     * runs $write in the transaction that holds them. The read-back and the
+     * change record come after it returns, past the commit (CLAUDE.md #13).
+     *
+     * @template T
+     * @param array<string, mixed>|null $current the row before (null on a create)
+     * @param array<string, mixed> $clean the validated fields written (none on a delete)
+     * @param callable(): T $write
+     * @return T
+     */
+    protected function writeRow(?array $current, array $clean, callable $write): mixed
+    {
+        return $write();
+    }
+
+    /**
      * Called before INSERT.  Return extra columns to include in the INSERT.
      * @return array<string, array{type: string, value: mixed}>
      */
@@ -623,57 +640,41 @@ abstract class Controller
     }
 
     /**
-     * The list's `filter[<field>]=<value>` pairs, each a field this
-     * controller declares with a value its type can hold.
+     * The columns `q=` searches: the list's record contains the text in one
+     * of them, in any case. [] (the default) is a list that cannot be
+     * searched, and refuses a q.
      *
-     * A filter it could not apply used to be skipped, so the list came
-     * back unfiltered with a 200: `filter[aff_campaing_id]=3` (a typo),
-     * `filter[aff_campaign_id_public]=…` (a read-only field), or
-     * `filter[aff_campaign_id]=abc` (bound as 0) each answered with every
-     * row, or none, as though it had been honoured. A narrowing that is
-     * silently dropped widens the answer (error pattern #4), so each of
-     * those is a 422 naming what the list can be filtered by. Read-only
-     * fields are filterable: a filter is a read.
-     *
-     * @param array<string, mixed> $params
-     * @param array<string, array<string, mixed>> $fields
-     * @return array<string, mixed>
+     * @return list<string>
      */
-    private function listFilters(array $params, array $fields): array
+    protected function listSearchColumns(): array
     {
-        if (!array_key_exists('filter', $params)) {
-            return [];
-        }
-        $filters = $params['filter'];
-        $filterable = 'Filter by field: ' . implode(', ', array_keys($fields));
-        if (!is_array($filters)) {
-            throw new ValidationException('Invalid filter', ['filter' => 'Use filter[<field>]=<value>. ' . $filterable]);
-        }
-        $errors = [];
-        foreach ($filters as $field => $value) {
-            $key = 'filter[' . $field . ']';
-            if (!isset($fields[$field])) {
-                $errors[$key] = 'Not a field of this list. ' . $filterable;
-                continue;
-            }
-            $type = $fields[$field]['type'] ?? 's';
-            if (!is_scalar($value)) {
-                $errors[$key] = 'Must be a single value';
-            } elseif ($type === 'i' && preg_match('/^-?[0-9]+$/D', (string) $value) !== 1) {
-                $errors[$key] = 'Must be a whole number';
-            } elseif ($type === 'd' && !is_numeric($value)) {
-                $errors[$key] = 'Must be a number';
-            } elseif (($fields[$field]['format'] ?? null) === 'date' && !self::isDate((string) $value)) {
-                // A date column compared with 'garbage' matches nothing, and
-                // the empty list read as "no events that day".
-                $errors[$key] = 'Must be a date written YYYY-MM-DD';
-            }
-        }
-        if ($errors !== []) {
-            throw new ValidationException('Invalid filter', $errors);
-        }
+        return [];
+    }
 
-        return $filters;
+    /**
+     * The condition `q=` narrows the list by, given q as a LIKE pattern
+     * (ListQuery::searchPattern()), or null when the list cannot be
+     * searched. Override where the name is another record's (a tracker is
+     * found by its campaign's).
+     *
+     * @return array{string, list<mixed>, string}|null [sql, binds, types]
+     */
+    protected function listSearchCondition(string $pattern): ?array
+    {
+        $columns = $this->listSearchColumns();
+
+        return $columns === [] ? null : ListQuery::searchCondition($columns, $pattern);
+    }
+
+    /**
+     * What `sort=` may name: a field of the list's answer => its column.
+     * The primary key by default.
+     *
+     * @return array<string, string>
+     */
+    protected function listSortFields(): array
+    {
+        return [$this->primaryKey() => $this->primaryKey()];
     }
 
     /**
@@ -750,15 +751,26 @@ abstract class Controller
         $stmt->close();
         $message = $this->duplicateKeyConflictMessage();
         if ($message !== null && (int)$e->getCode() === 1062) {
-            throw new ConflictException($message);
+            throw (new ConflictException($message))->coded(ErrorCode::ALREADY_EXISTS);
         }
         throw $e;
     }
 
     // ─── CRUD Operations ─────────────────────────────────────────────
 
+    /**
+     * The Library resource these records are (LibraryUsage: where each is
+     * used), or null for records no Library list shows.
+     */
+    protected function libraryResource(): ?string
+    {
+        return null;
+    }
+
     public function list(array $params): array
     {
+        $library = $this->libraryResource();
+        $with = $library === null ? [] : LibraryUsage::withOf($library, $params);
         $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
         $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
         // Absent and '' are no cursor; anything else is decoded or refused.
@@ -789,14 +801,29 @@ abstract class Controller
         }
 
         // The primary key filters too: `filter[aff_campaign_id]=3` on
-        // campaigns is a lookup by id.
+        // campaigns is a lookup by id. A filter of several values matches
+        // a record that any one of them would.
         $fields = [$this->primaryKey() => ['type' => 'i']] + $this->resolveFields();
-        foreach ($this->listFilters($params, $fields) as $field => $value) {
-            [$condition, $bindValue, $bindType] = $this->filterCondition($field, $fields[$field], $value);
-            $where[] = $condition;
-            $binds[] = $bindValue;
-            $types .= $bindType;
+        foreach (ListQuery::filters($params, $fields) as $field => $values) {
+            $any = [];
+            foreach ($values as $value) {
+                [$condition, $bindValue, $bindType] = $this->filterCondition($field, $fields[$field], $value);
+                $any[] = $condition;
+                $binds[] = $bindValue;
+                $types .= $bindType;
+            }
+            $where[] = count($any) === 1 ? $any[0] : '(' . implode(' OR ', $any) . ')';
         }
+
+        $search = ListQuery::searchPattern($params);
+        if ($search !== null) {
+            $condition = $this->listSearchCondition($search) ?? throw ListQuery::notSearchable();
+            [$searchSql, $searchBinds, $searchTypes] = $condition;
+            $where[] = $searchSql;
+            array_push($binds, ...$searchBinds);
+            $types .= $searchTypes;
+        }
+        $orderBy = ListQuery::orderBy($params, $this->listSortFields(), $this->primaryKey()) ?? $this->listOrderBy();
 
         // A time filter applies where the records keep that time, or it is
         // refused naming it. These probed the table with `SHOW COLUMNS FROM
@@ -833,7 +860,6 @@ abstract class Controller
         $this->beforeListRead();
 
         $whereClause = $where ? 'WHERE ' . implode(' AND ', $where) : '';
-        $orderBy = $this->listOrderBy();
 
         $countSql = "SELECT COUNT(*) as total FROM {$this->tableName()} $whereClause";
         $total = 0;
@@ -852,7 +878,7 @@ abstract class Controller
         }
 
         $sql = "SELECT $selectExpr FROM {$this->tableName()} $whereClause ORDER BY $orderBy LIMIT ? OFFSET ?";
-        $binds[] = $limit;
+        $binds[] = PageRows::fetchLimit($limit);
         $types .= 'i';
         $binds[] = $offset;
         $types .= 'i';
@@ -867,16 +893,23 @@ abstract class Controller
             $rows[] = $this->withVersionMetadata($row);
         }
         $stmt->close();
+        [$rows, $truncated] = PageRows::cut($rows, $limit);
+        if ($library !== null) {
+            $rows = (new LibraryUsage($this->db, $this->userId))->addTo($library, $this->primaryKey(), $rows, $with);
+        }
 
         $nextCursor = null;
         $cursorExpiresAt = null;
-        if (($offset + $limit) < $total) {
+        // The row past the page says whether one follows, as `truncated`
+        // does; the count is a separate read and can disagree with it.
+        if ($truncated) {
             $cursorExpiresAt = time() + $cursorTtl;
             $nextCursor = $this->encodeOffsetCursor($offset + $limit, $cursorExpiresAt);
         }
 
         return [
             'data' => $rows,
+            'truncated' => $truncated,
             'pagination' => [
                 'total' => $total,
                 'limit' => $limit,
@@ -987,17 +1020,21 @@ abstract class Controller
             implode(', ', $placeholders)
         );
 
-        $stmt = $this->prepare($sql);
-        $this->bind($stmt, $types, ...$binds);
+        $insertId = $this->writeRow(null, $clean, function () use ($sql, $types, $binds): int {
+            $stmt = $this->prepare($sql);
+            $this->bind($stmt, $types, ...$binds);
 
-        try {
-            $this->execute($stmt, 'Insert failed');
-        } catch (\mysqli_sql_exception $e) {
-            $this->rethrowDuplicateKey($e, $stmt);
-        }
+            try {
+                $this->execute($stmt, 'Insert failed');
+            } catch (\mysqli_sql_exception $e) {
+                $this->rethrowDuplicateKey($e, $stmt);
+            }
 
-        $insertId = $stmt->insert_id;
-        $stmt->close();
+            $insertId = $stmt->insert_id;
+            $stmt->close();
+
+            return $insertId;
+        });
 
         // The row exists from here on. A failure past this point is not a
         // failed create, and must not be reported as one: the caller would
@@ -1067,15 +1104,17 @@ abstract class Controller
             implode(' AND ', $where)
         );
 
-        $stmt = $this->prepare($sql);
-        $this->bind($stmt, $types, ...$binds);
+        $this->writeRow($currentData, $clean, function () use ($sql, $types, $binds): void {
+            $stmt = $this->prepare($sql);
+            $this->bind($stmt, $types, ...$binds);
 
-        try {
-            $this->execute($stmt, 'Update failed');
-        } catch (\mysqli_sql_exception $e) {
-            $this->rethrowDuplicateKey($e, $stmt);
-        }
-        $stmt->close();
+            try {
+                $this->execute($stmt, 'Update failed');
+            } catch (\mysqli_sql_exception $e) {
+                $this->rethrowDuplicateKey($e, $stmt);
+            }
+            $stmt->close();
+        });
 
         // As in create(): the write has landed, so a later failure must not
         // read as "the update did not happen".
@@ -1135,11 +1174,13 @@ abstract class Controller
             );
         }
 
-        $stmt = $this->prepare($sql);
-        $this->bind($stmt, $types, ...$binds);
+        $this->writeRow((array)$existing['data'], [], function () use ($sql, $types, $binds): void {
+            $stmt = $this->prepare($sql);
+            $this->bind($stmt, $types, ...$binds);
 
-        $this->execute($stmt, 'Delete failed');
-        $stmt->close();
+            $this->execute($stmt, 'Delete failed');
+            $stmt->close();
+        });
 
         return (array)$existing['data'];
     }
@@ -1175,7 +1216,41 @@ abstract class Controller
             'mode' => $this->deletedColumn() !== null ? 'soft' : 'hard',
             'record' => $existing['data'],
             'cascade' => [],
-        ]];
+        ] + $this->inUseBy((int) $id)];
+    }
+
+    /**
+     * Where one of the account's Library records is used: GET
+     * /<resource>/{id}/uses. A record that is not the account's is a 404,
+     * as its GET is.
+     */
+    public function uses(int $id): array
+    {
+        $library = $this->libraryResource() ?? throw new \LogicException(static::class . ' is no Library resource');
+        $this->get($id);
+        $uses = (new LibraryUsage($this->db, $this->userId))->named($library, $id);
+        $total = 0;
+        foreach ($uses as $kind) {
+            $total += $kind['count'];
+        }
+
+        return ['data' => ['resource' => $library, 'id' => $id, 'total' => $total, 'uses' => $uses]];
+    }
+
+    /**
+     * A Library record's delete preview names what still points at it: a
+     * soft delete takes it out of the Library and leaves those pointing.
+     *
+     * @return array{}|array{in_use_by: array<string, mixed>}
+     */
+    private function inUseBy(int $id): array
+    {
+        $library = $this->libraryResource();
+        if ($library === null) {
+            return [];
+        }
+
+        return ['in_use_by' => (new LibraryUsage($this->db, $this->userId))->named($library, $id)];
     }
 
     public function bulkUpsert(array $payload): array
@@ -1209,12 +1284,12 @@ abstract class Controller
         $scope = ServerStateStore::idempotencyScopeForUser($this->userId);
         $lookup = $this->stateStore()->lookupIdempotent($scope, $idempotencyKey, $requestHash);
         if ($lookup['state'] === 'mismatch') {
-            throw new ValidationException(
+            throw (new ValidationException(
                 'This Idempotency-Key was already used for a different request. Resend the original '
                 . 'rows to this same endpoint to replay the recorded response, or send a new '
                 . 'Idempotency-Key for a different batch.',
                 ['idempotency_key' => 'Already used for a different request']
-            );
+            ))->coded(ErrorCode::IDEMPOTENCY_KEY_REUSED);
         }
         if ($lookup['state'] === 'replay' && is_array($lookup['response'])) {
             $existing = $lookup['response'];
@@ -1670,14 +1745,14 @@ abstract class Controller
         $currentVersion = $this->computeVersionHash($currentRow);
         if ($expected !== $currentVersion) {
             $this->stateStore()->incrementMetric('conflicts', 1);
-            throw new ConflictException(
+            throw (new ConflictException(
                 'Version mismatch',
                 [
                     'expected_version' => $expected,
                     'current_version' => $currentVersion,
                     'diff_hint' => 'Re-fetch resource and retry update with latest ETag.',
                 ]
-            );
+            ))->coded(ErrorCode::VERSION_CONFLICT);
         }
     }
 

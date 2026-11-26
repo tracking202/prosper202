@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\ErrorCode;
 use Api\V3\Apps\Apple\SkanEncodingRules;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\PageRows;
 use Api\V3\Support\PayloadKeys;
 use Prosper202\Database\Connection;
 use Prosper202\Goals\EvaluationTooLarge;
@@ -82,10 +84,12 @@ final class GoalsController
         $filters['include_archived'] = self::flag($params['include_archived'] ?? '0', 'include_archived');
         [$limit, $offset] = self::paging($params);
 
-        $page = $this->guard(fn () => $this->goals->list($this->userId, $filters, $offset, $limit));
+        $page = $this->guard(fn () => $this->goals->list($this->userId, $filters, $offset, PageRows::fetchLimit($limit)));
+        [$rows, $truncated] = PageRows::cut($page['rows'], $limit);
 
         return [
-            'data' => array_map(fn (array $row): array => $this->present($row, false), $page['rows']),
+            'data' => array_map(fn (array $row): array => $this->present($row, false), $rows),
+            'truncated' => $truncated,
             'pagination' => ['total' => $page['total'], 'limit' => $limit, 'offset' => $offset],
         ];
     }
@@ -145,7 +149,8 @@ final class GoalsController
             $filters['subject_id'] = self::id($params['subject_id'], 'subject_id');
         }
         [$limit, $offset] = self::paging($params);
-        $rows = $this->guard(fn () => $this->goals->liveOutcomes($this->userId, $filters, $limit, $offset));
+        $rows = $this->guard(fn () => $this->goals->liveOutcomes($this->userId, $filters, PageRows::fetchLimit($limit), $offset));
+        [$rows, $truncated] = PageRows::cut($rows, $limit);
         $total = $this->guard(fn () => $this->goals->countLiveOutcomes($this->userId, $filters));
         $purLinkIds = [];
         foreach ($rows as $row) {
@@ -190,6 +195,7 @@ final class GoalsController
                 'app_registration_id' => $r['app_registration_id'] !== null ? (int) $r['app_registration_id'] : null,
                 'conversion_id' => $r['conversion_id'] !== null ? (int) $r['conversion_id'] : null,
             ] + ($r['subject_type'] === GoalSubject::PURLINK ? ['purlink' => $purLinks[(int) $r['subject_id']]] : []), $rows),
+            'truncated' => $truncated,
             'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset],
         ];
     }
@@ -612,7 +618,9 @@ final class GoalsController
     private function assertNameFree(GoalScope $scope, int $scopeId, string $name, ?int $exceptId): void
     {
         if ($this->goals->nameTaken($this->userId, $scope, $scopeId, $name, $exceptId)) {
-            throw new ConflictException('A goal named "' . $name . '" already exists for this ' . $scope->value . '; goal names are unique per owner.');
+            throw (new ConflictException(
+                'A goal named "' . $name . '" already exists for this ' . $scope->value . '; goal names are unique per owner.'
+            ))->coded(ErrorCode::NAME_TAKEN);
         }
     }
 

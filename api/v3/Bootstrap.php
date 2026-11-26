@@ -86,9 +86,18 @@ final class Bootstrap
         header('Content-Type: application/json; charset=utf-8');
         header('X-Content-Type-Options: nosniff');
         header('Cache-Control: ' . $cacheControl);
+        if ($status >= 400) {
+            // Every error answer carries a documented code (ErrorCode).
+            $data['code'] = ErrorCode::forBody($data, $status);
+        }
         $json = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         if ($json === false) {
-            $json = json_encode(['error' => true, 'message' => 'Response encoding failed', 'status' => 500]);
+            $json = json_encode([
+                'error' => true,
+                'message' => 'Response encoding failed',
+                'status' => 500,
+                'code' => ErrorCode::SERVER_ERROR,
+            ]);
             http_response_code(500);
         }
         echo $json;

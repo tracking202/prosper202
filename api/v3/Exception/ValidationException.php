@@ -24,7 +24,7 @@ class ValidationException extends HttpException
 
     public function toArray(): array
     {
-        $out = ['error' => true, 'message' => $this->getMessage(), 'status' => 422];
+        $out = ['error' => true, 'message' => $this->getMessage(), 'status' => 422, 'code' => $this->errorCode()];
         if ($this->fieldErrors) {
             $out['field_errors'] = $this->fieldErrors;
         }

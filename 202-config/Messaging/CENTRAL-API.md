@@ -170,11 +170,18 @@ therefore answer without `consent_ack`, or with a non-200, never `ok` alone.
 - `consent` is the same block as `identity.consent` (top-level here per the receiver
   contract), plus `version`; store the latest values. Tolerate its absence (older clients)
   and fail closed: no explicit `email_marketing: "granted"` means no marketing email.
-  `version` is an integer that grows with each of the user's consent changes on the
-  install (at least the Unix time of the change, so a restored backup does not reuse
-  one), and it only grows: a block
-  whose version is lower than one already stored for the user is an older delivery
-  arriving late; acknowledge it, but do not let it replace the newer values.
+  `version` is an integer the install assigns at each of the user's consent changes as
+  `GREATEST(previous + 1, UNIX_TIMESTAMP())`, read from its database server, so it only
+  grows: every change gets a version above the install's previous one, and, once that
+  server's clock has passed the versions assigned before, above every one of them too,
+  those sent before a database was restored from a backup or copied to another server
+  included. A version is ahead of the clock only by the changes made faster than one
+  a second. A block whose version is lower than one already stored for the user is
+  therefore an older delivery arriving late, or comes from an install whose database
+  went back (a restore forgets the choices made after its backup, and a server whose
+  clock runs behind assigns versions below the old ones). Acknowledge it either way,
+  and fail closed: apply it where it narrows consent (`denied` or `unset` where
+  `granted` is stored), never where it would widen it, and keep the higher version.
 - Every event carries `tier`: `"essential"` (operational/lifecycle — arrives for all users;
   usable for support and account operations) or `"analytics"` (behavioural — arrives only
   for consented users; usable for segmentation and marketing). Store it; never treat an

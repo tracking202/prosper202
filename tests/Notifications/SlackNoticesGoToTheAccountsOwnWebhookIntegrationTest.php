@@ -6,10 +6,12 @@ namespace Tests\Notifications;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Connection;
+use Prosper202\Notifications\SlackNoticeQueue;
 use Prosper202\Notifications\SlackWebhook;
 
 /**
  * 974K: a notice goes to the account's own webhook, or none; never account 1's.
+ * YS8E: the page queues it, and the cron job's send (SlackNoticeQueue) posts it.
  * The webhooks are documentation addresses: refused before connecting, named in the log.
  *
  * @group integration
@@ -109,7 +111,7 @@ final class SlackNoticesGoToTheAccountsOwnWebhookIntegrationTest extends TestCas
     private static function cleanUp(): void
     {
         foreach ([self::WITH_WEBHOOK, self::WITHOUT, self::BLANK] as $user) {
-            foreach (['202_user_role', '202_users_pref', '202_users'] as $table) {
+            foreach (['202_slack_notices', '202_trackers', '202_user_role', '202_users_pref', '202_users'] as $table) {
                 self::q("DELETE FROM $table WHERE user_id = $user");
             }
         }
@@ -163,9 +165,16 @@ final class SlackNoticesGoToTheAccountsOwnWebhookIntegrationTest extends TestCas
     public function testADeletedLinkIsAnnouncedOnTheAccountsOwnWebhook(): void
     {
         $log = $this->deleteTrackerAs(self::WITH_WEBHOOK);
-        self::assertStringContainsString('Slack: the "tracking_link_deleted" notice was not sent', $log);
-        self::assertStringContainsString('192.0.2.10', $log, 'the notice was for the account\'s own webhook');
-        self::assertStringNotContainsString('192.0.2.11', $log, 'and not account 1\'s');
+        self::assertStringNotContainsString('Slack:', $log, 'the page queued the notice and sent nothing itself');
+        self::assertSame([[(string) self::WITH_WEBHOOK, 'tracking_link_deleted']], $this->queued());
+
+        $sent = $this->sendQueued();
+        self::assertSame(['sent' => 0, 'failed' => 1, 'retrying' => 0], $sent['counts'], 'refused, so dropped');
+        self::assertStringContainsString('Slack: the "tracking_link_deleted" notice for account '
+            . self::WITH_WEBHOOK . ' was not sent', $sent['log']);
+        self::assertStringContainsString('192.0.2.10', $sent['log'], 'the notice was for the account\'s own webhook');
+        self::assertStringNotContainsString('192.0.2.11', $sent['log'], 'and not account 1\'s');
+        self::assertSame([], $this->queued(), 'a refused notice is not kept');
     }
 
     public function testAnAccountWithNoWebhookSendsNoNotice(): void
@@ -173,18 +182,58 @@ final class SlackNoticesGoToTheAccountsOwnWebhookIntegrationTest extends TestCas
         $log = $this->deleteTrackerAs(self::WITHOUT);
         self::assertStringNotContainsString('Slack:', $log, 'no notice, not one to account 1\'s webhook');
         self::assertStringNotContainsString('192.0.2.11', $log);
+        self::assertSame([], $this->queued(), 'and none queued');
     }
 
-    /** What the page logged, deleting a link (one there is none of) as $user. */
+    /** @return list<array{0: string, 1: string}> this class's queued notices: account, notice */
+    private function queued(): array
+    {
+        $found = self::requireScratch()->query('SELECT user_id, notice FROM 202_slack_notices WHERE user_id IN ('
+            . self::WITH_WEBHOOK . ', ' . self::WITHOUT . ', ' . self::BLANK . ') ORDER BY notice_id');
+        self::assertInstanceOf(\mysqli_result::class, $found);
+
+        return array_map(
+            static fn (array $row): array => [(string) $row[0], (string) $row[1]],
+            $found->fetch_all(MYSQLI_NUM)
+        );
+    }
+
+    /** @return array{counts: array{sent: int, failed: int, retrying: int}, log: string} the cron's send, as it ran */
+    private function sendQueued(): array
+    {
+        $log = (string) tempnam(sys_get_temp_dir(), 'p202-slack-send-');
+        $saved = ini_get('error_log');
+        $allow = getenv('P202_WEBHOOK_ALLOW_NETWORKS');
+        putenv('P202_WEBHOOK_ALLOW_NETWORKS=');
+        ini_set('error_log', $log);
+        try {
+            $counts = (new SlackNoticeQueue(new Connection(self::requireScratch())))->sendDue(10);
+        } finally {
+            ini_set('error_log', $saved === false ? '' : $saved);
+            putenv($allow === false ? 'P202_WEBHOOK_ALLOW_NETWORKS' : 'P202_WEBHOOK_ALLOW_NETWORKS=' . $allow);
+        }
+        $logged = (string) file_get_contents($log);
+        @unlink($log);
+
+        return ['counts' => $counts, 'log' => $logged];
+    }
+
+    /**
+     * What the page logged, deleting one of $user's links. A delete that
+     * matched no row announces nothing, so the link is the account's own.
+     */
     private function deleteTrackerAs(int $user): string
     {
         self::requireScratch();
+        $tracker = self::insert('INSERT INTO 202_trackers SET user_id = ' . $user . ', tracker_id_public = 0,'
+            . ' aff_campaign_id = 0, text_ad_id = 0, ppc_account_id = 0, landing_page_id = 0, click_cloaking = 0,'
+            . ' tracker_time = ' . time());
         $log = (string) tempnam(sys_get_temp_dir(), 'p202-slack-page-');
         $env = [
             'P202_TEST_REPORT_USER' => (string) $user,
             'P202_TEST_SESSION_DIR' => self::$sessions,
             'P202_TEST_GET' => '{}',
-            'P202_TEST_POST' => (string) json_encode(['token' => 'SESSION', 'tracker_id' => '99009199']),
+            'P202_TEST_POST' => (string) json_encode(['token' => 'SESSION', 'tracker_id' => (string) $tracker]),
             'P202_WEBHOOK_ALLOW_NETWORKS' => '',
         ] + getenv();
         $proc = proc_open(
@@ -208,6 +257,7 @@ final class SlackNoticesGoToTheAccountsOwnWebhookIntegrationTest extends TestCas
         self::assertStringNotContainsString('Fatal error', $out . $err . $logged, $err . $logged);
         self::assertStringNotContainsString('Invalid token', $out, 'the delete ran');
         self::assertStringNotContainsString('could not be deleted', $out, 'the delete ran');
+        self::assertStringNotContainsString('not found on this account', $out, 'the delete found the link');
 
         return $logged . $err;
     }

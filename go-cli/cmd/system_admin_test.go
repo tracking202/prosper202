@@ -519,6 +519,48 @@ func TestLtvWebhookReviveSendsTheRevival(t *testing.T) {
 	}
 }
 
+func TestLtvWebhookRotateSecretSendsTheOverlapAsANumber(t *testing.T) {
+	cases := []struct {
+		args []string
+		body string
+	}{
+		{[]string{"3"}, `{}`},
+		{[]string{"3", "--overlap-hours", "0"}, `{"overlap_hours":0}`},
+		{[]string{"3", "--overlap-hours", "168"}, `{"overlap_hours":168}`},
+	}
+	for _, c := range cases {
+		srv := newLtvServer(t, func(ltvRequest) (int, string) {
+			return 200, `{"data":{"webhook_id":3,"secret":"whsec_new","overlap_hours":24,"previous_secret_expires_at":1790000000}}`
+		})
+		out, _, err := executeCommand(append([]string{"ltv", "webhooks", "rotate-secret"}, c.args...)...)
+		if err != nil {
+			t.Fatalf("%v: %v", c.args, err)
+		}
+		req := srv.only(t)
+		if req.Method != "POST" || req.Path != "/ltv/webhooks/3/rotate-secret" || req.Body != c.body {
+			t.Errorf("%v: request = %+v", c.args, req)
+		}
+		if !strings.Contains(out, "whsec_new") {
+			t.Errorf("%v: output = %s", c.args, out)
+		}
+	}
+	for _, args := range [][]string{{"x"}, {"0"}, {"3", "--overlap-hours", "169"}, {"3", "--overlap-hours", "-1"},
+		{"3", "--overlap-hours", "1.5"}, {"3", "--overlap-hours", "007"}} {
+		srv := newLtvServer(t, nil)
+		_, _, err := executeCommand(append([]string{"ltv", "webhooks", "rotate-secret"}, args...)...)
+		if exitCodeForError(err) != ExitValidation || hintFor(err) == "" || len(srv.seen()) != 0 {
+			t.Errorf("%v: exit %d, hint %q, sent %d", args, exitCodeForError(err), hintFor(err), len(srv.seen()))
+		}
+	}
+	newLtvServer(t, func(ltvRequest) (int, string) {
+		return 404, `{"error":true,"status":404,"message":"Webhook not found"}`
+	})
+	_, _, err := executeCommand("ltv", "webhooks", "rotate-secret", "9")
+	if exitCodeForError(err) != ExitValidation || !strings.Contains(hintFor(err), "`p202 ltv webhooks list`") {
+		t.Errorf("404: exit %d, hint %q", exitCodeForError(err), hintFor(err))
+	}
+}
+
 func TestLtvWebhookDeliveriesReadsTheLog(t *testing.T) {
 	srv := newLtvServer(t, func(ltvRequest) (int, string) { return 200, `{"data":[],"meta":{}}` })
 	if _, _, err := executeCommand("ltv", "webhooks", "deliveries", "3", "--limit", "10", "--status", "failed"); err != nil {
