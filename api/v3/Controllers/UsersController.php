@@ -601,8 +601,10 @@ class UsersController
             $stmt = $this->prepare('INSERT IGNORE INTO 202_user_role (user_id, role_id) VALUES (?, ?)');
             $this->bind($stmt, 'ii', $userId, $roleId);
             $this->execute($stmt, 'Failed to assign role');
+            $inserted = $stmt->affected_rows > 0;
             $stmt->close();
-            if ($actorUserId !== null) {
+            // Only a role newly given grants: a revoked grant stays gone when the role is assigned again.
+            if ($actorUserId !== null && $inserted) {
                 (new \Prosper202\Click\PublisherCredit(new Connection($this->db)))
                     ->grantWithRole($actorUserId, $userId, $roleId, time());
             }

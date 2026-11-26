@@ -458,6 +458,7 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
         && !\Prosper202\User\UserStanding::isActive($userSet['user_active']));
 
     return $conn->transaction(static function () use ($conn, $editUserId, $assignments, $types, $values, $roleId, $onCreate, $revokes, $actorUserId): int {
+        $roleHeld = false;
         if ($editUserId !== null) {
             $stmt = $conn->prepareWrite('SELECT `user_id` FROM `202_users` WHERE `user_id` = ? AND `user_deleted` != 1 FOR UPDATE');
             $conn->bind($stmt, 'i', [$editUserId]);
@@ -471,6 +472,11 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
             if ($revokes) {
                 \Prosper202\User\RememberMeKeys::revokeAll($conn, $userId);
                 \Prosper202\User\SessionGeneration::bump($conn, $userId);
+            }
+            if ($actorUserId !== null) {
+                $stmt = $conn->prepareWrite('SELECT 1 AS `held` FROM `202_user_role` WHERE `user_id` = ? AND `role_id` = ? LIMIT 1');
+                $conn->bind($stmt, 'ii', [$userId, $roleId]);
+                $roleHeld = $conn->fetchOne($stmt) !== null;
             }
             $stmt = $conn->prepareWrite('DELETE FROM `202_user_role` WHERE `user_id` = ?');
             $conn->bind($stmt, 'i', [$userId]);
@@ -496,7 +502,8 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
         $stmt = $conn->prepareWrite('INSERT INTO `202_user_role` (`user_id`, `role_id`) VALUES (?, ?)');
         $conn->bind($stmt, 'ii', [$userId, $roleId]);
         $conn->executeInsert($stmt);
-        if ($actorUserId !== null) {
+        // Only a role newly given grants: a revoked grant stays gone when the user is edited.
+        if ($actorUserId !== null && !$roleHeld) {
             (new \Prosper202\Click\PublisherCredit($conn))->grantWithRole($actorUserId, $userId, $roleId, time());
         }
         if ($editUserId === null && $onCreate !== null) {

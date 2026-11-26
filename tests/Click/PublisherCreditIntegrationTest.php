@@ -286,11 +286,57 @@ final class PublisherCreditIntegrationTest extends TestCase
             self::assertNotNull(self::credit()->forClick(self::OTHER_OWNER, 'd0d0d0d0d0'));
 
             self::q('DELETE FROM 202_publisher_grants WHERE user_id = ' . self::OTHER_OWNER);
+            self::q('DELETE FROM 202_user_role WHERE user_id = ' . self::UNGRANTED . " AND role_id = $publisherRole");
             $conn = new Connection(self::requireScratch());
             $role = $publisherRole;
             p202_account_save_user($conn, self::UNGRANTED, ['user_fname' => 'Pub'], $role, null, self::OTHER_OWNER);
             self::assertSame([self::UNGRANTED], $grants(self::OTHER_OWNER));
             self::assertNotContains(self::UNGRANTED, $grants(self::MANAGER), 'only the account that gave it');
+        } finally {
+            self::q('DELETE FROM 202_user_role WHERE user_id = ' . self::UNGRANTED);
+            self::q('INSERT INTO 202_user_role SET user_id = ' . self::UNGRANTED . ', role_id = 3');
+        }
+    }
+
+    /** Editing a Publisher who already holds the role must not bring back a grant the account revoked. */
+    public function testSavingAPublisherWhoHoldsTheRoleDoesNotRegrantARevokedPublisher(): void
+    {
+        require_once dirname(__DIR__, 2) . '/202-config/functions-account-ui.php';
+        $publisherRole = PublisherCredit::PUBLISHER_ROLE_ID;
+        self::assertTrue(self::credit()->revoke(self::OWNER, self::PUBLISHER));
+        $conn = new Connection(self::requireScratch());
+        p202_account_save_user($conn, self::PUBLISHER, ['user_lname' => (string) self::PUBLISHER], $publisherRole, null, self::OWNER);
+        self::assertNull(self::credit()->forClick(self::OWNER, 'c0c0c0c0c0'));
+        self::assertNotContains(self::PUBLISHER, array_column(self::credit()->granted(self::OWNER), 'user_id'));
+    }
+
+    /** Assigning a role the user already holds, through the API, grants nothing either. */
+    public function testAssigningAHeldPublisherRoleDoesNotRegrantARevokedPublisher(): void
+    {
+        $publisherRole = PublisherCredit::PUBLISHER_ROLE_ID;
+        self::assertTrue(self::credit()->revoke(self::OWNER, self::PUBLISHER));
+        $users = new \Api\V3\Controllers\UsersController(self::requireScratch());
+        $users->assignRole(self::PUBLISHER, ['role_id' => $publisherRole], self::OWNER);
+        self::assertNull(self::credit()->forClick(self::OWNER, 'c0c0c0c0c0'));
+    }
+
+    /** A user who lacked the Publisher role is granted when given it, on both paths. */
+    public function testGivingThePublisherRoleToAUserWhoLackedItStillGrants(): void
+    {
+        require_once dirname(__DIR__, 2) . '/202-config/functions-account-ui.php';
+        $publisherRole = PublisherCredit::PUBLISHER_ROLE_ID;
+        $grants = static fn (int $owner): array => array_column(self::credit()->granted($owner), 'user_id');
+        $users = new \Api\V3\Controllers\UsersController(self::requireScratch());
+        $conn = new Connection(self::requireScratch());
+        try {
+            self::q('DELETE FROM 202_publisher_grants WHERE user_id = ' . self::OTHER_OWNER);
+            $users->assignRole(self::UNGRANTED, ['role_id' => $publisherRole], self::OTHER_OWNER);
+            self::assertSame([self::UNGRANTED], $grants(self::OTHER_OWNER), 'the API path');
+
+            self::q('DELETE FROM 202_publisher_grants WHERE user_id = ' . self::OTHER_OWNER);
+            self::q('DELETE FROM 202_user_role WHERE user_id = ' . self::UNGRANTED . " AND role_id = $publisherRole");
+            p202_account_save_user($conn, self::UNGRANTED, ['user_lname' => (string) self::UNGRANTED], $publisherRole, null, self::OTHER_OWNER);
+            self::assertSame([self::UNGRANTED], $grants(self::OTHER_OWNER), 'the edit path');
         } finally {
             self::q('DELETE FROM 202_user_role WHERE user_id = ' . self::UNGRANTED);
             self::q('INSERT INTO 202_user_role SET user_id = ' . self::UNGRANTED . ', role_id = 3');
