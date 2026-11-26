@@ -1794,6 +1794,7 @@ paths:
             type: string
             enum: [aff_campaign_id, aff_campaign_name, aff_campaign_payout, aff_network_id]
         - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/libraryWith"
       responses:
         "200":
           description: Paginated campaign list
@@ -1869,9 +1870,35 @@ paths:
       operationId: deleteCampaign
       responses:
         "200":
-          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+          description: >-
+            Dry-run preview (`dry_run=1`) — the delete was not performed. Its
+            `in_use_by` names what still points at the record, as
+            `GET /campaigns/{id}/uses` does.
         "204":
           description: Campaign deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /campaigns/{id}/uses:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Campaigns]
+      summary: Where a campaign is used
+      description: >-
+        The account's live records that point at this campaign, by kind: how
+        many, and the first 25 of each (lowest id first). A soft delete takes
+        the campaign out of the Library and leaves these pointing at it, so a
+        delete's dry run names the same uses as `in_use_by`. Role permission
+        `access_to_setup_section`, as the record's own GET.
+      operationId: getCampaignUses
+      responses:
+        "200":
+          description: The campaign's uses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryUsesResponse"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1897,6 +1924,7 @@ paths:
             enum: [aff_network_id, aff_network_name]
         - $ref: "#/components/parameters/listSortDir"
         - $ref: "#/components/parameters/listFilter"
+        - $ref: "#/components/parameters/libraryWith"
       responses:
         "200":
           description: Paginated affiliate network list
@@ -1971,9 +1999,35 @@ paths:
       operationId: deleteAffNetwork
       responses:
         "200":
-          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+          description: >-
+            Dry-run preview (`dry_run=1`) — the delete was not performed. Its
+            `in_use_by` names what still points at the record, as
+            `GET /aff-networks/{id}/uses` does.
         "204":
           description: Network deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /aff-networks/{id}/uses:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Affiliate Networks]
+      summary: Where a affiliate network is used
+      description: >-
+        The account's live records that point at this affiliate network, by kind: how
+        many, and the first 25 of each (lowest id first). A soft delete takes
+        the affiliate network out of the Library and leaves these pointing at it, so a
+        delete's dry run names the same uses as `in_use_by`. Role permission
+        `access_to_setup_section`, as the record's own GET.
+      operationId: getAffNetworkUses
+      responses:
+        "200":
+          description: The affiliate network's uses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryUsesResponse"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1999,6 +2053,7 @@ paths:
             enum: [ppc_network_id, ppc_network_name]
         - $ref: "#/components/parameters/listSortDir"
         - $ref: "#/components/parameters/listFilter"
+        - $ref: "#/components/parameters/libraryWith"
       responses:
         "200":
           description: Paginated PPC network list
@@ -2073,9 +2128,35 @@ paths:
       operationId: deletePpcNetwork
       responses:
         "200":
-          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+          description: >-
+            Dry-run preview (`dry_run=1`) — the delete was not performed. Its
+            `in_use_by` names what still points at the record, as
+            `GET /ppc-networks/{id}/uses` does.
         "204":
           description: Network deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /ppc-networks/{id}/uses:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [PPC Networks]
+      summary: Where a traffic source is used
+      description: >-
+        The account's live records that point at this traffic source, by kind: how
+        many, and the first 25 of each (lowest id first). A soft delete takes
+        the traffic source out of the Library and leaves these pointing at it, so a
+        delete's dry run names the same uses as `in_use_by`. Role permission
+        `access_to_setup_section`, as the record's own GET.
+      operationId: getPpcNetworkUses
+      responses:
+        "200":
+          description: The traffic source's uses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryUsesResponse"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2101,6 +2182,7 @@ paths:
             enum: [ppc_account_id, ppc_account_name, ppc_network_id]
         - $ref: "#/components/parameters/listSortDir"
         - $ref: "#/components/parameters/listFilter"
+        - $ref: "#/components/parameters/libraryWith"
       responses:
         "200":
           description: Paginated PPC account list
@@ -2175,9 +2257,35 @@ paths:
       operationId: deletePpcAccount
       responses:
         "200":
-          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+          description: >-
+            Dry-run preview (`dry_run=1`) — the delete was not performed. Its
+            `in_use_by` names what still points at the record, as
+            `GET /ppc-accounts/{id}/uses` does.
         "204":
           description: Account deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /ppc-accounts/{id}/uses:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [PPC Accounts]
+      summary: Where a traffic source account is used
+      description: >-
+        The account's live records that point at this traffic source account, by kind: how
+        many, and the first 25 of each (lowest id first). A soft delete takes
+        the traffic source account out of the Library and leaves these pointing at it, so a
+        delete's dry run names the same uses as `in_use_by`. Role permission
+        `access_to_setup_section`, as the record's own GET.
+      operationId: getPpcAccountUses
+      responses:
+        "200":
+          description: The traffic source account's uses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryUsesResponse"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2452,6 +2560,7 @@ paths:
             enum: [landing_page_id, landing_page_nickname, landing_page_url, aff_campaign_id]
         - $ref: "#/components/parameters/listSortDir"
         - $ref: "#/components/parameters/listFilter"
+        - $ref: "#/components/parameters/landingPageWith"
       responses:
         "200":
           description: Paginated landing page list
@@ -2538,7 +2647,10 @@ paths:
       operationId: deleteLandingPage
       responses:
         "200":
-          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+          description: >-
+            Dry-run preview (`dry_run=1`) — the delete was not performed. Its
+            `in_use_by` names what still points at the record, as
+            `GET /landing-pages/{id}/uses` does.
         "204":
           description: Landing page deleted
         "404":
@@ -2552,6 +2664,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  /landing-pages/{id}/uses:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Landing Pages]
+      summary: Where a landing page is used
+      description: >-
+        The account's live records that point at this landing page, by kind: how
+        many, and the first 25 of each (lowest id first). A soft delete takes
+        the landing page out of the Library and leaves these pointing at it, so a
+        delete's dry run names the same uses as `in_use_by`. Role permission
+        `access_to_setup_section`, as the record's own GET.
+      operationId: getLandingPageUses
+      responses:
+        "200":
+          description: The landing page's uses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryUsesResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   # ─── Text Ads ────────────────────────────────────────────────────────
 
@@ -2575,6 +2710,7 @@ paths:
             enum: [text_ad_id, text_ad_name, aff_campaign_id, landing_page_id]
         - $ref: "#/components/parameters/listSortDir"
         - $ref: "#/components/parameters/listFilter"
+        - $ref: "#/components/parameters/libraryWith"
       responses:
         "200":
           description: Paginated text ad list
@@ -2648,9 +2784,35 @@ paths:
       operationId: deleteTextAd
       responses:
         "200":
-          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+          description: >-
+            Dry-run preview (`dry_run=1`) — the delete was not performed. Its
+            `in_use_by` names what still points at the record, as
+            `GET /text-ads/{id}/uses` does.
         "204":
           description: Text ad deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /text-ads/{id}/uses:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Text Ads]
+      summary: Where a text ad is used
+      description: >-
+        The account's live records that point at this text ad, by kind: how
+        many, and the first 25 of each (lowest id first). A soft delete takes
+        the text ad out of the Library and leaves these pointing at it, so a
+        delete's dry run names the same uses as `in_use_by`. Role permission
+        `access_to_setup_section`, as the record's own GET.
+      operationId: getTextAdUses
+      responses:
+        "200":
+          description: The text ad's uses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryUsesResponse"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -15059,7 +15221,9 @@ components:
       description: |
         Preview the delete without performing it. With `dry_run=1` the
         response is `200` with `{data: {dry_run, action, resource, mode,
-        record, cascade}}` instead of `204`. Fail-closed: an endpoint
+        record, cascade}}` instead of `204`; a Library record's (campaigns,
+        networks, traffic sources and their accounts, landing pages, text
+        ads) also carries `in_use_by`, the records still pointing at it. Fail-closed: an endpoint
         without preview support rejects the parameter with `422`, and an
         unrecognized value is a `422` — never a delete. Supported
         when the capabilities report `features.delete_dry_run`.
@@ -15112,6 +15276,34 @@ components:
         type: integer
         default: 50
         maximum: 500
+    libraryWith:
+      name: with
+      in: query
+      required: false
+      description: >-
+        `usage` adds to each row a `usage` object: for each kind of record
+        that can point at this one, how many of the account's live records
+        do, and `total`. Any other value is a `422` naming `with`. Opt-in, so
+        a row read for a PUT body carries no key the record does not have.
+      schema:
+        type: string
+        enum: [usage]
+    landingPageWith:
+      name: with
+      in: query
+      required: false
+      description: >-
+        A comma list of `usage` (as on the other Library lists: trackers,
+        text ads and rotators pointing at each page, and `total`), `health`
+        (each page's stored code check for its present URL, or
+        `status: unchecked`) and `last_seen` (adds `last_seen_at`, when the
+        page last had a click in unix seconds, stored as clicks arrive and up
+        to 60 seconds behind the latest; null for a page with no click since
+        the install's 1.9.81 upgrade). Any other value, an empty item or a
+        repeat is a `422` naming `with`.
+      schema:
+        type: string
+        example: usage,health,last_seen
     listQ:
       name: q
       in: query
@@ -16645,6 +16837,73 @@ components:
       properties:
         data:
           $ref: "#/components/schemas/Campaign"
+
+    LibraryUsage:
+      type: object
+      description: >-
+        Per kind (trackers, landing_pages, text_ads, rotators, campaigns,
+        ppc_accounts, ad_connections, as the resource has them), how many of
+        the account's live records point at this one; a rotator counts once
+        however many of its redirects name it.
+      properties:
+        total:
+          type: integer
+      additionalProperties:
+        type: integer
+    LandingPageHealth:
+      type: object
+      description: The page's stored code check for its present URL (Setup › Landing Pages' pill).
+      properties:
+        status:
+          type: string
+          enum: [present, legacy, mixed, other_tracker, wrong_id, commented, absent, error, unchecked]
+        level:
+          type: string
+          enum: [good, warn, bad, unchecked]
+        label:
+          type: string
+          description: The words the Library shows for the status.
+        message:
+          type: string
+          nullable: true
+        checked_at:
+          type: integer
+          nullable: true
+    LibraryUsesResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            resource:
+              type: string
+            id:
+              type: integer
+            total:
+              type: integer
+            uses:
+              type: object
+              description: Each kind of use, in a fixed order per resource.
+              additionalProperties:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  records:
+                    type: array
+                    maxItems: 25
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        name:
+                          type: string
+                          nullable: true
+                          description: Null for a tracker, which has no name.
+                        path:
+                          type: string
+                          description: Where the API serves the record, as `/trackers/12`.
 
     CampaignListResponse:
       type: object

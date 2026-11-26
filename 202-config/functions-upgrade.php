@@ -5714,6 +5714,10 @@ class UPGRADE
                 // until it expires (previous_secret, previous_secret_expires_at).
                 \Prosper202\Database\Tables\LtvTables::ltvWebhooks(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
+                // When each landing page last had a click, which the landing
+                // page list reads (Prosper202\Click\LandingPageLastSeen).
+                // Pages start with none: no old click is scanned for one.
+                \Prosper202\Database\Tables\CampaignTables::landingPageLastSeen(),
                 // Each landing page's split test, whose variant the page's
                 // script writes into the click's C4 (Prosper202\Setup\
                 // LandingPageSplitTest).

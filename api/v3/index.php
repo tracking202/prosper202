@@ -509,6 +509,34 @@ try {
             }, isset($setupRemove[$resource]) ? [$setupRemove[$resource], $setupSection] : []);
         }
 
+        // Where a Library record is used (LibraryUsage): reads, held to Setup as the records are.
+        $router->group('', function (Router $r) use ($crud) {
+            $r->get(
+                '/campaigns/{id}/uses',
+                fn($ctx) => $crud(\Api\V3\Controllers\CampaignsController::class)->uses(PathId::of($ctx))
+            );
+            $r->get(
+                '/aff-networks/{id}/uses',
+                fn($ctx) => $crud(\Api\V3\Controllers\AffNetworksController::class)->uses(PathId::of($ctx))
+            );
+            $r->get(
+                '/ppc-networks/{id}/uses',
+                fn($ctx) => $crud(\Api\V3\Controllers\PpcNetworksController::class)->uses(PathId::of($ctx))
+            );
+            $r->get(
+                '/ppc-accounts/{id}/uses',
+                fn($ctx) => $crud(\Api\V3\Controllers\PpcAccountsController::class)->uses(PathId::of($ctx))
+            );
+            $r->get(
+                '/landing-pages/{id}/uses',
+                fn($ctx) => $crud(\Api\V3\Controllers\LandingPagesController::class)->uses(PathId::of($ctx))
+            );
+            $r->get(
+                '/text-ads/{id}/uses',
+                fn($ctx) => $crud(\Api\V3\Controllers\TextAdsController::class)->uses(PathId::of($ctx))
+            );
+        }, [$setupSection]);
+
         // Tracker sub-resource: Setup › Get Links' link.
         $router->group('/trackers', function (Router $r) use ($crud, $queryParams) {
             $r->get('/{id}/url', fn($ctx) => $crud(\Api\V3\Controllers\TrackersController::class)->getTrackingUrl(PathId::of($ctx), $queryParams));
