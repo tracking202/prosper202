@@ -176,8 +176,19 @@ final class GetLinksSchemeIntegrationTest extends TestCase
     {
         return $https + [
             'SERVER_NAME' => 'localhost', 'HTTP_HOST' => 'localhost', 'SERVER_PORT' => '80',
-            'DOCUMENT_ROOT' => dirname(__DIR__, 2),
+            'DOCUMENT_ROOT' => dirname(__DIR__, 2), 'REMOTE_ADDR' => '127.0.0.1',
         ];
+    }
+
+    /** The API side runs here: its REMOTE_ADDR is the listed TLS proxy, as the page runner's is. */
+    protected function setUp(): void
+    {
+        putenv('P202_TRUSTED_PROXIES=127.0.0.1');
+    }
+
+    protected function tearDown(): void
+    {
+        putenv('P202_TRUSTED_PROXIES');
     }
 
     /**
@@ -194,6 +205,8 @@ final class GetLinksSchemeIntegrationTest extends TestCase
             'P202_TEST_GET' => '{}',
             'P202_TEST_POST' => '{}',
             'P202_TEST_SERVER' => (string) json_encode((object) $server),
+            // The runner's REMOTE_ADDR stands for the TLS-terminating proxy (TrustedProxies).
+            'P202_TRUSTED_PROXIES' => '127.0.0.1',
         ] + getenv();
         $command = [
             PHP_BINARY, '-d', 'display_errors=stderr', '-d', 'error_reporting=E_ALL & ~E_DEPRECATED',

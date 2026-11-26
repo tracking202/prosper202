@@ -1,0 +1,3 @@
+# R4CE: a refund is capped at its sale under the click's lock.
+-- Fixed: A JVZoo, ClickBank, Zaxaa or PayKickstart refund stating more than its sale was capped at the sale only when the sale had committed before the refund arrived: the cap came from a read made before the conversion writer locked the click, so a sale and its refund arriving together could record the whole refund and leave the click's payout below 0. The writer now caps the refund at the sale it finds under the lock, and the answer names both amounts as before.
+app: Fixed: A refund arriving together with its sale can no longer take a click's payout below 0.

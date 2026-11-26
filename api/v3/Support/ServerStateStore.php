@@ -1488,14 +1488,14 @@ class ServerStateStore implements QuotaStore
     /**
      * Soft per-source rate limit for unauthenticated endpoints.
      *
-     * The bucket is keyed on the validated TCP peer address (REMOTE_ADDR),
-     * never on client-supplied headers: X-Forwarded-For is attacker-chosen
-     * on an open endpoint, so keying on it lets a flooder mint a fresh
-     * bucket per request — the limit never fires AND every spoofed value
-     * becomes a state file (the p13n endpoints' "never raw spoofable
-     * headers" rule). Behind a TLS-terminating proxy the peer is the proxy,
-     * so callers size $maxPerWindow as an aggregate ceiling, not a
-     * per-device one.
+     * The bucket is keyed on the client VisitorIp::fromServer() names: the
+     * TCP peer (REMOTE_ADDR), or behind a proxy listed in
+     * P202_TRUSTED_PROXIES the client that proxy saw. Never on a header
+     * from any other peer: X-Forwarded-For is attacker-chosen on an open
+     * endpoint, so keying on it lets a flooder mint a fresh bucket per
+     * request — the limit never fires AND every spoofed value becomes a
+     * state file. Behind a proxy nobody listed the peer is the proxy, so
+     * callers size $maxPerWindow as an aggregate ceiling too.
      *
      * Soft means the limiter's own failure never blocks the request:
      * returns the retry-after seconds when the limit is exceeded, and null
@@ -1553,13 +1553,13 @@ class ServerStateStore implements QuotaStore
     }
 
     /**
-     * The bucket of a soft per-source limit: the validated TCP peer, or one
+     * The bucket of a soft per-source limit: the client (VisitorIp), or one
      * shared bucket when there is none (CLI, misconfigured SAPI) rather than
      * an attacker-nameable one.
      */
     private static function softIpBucket(string $prefix, ?string $peerIp): string
     {
-        $ip = $peerIp ?? (string)($_SERVER['REMOTE_ADDR'] ?? '');
+        $ip = $peerIp ?? \Prosper202\Http\VisitorIp::fromServer($_SERVER);
         if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
             $ip = 'unknown';
         }

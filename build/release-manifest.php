@@ -64,6 +64,7 @@ return [
         '.claude',              // only the onboarding skill; see 'keep_only'
         'LICENSE',
         'README.md',
+        'SECURITY.md',          // how to report a vulnerability
         'changelogs.txt',
         'composer.json',        // lets a terminal user re-run composer install
         'composer.lock',        // ... against the exact set that shipped

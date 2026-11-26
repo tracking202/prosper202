@@ -46,6 +46,8 @@ final class PostReadersCheckTokenTest extends TestCase
     private const NO_TOKEN = [
         '202-account/ajax/validate-apikey.php' => 'writes nothing: it forwards a key to the vendor API to be checked and prints the answer, which another origin cannot read',
         '202-config/class-dataengine.php' => 'a report reader: offset and order page and sort a read',
+        '202-config/functions-account-ui.php' => 'p202_account_require_shown() reads the version a settings form'
+            . ' posted, for pages that checked the token first (AccountPostRequiresTokenTest)',
         '202-config/functions-auth.php' => 'defines the guard: check_csrf_token() reads the posted token',
         '202-config/functions-standalone-ui.php' => 'defines the pre-login guard: p202_standalone_wizard_token_ok() reads the posted token',
         '202-config/functions-upgrade.php' => 'the upgrade ladder, which runs only behind the upgrade pages\' guards (PreLoginPostRequiresTokenTest, AccountPostRequiresTokenTest)',
