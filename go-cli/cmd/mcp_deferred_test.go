@@ -52,7 +52,9 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 	// paid for by a shorter help line on the link-token flags; get_more_tools
 	// and its sentence in the instructions about 700 (every later tool is
 	// listed on request, mcpDeferredToolSpecs), paid for by the click
-	// filter tools' user_id, which their Omit meant to leave out; items on
+	// filter tools' user_id, which their Omit meant to leave out; the
+	// instructions' line on truncated (every paged answer's) about 100, paid
+	// for by the two report tools' notes it replaced; items on
 	// tracker_create_with_url and tracker_update (many trackers in one call)
 	// about 410.
 	const budget = 100950

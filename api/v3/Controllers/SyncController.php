@@ -9,6 +9,7 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\SyncException;
 use Api\V3\Exception\SyncRecordException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\PageRows;
 use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\RemoteApiClient;
 use Api\V3\Support\ServerStateStore;
@@ -213,7 +214,14 @@ class SyncController
         $limit = QueryInt::param($params, 'limit', 100, 1, 500, 'events per page');
         $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'events to skip');
 
-        return $this->store->listJobEvents($jobId, $offset, $limit);
+        $page = $this->store->listJobEvents($jobId, $offset, PageRows::fetchLimit($limit));
+        [$events, $truncated] = PageRows::cut($page['data'], $limit);
+
+        return [
+            'data' => $events,
+            'truncated' => $truncated,
+            'pagination' => array_replace($page['pagination'], ['limit' => $limit]),
+        ];
     }
 
     public function reSync(array $payload): array

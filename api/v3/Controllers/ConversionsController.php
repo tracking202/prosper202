@@ -11,6 +11,7 @@ use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\AccountTimezone;
 use Api\V3\Support\LtvBody;
+use Api\V3\Support\PageRows;
 use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\ReportFilter;
 use Api\V3\Support\StatementHelpers;
@@ -158,7 +159,7 @@ class ConversionsController
             $whereClause
             ORDER BY cl.conv_time DESC, cl.conv_id DESC LIMIT ? OFFSET ?";
 
-        $binds[] = $limit;
+        $binds[] = PageRows::fetchLimit($limit);
         $types .= 'i';
         $binds[] = $offset;
         $types .= 'i';
@@ -173,9 +174,11 @@ class ConversionsController
             $rows[] = self::present($row);
         }
         $stmt->close();
+        [$rows, $truncated] = PageRows::cut($rows, $limit);
 
         return [
             'data' => $rows,
+            'truncated' => $truncated,
             'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset],
         ];
     }
