@@ -91,6 +91,16 @@ var reportSummaryCmd = &cobra.Command{
 	Use:   "summary",
 	Short: "Get aggregate totals — clicks, conversions, revenue, cost, profit, ROI for a period",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		compare := enumValue(cmd, "compare")
+		if compare != "" {
+			allProfiles, _ := cmd.Flags().GetBool("all-profiles")
+			profilesRaw, _ := cmd.Flags().GetString("profiles")
+			groupTag, _ := cmd.Flags().GetString("group")
+			if allProfiles || strings.TrimSpace(profilesRaw) != "" || strings.TrimSpace(groupTag) != "" {
+				return validationError("--compare reads one profile's two windows; it does not combine with --all-profiles, --profiles or --group").
+					WithHint("Run `p202 report summary --compare previous --profile NAME` once per profile.")
+			}
+		}
 		profiles, err := resolveMultiProfiles(cmd)
 		if err != nil {
 			return err
@@ -98,6 +108,9 @@ var reportSummaryCmd = &cobra.Command{
 		params := collectReportParams(cmd)
 		if len(profiles) > 0 {
 			return runMultiProfileSummary(params, profiles)
+		}
+		if compare != "" {
+			params["compare"] = compare
 		}
 
 		c, err := api.NewFromConfig()
@@ -107,6 +120,13 @@ var reportSummaryCmd = &cobra.Command{
 		data, err := c.Get("reports/summary", params)
 		if err != nil {
 			return err
+		}
+		if compare != "" && !jsonOutput && !ndjsonOutput {
+			rows, err := comparedSummaryRows(data)
+			if err != nil {
+				return err
+			}
+			data = rows
 		}
 		return render(data)
 	},
@@ -262,6 +282,9 @@ var reportTimeseriesCmd = &cobra.Command{
 		if v := getStringFlagOrDefault(cmd, "report", "interval"); v != "" {
 			params["interval"] = v
 		}
+		if v := enumValue(cmd, "group-by"); v != "" {
+			params["group_by"] = v
+		}
 		data, err := c.Get("reports/timeseries", params)
 		if err != nil {
 			return err
@@ -270,6 +293,9 @@ var reportTimeseriesCmd = &cobra.Command{
 			return err
 		}
 		if w := timeseriesTruncationWarning(data, params["interval"]); w != "" {
+			if params["group_by"] != "" {
+				w = strings.TrimSuffix(w, ".") + ", or filter to fewer groups: --group-by takes a row per group and period."
+			}
 			fmt.Fprintln(cmd.ErrOrStderr(), w)
 		}
 		return nil
@@ -375,6 +401,8 @@ var reportDaypartCmd = &cobra.Command{
 func init() {
 	addReportFilters(reportSummaryCmd)
 	addMultiProfileFlags(reportSummaryCmd)
+	reportSummaryCmd.Flags().String("compare", "", "Also answer the window before it (today: yesterday so far)")
+	enumFlag(reportSummaryCmd, "compare", newEnum(summaryCompare, enumFoldCase()))
 
 	addReportFilters(reportBreakdownCmd)
 	reportBreakdownCmd.Flags().StringP("breakdown", "b", "", "Dimension (rows are one per stored value; clicks without one, e.g. no referer, are in `report summary` only)")
@@ -394,6 +422,8 @@ func init() {
 
 	addReportFilters(reportTimeseriesCmd)
 	reportTimeseriesCmd.Flags().StringP("interval", "i", "", "Interval: hour, day, week, month")
+	reportTimeseriesCmd.Flags().String("group-by", "", "A series per value (null group: none)")
+	enumFlag(reportTimeseriesCmd, "group-by", newEnum(timeseriesGroups, enumAliases(dimensionAliases), enumFoldCase()))
 
 	addReportFilters(reportDaypartCmd)
 	addSortFlags(reportDaypartCmd, daypartSorts)

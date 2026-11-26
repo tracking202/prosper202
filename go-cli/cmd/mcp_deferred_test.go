@@ -56,8 +56,9 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 	// instructions' line on truncated (every paged answer's) about 100, paid
 	// for by the two report tools' notes it replaced; items on
 	// tracker_create_with_url and tracker_update (many trackers in one call)
-	// about 410.
-	const budget = 100950
+	// about 410; report_summary's compare and report_timeseries' group_by
+	// about 360.
+	const budget = 101272
 	if len(body) > budget {
 		t.Fatalf("the tool list is %d characters, over its %d budget; trim notes or omit flags", len(body), budget)
 	}

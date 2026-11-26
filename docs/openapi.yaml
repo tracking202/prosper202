@@ -4541,6 +4541,23 @@ paths:
         away from zero to 4 decimals for conv_rate and 9 for the others.
       operationId: reportSummary
       parameters:
+        - name: compare
+          in: query
+          description: >-
+            `previous` answers the window before as well, under `previous`:
+            the same figures, filtered the same way. A named period steps back
+            by its own unit in the account's zone (today against yesterday up
+            to the same time, thismonth against last month up to the same day,
+            lastmonth against the whole month before, last30 against the 30
+            whole days before its start); time_from and time_to given as dates
+            are the same number of days before, any other pair the same number
+            of seconds before. Both windows are then answered with explicit
+            bounds, read from one clock, in `window` and `previous`. A 422 on
+            `compare` for alltime, for a window missing a bound, and for a
+            period given with time bounds.
+          schema:
+            type: string
+            enum: [previous]
         - $ref: "#/components/parameters/period"
         - $ref: "#/components/parameters/windowFrom"
         - $ref: "#/components/parameters/windowTo"
@@ -4599,6 +4616,36 @@ paths:
                       $ref: "#/components/schemas/OtherCurrencyRevenue"
                   spend_ledger:
                     $ref: "#/components/schemas/SpendLedgerNote"
+                  window:
+                    type: object
+                    description: >-
+                      With compare=previous: the seconds `data` covers, as
+                      Unix timestamps, both ends included.
+                    properties:
+                      time_from:
+                        type: integer
+                      time_to:
+                        type: integer
+                  previous:
+                    type: object
+                    description: >-
+                      With compare=previous: the window before, as `time_from`
+                      and `time_to`, and its summary, answered as the summary
+                      of that window alone (`data`, `other_currencies`,
+                      `spend_ledger`).
+                    properties:
+                      time_from:
+                        type: integer
+                      time_to:
+                        type: integer
+                      data:
+                        $ref: "#/components/schemas/ReportMetrics"
+                      other_currencies:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/OtherCurrencyRevenue"
+                      spend_ledger:
+                        $ref: "#/components/schemas/SpendLedgerNote"
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -4916,6 +4963,20 @@ paths:
             type: string
             default: day
             enum: [hour, day, week, month]
+        - name: group_by
+          in: query
+          description: >-
+            A series for each value of this dimension: every row then carries
+            `group_id` and `group_name`, ordered by period and then group, and
+            the rows of one group are what the same call filtered to that
+            value answers. Clicks with no value, or whose record is not the
+            account's, are the group whose `group_id` is null, so the groups
+            of a period add up to that period ungrouped. Rows count against
+            `limit` one per group and period; when the cut falls inside a
+            period, that period is left out whole.
+          schema:
+            type: string
+            enum: [campaign, aff_network, ppc_network, ppc_account, landing_page, country]
         - $ref: "#/components/parameters/period"
         - $ref: "#/components/parameters/windowFrom"
         - $ref: "#/components/parameters/windowTo"
@@ -4954,6 +5015,16 @@ paths:
                         period:
                           type: string
                           description: Time bucket label (YYYY-MM-DD, YYYY-MM-DD HH:00, etc.)
+                        group_id:
+                          type: integer
+                          nullable: true
+                          description: >-
+                            With group_by: the value's id, null for clicks
+                            with none.
+                        group_name:
+                          type: string
+                          nullable: true
+                          description: With group_by, the value's name.
                         total_clicks:
                           type: integer
                         total_click_throughs:
@@ -4978,6 +5049,9 @@ paths:
                           type: number
                   interval:
                     type: string
+                  group_by:
+                    type: string
+                    description: The dimension the series are split by, when group_by was given.
                   timezone:
                     type: string
                     description: >-

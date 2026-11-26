@@ -9,6 +9,7 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\AccountTimezone;
 use Api\V3\Support\PageRows;
+use Api\V3\Support\PreviousWindow;
 use Api\V3\Support\QueryInt;
 use Api\V3\Support\ReportFilter;
 use Api\V3\Support\ResponseSanitizer;
@@ -240,6 +241,10 @@ class ReportsController
     ];
     /** Most buckets one timeseries response carries; more sets `truncated`. */
     public const int TIMESERIES_MAX_ROWS = 2000;
+    /** The dimensions a timeseries splits by (group_by): a series for each of their values. */
+    public const array TIMESERIES_GROUPS = [
+        'campaign', 'aff_network', 'ppc_network', 'ppc_account', 'landing_page', 'country',
+    ];
 
     private const array DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     private const array METRIC_FIELDS = [
@@ -294,9 +299,9 @@ class ReportsController
     public static function reportParams(string $report): array
     {
         $own = match ($report) {
-            'summary'    => [],
+            'summary'    => ['compare'],
             'breakdown'  => self::BREAKDOWN_PARAMS,
-            'timeseries' => ['interval'],
+            'timeseries' => ['interval', 'group_by'],
             'daypart', 'weekpart' => ['sort', 'sort_dir'],
             'groups'     => self::GROUPS_PARAMS,
             default      => throw new \InvalidArgumentException("No report named $report"),
@@ -308,6 +313,11 @@ class ReportsController
     public function summary(array $params): array
     {
         ReportFilter::rejectUnknown($params, self::reportParams('summary'));
+        $compare = $params['compare'] ?? '';
+        unset($params['compare']);
+        if ($compare !== '') {
+            return $this->comparedSummary($params, $compare);
+        }
         [$where, $binds, $types] = $this->filtered($params);
         $ledger = $this->ledger($params);
         $sum = self::summed($ledger);
@@ -342,6 +352,26 @@ class ReportsController
 
         return ['data' => $data, 'other_currencies' => $this->money($params, $data['currency'])['other_currencies']]
             + $this->ledgerMeta($ledger);
+    }
+
+    /**
+     * The summary of a window and of the one before it (PreviousWindow), each
+     * answered as summary() answers it: `window` and `previous.time_from` /
+     * `time_to` say which seconds each covers.
+     *
+     * @param array<string, mixed> $params without compare
+     * @return array<string, mixed>
+     */
+    private function comparedSummary(array $params, mixed $compare): array
+    {
+        if ($compare !== 'previous') {
+            throw new ValidationException('Invalid compare', ['compare' => 'Valid: previous']);
+        }
+        $windows = PreviousWindow::of($params, fn (): string => $this->accountTimezone());
+
+        return $this->summary($windows['current'])
+            + ['window' => $windows['window']]
+            + ['previous' => $windows['previous_window'] + $this->summary($windows['previous'])];
     }
 
     /**
@@ -781,6 +811,13 @@ class ReportsController
                 ['interval' => 'Valid values: ' . implode(', ', $validIntervals)]
             );
         }
+        $groupBy = $params['group_by'] ?? '';
+        if ($groupBy !== '' && !in_array($groupBy, self::TIMESERIES_GROUPS, true)) {
+            throw new ValidationException(
+                'Invalid group_by',
+                ['group_by' => 'Valid values: ' . implode(', ', self::TIMESERIES_GROUPS)]
+            );
+        }
 
         $timezone = $this->accountTimezone();
         [$where, $binds, $types] = $this->filtered($params, $timezone);
@@ -804,14 +841,31 @@ class ReportsController
             'month' => "DATE_FORMAT($local, '%Y-%m')",
         };
 
+        // A series per value of group_by: a left join, so the clicks with no
+        // value (or one that is not the account's) are the null group, and
+        // the series add up to the ungrouped one.
+        $groupSelect = '';
+        $groupJoin = '';
+        $groupKey = '';
+        $groupOrder = '';
+        if ($groupBy !== '') {
+            $bd = self::BREAKDOWNS[$groupBy];
+            $groupSelect = "ref.{$bd['id']} as group_id, ref.{$bd['name']} as group_name,";
+            $groupJoin = str_replace('INNER JOIN', 'LEFT JOIN', self::dimensionJoin($groupBy));
+            $groupKey = ", ref.{$bd['id']}, ref.{$bd['name']}";
+            $groupOrder = ", ref.{$bd['id']} IS NULL, ref.{$bd['id']} ASC";
+        }
+
         $sql = "SELECT
                 $groupExpr as period,
+                $groupSelect
                 " . self::metricsSelect($sum) . "
             FROM 202_dataengine de
             {$ledger?->join}
+            $groupJoin
             $whereClause
-            GROUP BY period
-            ORDER BY period ASC
+            GROUP BY period$groupKey
+            ORDER BY period ASC$groupOrder
             LIMIT " . (self::TIMESERIES_MAX_ROWS + 1);
 
         $stmt = $this->prepare($sql);
@@ -825,6 +879,9 @@ class ReportsController
 
         $rows = [];
         while ($row = $result->fetch_assoc()) {
+            if ($groupBy !== '') {
+                $row['group_id'] = $row['group_id'] === null ? null : (int) $row['group_id'];
+            }
             $rows[] = array_merge($row, self::typedMetrics($row));
         }
         $stmt->close();
@@ -834,11 +891,22 @@ class ReportsController
         $truncated = count($rows) > self::TIMESERIES_MAX_ROWS;
         if ($truncated) {
             $rows = array_slice($rows, 0, self::TIMESERIES_MAX_ROWS);
+            if ($groupBy !== '') {
+                // The cut can fall inside a period, which would serve some
+                // groups' last bucket and not others': the period goes whole.
+                $last = $rows[count($rows) - 1]['period'];
+                $rows = array_values(array_filter($rows, static fn (array $r): bool => $r['period'] !== $last));
+                if ($rows === []) {
+                    throw new ValidationException('Too many groups', ['group_by' => 'More than '
+                        . self::TIMESERIES_MAX_ROWS . " $groupBy groups in one period: filter to fewer"]);
+                }
+            }
         }
 
         return [
             'data' => $rows,
             'interval' => $interval,
+        ] + ($groupBy === '' ? [] : ['group_by' => $groupBy]) + [
             'timezone' => $timezone,
             'truncated' => $truncated,
             'limit' => self::TIMESERIES_MAX_ROWS,
