@@ -130,7 +130,8 @@ scope is missing and what grants it, in its message and in fields:
 
 The message keeps its first sentence as before, so a reader matching it still
 matches. A refusal for the user's role (`Admin access required.`, a missing
-permission) is a `403` with `error`, `message` and `status` only.
+permission) is a `403` with `error`, `message`, `status` and `code`
+(`forbidden`) only.
 
 ### Role Permissions
 
@@ -541,11 +542,21 @@ Empty response body.
   "error": true,
   "message": "Descriptive error message",
   "status": 422,
+  "code": "validation_failed",
   "field_errors": {
     "field_name": "Validation message"
   }
 }
 ```
+
+Every `4xx` and `5xx` carries `code`, a stable name for what went wrong:
+`version_conflict` for an update made on an older read, `name_taken` when
+another record has the name, `idempotency_key_reused`, `upgrade_pending` when
+the database is behind the code, and so on. A program decides on `code`, never
+on `message`, whose wording can change. The list, with each code's status and
+meaning, is the Errors section of `docs/openapi.yaml` (the `Error` schema's
+`code` enum). Codes are only ever added; treat one you do not know as the
+generic code of its status (`conflict` for a 409, `server_error` for a 500).
 
 A `403` for the key's scope adds `code`, `required_scope`, `key_scope`,
 `key_source`, `remedy` and, for an AI connection, `connect_access`

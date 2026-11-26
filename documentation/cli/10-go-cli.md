@@ -766,6 +766,7 @@ envelope, so an agent reads structured fields instead of parsing prose:
 | `command` | yes | The command that ran, e.g. `p202 rotator create` |
 | `hint` | when known | The recovery step to take next |
 | `http_status` | API errors | The server's status code |
+| `api_code` | API errors from a server that sends one | The server's stable error code (`version_conflict`, `name_taken`, `upgrade_pending`, …; the list is in the API's Errors section) |
 | `field_errors` | 422 responses | Per-field messages from the server |
 | `retry_after_seconds` | 429 responses that say | Seconds to wait before running the same command again: the server's `retry_after_seconds`, else its `Retry-After` header |
 

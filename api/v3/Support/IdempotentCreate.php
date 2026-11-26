@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Support;
 
+use Api\V3\ErrorCode;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
@@ -51,12 +52,12 @@ final class IdempotentCreate
         // both created a row.
         $reservation = $this->stateStore->reserveIdempotent($scope, $key, $fingerprint);
         if ($reservation['state'] === 'mismatch') {
-            throw new ValidationException(
+            throw (new ValidationException(
                 'This Idempotency-Key was already used for a different request. Resend the original '
                 . 'request — same endpoint, same body — to replay its recorded response, or send a '
                 . 'new Idempotency-Key to create something different.',
                 ['idempotency_key' => 'Already used for a different request']
-            );
+            ))->coded(ErrorCode::IDEMPOTENCY_KEY_REUSED);
         }
         if ($reservation['state'] === 'replay') {
             $existing = $reservation['response'] ?? [];
@@ -64,21 +65,21 @@ final class IdempotentCreate
             return $existing;
         }
         if ($reservation['state'] === 'in_flight') {
-            throw new ConflictException(
+            throw (new ConflictException(
                 'A request with this Idempotency-Key is still in flight; retry once it completes '
                 . 'to receive the recorded response.'
-            );
+            ))->coded(ErrorCode::IDEMPOTENCY_IN_FLIGHT);
         }
         if ($reservation['state'] === 'indeterminate') {
             // A previous holder died without recording a response, so
             // whether it created the record is unknowable. Replaying is
             // impossible and re-executing could duplicate exactly what
             // the key exists to prevent, so the key stays spent.
-            throw new ConflictException(
+            throw (new ConflictException(
                 'A previous request with this Idempotency-Key did not finish, so whether it created '
                 . 'the record is unknown and this key can be neither replayed nor reused. Check '
                 . 'whether the record exists, then retry with a new Idempotency-Key if it does not.'
-            );
+            ))->coded(ErrorCode::IDEMPOTENCY_INDETERMINATE);
         }
         try {
             $response = $op();

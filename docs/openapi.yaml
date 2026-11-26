@@ -140,12 +140,60 @@ info:
     Error responses use a consistent format:
     ```json
     {
-      "error": "Error message",
+      "error": true,
+      "message": "Validation failed",
       "status": 422,
+      "code": "validation_failed",
       "field_errors": { "field_name": "Reason" }
     }
     ```
     `field_errors` is only present on validation errors (422).
+
+    Every 4xx and 5xx answer carries `code`, one of the values below. Decide
+    on `code`, never on `message`, whose wording may change. A code is never
+    renamed or removed; new ones may be added, so treat an unknown code as
+    the generic code of its status.
+
+    | code | status | meaning |
+    |------|--------|---------|
+    | `bad_request` | 400 | The request could not be read as sent |
+    | `invalid_json` | 400 | The body is not a JSON object |
+    | `unsupported_api_version` | 400 | `X-P202-API-Version` names a version this server does not serve |
+    | `invalid_request` | 400 | `POST /ai-connect/token`: a parameter is missing or malformed |
+    | `invalid_grant` | 400 | `POST /ai-connect/token`: the approval is used, expired or does not match |
+    | `unauthorized` | 401 | No usable key or session |
+    | `licence` | 402 | The Go CLI needs an active ClickServer licence on this install |
+    | `forbidden` | 403 | The user's role does not allow this |
+    | `insufficient_scope` | 403 | The key's scope does not allow this (see ScopeRefusal) |
+    | `not_found` | 404 | No such route, or no such record on this account |
+    | `method_not_allowed` | 405 | The route does not take this method |
+    | `conflict` | 409 | The record's state refuses the request (`details` says how) |
+    | `version_conflict` | 409 | The body's `version`/`etag` or `If-Match` is from an older read; GET it again |
+    | `name_taken` | 409 | Another record of this account already has this name |
+    | `already_exists` | 409 | The record this would create already exists |
+    | `idempotency_in_flight` | 409 | A request with this Idempotency-Key is still running; retry once it finishes |
+    | `idempotency_indeterminate` | 409 | A request with this Idempotency-Key did not finish; check for the record, then use a new key |
+    | `sync_pair_busy` | 409 | Sync: another run between the same two installs is running; the job waits and is tried again |
+    | `payload_too_large` | 413 | The body is larger than this route takes (`max_bytes`) |
+    | `validation_failed` | 422 | A field is missing or malformed (`field_errors`) |
+    | `nothing_to_update` | 422 | The update names no field that would change |
+    | `idempotency_key_reused` | 422 | The Idempotency-Key was used for a different request |
+    | `dry_run_unsupported` | 422 | `dry_run` or `staged` was sent to a route that cannot preview |
+    | `sync_url_refused` | 422 | Sync: the remote URL is one this server will not call |
+    | `sync_url_unresolved` | 422 | Sync: the remote host did not resolve |
+    | `sync_limit` | 422 | Sync: an answer, a list or the sync's time reached its cap |
+    | `sync_key_unreadable` | 422 | Sync: the job's stored key cannot be opened; send the request again |
+    | `sync_record_unusable` | 422 | Sync: one record cannot be written as the source holds it; the next run reads it the same |
+    | `rate_limited` | 429 | A limit refused the request; wait `retry_after_seconds` |
+    | `client_error` | 4xx | Any other 4xx |
+    | `server_error` | 500 | The server failed; nothing in the request is known to be wrong |
+    | `write_committed` | 500 | The write landed and a step after it failed; look the record up rather than retrying |
+    | `sync_worker_lost` | 500 | Sync: the job's process ended before it finished (a job's `error_code`) |
+    | `sync_internal` | 500 | Sync: an error inside this server, logged with the job's id (a job's `error_code`) |
+    | `upstream_unavailable` | 502, 503 | A service this install had to ask (an ad platform) failed |
+    | `sync_remote_failed` | 502 | Sync: the remote install did not answer usably |
+    | `service_unavailable` | 503 | The API cannot serve requests right now |
+    | `upgrade_pending` | 503 | The database is behind the code: run the upgrade |
   contact:
     name: Prosper202
   license:
@@ -16096,11 +16144,56 @@ components:
 
     Error:
       type: object
+      required: [code]
       properties:
         error:
+          type: boolean
+        message:
           type: string
         status:
           type: integer
+        code:
+          type: string
+          description: Stable error code; the Errors section of this document says what each means
+          enum:
+            - bad_request
+            - unauthorized
+            - licence
+            - forbidden
+            - not_found
+            - method_not_allowed
+            - conflict
+            - payload_too_large
+            - validation_failed
+            - rate_limited
+            - client_error
+            - server_error
+            - upstream_unavailable
+            - service_unavailable
+            - invalid_json
+            - unsupported_api_version
+            - dry_run_unsupported
+            - nothing_to_update
+            - version_conflict
+            - already_exists
+            - name_taken
+            - idempotency_key_reused
+            - idempotency_in_flight
+            - idempotency_indeterminate
+            - write_committed
+            - upgrade_pending
+            - insufficient_scope
+            - invalid_request
+            - invalid_grant
+            - sync_url_refused
+            - sync_url_unresolved
+            - sync_limit
+            - sync_key_unreadable
+            - sync_remote_failed
+            - sync_record_unusable
+            - sync_pair_busy
+            - sync_worker_lost
+            - sync_internal
 
     ScopeRefusal:
       description: >-
@@ -16108,8 +16201,8 @@ components:
         `remedy`, and the fields below say the same for a program; a key keeps
         the scope it was made with, so an AI connection approved before a
         release added to what connections may do is refused there until it is
-        approved again. A refusal for the user's role has `error`, `message`
-        and `status` only.
+        approved again. A refusal for the user's role has `error`, `message`,
+        `status` and `code` (`forbidden`) only.
       type: object
       properties:
         error:
@@ -16128,7 +16221,7 @@ components:
           example: 403
         code:
           type: string
-          enum: [insufficient_scope]
+          enum: [insufficient_scope, forbidden]
         required_scope:
           type: string
           description: The scope token the request needed, e.g. `text-ads:write`; `write` for a staged change whose area cannot be told

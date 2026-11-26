@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\ErrorCode;
 use Api\V3\Apps\Android\Integrity\IntegrityCredentialStore;
 use Api\V3\Apps\Android\Integrity\IntegrityMode;
 use Api\V3\Apps\Android\Integrity\UnverifiableInstalls;
@@ -731,7 +732,7 @@ class AppRegistrationsController extends Controller
         $stmt->close();
 
         if (is_array($row)) {
-            throw new ConflictException('This app is already registered.');
+            throw (new ConflictException('This app is already registered.'))->coded(ErrorCode::ALREADY_EXISTS);
         }
     }
 }
