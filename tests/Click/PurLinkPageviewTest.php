@@ -102,7 +102,7 @@ final class PurLinkPageviewTest extends TestCase
             }
             $source = (string) file_get_contents((string) $file);
             $calls = ['PurLinkProof::issue(', 'PurLinkPageview::forDatabase(', 'PurLinkPageview::script(',
-                'PageUpdate::clickScript(', 'echo p202DcsClickJs('];
+                'PageUpdate::clickScript(', 'echo p202DcsClickJs(', 'OpenAiBrowserRef::proof(', 'OpenAiPixelScript::forClick('];
             foreach ($calls as $call) {
                 if (str_contains($source, $call)) {
                     $callers[$call][] = $path;
@@ -115,11 +115,17 @@ final class PurLinkPageviewTest extends TestCase
         ksort($callers);
         // PageUpdate's update proof goes out from the same pageview, through p202DcsClickJs().
         self::assertSame([
+            // The ChatGPT Ads pixel's browser reference proof, from a simple page's pageview.
+            'OpenAiBrowserRef::proof(' => ['202-config/Click/OpenAiPixelScript.php'],
+            'OpenAiPixelScript::forClick(' => ['tracking202/static/record_simple.php'],
             'PageUpdate::clickScript(' => ['202-config/connect2.php'],
             'PurLinkPageview::forDatabase(' => ['tracking202/static/record_adv.php', 'tracking202/static/record_simple.php'],
-            'PurLinkProof::issue(' => ['202-config/Click/PageUpdate.php', '202-config/Click/PurLinkPageview.php'],
+            'PurLinkProof::issue(' => ['202-config/Click/OpenAiBrowserRef.php', '202-config/Click/PageUpdate.php', '202-config/Click/PurLinkPageview.php'],
             'echo p202DcsClickJs(' => ['tracking202/static/record_adv.php', 'tracking202/static/record_simple.php'],
         ], $callers);
+        $simple = (string) file_get_contents($root . '/tracking202/static/record_simple.php');
+        self::assertSame(1, substr_count($simple, 'OpenAiPixelScript::forClick('));
+        self::assertLessThan(strpos($simple, 'OpenAiPixelScript::forClick('), strpos($simple, '->allocateClickId()'));
         foreach ($callers['PurLinkPageview::forDatabase('] as $path) {
             $source = (string) file_get_contents($root . '/' . $path);
             self::assertSame(1, substr_count($source, '->allocateClickId()'), "$path allocates one click");

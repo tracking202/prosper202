@@ -551,7 +551,8 @@ p202 ppc-account pixel create 4 --type-id 4 --code 'https://network.example/pb?c
 - **`ppc-account pixel`** edits what the account fires on a conversion:
   `--type-id` 1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server,
   http(s) URLs to public addresses only), 5 Raw, 6 Bot202 Facebook Pixel
-  Assistant; `--code` the URL(s) or markup; `--correction-url` (Postback only,
+  Assistant, 7 ChatGPT Ads Pixel; `--code` the URL(s), the markup, or for 6
+  and 7 the pixel id; `--correction-url` (Postback only,
   one per code URL; `--correction-url ''` removes it). A Postback aimed at a
   private, loopback or metadata address, a local name, or with a password in
   it is refused (exit 1, the field named, and a hint naming

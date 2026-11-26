@@ -422,8 +422,8 @@ What the account fires when one of its clicks converts. Fields:
 
 | Field | Description |
 | ----- | ----------- |
-| `pixel_type_id` | 1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server), 5 Raw (markup as given), 6 Bot202 Facebook Pixel Assistant (answered with `pixel_type`, the name) |
-| `pixel_code` | For every type except Raw, the URL from the pixel's src — several separated by spaces — with tokens such as `[[subid]]`, `[[payout]]`, `[[transactionid]]` filled in when it fires |
+| `pixel_type_id` | 1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server), 5 Raw (markup as given), 6 Bot202 Facebook Pixel Assistant, 7 ChatGPT Ads Pixel (answered with `pixel_type`, the name) |
+| `pixel_code` | For every type except Raw, Bot202 Facebook Pixel Assistant and ChatGPT Ads Pixel, the URL from the pixel's src — several separated by spaces — with tokens such as `[[subid]]`, `[[payout]]`, `[[transactionid]]` filled in when it fires. A ChatGPT Ads Pixel's is the OpenAI pixel id (`px_4821`); OpenAI's base code or image tag is taken too and only the id is stored, and a code holding none is refused ([ChatGPT Ads, step 4](../features/chatgpt-ads.md#4-put-openais-pixel-on-your-landing-page)) |
 | `correction_url` | Postback pixels only: where a correction goes when a conversion it announced is replaced; one URL per code URL, in the same order. `""` removes it |
 
 The account form's rules hold: the account must be yours (and filed under

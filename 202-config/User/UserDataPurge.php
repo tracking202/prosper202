@@ -6,6 +6,7 @@ namespace Prosper202\User;
 
 use Api\V3\Apps\AppDataPurge;
 use Prosper202\Attribution\ExportFiles;
+use Prosper202\Click\MysqlClickRepository;
 use Prosper202\Database\Connection;
 
 /**
@@ -27,7 +28,8 @@ use Prosper202\Database\Connection;
  *  - the identity graph (PR 2) is deleted: the account's hashing and linking
  *    keys, its visitors, signals and merges, and the per-click observations
  *    and visitor keys of the user's clicks — the links that say which
- *    clicks were one person;
+ *    clicks were one person — and the ChatGPT Ads pixel's browser
+ *    references their landing pages sent;
  *  - app measurement is purged by AppDataPurge: registrations, SKAN
  *    encodings and Android installs deleted, postbacks released to
  *    unclaimed, the campaigns linked to the registrations unlinked;
@@ -221,8 +223,9 @@ final class UserDataPurge
 
     /**
      * What deleteUser() does, table by table, for a delete preview
-     * (`DELETE /users/{id}?dry_run=1`). Read from the same statement lists
-     * and AppDataPurge::TABLE_ACTIONS that the delete runs, so the preview
+     * (`DELETE /users/{id}?dry_run=1`). Read from the same statement lists,
+     * MysqlClickRepository::ACCOUNT_PURGED_TABLES and
+     * AppDataPurge::TABLE_ACTIONS that the delete runs, so the preview
      * cannot promise a different cascade from the one that happens.
      *
      * @return list<array{resource: string, action: string, where: string}>
@@ -235,6 +238,9 @@ final class UserDataPurge
                 throw new \LogicException('Unreadable purge statement: ' . $sql);
             }
             $cascade[] = ['resource' => $m[1], 'action' => 'delete', 'where' => 'belongs to user ' . $userId];
+        }
+        foreach (MysqlClickRepository::ACCOUNT_PURGED_TABLES as $table) {
+            $cascade[] = ['resource' => $table, 'action' => 'delete', 'where' => 'joined to a click of user ' . $userId];
         }
         $cascade[] = [
             'resource' => 'attribution export files',
@@ -282,7 +288,8 @@ final class UserDataPurge
         }
 
         try {
-            [$exportFileNames, $unlinked] = (new Connection($this->db))->transaction(function () use ($userId): array {
+            $conn = new Connection($this->db);
+            [$exportFileNames, $unlinked] = $conn->transaction(function () use ($userId, $conn): array {
                 // The user row is locked first, before anything is purged. The
                 // attribution worker reads user_deleted with a shared lock on
                 // that row before it writes a conversion's journey and credits,
@@ -298,6 +305,8 @@ final class UserDataPurge
                 foreach (self::statements() as $sql) {
                     $this->run($sql, $userId);
                 }
+                // The clicks' browser references, by the click writer (ClickRowsWrittenOnlyByTheWriterTest).
+                (new MysqlClickRepository($conn))->purgeAccount($userId);
                 $unlinked = (new AppDataPurge($this->db))->purgeUser($userId);
                 // Every open session of the user ends with the delete
                 // (SessionGeneration), so a row restored by hand stays signed out.

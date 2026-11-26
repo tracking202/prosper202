@@ -61,6 +61,8 @@ final class MiscTables
             self::bot202FacebookPixelAssistant(),
             self::bot202FacebookPixelContentType(),
             self::bot202FacebookPixelClickEvents(),
+            // ChatGPT Ads pixel on a landing page
+            self::landingPageOpenAiPixel(),
         ];
     }
 
@@ -688,6 +690,24 @@ final class MiscTables
                 PRIMARY KEY (`b202_fbpa_id`),
                 UNIQUE KEY `landing_page_id` (`landing_page_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+        );
+    }
+
+    /**
+     * A simple landing page's ChatGPT Ads pixel switch (Prosper202\Setup\
+     * OpenAiPixelSettings), from 1.9.81 on: one row per page that has been
+     * saved with it; no row is off. The pixel id is the click's traffic
+     * source's ChatGPT Ads Pixel (Conversion\OpenAiPixelId).
+     */
+    public static function landingPageOpenAiPixel(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::LANDING_PAGE_OPENAI_PIXEL,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::LANDING_PAGE_OPENAI_PIXEL . "` (
+                `landing_page_id` mediumint(8) unsigned NOT NULL,
+                `status` tinyint(1) unsigned NOT NULL DEFAULT '0',
+                PRIMARY KEY (`landing_page_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
 

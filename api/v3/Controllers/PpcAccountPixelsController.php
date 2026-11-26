@@ -10,6 +10,7 @@ use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\StatementHelpers;
 use Prosper202\Conversion\FacebookPixelId;
+use Prosper202\Conversion\OpenAiPixelId;
 use Prosper202\Database\Connection;
 use Prosper202\Notifications\CorrectionUrls;
 use Prosper202\Notifications\NotificationOutbox;
@@ -231,6 +232,15 @@ final class PpcAccountPixelsController
             $pixelId = FacebookPixelId::fromCode($code);
             if ($pixelId === null) {
                 $errors['pixel_code'] = 'A Bot202 Facebook Pixel Assistant pixel holds your Meta Pixel ID: its digits, or Meta\'s Pixel code pasted whole';
+            } else {
+                $code = $pixelId;
+            }
+        }
+        // A ChatGPT Ads Pixel is stored as its pixel id, as the form stores it.
+        if ($typeId === OpenAiPixelId::PIXEL_TYPE && is_string($code) && $code !== '' && !isset($errors['pixel_code'])) {
+            $pixelId = OpenAiPixelId::fromCode($code);
+            if ($pixelId === null) {
+                $errors['pixel_code'] = 'A ChatGPT Ads Pixel holds your pixel id from Ads Manager › Conversions (letters, digits, - and _), or OpenAI\'s pixel code pasted whole';
             } else {
                 $code = $pixelId;
             }

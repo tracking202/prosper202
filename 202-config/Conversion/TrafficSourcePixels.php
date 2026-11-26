@@ -8,6 +8,8 @@ use Prosper202\Click\AdClickIdColumns;
 use Prosper202\Click\FirstVisit;
 use Prosper202\Database\Connection;
 use Prosper202\Destinations\DestinationEventId;
+use Prosper202\Destinations\MinorUnits;
+use Prosper202\Destinations\OpenAiAdsDestination;
 use Prosper202\Notifications\PostbackResult;
 use Prosper202\Notifications\PostbackSender;
 
@@ -31,6 +33,9 @@ use Prosper202\Notifications\PostbackSender;
  *   6 Bot202 Facebook Pixel Assistant — a Meta Pixel ID (FacebookPixelId):
  *     a Purchase event image for a browser, returned only for a visitor
  *     who may be tracked (visitorMayBeTracked()).
+ *   7 ChatGPT Ads Pixel — an OpenAI pixel id (OpenAiPixelId): the pixel's
+ *     conversion image for a browser (chatGptAdsEvent()), on the same terms
+ *     as type 6.
  *
  * None of them, for a conversion whose visitor refused consent
  * (AdPlatformConsent): the rule the destinations follow.
@@ -46,6 +51,9 @@ final class TrafficSourcePixels
      * once; for a goal outcome, its own key. Not a [[token]] in any URL.
      */
     public const EVENT_ID = 'p202_event_id';
+
+    /** The conversion's campaign, which picks a ChatGPT Ads event's type (withConversionEventId()). */
+    public const EVENT_CAMPAIGN = 'p202_event_campaign';
 
     /**
      * Every token replaceTokens() fills, in the order it fills them, as
@@ -278,6 +286,37 @@ final class TrafficSourcePixels
                 $out['markup'] .= $markup;
                 continue;
             }
+            if ($type === OpenAiPixelId::PIXEL_TYPE) {
+                if (!$browser) {
+                    $out['browser_skipped']++;
+                    continue;
+                }
+                // Held back as the landing page's pixel is.
+                $mayTrack ??= $visitorMayBeTracked !== null && $visitorMayBeTracked() === true;
+                if (!$mayTrack) {
+                    continue;
+                }
+                $rowCurrency = is_string($tokens['row_currency'] ?? null) ? $tokens['row_currency'] : '';
+                $currency ??= preg_match('/^[A-Z]{3}$/D', $rowCurrency) === 1 ? $rowCurrency : self::accountCurrency($conn, $ppcAccountId);
+                try {
+                    $markup = self::chatGptAdsEvent($conn, $ppcAccountId, $code, $tokens, $currency);
+                } catch (\Throwable $e) {
+                    if ($conn->inTransaction() && Connection::isRetryableLockError($e)) {
+                        throw $e;
+                    }
+                    // Under a guessed event type OpenAI would count the conversion twice.
+                    error_log('traffic source pixel ' . (int) ($pixel['pixel_id'] ?? 0) . ' of ppc account ' . $ppcAccountId
+                        . ': the ChatGPT Ads destinations could not be read; its event is not fired: ' . $e->getMessage());
+                    continue;
+                }
+                if ($markup === null) {
+                    error_log('traffic source pixel ' . (int) ($pixel['pixel_id'] ?? 0) . ' of ppc account ' . $ppcAccountId
+                        . ' is a ChatGPT Ads Pixel without a pixel id, or its conversion has no event id; not fired');
+                    continue;
+                }
+                $out['markup'] .= $markup;
+                continue;
+            }
 
             foreach (explode(' ', $code) as $url) {
                 if ($url === '') {
@@ -349,9 +388,110 @@ final class TrafficSourcePixels
         if ($eventId !== '') {
             $query['eid'] = $eventId;
         }
-        $src = htmlspecialchars('https://www.facebook.com/tr?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986), ENT_QUOTES);
+        return self::eventImage('https://www.facebook.com/tr?', $query);
+    }
+
+    /**
+     * The ChatGPT Ads pixel's conversion event as its image tag: EVENT_ID as
+     * the event id, so OpenAI counts it and the same conversion from a
+     * ChatGPT Ads destination once, under the event type that destination
+     * sends the conversion's campaign as (OpenAiAdsDestination::eventType():
+     * the account's enabled destination for the pixel that takes the
+     * campaign, else order_created), with the click's oppref and the payout
+     * in minor units. Null for a code that holds no pixel id, or without an
+     * event id, which would let the event be counted twice. A destination
+     * that cannot be read throws: under a guessed type the event would be
+     * counted twice too.
+     *
+     * @param array<string, scalar|null> $tokens
+     */
+    public static function chatGptAdsEvent(Connection $conn, int $ppcAccountId, string $code, array $tokens, string $currency): ?string
+    {
+        $pixelId = OpenAiPixelId::fromCode($code);
+        $eventId = (string) ($tokens[self::EVENT_ID] ?? '');
+        if ($pixelId === null || $eventId === '') {
+            return null;
+        }
+        $campaignId = is_numeric($tokens[self::EVENT_CAMPAIGN] ?? null) ? (int) $tokens[self::EVENT_CAMPAIGN] : 0;
+        $settings = self::chatGptAdsDestination($conn, $ppcAccountId, $pixelId, $campaignId);
+        $type = OpenAiAdsDestination::eventType($settings, $campaignId);
+        if (!isset(OpenAiAdsDestination::EVENT_TYPES[$type])) {
+            $type = 'order_created';
+        }
+        $query = ['pid' => $pixelId, 'event' => $type, 'event_id' => $eventId];
+        $custom = is_string($settings['custom_event_name'] ?? null) ? $settings['custom_event_name'] : '';
+        if ($type === 'custom') {
+            if ($custom === '') {
+                return null;
+            }
+            $query['custom_event_name'] = $custom;
+        }
+        $oppref = is_string($tokens['oppref'] ?? null) ? trim($tokens['oppref']) : '';
+        if ($oppref !== '') {
+            $query['oppref'] = $oppref;
+        }
+        $query['data[type]'] = OpenAiAdsDestination::EVENT_TYPES[$type];
+        $payout = $tokens['payout'] ?? null;
+        if (is_numeric($payout) && preg_match('/^[A-Z]{3}$/D', $currency) === 1) {
+            try {
+                $units = MinorUnits::of((string) $payout, $currency);
+            } catch (\Prosper202\Destinations\DestinationInputException) {
+                // A currency without a known minor unit, or a payout below zero: the event goes without an amount.
+                $units = 0;
+            }
+            if ($units > 0) {
+                $query['data[amount]'] = (string) $units;
+                $query['data[currency]'] = $currency;
+            }
+        }
+        return self::eventImage('https://bzr.openai.com/v1/sdk/events?', $query);
+    }
+
+    /**
+     * An ad platform's conversion event as a hidden image tag.
+     *
+     * @param array<string, string> $query
+     */
+    private static function eventImage(string $endpoint, array $query): string
+    {
+        $src = htmlspecialchars($endpoint . http_build_query($query, '', '&', PHP_QUERY_RFC3986), ENT_QUOTES);
 
         return "<img src='{$src}' height='1' width='1' style='display:none' alt='' />\n";
+    }
+
+    /**
+     * The settings of the source's account's first enabled ChatGPT Ads
+     * destination for $pixelId that takes conversions of $campaignId; [] when
+     * there is none. A row whose settings are not JSON is skipped, logged.
+     *
+     * @return array<string, mixed>
+     */
+    private static function chatGptAdsDestination(Connection $conn, int $ppcAccountId, string $pixelId, int $campaignId): array
+    {
+        $stmt = $conn->prepareRead(
+            'SELECT d.destination_id, d.settings
+               FROM `' . \Prosper202\Database\Schema\TableRegistry::DESTINATIONS . '` AS d
+               JOIN 202_ppc_accounts AS a ON a.user_id = d.user_id AND a.ppc_account_id = ?
+              WHERE d.type = ? AND d.enabled = 1 AND d.deleted_at IS NULL
+              ORDER BY d.destination_id'
+        );
+        $conn->bind($stmt, 'is', [$ppcAccountId, OpenAiAdsDestination::TYPE]);
+        foreach ($conn->fetchAll($stmt) as $row) {
+            $settings = json_decode((string) ($row['settings'] ?? ''), true);
+            if (!is_array($settings)) {
+                error_log('traffic source pixels: destination ' . (int) ($row['destination_id'] ?? 0) . '\'s settings cannot be read; skipped for a ChatGPT Ads event');
+                continue;
+            }
+            $campaigns = $settings['campaign_ids'] ?? [];
+            if (($settings['pixel_id'] ?? null) !== $pixelId || !is_array($campaigns)) {
+                continue;
+            }
+            if ($campaigns === [] || in_array($campaignId, array_map('intval', $campaigns), true)) {
+                return $settings;
+            }
+        }
+
+        return [];
     }
 
     /**
@@ -366,12 +506,18 @@ final class TrafficSourcePixels
     {
         try {
             $tokens[self::EVENT_ID] = DestinationEventId::of($conn, $userId, $clickId, $convId, $transactionId);
+            $campaign = $conn->prepareWrite('SELECT campaign_id FROM 202_conversion_logs WHERE conv_id = ? AND user_id = ? LIMIT 1');
+            $conn->bind($campaign, 'ii', [$convId, $userId]);
+            $campaignId = $conn->fetchOne($campaign)['campaign_id'] ?? null;
+            if (is_numeric($campaignId)) {
+                $tokens[self::EVENT_CAMPAIGN] = (int) $campaignId;
+            }
         } catch (\Throwable $e) {
             // Inside a transaction a lock error ended it, and its owner must hear (CLAUDE.md #34); after one, the visitor goes on.
             if ($conn->inTransaction() && Connection::isRetryableLockError($e)) {
                 throw $e;
             }
-            unset($tokens[self::EVENT_ID]);
+            unset($tokens[self::EVENT_ID], $tokens[self::EVENT_CAMPAIGN]);
             error_log('traffic source pixels: conversion ' . $convId . '\'s event id could not be read; its pixels go without one: ' . $e->getMessage());
         }
 

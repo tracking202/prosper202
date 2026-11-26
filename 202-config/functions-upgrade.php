@@ -182,6 +182,38 @@ if (!function_exists('_upgrade_query')) {
     }
 }
 
+if (!function_exists('_upgrade_openai_pixel_type')) {
+    /**
+     * The ChatGPT Ads Pixel traffic source pixel type at its id, 7
+     * (Prosper202\Conversion\OpenAiPixelId), for the 1.9.81 rung. A row
+     * already at 7 under another name is not taken for it: the step fails,
+     * named, rather than firing ChatGPT Ads events for that type's pixels.
+     */
+    function _upgrade_openai_pixel_type(): bool
+    {
+        if (_upgrade_query(\Prosper202\Conversion\OpenAiPixelId::seedStatement()) === false) {
+            _upgrade_note('the ChatGPT Ads Pixel type could not be added to 202_pixel_types.');
+
+            return false;
+        }
+        $read = _upgrade_query(\Prosper202\Conversion\OpenAiPixelId::seededSql());
+        if (!$read instanceof \mysqli_result) {
+            _upgrade_note('202_pixel_types could not be read back after adding the ChatGPT Ads Pixel type.');
+
+            return false;
+        }
+        $row = $read->fetch_assoc();
+        if (!\Prosper202\Conversion\OpenAiPixelId::seededAsExpected($row['pixel_type'] ?? null)) {
+            _upgrade_note('202_pixel_types holds another type at id ' . \Prosper202\Conversion\OpenAiPixelId::PIXEL_TYPE
+                . ', where 1.9.81 puts the ChatGPT Ads Pixel; rename or move that row, then run the upgrade again.');
+
+            return false;
+        }
+
+        return true;
+    }
+}
+
 if (!function_exists('_upgrade_seed_bot202_facebook_pixel_lookups')) {
     /**
      * The Bot202 Facebook Pixel Assistant's lookup rows, as DataSeeder
@@ -5594,11 +5626,18 @@ class UPGRADE
             //
             // The re-click backfill's stopped_at, when a stop began, which
             // Settings and the cron output show (Prosper202\Click\ReClickBackfill).
+            //
+            // The ChatGPT Ads pixel on a landing page: the page's switch, the
+            // browser reference a click's page sends (Prosper202\Click\
+            // OpenAiBrowserRef), and the ChatGPT Ads Pixel type at id 7.
+            $pixel_type_ok = _upgrade_openai_pixel_type();
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
-            ]);
+                \Prosper202\Database\Tables\ClickTables::clickOpenAiRefs(),
+                \Prosper202\Database\Tables\MiscTables::landingPageOpenAiPixel(),
+            ]) && $pixel_type_ok;
             if ($step_ok) {
                 // Redirector criterion values the API stored untrimmed before
                 // 1.9.79, stored as the writers store them now.
@@ -5611,7 +5650,7 @@ class UPGRADE
                     _upgrade_note('failed to persist version 1.9.81; leaving version at 1.9.80 so the next run retries.');
                 }
             } else {
-                _upgrade_note('a table of the 1.9.81 step could not be reconciled (the list above);'
+                _upgrade_note('a table of the 1.9.81 step could not be reconciled (the list above), or the ChatGPT Ads Pixel type seeded;'
                     . ' leaving version at 1.9.80 so the next run retries.');
             }
         }
