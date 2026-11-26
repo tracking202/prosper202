@@ -29,7 +29,7 @@ $errors = $campaignForm['errors'];
 
 <div class="mb-3">
 	<label class="form-label" for="aff_campaign_name">Campaign name</label>
-	<input type="text" class="form-control<?php echo p202_setup_invalid($errors, 'aff_campaign_name'); ?>" id="aff_campaign_name" name="aff_campaign_name" value="<?php echo p202_setup_e($values['aff_campaign_name']); ?>" maxlength="255" required>
+	<input type="text" class="form-control<?php echo p202_setup_invalid($errors, 'aff_campaign_name'); ?>" id="aff_campaign_name" name="aff_campaign_name" value="<?php echo p202_setup_e($values['aff_campaign_name']); ?>" maxlength="<?php echo \Prosper202\Setup\FieldLength::of('aff_campaign_name'); ?>" required>
 	<?php echo p202_setup_feedback($errors, 'aff_campaign_name'); ?>
 </div>
 

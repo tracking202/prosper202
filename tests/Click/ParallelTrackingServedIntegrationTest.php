@@ -478,6 +478,18 @@ final class ParallelTrackingServedIntegrationTest extends TestCase
         self::assertSame('https://shop.example/landing?x=1&adg=a%23b%0D%0AX-Evil%3A1&gclid=G-enc-1', self::location($headers));
     }
 
+    /** The template's gbraid, wbraid and ttclid are passed on and are ad click ids: each goes once (4V9P). */
+    public function testTheSavedPageGetsEachClickIdOnce(): void
+    {
+        $query = '&gbraid=GB-1&wbraid=WB-1&ttclid=TT-1&gclid=G-braid-1';
+        [$status, $headers] = self::get(self::pt(self::SIMPLE_TRACKER, $query));
+        self::assertSame(302, $status, $headers . $this->serverLog());
+        self::assertSame(
+            'https://shop.example/landing?x=1&gclid=G-braid-1&gbraid=GB-1&wbraid=WB-1&ttclid=TT-1',
+            self::location($headers)
+        );
+    }
+
     public function testAnAdvancedPagesTemplateClickIsTakenByItsScript(): void
     {
         [$status, $headers] = self::get(self::pt(self::ADVANCED_TRACKER, '&t202kw=boots&gclid=G-adv-1'));

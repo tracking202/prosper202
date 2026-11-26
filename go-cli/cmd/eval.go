@@ -99,7 +99,9 @@ var evalRunCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("encoding results: %w", err)
 		}
-		render(encoded)
+		if err := render(encoded); err != nil {
+			return err
+		}
 
 		if summary.NeedsJudge > 0 && strings.TrimSpace(judgeCmd) == "" {
 			fmt.Fprintf(os.Stderr, "Note: %d case(s) have a rubric and need --judge-cmd to fully pass.\n", summary.NeedsJudge)

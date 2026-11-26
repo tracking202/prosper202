@@ -44,6 +44,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if (empty($aff_network_name)) {
 		$error['aff_network_name'] = '<div class="error">Type in the name of your campaign\'s category.</div>';
 	}
+    $tooLong = \Prosper202\Setup\FieldLength::refusal(
+        'aff_network_name',
+        (string) $_POST['aff_network_name'],
+        'The category name'
+    );
+    if ($tooLong !== null) {
+        $error['aff_network_name'] = '<div class="error">'
+            . htmlspecialchars($tooLong, ENT_QUOTES, 'UTF-8') . '</div>';
+    }
 
 	//if editing, check to make sure the own the network they are editing
 	if ($editing == true) {
@@ -141,18 +150,15 @@ if (isset($_GET['delete_aff_network_id'])) {
 	}
 
 	if ($userObj->hasPermission("remove_campaign_category")) {
-		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-		$mysql['aff_network_id'] = $db->real_escape_string((string)$_GET['delete_aff_network_id']);
-		$mysql['aff_network_time'] = time();
-
-		$delete_sql = " UPDATE  `202_aff_networks`
-						SET     `aff_network_deleted`='1',
-								`aff_network_time`='" . $mysql['aff_network_time'] . "'
-						WHERE   `user_id`='" . $mysql['user_id'] . "'
-						AND     `aff_network_id`='" . $mysql['aff_network_id'] . "'";
-        if ($db->query($delete_sql)) {
-            $delete_success = true;
-
+		// Removed only when it is the account's and still there; anything else
+		// says so rather than redirecting to "Removed".
+		try {
+			$delete_success = \Prosper202\Setup\SetupRemoval::mark(new \Prosper202\Database\Connection($db),
+				'campaign_category', $_GET['delete_aff_network_id'], (int) $_SESSION['user_id'], time());
+		} catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+			record_mysql_error($db, 'UPDATE 202_aff_networks (remove a campaign category)', $e->getMessage());
+		}
+        if ($delete_success === true) {
             // Landing Page Optimizer (segments-v2 G10): mirror the save-path
             // hook above — every dictionary mutation on this page flags the
             // snapshot dirty for the hourly cron. DB-only — no HTTP here.
@@ -161,7 +167,7 @@ if (isset($_GET['delete_aff_network_id'])) {
             if ($slack)
                 $slack->push('campaign_category_deleted', ['name' => $_GET['delete_aff_network_name'], 'user' => $user_row['username']]);
         } else {
-            record_mysql_error($db, $delete_sql);
+            $error['delete_aff_network'] = 'That campaign category was not found on this account. Nothing was removed.';
         }
 	} else {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/aff_networks.php');
@@ -225,7 +231,7 @@ if ($error) {
 					<?php echo p202_setup_token_field((string) ($_SESSION['token'] ?? '')); ?>
 					<div class="mb-3">
 						<label class="form-label" for="aff_network_name">Category name</label>
-						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'aff_network_name'); ?>" id="aff_network_name" name="aff_network_name" value="<?php echo p202_setup_e($formName); ?>" maxlength="255" required<?php echo $categories === [] || $editing ? ' autofocus' : ''; ?>>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'aff_network_name'); ?>" id="aff_network_name" name="aff_network_name" value="<?php echo p202_setup_e($formName); ?>" maxlength="<?php echo \Prosper202\Setup\FieldLength::of('aff_network_name'); ?>" required<?php echo $categories === [] || $editing ? ' autofocus' : ''; ?>>
 						<?php echo p202_setup_feedback($error, 'aff_network_name'); ?>
 					</div>
 					<div class="p202-form-actions">

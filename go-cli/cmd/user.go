@@ -35,8 +35,7 @@ var userListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -53,8 +52,7 @@ var userGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -102,8 +100,7 @@ var userCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -177,8 +174,7 @@ var userUpdateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -224,8 +220,7 @@ var userRoleListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -252,8 +247,7 @@ var userRoleAssignCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -324,8 +318,7 @@ var userAPIKeyListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -381,8 +374,7 @@ var userAPIKeyCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -540,8 +532,7 @@ var userAPIKeyRotateCmd = &cobra.Command{
 		}
 		// stderr: stdout carries data only.
 		fmt.Fprintf(os.Stderr, "The old key keeps working until %s. To end it now: p202 user apikey delete %s <old_api_key>\n", oldKeyEnds, userID)
-		render(encoded)
-		return nil
+		return render(encoded)
 	},
 }
 
@@ -581,8 +572,7 @@ var userIdentityKeyGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -613,8 +603,7 @@ var userIdentityKeyRotateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -640,8 +629,7 @@ var userPrefsGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		renderPrefs(data)
-		return nil
+		return renderPrefs(data)
 	},
 }
 

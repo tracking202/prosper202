@@ -12,6 +12,7 @@ Aggregate performance data across campaigns, networks, time periods, and dimensi
 | `GET` | `/reports/daypart` | Performance by hour of day |
 | `GET` | `/reports/weekpart` | Performance by day of week |
 | `GET` | `/reports/groups` | Traffic grouped by up to four dimensions, nested, every group with its totals (see [Group Overview](#group-overview)) |
+| `GET` | `/reports/payout` | One campaign's default payout, which the break-even rankings price a click with (see [A campaign's payout](#a-campaigns-payout)) |
 | `GET` | `/rotators/{id}/stats` | One rotator: its totals, each rule, and its default (see [Rotator stats](#rotator-stats)) |
 
 ## Common Query Parameters
@@ -215,6 +216,26 @@ by `202_clicks.rule_id`, which the rotator redirect fills with the chosen
 it missed the clicks a landing page's offer rotator routes. A rotator the
 account does not own is a `404`. The key needs read scope on `rotators` and
 on `reports`.
+
+## A campaign's payout
+
+`GET /reports/payout?aff_campaign_id=12` is the default payout of one of the
+account's campaigns: what `p202 report losers`, `report winners`, `report
+breakeven` and `campaign optimize` price a click with.
+
+```json
+{"data": {"aff_campaign_id": 12, "aff_campaign_name": "Offer A", "aff_campaign_payout": 40, "aff_campaign_currency": "USD"}}
+```
+
+`GET /campaigns/{id}` answers the payout too, but it is Setup's and asks for
+`access_to_setup_section`, which a Campaign optimizer does not have; this
+route asks what the reports ask (the `reports` read scope), so a role with
+campaign data reads it. For a role without `access_to_campaign_data` the
+payout is `null` and the answer carries `masked: true`, as the reports' money
+does. `aff_campaign_id` is required and is the only parameter (any other is a
+`422` naming it); a campaign that is not the account's, or is deleted, is a
+`404`. Servers that serve it list `features.report_payout` in
+`/capabilities` (1.9.81 and later).
 
 ## Metrics Returned
 

@@ -12,6 +12,24 @@ class TextAdsController extends Controller
 {
     protected function tableName(): string { return '202_text_ads'; }
     protected function primaryKey(): string { return 'text_ad_id'; }
+
+    #[\Override]
+    protected function listSearchColumns(): array
+    {
+        return ['text_ad_name'];
+    }
+
+    #[\Override]
+    protected function listSortFields(): array
+    {
+        return [
+            'text_ad_id' => 'text_ad_id',
+            'text_ad_name' => 'text_ad_name',
+            'aff_campaign_id' => 'aff_campaign_id',
+            'landing_page_id' => 'landing_page_id',
+        ];
+    }
+
     protected function deletedColumn(): ?string { return 'text_ad_deleted'; }
 
     protected function fields(): array

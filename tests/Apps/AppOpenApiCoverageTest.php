@@ -157,7 +157,12 @@ final class AppOpenApiCoverageTest extends TestCase
         foreach (['/apps/notifications', '/apps/{id}/store-link'] as $path) {
             $this->assertStringContainsString("\n  $path:\n", $spec, "$path is served but not documented");
         }
-        $this->assertSame([], array_values(array_diff(\Api\V3\Controllers\AppNotificationsController::STATUSES, ['pending', 'sent', 'failed', 'cancelled', 'suppressed'])));
+        $notifications = substr($spec, (int) strpos($spec, "\n  /apps/notifications:\n"), 6000);
+        $this->assertSame(1, preg_match('/- \{name: status, in: query, schema: \{type: string, enum: \[([^\]]*)\]\}\}/', $notifications, $statuses), 'the status filter lists its values');
+        $this->assertEqualsCanonicalizing(\Api\V3\Controllers\AppNotificationsController::STATUSES, array_map('trim', explode(',', $statuses[1])), 'every status the read filters by is documented');
+        foreach (\Api\V3\Controllers\AppNotificationsController::STATUSES as $status) {
+            $this->assertMatchesRegularExpression('/\n {26}' . $status . ': \{type: integer\}\n/', $notifications, "meta.summary counts $status but does not document it");
+        }
         foreach (['kind', 'status', 'url', 'last_error', 'registration_id', 'goal_name'] as $field) {
             $this->assertContains($field, $this->documentedProperties('AppNotification'));
         }

@@ -22,6 +22,17 @@ ask="${P202_EVAL_ASK:-$(cat)}"
 run_id="$$-$(date +%s)"
 
 case "$ask" in
+    # Several links in one call (setup-links.json): create-with-url --items
+    # takes every tracker and answers each with its link; one key per item.
+    *"EVAL Bulk Source 1"*"EVAL Bulk Source 2"*)
+        c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name=="EVAL Campaign A")][0].aff_campaign_id')
+        a1=$(p202 ppc-account list --json | jq -r '[.data[] | select(.ppc_account_name=="EVAL Bulk Source 1")][0].ppc_account_id')
+        a2=$(p202 ppc-account list --json | jq -r '[.data[] | select(.ppc_account_name=="EVAL Bulk Source 2")][0].ppc_account_id')
+        items=$(jq -nc --arg c "$c" --arg a1 "$a1" --arg a2 "$a2" '[{aff_campaign_id: $c, ppc_account_id: $a1}, {aff_campaign_id: $c, ppc_account_id: $a2}]')
+        out=$(p202 tracker create-with-url --items "$items" --idempotency-key "eval-bulk-links-$run_id" --json)
+        printf 'Made both links for EVAL Campaign A (campaign %s) in one call (`p202 tracker create-with-url --items`):\n- EVAL Bulk Source 1: %s\n- EVAL Bulk Source 2: %s\n' "$c" \
+            "$(printf '%s' "$out" | jq -r '.data[0].tracking_url.direct_url')" "$(printf '%s' "$out" | jq -r '.data[1].tracking_url.direct_url')"
+        ;;
     # A tester's office (visitors.json): an always-count entry wins over every
     # built-in check, so add one, leave the checks alone, and report a test.
     *"QA team"*"198.51.100.0/24"*)
@@ -863,6 +874,21 @@ EOF
             "$(printf '%s' "$entry" | jq -r '.url')" \
             "$(if [ "$(printf '%s' "$entry" | jq -r '.secret_stored')" = true ]; then printf 'stored'; else printf 'not stored yet: set it with `p202 user prefs update <user_id> --cb-key ...`'; fi)"
         ;;
+    *"eval-optimizer profile"*)
+        # A Campaign optimizer's break-even CPC (optimize.json): the id from
+        # the role's reports, since campaign list is Setup's, then report
+        # breakeven, which reads the payout from the reports too.
+        id=$(p202 --profile eval-optimizer report breakdown --breakdown campaign --json | jq -r '[.data[] | select(.name=="EVAL Optimizer Offer")][0].id // empty')
+        if [ -z "$id" ]; then
+            printf 'The eval-optimizer reports have no EVAL Optimizer Offer (`p202 --profile eval-optimizer report breakdown --breakdown campaign`), so there is nothing to price.\n'
+        elif out=$(p202 --profile eval-optimizer report breakeven --aff-campaign-id "$id" --json 2>&1); then
+            printf 'Per `p202 --profile eval-optimizer report breakeven --aff-campaign-id %s`, the most a click on EVAL Optimizer Offer can cost and still break even (payout x conversions per click): %s.\n' \
+                "$id" "$(printf '%s' "$out" | jq -r '[.data[] | "\(.name) $\(.breakeven_cpc) (paying $\(.avg_cpc) now)"] | join(", ")')"
+        else
+            printf 'The eval-optimizer key was refused: %s Hint: %s\n' \
+                "$(printf '%s' "$out" | jq -r '.error.message')" "$(printf '%s' "$out" | jq -r '.error.hint')"
+        fi
+        ;;
     *"eval-viewer profile"*)
         # Run what was asked with the key asked for; a refusal is reported
         # with the hint it carries, not routed around with another key.
@@ -918,6 +944,19 @@ EOF
         ;;
     # Traffic sources (setup-traffic-sources.json): a rename is an update of
     # the source that is there, so its accounts and their trackers keep it.
+    # An account's postback (setup-traffic-sources.json): a Postback pixel of
+    # that account, with the URL as given, its id read by name.
+    *"EVAL Account traffic source account"*"server-to-server pixel"*)
+        code=$(printf '%s' "$ask" | grep -oE 'https://[^ ]+' | head -1)
+        account=$(p202 ppc-account list --all --json | jq -r '[.data[] | select(.ppc_account_name=="EVAL Account")][0].ppc_account_id // empty')
+        if [ -z "$account" ] || [ -z "$code" ]; then
+            printf 'I found no traffic source account named "EVAL Account" (`p202 ppc-account list`), or no URL in the ask, so nothing was added.\n'
+        else
+            made=$(p202 ppc-account pixel create "$account" --type-id 4 --code "$code" --json)
+            printf 'Added a Postback (server to server) pixel to EVAL Account (account %s, pixel %s) with `p202 ppc-account pixel create`: %s. It fires when one of the account'"'"'s clicks converts.\n' \
+                "$account" "$(printf '%s' "$made" | jq -r '.data.pixel_id')" "$code"
+        fi
+        ;;
     # ChatGPT Ads (setup-traffic-sources.json): the one-step setup, never a
     # hand-built source with variables of the agent's own choosing.
     *"ads in ChatGPT"*)
@@ -1002,6 +1041,28 @@ EOF
         else
             printf 'At $%s a sale these traffic sources lose money, per `p202 report losers --breakdown ppc_account --payout %s`: %s.\n' "$payout" "$payout" "$rows"
         fi
+        ;;
+    # Several values on one report filter (report-filter-lists.json): look
+    # each campaign up by name, refuse one that is not there, and read the
+    # two together with one comma list.
+    *"EVAL Campaign A and EVAL Campaign"*"between them"*)
+        list=$(p202 campaign list --all --json)
+        a=$(printf '%s' "$list" | jq -r '[.data[] | select(.aff_campaign_name=="EVAL Campaign A")][0].aff_campaign_id // empty')
+        case "$ask" in
+            *"EVAL Campaign Zed"*)
+                if [ -n "$(printf '%s' "$list" | jq -r '[.data[] | select(.aff_campaign_name=="EVAL Campaign Zed")][0].aff_campaign_id // empty')" ]; then
+                    printf 'EVAL Campaign Zed exists after all; ask again and I will add it in.\n'
+                else
+                    clicks=$(p202 report summary --aff-campaign-id "$a" --period alltime --json | jq -r '.data.total_clicks')
+                    printf 'There is no campaign named EVAL Campaign Zed in `p202 campaign list --all`, so I cannot give a total for the two. EVAL Campaign A (campaign %s) alone has %s clicks all time.\n' "$a" "$clicks"
+                fi
+                ;;
+            *)
+                b=$(printf '%s' "$list" | jq -r '[.data[] | select(.aff_campaign_name=="EVAL Campaign B")][0].aff_campaign_id // empty')
+                clicks=$(p202 report summary --aff-campaign-id "$a,$b" --period alltime --json | jq -r '.data.total_clicks')
+                printf 'EVAL Campaign A (campaign %s) and EVAL Campaign B (campaign %s) got %s clicks between them all time, per `p202 report summary --aff-campaign-id %s,%s --period alltime`.\n' "$a" "$b" "$clicks" "$a" "$b"
+                ;;
+        esac
         ;;
     *"traffic sources"*"losing money"*)
         # No value per sale given: report on the revenue ClickServer recorded,

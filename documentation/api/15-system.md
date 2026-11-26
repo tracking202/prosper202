@@ -411,9 +411,10 @@ minutes.
 }
 ```
 
-The base is the one tracker links use: user 1's tracking domain (or this
-server's name) and the install's path. `secret_stored` says whether the
-caller has stored the key each notification is checked with (null: it needs
+The base is the one tracker links use: the caller's own tracking domain (or,
+when none is set, the host the request arrived at) and the install's path, as
+the API integrations page builds it for the signed-in user. `secret_stored`
+says whether the caller has stored the key each notification is checked with (null: it needs
 none); PayKickstart's `keys_stored` counts its IPN secret keys, one for each
 PayKickstart campaign. The secrets are never served — `PUT
 /users/{id}/preferences` sets them, and its `GET` answers each only as

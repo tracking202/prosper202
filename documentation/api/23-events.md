@@ -220,6 +220,17 @@ decided per URL: a URL that had not yet been sent the earlier outcome
 hears the one that stands, once, while one that had is told nothing more.
 A goal that is not paid (tracked only) sends nothing.
 
+**Nothing is told about a visitor who refused consent** (`p202_consent`,
+on the event's own request or on any visit, conversion or goal event of its
+click; [destinations.md](../features/destinations.md#privacy-and-personal-data)
+lists which requests carry a refusal). The outcome still counts; no pixel
+is rendered, the outcome says `notify: suppressed`, its entry in
+`notifications` says `status: not_sent` with `reason: consent_withheld`,
+and the postbacks are stored `withheld`, with the reason, rather than
+queued. A postback queued before a refusal arrived
+is withheld when the worker comes to it; a retraction of one already sent
+still goes.
+
 ## Setup › Campaigns
 
 A campaign's page has a **Goals** panel once the campaign is saved: its

@@ -1,0 +1,2 @@
+-- Fixed: Go CLI: a command handed an empty answer to print (for example a 200 with no body from a failing server) printed "no output produced" itself and exited 0, so a script read success. It now fails with exit code 4 (category server), names the request whose answer was empty and how many bytes came back, and gives the next step; under --json the error is the usual envelope on stderr.
+app: Fixed: The Go CLI now exits with an error, naming the request, when the server's answer has nothing to print.

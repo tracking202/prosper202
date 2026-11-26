@@ -150,6 +150,21 @@ foreach ([
     $t202ServerData[$p202Segment] = $p202PageNow->format($p202Format);
 }
 
+// The page's split test (Prosper202\Setup\LandingPageSplitTest): null for
+// none running, false when it could not be read. The visitor goes on: the
+// script then shows and sends no variant, and keeps the one the visitor has.
+$p202Split = null;
+if ($t202LandingPageId !== null) {
+    try {
+        $p202Split = (new \Prosper202\Setup\LandingPageSplitTest(new \Prosper202\Database\Connection($db)))
+            ->forPage($t202LandingPageId);
+    } catch (\Throwable $splitError) {
+        error_log('landing.php: could not read the split test for lpip ' . $t202LandingPageId . ': '
+            . $splitError->getMessage());
+        $p202Split = false;
+    }
+}
+
 $baseUrl = $strProtocol . '://' . getTrackingDomain() . get_absolute_url();
 // p202_beacon=0: a page that only reports events (a thank-you page on the
 // same site as the landing page) loads the script without recording its own
@@ -179,6 +194,7 @@ $p202PurLinkDeferredJs = $p202Js(($_GET['p202_defpixel'] ?? $_GET['defpixel'] ??
 $p202ServerDataJs = $p202Js($t202ServerData, true);
 $p202ClientParamMapJs = $p202Js($t202ClientParamMap);
 $p202DcsUpdateUrlJs = $p202Js($baseUrl . 'tracking202/static/dcs-update.php');
+$p202SplitJs = $p202Js($p202Split);
 ?>
 
 (function() {
@@ -328,7 +344,11 @@ function p202ApplyTheSettings() {
         }
     }
     t202kw = readCookie('t202forcedkw') || p202Var('t202kw');
-    c1 = p202Var('c1'); c2 = p202Var('c2'); c3 = p202Var('c3'); c4 = p202Var('c4');
+    c1 = p202Var('c1'); c2 = p202Var('c2'); c3 = p202Var('c3'); c4 = p202VariantC4(p202Var('c4'));
+    // What the page shows as C4 is what the click is sent with.
+    for (key in data) {
+        if (own.call(data, key) && key.toLowerCase() === 't202c4') { data[key] = c4; }
+    }
     utm_source = p202Var('utm_source'); utm_medium = p202Var('utm_medium'); utm_term = p202Var('utm_term');
     utm_content = p202Var('utm_content'); utm_campaign = p202Var('utm_campaign');
     if (p202DcsSet) { p202DcsSet(data); }
@@ -420,6 +440,7 @@ window.p202.consent = function(given) {
 	if (given === false) {
 		p202Store('set', P202_CONSENT_KEY, '0');
 		p202Store('del', P202_LPID_KEY);
+        p202Store('del', P202_VARIANT_KEY);
         p202PurLinkRevoked = true;
         p202PurLinkPending = null;
         p202SubidOrigForget();
@@ -431,6 +452,68 @@ window.p202.consent = function(given) {
 	return p202ConsentGiven();
 };
 window.p202.lpid = p202Lpid;
+
+// --- Split test: one variant per visitor ---
+// The page's split test (Setup > Landing Pages): a variant picked by weight
+// and kept in this site's storage for the visitor's next views (only with
+// consent; a refusal deletes it), shown to the page as window.t202Variant,
+// p202.variant(), <html data-p202-variant>, a p202:variant event on the
+// document and dcs.t202DataObj.t202Variant, and sent as the click's C4 when
+// the visit has none, or over the one it has when the test says so.
+// p202Split is null for no test and false for one that could not be read,
+// which shows no variant and forgets none.
+var p202Split = <?php echo $p202SplitJs; ?>;
+var P202_VARIANT_KEY = 'p202variant_' + <?php echo $lpip_js; ?>;
+function p202SplitWeight(name) {
+    for (var i = 0; i < p202Split.variants.length; i++) {
+        if (p202Split.variants[i].name === name) { return p202Split.variants[i].weight; }
+    }
+    return 0;
+}
+function p202SplitPick() {
+    var list = p202Split.variants, total = 0, i, r;
+    for (i = 0; i < list.length; i++) { total += list[i].weight; }
+    try {
+        var n = new Uint32Array(1);
+        window.crypto.getRandomValues(n);
+        r = n[0] / 4294967296;
+    } catch (e) { r = Math.random(); }
+    var at = r * total;
+    for (i = 0; i < list.length; i++) {
+        at -= list[i].weight;
+        if (at < 0) { return list[i].name; }
+    }
+    return list[list.length - 1].name;
+}
+function p202SplitAssign() {
+    if (p202Split === false) { return ''; }
+    if (!p202Split || !p202ConsentGiven()) {
+        p202Store('del', P202_VARIANT_KEY);
+        return p202Split ? p202SplitPick() : '';
+    }
+    var kept = p202Store('get', P202_VARIANT_KEY);
+    if (kept !== null && p202SplitWeight(kept) > 0) { return kept; }
+    var picked = p202SplitPick();
+    p202Store('set', P202_VARIANT_KEY, picked);
+    return picked;
+}
+var p202Variant = p202SplitAssign();
+// A C4 the click is sent with: the variant in place of none, or of any
+// when the test replaces the visit's own.
+function p202VariantC4(value) {
+    if (!p202Variant) { return value; }
+    return (value === '' || p202Split.overwriteC4 === true) ? p202Variant : value;
+}
+c4 = p202VariantC4(c4);
+window.t202Variant = p202Variant;
+window.p202.variant = function() { return p202Variant; };
+if (p202Variant) {
+    try { document.documentElement.setAttribute('data-p202-variant', p202Variant); } catch (e) { /* no root to mark */ }
+    try {
+        document.dispatchEvent(new CustomEvent('p202:variant', {detail: {variant: p202Variant}}));
+    } catch (e) { /* no CustomEvent: the page reads p202.variant() */ }
+}
+// --- End of the split test ---
 
 // The record response and browser module load independently. Keep the
 // capability in this closure until both arrive, and fence it on revocation.
@@ -873,6 +956,7 @@ if (document.readyState === 'loading') {
 		data.t202Id = t202GetVar('t202id');
 		data.t202Kw = t202kw;
 		data.t202C1 = c1; data.t202C2 = c2; data.t202C3 = c3; data.t202C4 = c4;
+        data.t202Variant = p202Variant;
 		// 1.9.56's three ad click ids, and those 1.9.79 and 1.9.80 added.
 		var adClickIds = {t202GCLID: 'gclid', t202GBRAID: 'gbraid', t202WBRAID: 'wbraid', t202TTCLID: 'ttclid', t202FBCLID: 'fbclid', t202MSCLKID: 'msclkid', t202OPPREF: 'oppref'};
         for (key in adClickIds) { if (own(adClickIds, key)) { data[key] = p202Var(adClickIds[key]); } }

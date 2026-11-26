@@ -93,8 +93,7 @@ func adCampaignWrite(cmd *cobra.Command, name, path string, body map[string]inte
 		parts := strings.Split(path, "/")
 		return adCampaignWriteFailure(err, parts[1], parts[3])
 	}
-	render(data)
-	return nil
+	return render(data)
 }
 
 var adCampaignListCmd = &cobra.Command{
@@ -136,8 +135,7 @@ var adCampaignListCmd = &cobra.Command{
 		if err != nil {
 			return adCampaignFailure(err, args[0], adCampaignListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -157,8 +155,7 @@ var adCampaignGetCmd = &cobra.Command{
 		if err != nil {
 			return adCampaignFailure(err, args[0], adCampaignListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -287,8 +284,7 @@ var adCampaignSpendCmd = &cobra.Command{
 		if err != nil {
 			return adCampaignFailure(err, args[0], adConnectionListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 

@@ -180,7 +180,14 @@ final class IdentitySignalsTest extends TestCase
         self::assertTrue(RequestSignals::requestIsHttps(['HTTPS' => 'on']));
         self::assertFalse(RequestSignals::requestIsHttps(['HTTPS' => 'off']));
         self::assertFalse(RequestSignals::requestIsHttps([]));
-        self::assertTrue(RequestSignals::requestIsHttps(['HTTP_X_FORWARDED_PROTO' => 'https']));
+        $listed = \Prosper202\Http\TrustedProxies::parse('10.0.0.1');
+        self::assertTrue(RequestSignals::requestIsHttps(['HTTP_X_FORWARDED_PROTO' => 'https', 'REMOTE_ADDR' => '10.0.0.1'], $listed));
+        self::assertFalse(
+            RequestSignals::requestIsHttps(['HTTP_X_FORWARDED_PROTO' => 'https', 'REMOTE_ADDR' => '198.51.100.7'], $listed),
+            'a client claiming HTTPS does not choose the p202vid cookie\'s Secure flag'
+        );
+        self::assertFalse(RequestSignals::requestIsHttps(['HTTP_X_FORWARDED_PROTO' => 'https', 'REMOTE_ADDR' => '10.0.0.1'], \Prosper202\Http\TrustedProxies::none()));
+        self::assertTrue(RequestSignals::requestIsHttps(['SERVER_PORT' => '443']), 'the same answer as every other cookie');
     }
 
     public function testTheSignalTypeIsInsideTheHash(): void

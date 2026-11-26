@@ -11,6 +11,7 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\NothingToUpdateException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\ListQuery;
 use Api\V3\Support\StatementHelpers;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
@@ -98,13 +99,59 @@ class UsersController
     {
     }
 
-    public function list(): array
+    /** What the user list may be filtered by, as Controller::list() reads filters. */
+    private const array LIST_FIELDS = [
+        'user_id'       => ['type' => 'i'],
+        'user_name'     => ['type' => 's'],
+        'user_email'    => ['type' => 's'],
+        'user_timezone' => ['type' => 's'],
+        'user_active'   => ['type' => 'i'],
+    ];
+
+    /** What `sort=` may name, each its own column. */
+    private const array LIST_SORTS = [
+        'user_id' => 'user_id', 'user_name' => 'user_name', 'user_fname' => 'user_fname',
+        'user_lname' => 'user_lname', 'user_email' => 'user_email', 'user_time_register' => 'user_time_register',
+    ];
+
+    /**
+     * Every user, or those the request narrows to: `filter[...]`, `q`
+     * (the user name, first or last name or email contains it), and
+     * `sort` / `sort_dir`.
+     *
+     * @param array<string, mixed> $params
+     */
+    public function list(array $params = []): array
     {
+        $where = ['user_deleted = 0'];
+        $binds = [];
+        $types = '';
+        foreach (ListQuery::filters($params, self::LIST_FIELDS) as $field => $values) {
+            [$sql, $filterBinds, $filterTypes] = ListQuery::anyOf($field, $values, self::LIST_FIELDS[$field]['type']);
+            $where[] = $sql;
+            array_push($binds, ...$filterBinds);
+            $types .= $filterTypes;
+        }
+        $search = ListQuery::searchPattern($params);
+        if ($search !== null) {
+            [$sql, $searchBinds, $searchTypes] = ListQuery::searchCondition(
+                ['user_name', 'user_fname', 'user_lname', 'user_email'],
+                $search
+            );
+            $where[] = $sql;
+            array_push($binds, ...$searchBinds);
+            $types .= $searchTypes;
+        }
+        $orderBy = ListQuery::orderBy($params, self::LIST_SORTS, 'user_id') ?? 'user_id ASC';
+
         $stmt = $this->prepare(
             'SELECT user_id, user_fname, user_lname, user_name, user_email, user_timezone, user_active, user_deleted, user_time_register,
                 user_public_publisher_id
-            FROM 202_users WHERE user_deleted = 0 ORDER BY user_id ASC'
+            FROM 202_users WHERE ' . implode(' AND ', $where) . ' ORDER BY ' . $orderBy
         );
+        if ($types !== '') {
+            $this->bind($stmt, $types, ...$binds);
+        }
         $this->execute($stmt, 'List query failed');
         $result = $this->resultOf($stmt, 'List query failed');
         $rows = [];
@@ -654,7 +701,8 @@ class UsersController
         ];
     }
 
-    private function requireUser(int $userId): void
+    /** A user who is there: not removed (GET /users/{id}'s 404 for the rest). */
+    public function requireUser(int $userId): void
     {
         $stmt = $this->prepare('SELECT user_id FROM 202_users WHERE user_id = ? AND user_deleted = 0 LIMIT 1');
         $this->bind($stmt, 'i', $userId);
@@ -1069,8 +1117,16 @@ class UsersController
      *   (from currency, to currency, amount) => the exchange service's
      *   answer, the amount in the new account currency; null asks the live
      *   service
+     * @param (callable(): void)|null $ltvSettingsGate refuses a caller who may
+     *   not change LTV › Settings (LtvAccess's settings_write); a change to one
+     *   of its values without a gate is refused, never let through
      */
-    public function updatePreferences(int $userId, array $payload, ?callable $rate = null): array
+    public function updatePreferences(
+        int $userId,
+        array $payload,
+        ?callable $rate = null,
+        ?callable $ltvSettingsGate = null
+    ): array
     {
         // PreferenceRules::validate() refuses them too; refused here first,
         // before anything is read, like every other body.
@@ -1083,7 +1139,22 @@ class UsersController
         if ($payload === []) {
             throw new ValidationException('No valid fields to update');
         }
-        [$writes, $echoErrors] = ServedPreferences::withoutEchoes($payload, ServedPreferences::serve($current));
+        $served = ServedPreferences::serve($current);
+        [$writes, $echoErrors] = ServedPreferences::withoutEchoes($payload, $served);
+        // Asked of a value that would change, so a GET body sent back whole
+        // still passes for a role LTV › Settings refuses.
+        foreach (\Api\V3\Support\LtvAccess::PREFERENCES as $key) {
+            if (
+                array_key_exists($key, $writes)
+                && !\Api\V3\Support\PayloadKeys::same($writes[$key], $served[$key] ?? null)
+            ) {
+                if ($ltvSettingsGate === null) {
+                    throw new \LogicException('A change to the LTV › Settings preferences needs its permission check');
+                }
+                $ltvSettingsGate();
+                break;
+            }
+        }
         [$clean, $errors] = PreferenceRules::validate($writes, self::SUPPORTED_CURRENCIES);
         $errors += $echoErrors;
         if ($errors !== []) {
