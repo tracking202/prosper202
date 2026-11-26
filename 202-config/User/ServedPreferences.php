@@ -63,15 +63,29 @@ final class ServedPreferences
         'cb_key', 'jvzoo_ipn_secret_key', 'zaxaa_api_signature', 'ipqs_api_key',
         'revcontent_user_id', 'revcontent_user_secret',
         'user_slack_incoming_webhook', 'lpo_site_key', 'lpo_bridge_config',
-        'paykickstart_ipn_secret_keys', 'shopify_webhook_secret',
+        'paykickstart_ipn_secret_keys',
     ];
+
+    /**
+     * Secrets the preferences answer and take that are not columns: kept in
+     * the sealed store (Prosper202\Security\IntegrationSecretStore) and
+     * answered as their stored state by the controller, read without opening
+     * them. The Shopify webhook secret left the row in 1.9.81.
+     */
+    public const SEALED = ['shopify_webhook_secret'];
 
     private function __construct()
     {
     }
 
-    /** @return list<string> every column the lists classify */
+    /** @return list<string> every key GET answers: the row's columns the lists classify, and the sealed secrets */
     public static function columns(): array
+    {
+        return [...self::tableColumns(), ...self::SEALED];
+    }
+
+    /** @return list<string> the 202_users_pref columns the lists classify */
+    public static function tableColumns(): array
     {
         return [...self::SERVED, ...self::SECRET];
     }

@@ -203,7 +203,9 @@ final class ConversionTables
     /**
      * One row per revenue CSV upload. Each CSV line becomes a ledger row whose
      * source_ref names its batch, and the newest batch for a click replaces
-     * the earlier ones (ClickValueCalculator, rule 2).
+     * the earlier ones (ClickValueCalculator, rule 2). undone_at and
+     * undone_rows record the last undo of the batch (UploadBatchUndo): a log,
+     * never a gate, since an undo removes whatever of the batch is live.
      */
     public static function conversionUploads(): SchemaDefinition
     {
@@ -217,6 +219,8 @@ final class ConversionTables
                 `recorded_count` int(10) unsigned NOT NULL DEFAULT '0',
                 `skipped_count` int(10) unsigned NOT NULL DEFAULT '0',
                 `uploaded_at` int(10) unsigned NOT NULL,
+                `undone_at` int(10) unsigned DEFAULT NULL,
+                `undone_rows` int(10) unsigned DEFAULT NULL,
                 PRIMARY KEY (`batch_id`),
                 KEY `user_uploaded` (`user_id`,`uploaded_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"

@@ -405,6 +405,7 @@ minutes.
       { "integration": "paykickstart", "name": "PayKickstart", "label": "IPN URL", "url": "https://track.example.com/tracking202/static/paykickstart.php", "secret_stored": true, "keys_stored": 2,
         "held_notifications": { "recordable": 0, "waiting": 0, "waiting_currencies": [] } },
       { "integration": "shopify", "name": "Shopify", "label": "Webhook URL", "url": "https://track.example.com/tracking202/static/shopify.php", "secret_stored": true,
+        "secret_set_at": 1764000000, "previous_secret_expires_at": null,
         "held_notifications": { "recordable": 0, "waiting": 3, "waiting_currencies": ["EUR"] } }
     ]
   }
@@ -419,6 +420,14 @@ none); PayKickstart's `keys_stored` counts its IPN secret keys, one for each
 PayKickstart campaign. The secrets are never served — `PUT
 /users/{id}/preferences` sets them, and its `GET` answers each only as
 `{"stored": true}` or `{"stored": false}`.
+
+Shopify's secret is kept sealed in the integration secrets store
+(`documentation/features/integration-secrets.md`): its entry also says when
+it was set (`secret_set_at`, Unix seconds, null when none is) and, after a
+rotation on Account › API integrations, until when the secret it replaced
+still verifies webhooks (`previous_secret_expires_at`, else null). A stored
+secret that cannot be opened (sealed with a key the server does not have)
+is a `500` naming it in the server log, never `secret_stored: false`.
 
 `held_notifications` (PayKickstart, Shopify, Zaxaa) is what the page's card
 says: a notification stating another currency than the account counts in

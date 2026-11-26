@@ -132,7 +132,8 @@ final class RemovedUserRoutesTest extends TestCase
             . "                    \$payload,\n"
             . "                    null,\n"
             . "                    // The LTV › Settings values ask what the LTV Settings writes ask.\n"
-            . "                    static fn () => \\Api\\V3\\Support\\LtvAccess::require(\$auth, \$db, 'settings_write')\n"
+            . "                    static fn () => \\Api\\V3\\Support\\LtvAccess::require(\$auth, \$db, 'settings_write'),\n"
+            . "                    \$auth->userId()\n"
             . '                );';
         yield 'the guard removed' => [$auth . $guard . $get, $auth . $get];
         yield 'the guard before the authorization' => [$auth . $guard . $get, $guard . $auth . $get];

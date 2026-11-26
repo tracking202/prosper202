@@ -5,16 +5,27 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Controller;
+use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\Setup\AdvancedPageTextAds;
+use Prosper202\Setup\LandingPageTrackers;
 
 class LandingPagesController extends Controller
 {
+    /** Set while a page's write holds its lock, having repaired the account's public ids first (inPageTransaction()). */
+    private bool $repairDone = false;
+
     protected function tableName(): string { return '202_landing_pages'; }
     protected function primaryKey(): string { return 'landing_page_id'; }
+
+    #[\Override]
+    protected function libraryResource(): ?string
+    {
+        return 'landing-pages';
+    }
 
     #[\Override]
     protected function listSearchColumns(): array
@@ -161,6 +172,125 @@ class LandingPagesController extends Controller
         ]);
     }
 
+    /**
+     * An advanced page is not removed while text ads of type 1 or trackers
+     * name it: each would be left pointing at a page that is gone, with the
+     * delete answered 204. The page is locked first and checked and removed
+     * in the same transaction (LandingPageTrackers::lockPage()), so a second
+     * write of the page cannot land between the two. Setup › Landing Pages
+     * refuses the same delete. A simple page is removed as before.
+     */
+    #[\Override]
+    public function delete(int|string $id): void
+    {
+        $pageId = (int) $id;
+        $deleted = $this->inPageTransaction(function (LandingPageTrackers $trackers, ?int $type) use ($pageId): array {
+            $this->refuseWhileLinked($trackers, $pageId, $type);
+
+            return $this->deleteRecord($pageId);
+        }, $pageId);
+        // After the commit: a failed change record must not roll the delete back (CLAUDE.md #13).
+        $this->recordDeleted($deleted);
+    }
+
+    /** The preview answers the refusal the delete would: a dry run says what the delete will do. */
+    #[\Override]
+    public function deletePreview(int|string $id): array
+    {
+        $pageId = (int) $id;
+
+        return $this->inPageTransaction(function (LandingPageTrackers $trackers, ?int $type) use ($id, $pageId): array {
+            $this->refuseWhileLinked($trackers, $pageId, $type);
+
+            return parent::deletePreview($id);
+        }, $pageId);
+    }
+
+    /**
+     * Run $fn with the page's row locked and its type read under the lock
+     * (null: no live page of the account's), in a transaction of its own, or
+     * in the caller's when one is open (its commit is then the caller's).
+     *
+     * The account's id-less pages are repaired first, outside it: get()'s
+     * repair is an UPDATE over every page of the account, and run under the
+     * lock it would take the account's other pages in an order a second
+     * page's delete takes them in reverse, a deadlock between two deletes.
+     *
+     * @template T
+     * @param callable(LandingPageTrackers, ?int): T $fn
+     * @return T
+     */
+    private function inPageTransaction(callable $fn, int $pageId): mixed
+    {
+        $this->repairMissingPublicIds();
+        $conn = new Connection($this->db);
+        $locked = function () use ($conn, $fn, $pageId): mixed {
+            $trackers = new LandingPageTrackers($conn);
+            try {
+                $type = $trackers->lockPage($this->userId, $pageId);
+            } catch (QueryException $e) {
+                throw new DatabaseException('Landing page lock failed', $e);
+            }
+
+            return $fn($trackers, $type);
+        };
+        $this->repairDone = true;
+        try {
+            return $conn->inTransaction() ? $conn->joinTransaction($locked) : $conn->transaction($locked);
+        } finally {
+            $this->repairDone = false;
+        }
+    }
+
+    /**
+     * $type is the page's, read under its lock: null (no such page) is
+     * answered by the delete's own read, a 404.
+     *
+     * @throws ConflictException naming the text ads and trackers, when the page is advanced and any name it
+     */
+    private function refuseWhileLinked(LandingPageTrackers $trackers, int $pageId, ?int $type): void
+    {
+        if ($type !== 1) {
+            return;
+        }
+        try {
+            $ads = (new AdvancedPageTextAds(new Connection($this->db)))->naming($this->userId, $pageId);
+            $named = $trackers->naming($this->userId, $pageId);
+        } catch (QueryException $e) {
+            throw new DatabaseException('Text ad and tracker lookup failed', $e);
+        }
+        if ($ads === [] && $named === []) {
+            return;
+        }
+        $what = [];
+        $steps = [];
+        $lists = [];
+        if ($ads !== []) {
+            $what[] = count($ads) . ' text ' . (count($ads) === 1 ? 'ad' : 'ads') . ' of text_ad_type 1 (text_ad_id '
+                . AdvancedPageTextAds::ids($ads) . ')';
+            $steps[] = 'point each text ad at another advanced page (PUT /text-ads/{id} with its landing_page_id) '
+                . 'or make it a campaign ad (text_ad_type 0 with aff_campaign_id)';
+            $lists[] = "GET /text-ads?filter[landing_page_id]=$pageId&filter[text_ad_type]=1";
+        }
+        if ($named !== []) {
+            $what[] = count($named) . ' ' . (count($named) === 1 ? 'tracker' : 'trackers') . ' (tracker_id '
+                . implode(', ', $named) . ')';
+            $steps[] = 'move each tracker to another page (PUT /trackers/{id} with its landing_page_id) '
+                . 'or delete it (DELETE /trackers/{id}), which stops its link';
+            $lists[] = "GET /trackers?filter[landing_page_id]=$pageId";
+        }
+        throw new ConflictException(
+            "Landing page $pageId is advanced and " . implode(' and ', $what) . ' name it: '
+                . 'deleting it would leave ' . (count($ads) + count($named) === 1 ? 'that link' : 'their links')
+                . ' pointing at a page that is gone. First ' . implode(', and ', $steps) . ', then delete the page. '
+                . implode(' and ', $lists) . (count($lists) === 1 ? ' lists them.' : ' list them.'),
+            [
+                'text_ad_ids' => array_map(static fn (array $ad): int => $ad['text_ad_id'], $ads),
+                'tracker_ids' => $named,
+            ]
+        );
+    }
+
     #[\Override]
     protected function afterCreate(int $insertId, array $payload): void
     {
@@ -177,7 +307,9 @@ class LandingPagesController extends Controller
     #[\Override]
     public function get(int|string $id): array
     {
-        $this->repairMissingPublicIds();
+        if (!$this->repairDone) {
+            $this->repairMissingPublicIds();
+        }
         return parent::get($id);
     }
 

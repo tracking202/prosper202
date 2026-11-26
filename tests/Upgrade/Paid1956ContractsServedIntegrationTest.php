@@ -849,8 +849,7 @@ final class Paid1956ContractsServedIntegrationTest extends TestCase
      */
     public function testAShopifyOrderWebhookAtTheGlobalPostbackIsRecorded(): void
     {
-        self::q('UPDATE 202_users_pref SET shopify_webhook_secret = ' . self::str(self::SHOPIFY_SECRET)
-            . ' WHERE user_id = ' . self::OWNER);
+        \Tests\Support\StoredShopifySecret::set(self::requireScratch(), self::OWNER, self::SHOPIFY_SECRET);
         $click = $this->directLinkClick();
         $order = (string) json_encode([
             'id' => 5550001956001, 'name' => '#1956', 'currency' => 'USD', 'presentment_currency' => 'USD',

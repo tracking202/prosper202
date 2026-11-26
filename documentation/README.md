@@ -98,6 +98,7 @@ A legacy PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 lis
 
 - [Multi-touch Attribution Engine](features/advanced-attribution-engine.md)
 - [The Prosper202 UI Standard](features/ui-standard.md)
+- [Integration secrets](features/integration-secrets.md) — the sealed store, the key kept outside the database (`P202_SECRETS_KEY`), rotation with an overlap, and which secrets are in it
 - [Visitor identity](features/visitor-identity.md) — how clicks are linked to one person, with first-party signals only
 - [Money-loss alerts](features/money-loss-alerts.md) — Slack, email or webhook when a steady campaign stops converting while it buys clicks, or passes a daily cost cap with no conversion
 - [PurLinks](features/purlinks.md) — landing page links straight to the offer with no tracker redirect, the click-out still recorded, and the deferred pixel

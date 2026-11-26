@@ -15,7 +15,7 @@ use Prosper202\Webhooks\StandardWebhook;
  * answer of the host's can take (IPv6 carrying one included) and admits
  * the operator's P202_WEBHOOK_ALLOW_NETWORKS, on port 443 or 8443 as an
  * LTV webhook has always been; then the connection pinned to the address
- * it approved, no proxy, https only, no redirects followed, TLS verified,
+ * it approved, through no proxy but the egress proxy, https only, no redirects followed, TLS verified,
  * the time and the answer read capped.
  *
  * The answer is what the delivery's log records: whether the receiver

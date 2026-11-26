@@ -57,6 +57,8 @@ final class MiscTables
             self::forecastEvents(),
             // DNI tables
             self::dniNetworks(),
+            // Slack notices waiting to be sent
+            self::slackNotices(),
             // Bot202 Facebook Pixel tables
             self::bot202FacebookPixelAssistant(),
             self::bot202FacebookPixelContentType(),
@@ -64,6 +66,37 @@ final class MiscTables
             // ChatGPT Ads pixel on a landing page
             self::landingPageOpenAiPixel(),
         ];
+    }
+
+    /**
+     * Slack notices waiting to be sent (Prosper202\Notifications\SlackNoticeQueue):
+     * a page queues one and answers, and the minute's cron job (or the same
+     * request, once PHP-FPM has released the client) posts it to the
+     * account's webhook, read from 202_users_pref when it is sent, so a
+     * webhook changed or removed meanwhile applies and the secret has one
+     * copy. A row is deleted when the webhook takes the notice, or, with the
+     * reason logged, when it refuses it, its attempts run out, the account
+     * has no webhook or it is a day old. From 1.9.81, added by its rung.
+     */
+    public static function slackNotices(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::SLACK_NOTICES,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::SLACK_NOTICES . "` (
+                `notice_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `notice` varchar(64) NOT NULL,
+                `body` mediumtext NOT NULL,
+                `attempts` smallint(5) unsigned NOT NULL DEFAULT '0',
+                `next_attempt_at` int(10) unsigned NOT NULL,
+                `last_error` varchar(255) DEFAULT NULL,
+                `created_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`notice_id`),
+                KEY `next_attempt_at` (`next_attempt_at`),
+                KEY `user_id` (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+              COMMENT='Slack notices waiting to be posted to the account''s webhook'"
+        );
     }
 
     public static function ips(): SchemaDefinition

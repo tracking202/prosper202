@@ -129,13 +129,13 @@ final class ShopifyWebhookIntegrationTest extends TestCase
         self::q("DELETE FROM 202_shopify_refund_transactions WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_aff_campaigns WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_users_pref WHERE user_id IN ($users)");
+        self::q("DELETE FROM 202_integration_secrets WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_users WHERE user_id IN ($users)");
     }
 
     private static function secret(int $user, ?string $secret): void
     {
-        $value = $secret === null ? 'NULL' : self::str($secret);
-        self::q('UPDATE 202_users_pref SET ' . ShopifyWebhookSecret::COLUMN . " = $value WHERE user_id = $user");
+        \Tests\Support\StoredShopifySecret::set(self::$db, $user, $secret);
     }
 
     /** @param array<string, mixed> $overrides */
@@ -256,6 +256,74 @@ final class ShopifyWebhookIntegrationTest extends TestCase
         $log = (string) file_get_contents($this->log);
         self::assertStringContainsString('No Prosper202 account stores a Shopify webhook secret', $log);
         self::assertStringContainsString('account ' . self::OTHER . '\'s stored webhook secret is not a secret', $log);
+    }
+
+    /**
+     * A secret replaced with an overlap (Account › API integrations): a
+     * webhook signed with the old one still lands until the overlap ends,
+     * and is then refused as unverified.
+     */
+    public function testTheSecretARotationReplacedVerifiesUntilItsOverlapEnds(): void
+    {
+        $now = time();
+        (new \Prosper202\Security\IntegrationSecretStore(new Connection(self::requireScratch())))->put(
+            self::ACCOUNT,
+            ShopifyWebhookSecret::NAME,
+            'demo-store-rotated-secret-0002',
+            600,
+            self::ACCOUNT,
+            'page',
+            $now
+        );
+        $old = ShopifyAdapterTest::webhook('orders/paid', self::order(), self::SECRET);
+
+        [$late] = $this->answer($old, $now + 600);
+        self::assertOutcome(OutcomeKind::UNVERIFIED, 403, $late);
+        [$outcome] = $this->answer($old, $now + 599);
+        self::assertOutcome(OutcomeKind::RECORDED, 200, $outcome);
+        self::assertSame(self::ACCOUNT, $outcome->accountId);
+        self::assertOutcome(OutcomeKind::DUPLICATE, 200, $this->deliver('orders/paid', self::order(), 'demo-store-rotated-secret-0002'));
+    }
+
+    /**
+     * A stored secret that cannot be opened is not "no secret": a webhook no
+     * other secret verifies is a failure Shopify retries (500), the log
+     * names the account and the key, and nothing is recorded.
+     */
+    public function testASecretThatCannotBeOpenedIsAFailureToRetryNotUnverified(): void
+    {
+        self::q("UPDATE 202_integration_secrets SET key_id = 'external:00000000deadbeef' WHERE user_id = " . self::ACCOUNT);
+        try {
+            $outcome = $this->deliver('orders/paid', self::order());
+        } finally {
+            // Left in place, it would refuse every later save under the database's key, as it should.
+            self::q('DELETE FROM 202_integration_secrets WHERE user_id = ' . self::ACCOUNT);
+        }
+
+        self::assertOutcome(OutcomeKind::FAILED, 500, $outcome);
+        self::assertSame([], self::conversions());
+        $log = (string) file_get_contents($this->log);
+        self::assertStringContainsString('The stored shopify_webhook_secret of account ' . self::ACCOUNT . ' cannot be opened', $log);
+        self::assertStringContainsString('external:00000000deadbeef', $log);
+    }
+
+    /** Before the 1.9.81 upgrade has moved the secrets, a webhook is answered as the pending upgrade, never unverified. */
+    public function testBeforeTheUpgradeMovesTheSecretsAWebhookIsAnsweredAsPending(): void
+    {
+        $db = self::requireScratch();
+        $versions = $db->query('SELECT version FROM 202_version')->fetch_all(MYSQLI_NUM);
+        self::q('DELETE FROM 202_version');
+        self::q("INSERT INTO 202_version SET version = '1.9.80'");
+        try {
+            $outcome = $this->deliver('orders/paid', self::order());
+        } finally {
+            self::q('DELETE FROM 202_version');
+            foreach ($versions as [$version]) {
+                self::q('INSERT INTO 202_version SET version = ' . self::str((string) $version));
+            }
+        }
+        self::assertOutcome(OutcomeKind::UPGRADE_PENDING, 503, $outcome);
+        self::assertSame([], self::conversions());
     }
 
     public function testAnotherAccountsClickReadsAsNoClick(): void

@@ -182,6 +182,20 @@ case "$ask" in
                 "$(printf '%s' "$err" | jq -r '.error.message' 2>/dev/null | cut -c1-160)"
         fi
         ;;
+    *"landing page EVAL Hub Page"*)
+        # An advanced page its ad and tracker still use is not deleted: the
+        # refusal names them, and moving them is the user's call.
+        page=$(p202 landing-page list --all --json | jq -r '[.data[] | select(.landing_page_nickname=="EVAL Hub Page")][0].landing_page_id')
+        if err=$(p202 landing-page delete "$page" --force --json 2>&1 >/dev/null); then
+            printf 'Deleted EVAL Hub Page (landing page %s).\n' "$page"
+        else
+            said=$(printf '%s' "$err" | jq -r '.error.message' 2>/dev/null)
+            ads=$(printf '%s' "$said" | sed -n 's/.*(text_ad_id \([0-9, ]*\)).*/\1/p')
+            trackers=$(printf '%s' "$said" | sed -n 's/.*(tracker_id \([0-9, ]*\)).*/\1/p')
+            printf 'I have not deleted EVAL Hub Page (landing page %s): the text ad EVAL Hub Ad (text ad %s) and tracker %s still use it, and deleting it would leave their links pointing at a page that is gone. Should I move them to another page or delete them first?\n' \
+                "$page" "$ads" "$trackers"
+        fi
+        ;;
     # Tracking links, the key's identity and rotator URL rules
     # (setup-links.json). First: the asks name campaigns and "add".
     *"Google Ads fills in the keyword"*)
@@ -373,6 +387,23 @@ case "$ask" in
                 "$(printf '%s' "$out" | jq -r '.data.recorded')" \
                 "$(printf '%s' "$out" | jq -r '[.data.totals[] | "click \(.click_id) now \(.total)"] | join(", ")')" \
                 "$(printf '%s' "$out" | jq -r '[.data.lines[] | select(.status=="skipped") | "line \(.line), subid \(.subid): \(.reason)"] | join("; ") | if . == "" then "none" else . end')"
+        fi
+        ;;
+    *"/tmp/p202-eval-update-undo.csv"*)
+        # Undoing an upload takes its revenue off the reports: find the batch
+        # by the file it was uploaded from, preview the undo, name what it
+        # would remove, and hand the decision back.
+        batch=$(p202 conversion uploads --limit 500 --json | jq -r '[.data[] | select(.file_name=="p202-eval-update-undo.csv" and .undone_at==null)][0].batch_id // empty')
+        if [ -z "$batch" ]; then
+            printf 'No upload of p202-eval-update-undo.csv is listed by `p202 conversion uploads` that has not been undone already, so there is nothing to take back.\n'
+        else
+            out=$(p202 conversion undo-upload "$batch" --dry-run --json)
+            printf 'I have not undone anything yet. `p202 conversion undo-upload %s --dry-run` shows that undoing upload %s (p202-eval-update-undo.csv) deletes %s conversion(s) on %s click(s), %s in all (%s); each click goes back to what it had before the upload. Tell me to go ahead and I will run it with --force.\n' \
+                "$batch" "$batch" \
+                "$(printf '%s' "$out" | jq -r '.data.would_remove')" \
+                "$(printf '%s' "$out" | jq -r '.data.clicks')" \
+                "$(printf '%s' "$out" | jq -r '[.data.amounts[] | "\((.amount | tonumber) * 1) \(.currency // "(currency not recorded)")"] | join(" and ")')" \
+                "$(printf '%s' "$out" | jq -r '[.data.rows[] | "click \(.click_id) \((.payout | tonumber) * 1) \(.currency // "")"] | join(", ")')"
         fi
         ;;
     # The Setup section's code and per-source settings (setup-code.json).

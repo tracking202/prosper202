@@ -528,6 +528,10 @@ func TestHintFor(t *testing.T) {
 	if !strings.Contains(pending, "202-config/upgrade.php") || strings.Contains(pending, "system health") {
 		t.Errorf("a pending upgrade's 503 hint = %q", pending)
 	}
+	// The code decides, whatever the message's wording.
+	if h := HintFor(parseAPIError(503, []byte(`{"error":true,"message":"Upgrade first","status":503,"code":"upgrade_pending"}`))); !strings.Contains(h, "202-config/upgrade.php") {
+		t.Errorf("a 503 coded upgrade_pending: hint = %q", h)
+	}
 	if h := HintFor(&APIError{Status: 503, Message: "Service unavailable"}); !strings.Contains(h, "system health") {
 		t.Errorf("another 503's hint = %q", h)
 	}
@@ -585,6 +589,21 @@ func TestHintForAStaleVersion(t *testing.T) {
 	h := HintFor(&APIError{Status: 409, Message: "Version mismatch"})
 	if !strings.Contains(h, "changed since it was read") {
 		t.Errorf("hint = %q", h)
+	}
+}
+
+// An advanced landing page's delete refused while its text ads and trackers
+// name it is a 409 too; "update it instead of creating" is wrong advice.
+func TestHintForAPageItsTrackersName(t *testing.T) {
+	h := HintFor(&APIError{Status: 409, Message: "Landing page 7 is advanced and 1 tracker (tracker_id 3) name it",
+		Raw: map[string]interface{}{"details": map[string]interface{}{"text_ad_ids": []interface{}{}, "tracker_ids": []interface{}{3.0}}}})
+	for _, want := range []string{"Nothing was deleted", "p202 text-ad update", "p202 tracker update", "p202 tracker delete", "p202 tracker list --landing-page-id"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("hint lacks %q: %q", want, h)
+		}
+	}
+	if strings.Contains(h, "already exists") {
+		t.Errorf("the duplicate's hint: %q", h)
 	}
 }
 
@@ -666,5 +685,18 @@ func TestA429IsRateLimitedAndCarriesItsWait(t *testing.T) {
 				t.Errorf("hint %q lacks %q", hint, wantWait)
 			}
 		})
+	}
+}
+
+func TestParseAPIErrorReadsTheCode(t *testing.T) {
+	ae := parseAPIError(409, []byte(`{"error":true,"message":"Username already exists","status":409,"code":"name_taken"}`))
+	if ae.Code != "name_taken" || ae.Message != "Username already exists" {
+		t.Errorf("parsed %+v", ae)
+	}
+	if ae := parseAPIError(502, []byte(`<html>Bad gateway</html>`)); ae.Code != "" {
+		t.Errorf("a body that is not JSON has no code, got %q", ae.Code)
+	}
+	if ae := parseAPIError(409, []byte(`{"code":7}`)); ae.Code != "" {
+		t.Errorf("a code that is not a string is not read, got %q", ae.Code)
 	}
 }

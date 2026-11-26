@@ -175,6 +175,36 @@ final class WebhookSenderTest extends TestCase
     }
 
     /**
+     * With an egress proxy in force the guard still resolves the host itself
+     * before any tunnel is asked for, so a name that does not resolve is
+     * retried with nothing sent, and a private answer stays final.
+     */
+    public function testWithAProxyInForceAnUnresolvedHostIsStillRetriedAndARefusedAddressIsNot(): void
+    {
+        \Prosper202\Http\EgressProxy::readStoredFrom(static fn (): \Prosper202\Http\StoredEgressProxy
+            => new \Prosper202\Http\StoredEgressProxy('http://192.0.2.10:3128', '', '', null));
+        try {
+            $unresolved = $this->sender(static fn (): array => [])
+                ->send('https://hooks.example.com/', 'secretsecretsecret', 'x', 1, 1);
+            self::assertFalse($unresolved->delivered);
+            self::assertTrue($unresolved->retryable, 'a name that did not resolve may resolve on the next run');
+            self::assertStringContainsString('hooks.example.com does not resolve', (string) $unresolved->error);
+
+            $private = $this->sender(static fn (): array => ['10.0.0.5'])
+                ->send('https://hooks.example.com/', 'secretsecretsecret', 'x', 1, 1);
+            self::assertFalse($private->retryable);
+            self::assertSame([], $this->sent, 'no request was made');
+
+            $sent = $this->sender(static fn (): array => ['93.184.216.34'], ['status' => 204, 'primary_ip' => '192.0.2.10'])
+                ->send('https://hooks.example.com/', 'secretsecretsecret', 'x', 1, 1);
+            self::assertTrue($sent->delivered, 'the connection is to the proxy, which is the expected peer');
+            self::assertSame('http://192.0.2.10:3128', $this->sent[0][CURLOPT_PROXY] ?? null, 'the request went through the proxy');
+        } finally {
+            \Prosper202\Http\EgressProxy::readStoredFrom(null);
+        }
+    }
+
+    /**
      * Every refusal of the address itself stays final: the guard's verdict
      * on a private, loopback, link-local or metadata answer, or on a URL
      * that is not https, does not change on a later run.
@@ -321,6 +351,12 @@ final class WebhookSenderTest extends TestCase
         self::assertSame([null, null, 200, '{"ok":true}'], [$got['refused'], $got['strayed'], $got['status'], $got['body']]);
         self::assertSame(200, $posted['status']);
         [$get, $post] = $this->sent;
+        foreach ([&$get, &$post] as &$sent) {
+            // The time the lookup left, which the options cannot know.
+            self::assertLessThanOrEqual(WebhookSender::TIMEOUT * 1000, $sent[CURLOPT_TIMEOUT_MS]);
+            unset($sent[CURLOPT_TIMEOUT_MS]);
+        }
+        unset($sent);
         self::assertTrue($get[CURLOPT_HTTPGET]);
         self::assertArrayNotHasKey(CURLOPT_POST, $get);
         self::assertArrayNotHasKey(CURLOPT_POSTFIELDS, $get);

@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Prosper202\Attribution;
 
+use Prosper202\Http\DnsLookup;
+use Prosper202\Http\DnsLookupFailed;
+
 /**
  * Decides whether a webhook may be sent to a URL: an export's (plan §6.3
  * "Exports", §7.1 "SSRF through MTA export webhooks") and an LTV webhook's
@@ -37,6 +40,10 @@ namespace Prosper202\Attribution;
  *   IPv4 address any other way (IPv4-compatible, IPv4-translated, local-use
  *   NAT64, 6to4, Teredo) is refused as that address, which the allowlist
  *   below cannot admit either.
+ * - The lookup is bounded: each check that resolves takes the sender's
+ *   deadline (a microtime(true) value), and the resolver gets what is left
+ *   of it, at most LOOKUP_SECONDS. A lookup that runs out is a
+ *   WebhookUnresolved, which a later try may change.
  * - The sender re-runs this check at send time and connects to the address
  *   it approved, with the host pinned (WebhookTarget::resolveEntry), so a
  *   DNS answer that changes between the check and the connection (DNS
@@ -62,6 +69,9 @@ namespace Prosper202\Attribution;
 final class WebhookGuard
 {
     public const MAX_URL_LENGTH = 500;
+
+    /** Seconds a lookup may take at most, within any longer deadline: glibc's default timeout for one nameserver. */
+    public const LOOKUP_SECONDS = 5.0;
 
     /** checkPage()'s kind, which its sentences name. */
     private const PAGE = 'landing page';
@@ -125,14 +135,15 @@ final class WebhookGuard
     /** AWS's IPv6 metadata endpoint, inside the unique-local block. */
     private const V6_METADATA = ['fd00:ec2::254'];
 
-    /** @var callable(string): list<string> */
+    /** @var callable(string, float): list<string> */
     private $resolver;
 
     /** @var list<array{0: string, 1: int}> binary network, prefix */
     private array $allowed;
 
     /**
-     * @param (callable(string): list<string>)|null $resolver host => addresses; the system resolver by default
+     * @param (callable(string, float): list<string>)|null $resolver (host, seconds it may take) => addresses;
+     *        the system resolver by default
      * @param string|null $allowNetworks the operator's allowlist; null reads P202_WEBHOOK_ALLOW_NETWORKS
      * @throws \UnexpectedValueException when the allowlist does not parse
      */
@@ -151,11 +162,13 @@ final class WebhookGuard
      * webhook's is 443 or 8443 (MysqlWebhookRepository::PORTS).
      *
      * @param list<int> $ports
+     * @param float|null $deadline microtime(true) by which the lookup must finish; LOOKUP_SECONDS from now when null
+     * @throws WebhookUnresolved when the host resolves to nothing, or not in time
      * @throws WebhookRefused with the sentence for the person who typed it
      */
-    public function check(string $url, array $ports = []): WebhookTarget
+    public function check(string $url, array $ports = [], ?float $deadline = null): WebhookTarget
     {
-        $target = $this->target($url, self::webhookParts($url), 443, 'webhook', true, $ports);
+        $target = $this->target($url, self::webhookParts($url), 443, 'webhook', true, $ports, $deadline);
         assert($target !== null);
 
         return $target;
@@ -213,14 +226,15 @@ final class WebhookGuard
      * the host. The host and every address it resolves to are held to the
      * rules above, the allowlist included.
      *
-     * @throws WebhookUnresolved when the host resolves to nothing, which a later try may change
+     * @param float|null $deadline as check()'s
+     * @throws WebhookUnresolved when the host resolves to nothing, or not in time, which a later try may change
      * @throws WebhookRefused with the reason, which names the host and never the path or query
      */
-    public function checkPostback(string $url): WebhookTarget
+    public function checkPostback(string $url, ?float $deadline = null): WebhookTarget
     {
         $m = self::postbackParts($url, false);
         assert($m !== null);
-        $target = $this->target($url, $m, self::defaultPort($m['scheme']), 'postback', true);
+        $target = $this->target($url, $m, self::defaultPort($m['scheme']), 'postback', true, [], $deadline);
         assert($target !== null);
 
         return $target;
@@ -230,14 +244,15 @@ final class WebhookGuard
      * The postback rules for a landing page that Setup › Get LP Code fetches
      * to look for its code (Setup\LandingPageCheck), worded for that page.
      *
-     * @throws WebhookUnresolved when the host resolves to nothing
+     * @param float|null $deadline as check()'s
+     * @throws WebhookUnresolved when the host resolves to nothing, or not in time
      * @throws WebhookRefused with the reason, which names the host and never the path or query
      */
-    public function checkPage(string $url): WebhookTarget
+    public function checkPage(string $url, ?float $deadline = null): WebhookTarget
     {
         $m = self::postbackParts($url, false, self::PAGE);
         assert($m !== null);
-        $target = $this->target($url, $m, self::defaultPort($m['scheme']), self::PAGE, true);
+        $target = $this->target($url, $m, self::defaultPort($m['scheme']), self::PAGE, true, [], $deadline);
         assert($target !== null);
 
         return $target;
@@ -332,12 +347,13 @@ final class WebhookGuard
      * A refusal the allowlist could lift says so, naming the address.
      *
      * @param list<string> $operatorHosts lower-case host names
-     * @throws WebhookUnresolved when the host resolves to nothing, which a later try may change
+     * @param float|null $deadline as check()'s
+     * @throws WebhookUnresolved when the host resolves to nothing, or not in time, which a later try may change
      * @throws WebhookRefused naming the host and never the path
      */
-    public function checkSync(string $url, array $operatorHosts = []): WebhookTarget
+    public function checkSync(string $url, array $operatorHosts = [], ?float $deadline = null): WebhookTarget
     {
-        $target = $this->syncTarget($url, $operatorHosts, true);
+        $target = $this->syncTarget($url, $operatorHosts, true, $deadline);
         assert($target !== null);
 
         return $target;
@@ -366,20 +382,24 @@ final class WebhookGuard
      * @param list<string> $operatorHosts
      * @throws WebhookRefused
      */
-    private function syncTarget(string $url, array $operatorHosts, bool $resolve): ?WebhookTarget
-    {
+    private function syncTarget(
+        string $url,
+        array $operatorHosts,
+        bool $resolve,
+        ?float $deadline = null
+    ): ?WebhookTarget {
         $m = self::syncParts($url);
         $port = self::defaultPort($m['scheme']);
         $host = strtolower($m['host'] ?? '');
         $operator = $host !== '' && in_array($host, $operatorHosts, true);
         try {
             $target = $operator
-                ? $this->operatorTarget($url, $m, $host, $port, $resolve)
-                : $this->target($url, $m, $port, 'sync', $resolve);
+                ? $this->operatorTarget($url, $m, $host, $port, $resolve, $deadline)
+                : $this->target($url, $m, $port, 'sync', $resolve, [], $deadline);
         } catch (WebhookUnresolved $e) {
             throw $e;
         } catch (WebhookRefused $e) {
-            $hint = $this->allowlistWouldAdmit($url, $m, $port, $operator, $resolve);
+            $hint = $this->allowlistWouldAdmit($url, $m, $port, $operator, $resolve, $deadline);
             throw new WebhookRefused($e->getMessage() . $hint, 0, $e);
         }
         if (strtolower($m['scheme']) !== 'http') {
@@ -413,13 +433,19 @@ final class WebhookGuard
      * @param array<string, string> $m
      * @throws WebhookRefused
      */
-    private function operatorTarget(string $url, array $m, string $host, int $port, bool $resolve): ?WebhookTarget
-    {
+    private function operatorTarget(
+        string $url,
+        array $m,
+        string $host,
+        int $port,
+        bool $resolve,
+        ?float $deadline = null
+    ): ?WebhookTarget {
         if (($m['port'] ?? '') !== '') {
             $port = (int) $m['port'];
         }
 
-        return $resolve ? $this->resolvedTarget($url, $host, $port, 'sync') : null;
+        return $resolve ? $this->resolvedTarget($url, $host, $port, 'sync', $deadline) : null;
     }
 
     /**
@@ -430,13 +456,19 @@ final class WebhookGuard
      *
      * @param array<string, string> $m
      */
-    private function allowlistWouldAdmit(string $url, array $m, int $port, bool $operator, bool $resolve): string
-    {
+    private function allowlistWouldAdmit(
+        string $url,
+        array $m,
+        int $port,
+        bool $operator,
+        bool $resolve,
+        ?float $deadline
+    ): string {
         $open = new self($this->resolver, '0.0.0.0/0 ::/0');
         try {
             $target = $operator
-                ? $open->operatorTarget($url, $m, strtolower($m['host']), $port, $resolve)
-                : $open->target($url, $m, $port, 'sync', $resolve);
+                ? $open->operatorTarget($url, $m, strtolower($m['host']), $port, $resolve, $deadline)
+                : $open->target($url, $m, $port, 'sync', $resolve, [], $deadline);
         } catch (WebhookRefused) {
             return '';
         }
@@ -503,7 +535,8 @@ final class WebhookGuard
         int $port,
         string $kind,
         bool $resolve,
-        array $ports = []
+        array $ports = [],
+        ?float $deadline = null
     ): ?WebhookTarget {
         if (($m['port'] ?? '') !== '') {
             if ($m['port'][0] === '0' || (int) $m['port'] < 1 || (int) $m['port'] > 65535) {
@@ -548,19 +581,37 @@ final class WebhookGuard
             return null;
         }
 
-        return $this->resolvedTarget($url, $host, $port, $kind);
+        return $this->resolvedTarget($url, $host, $port, $kind, $deadline);
     }
 
     /**
-     * A host name's target: every address it resolves to, each checked.
+     * A host name's target: every address it resolves to, each checked,
+     * looked up in what is left before $deadline, at most LOOKUP_SECONDS.
      *
      * @throws WebhookUnresolved
      * @throws WebhookRefused
      */
-    private function resolvedTarget(string $url, string $host, int $port, string $kind): WebhookTarget
-    {
+    private function resolvedTarget(
+        string $url,
+        string $host,
+        int $port,
+        string $kind,
+        ?float $deadline = null
+    ): WebhookTarget {
+        $seconds = self::LOOKUP_SECONDS;
+        if ($deadline !== null) {
+            $seconds = min($seconds, $deadline - microtime(true));
+            if ($seconds <= 0) {
+                throw new WebhookUnresolved($host . ' was not looked up: the ' . $kind . '\'s time had run out.');
+            }
+        }
+        try {
+            $answers = ($this->resolver)($host, $seconds);
+        } catch (DnsLookupFailed $e) {
+            throw new WebhookUnresolved($e->getMessage(), 0, $e);
+        }
         $resolved = [];
-        foreach (($this->resolver)($host) as $answer) {
+        foreach ($answers as $answer) {
             $binary = @inet_pton((string) $answer);
             if ($binary === false) {
                 throw new WebhookRefused($host . ' resolved to "' . $answer . '", which is not an address.');
@@ -836,14 +887,21 @@ final class WebhookGuard
     }
 
     /**
-     * The system resolver: IPv4 through the C library (which reads
-     * /etc/hosts as the rest of the server does), IPv6 from DNS AAAA
-     * records. Nothing it returns is trusted; every answer is checked.
+     * The system resolver, within $seconds: /etc/hosts, then resolv.conf's
+     * nameservers (Http\DnsLookup). Where either cannot be read here
+     * (Windows, open_basedir), the C library's lookup, which no limit bounds. Nothing it
+     * returns is trusted; every answer is checked.
      *
      * @return list<string>
+     * @throws DnsLookupFailed when no answer came in time
      */
-    public static function systemResolve(string $host): array
+    public static function systemResolve(string $host, float $seconds = self::LOOKUP_SECONDS): array
     {
+        $lookup = DnsLookup::system();
+        if ($lookup !== null) {
+            return $lookup->addresses($host, $seconds);
+        }
+
         $addresses = [];
         $v4 = @gethostbynamel($host);
         if (is_array($v4)) {

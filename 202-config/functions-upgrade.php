@@ -319,6 +319,70 @@ if (!function_exists('_upgrade_seed_licence_answers')) {
     }
 }
 
+if (!function_exists('_upgrade_shopify_secret_into_store')) {
+    /**
+     * The Shopify webhook secret leaves 202_users_pref for the sealed
+     * integration secrets store (Prosper202\Security\IntegrationSecretStore):
+     * every account's value moved and read back in one transaction
+     * (PreferenceSecretMigration), then the plaintext column dropped. It
+     * makes the store's tables itself, as it runs before the step's
+     * reconcile, which converges them after. A database that never had the
+     * column (upgraded from a tag before 1.9.80) has nothing to move. Any
+     * failure keeps the column and answers false, so the version stays and
+     * the next run retries; a run after a failed drop moves nothing twice.
+     */
+    function _upgrade_shopify_secret_into_store(): bool
+    {
+        global $db;
+
+        foreach ([
+            \Prosper202\Database\Tables\SecretTables::integrationSecrets(),
+            \Prosper202\Database\Tables\SecretTables::integrationSecretEvents(),
+        ] as $definition) {
+            if (_upgrade_query($definition->createStatement) === false) {
+                _upgrade_note('could not create ' . $definition->tableName . ' for the Shopify webhook secrets; they move on the next run.');
+                return false;
+            }
+        }
+
+        $column = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE 'shopify\\_webhook\\_secret'");
+        if (!$column instanceof \mysqli_result) {
+            _upgrade_note('could not read whether 202_users_pref still holds the Shopify webhook secret; it moves on the next run.');
+            return false;
+        }
+        $present = $column->num_rows > 0;
+        $column->free();
+        if (!$present) {
+            return true;
+        }
+        try {
+            $conn = new \Prosper202\Database\Connection(($db instanceof \mysqli) ? $db : $db->getConnection());
+            $counts = \Prosper202\Security\PreferenceSecretMigration::move(
+                $conn,
+                new \Prosper202\Security\IntegrationSecretStore($conn),
+                'shopify_webhook_secret',
+                \Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret::NAME,
+                time()
+            );
+        } catch (\Throwable $e) {
+            _upgrade_note('the Shopify webhook secrets could not be moved into the encrypted store; none was, and the'
+                . ' next run retries', ': ' . $e->getMessage());
+            return false;
+        }
+        if ($counts['kept'] > 0) {
+            error_log('Prosper202 upgrade: ' . $counts['kept'] . ' account(s) already had a Shopify webhook secret in the'
+                . ' encrypted store, saved after this code was deployed; that one is kept.');
+        }
+        if (_upgrade_query('ALTER TABLE `202_users_pref` DROP COLUMN `shopify_webhook_secret`') === false) {
+            _upgrade_note('the Shopify webhook secrets were moved into the encrypted store, but their plaintext column'
+                . ' could not be dropped; the next run drops it.');
+            return false;
+        }
+
+        return true;
+    }
+}
+
 if (!function_exists('_upgrade_purlink_carryover')) {
     /**
      * Paid 1.9.56's pending PurLink click-outs, carried into the PurLink
@@ -5525,9 +5589,7 @@ class UPGRADE
             $history_ok = _upgrade_currency_history_start();
             $before_ok = $baseline_ok && $carried_ok && $campaigns_ok && $history_ok;
             $step_ok = _upgrade_measurement_tables([
-                // 202_users_pref gains shopify_webhook_secret, which Shopify's
-                // order webhooks are verified with (ShopifyWebhookSecret),
-                // jvzoo_roleless_role, how the 1.9.56 JVZoo URL is read (JVZooRole),
+                // 202_users_pref gains jvzoo_roleless_role, how the 1.9.56 JVZoo URL is read (JVZooRole),
                 // the consent columns (ConsentPolicy; the messaging tables carry them),
                 // and user_pref_click_id_params, the postback parameters an
                 // account's networks send an ad click id back in (ClickIdParameters).
@@ -5665,6 +5727,7 @@ class UPGRADE
             // The Shopify refund tables, which a database upgraded by an
             // early 1.9.80 build can lack (Prosper202\PaymentNotification\
             // Shopify\SettlementSchema), reconciled on the way up.
+            // A revenue upload's undo log (undone_at, undone_rows).
             //
             // The re-click backfill's stopped_at, when a stop began, which
             // Settings and the cron output show (Prosper202\Click\ReClickBackfill).
@@ -5673,9 +5736,14 @@ class UPGRADE
             // browser reference a click's page sends (Prosper202\Click\
             // OpenAiBrowserRef), and the ChatGPT Ads Pixel type at id 7.
             $pixel_type_ok = _upgrade_openai_pixel_type();
+            // The Shopify webhook secret moves into the sealed integration
+            // secrets store (0H6C), which this makes, and its plaintext column goes.
+            $secrets_ok = _upgrade_shopify_secret_into_store();
+            $moved_ok = $pixel_type_ok && $secrets_ok;
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
+                \Prosper202\Database\Tables\ConversionTables::conversionUploads(),
                 // 202_ppc_network_variables.ppc_network_id unsigned, as wide
                 // as the source id it names (_upgrade_ppc_variable_network_width()).
                 \Prosper202\Database\Tables\TrackingTables::ppcNetworkVariables(),
@@ -5683,13 +5751,24 @@ class UPGRADE
                 // until it expires (previous_secret, previous_secret_expires_at).
                 \Prosper202\Database\Tables\LtvTables::ltvWebhooks(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
+                // The egress proxy set on Account › Settings (Prosper202\Http\EgressProxyStore).
+                \Prosper202\Database\Tables\SecretTables::egressProxy(),
+                // Slack notices waiting to be sent (Prosper202\Notifications\SlackNoticeQueue).
+                \Prosper202\Database\Tables\MiscTables::slackNotices(),
+                // When each landing page last had a click, which the landing
+                // page list reads (Prosper202\Click\LandingPageLastSeen).
+                // Pages start with none: no old click is scanned for one.
+                \Prosper202\Database\Tables\CampaignTables::landingPageLastSeen(),
                 // Each landing page's split test, whose variant the page's
                 // script writes into the click's C4 (Prosper202\Setup\
                 // LandingPageSplitTest).
                 \Prosper202\Database\Tables\CampaignTables::landingPageSplitTests(),
                 \Prosper202\Database\Tables\ClickTables::clickOpenAiRefs(),
                 \Prosper202\Database\Tables\MiscTables::landingPageOpenAiPixel(),
-            ]) && $pixel_type_ok;
+                // The sealed integration secrets store and its record of changes (0H6C).
+                \Prosper202\Database\Tables\SecretTables::integrationSecrets(),
+                \Prosper202\Database\Tables\SecretTables::integrationSecretEvents(),
+            ]) && $moved_ok;
             if ($step_ok) {
                 // Redirector criterion values the API stored untrimmed before
                 // 1.9.79, stored as the writers store them now.
@@ -5702,7 +5781,8 @@ class UPGRADE
                     _upgrade_note('failed to persist version 1.9.81; leaving version at 1.9.80 so the next run retries.');
                 }
             } else {
-                _upgrade_note('a table of the 1.9.81 step could not be reconciled (the list above), or the ChatGPT Ads Pixel type seeded;'
+                _upgrade_note('a table of the 1.9.81 step could not be reconciled (the list above), the ChatGPT Ads'
+                    . ' Pixel type seeded or the Shopify webhook secret moved into the secrets store;'
                     . ' leaving version at 1.9.80 so the next run retries.');
             }
         }
