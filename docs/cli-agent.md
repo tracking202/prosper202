@@ -1527,7 +1527,10 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
   `ad_connection_check`, `ad_campaign_list`, `ad_campaign_pause`,
   `ad_campaign_activate` and `ad_campaign_spend`, and `ad_spend` and
   `ad_spend_sync_status` (what ad platforms billed per ad, and each ChatGPT
-  Ads connection's hourly spend pull); `--read-only` and `--staged` leave out
+  Ads connection's hourly spend pull), and `ppc_account_pixel_list`,
+  `ppc_account_pixel_create`, `ppc_account_pixel_update` and
+  `ppc_account_pixel_delete` (a traffic source account's conversion pixels,
+  `p202 ppc-account pixel`); `--read-only` and `--staged` leave out
   `destination_test` and `ad_connection_check`. The destination tools, the
   check and the two spend tools are local only: the hosted server below
   refuses them.

@@ -657,10 +657,15 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   `ad_spend` (`p202 spend list`: what ad platforms billed per ad per day or
   hour, your clicks that carried each ad, the spend no click carried, and
   `reaches`) and `ad_spend_sync_status` (`p202 spend sync list`: each
-  ChatGPT Ads connection's spend sync, on or off, its last run and error).
+  ChatGPT Ads connection's spend sync, on or off, its last run and error),
+  and `ppc_account_pixel_list`, `ppc_account_pixel_create`,
+  `ppc_account_pixel_update` and `ppc_account_pixel_delete` (`p202
+  ppc-account pixel`: the pixels a traffic source account fires when one of
+  its clicks converts; a change or removal is annotated destructive, and a
+  delete takes `dry_run: true` first).
   The destination tools, `ad_connection_check` and the two spend tools are
-  local only; the four campaign tools and `ad_connection_list` are offered
-  by the hosted server too. `p202 mcp tools --deferred`
+  local only; the four campaign tools, `ad_connection_list` and the four
+  pixel tools are offered by the hosted server too. `p202 mcp tools --deferred`
   answers `tools`, `hosted_excludes` (the local-only ones),
   `staged_excludes` (the ones `--staged` does not offer), `hosted_omits`
   (arguments the hosted server leaves out) and `words` (the words each tool
