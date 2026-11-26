@@ -87,9 +87,12 @@ func (c *Client) currentBaseURL() string {
 }
 
 type APIError struct {
-	Status      int
-	Message     string
-	Category    string
+	Status   int
+	Message  string
+	Category string
+	// Code is the server's stable error code (docs/openapi.yaml, Errors),
+	// "" from a server older than the codes or from something in front of it.
+	Code        string
 	FieldErrors map[string]string
 	Raw         map[string]interface{}
 	// RetryAfter is the seconds a 429 asks the caller to wait: the body's
@@ -358,7 +361,7 @@ func HintFor(err error) string {
 			return "Rate limited: nothing was done, and nothing in the request is wrong. Wait a minute and run the same command again, backing off if it repeats; reduce --concurrency for bulk operations."
 		// The files were deployed and the upgrade has not run (the message
 		// names both versions); `system health` answers healthy meanwhile.
-		case apiErr.Status == 503 && strings.Contains(apiErr.Message, "the database needs an upgrade"):
+		case apiErr.Status == 503 && (apiErr.Code == "upgrade_pending" || strings.Contains(apiErr.Message, "the database needs an upgrade")):
 			return "Nothing on this request is wrong: the install's files are newer than its database. An admin opens 202-config/upgrade.php on the site (signed in) to run the upgrade; then retry."
 		// A service the install had to ask (an ad platform) was not reached,
 		// or answered what cannot be used: the install itself is fine.
@@ -924,6 +927,9 @@ func parseAPIError(status int, body []byte) *APIError {
 		ae.Raw = data
 		if msg, ok := data["message"].(string); ok {
 			ae.Message = msg
+		}
+		if code, ok := data["code"].(string); ok {
+			ae.Code = code
 		}
 		// A 402 is the install's licence refusal only when its envelope says
 		// so; a 402 from a proxy or WAF in front of it is a server problem,

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\ErrorCode;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\RemoteApiException;
@@ -116,12 +117,12 @@ class SyncController
         if ($idempotencyKey !== '') {
             $lookup = $this->store->lookupIdempotent($idempotencyScope, $idempotencyKey, $requestHash);
             if ($lookup['state'] === 'mismatch') {
-                throw new ValidationException(
+                throw (new ValidationException(
                     'This Idempotency-Key was already used for a different request. Resend the original '
                     . 'sync request to replay its recorded response, or send a new Idempotency-Key to '
                     . 'queue a different job.',
                     ['idempotency_key' => 'Already used for a different request']
-                );
+                ))->coded(ErrorCode::IDEMPOTENCY_KEY_REUSED);
             }
             if ($lookup['state'] === 'replay' && is_array($lookup['response'])) {
                 $cached = $lookup['response'];

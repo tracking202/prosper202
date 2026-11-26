@@ -463,7 +463,7 @@ abstract class Controller
                 continue;
             }
             $this->stateStore()->incrementMetric('conflicts', 1);
-            throw new ConflictException(
+            throw (new ConflictException(
                 'Version mismatch',
                 [
                     'expected_version' => is_scalar($payload[$key]) ? trim((string) $payload[$key], '" ') : null,
@@ -471,7 +471,7 @@ abstract class Controller
                     'diff_hint' => "The body's $key is from an older read of this record. Re-fetch it (GET) and "
                         . "send your changes on that, or omit $key and send only the fields to change.",
                 ]
-            );
+            ))->coded(ErrorCode::VERSION_CONFLICT);
         }
     }
 
@@ -749,7 +749,7 @@ abstract class Controller
         $stmt->close();
         $message = $this->duplicateKeyConflictMessage();
         if ($message !== null && (int)$e->getCode() === 1062) {
-            throw new ConflictException($message);
+            throw (new ConflictException($message))->coded(ErrorCode::ALREADY_EXISTS);
         }
         throw $e;
     }
@@ -1230,12 +1230,12 @@ abstract class Controller
         $scope = ServerStateStore::idempotencyScopeForUser($this->userId);
         $lookup = $this->stateStore()->lookupIdempotent($scope, $idempotencyKey, $requestHash);
         if ($lookup['state'] === 'mismatch') {
-            throw new ValidationException(
+            throw (new ValidationException(
                 'This Idempotency-Key was already used for a different request. Resend the original '
                 . 'rows to this same endpoint to replay the recorded response, or send a new '
                 . 'Idempotency-Key for a different batch.',
                 ['idempotency_key' => 'Already used for a different request']
-            );
+            ))->coded(ErrorCode::IDEMPOTENCY_KEY_REUSED);
         }
         if ($lookup['state'] === 'replay' && is_array($lookup['response'])) {
             $existing = $lookup['response'];
@@ -1691,14 +1691,14 @@ abstract class Controller
         $currentVersion = $this->computeVersionHash($currentRow);
         if ($expected !== $currentVersion) {
             $this->stateStore()->incrementMetric('conflicts', 1);
-            throw new ConflictException(
+            throw (new ConflictException(
                 'Version mismatch',
                 [
                     'expected_version' => $expected,
                     'current_version' => $currentVersion,
                     'diff_hint' => 'Re-fetch resource and retry update with latest ETag.',
                 ]
-            );
+            ))->coded(ErrorCode::VERSION_CONFLICT);
         }
     }
 

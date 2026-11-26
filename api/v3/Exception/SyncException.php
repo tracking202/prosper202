@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Exception;
 
+use Api\V3\ErrorCode;
 use Api\V3\HttpException;
 
 /**
@@ -25,11 +26,11 @@ use Api\V3\HttpException;
  */
 final class SyncException extends HttpException
 {
-    public const URL_REFUSED = 'sync_url_refused';
-    public const URL_UNRESOLVED = 'sync_url_unresolved';
-    public const LIMIT = 'sync_limit';
-    public const KEY_UNREADABLE = 'sync_key_unreadable';
-    public const REMOTE_FAILED = 'sync_remote_failed';
+    public const URL_REFUSED = ErrorCode::SYNC_URL_REFUSED;
+    public const URL_UNRESOLVED = ErrorCode::SYNC_URL_UNRESOLVED;
+    public const LIMIT = ErrorCode::SYNC_LIMIT;
+    public const KEY_UNREADABLE = ErrorCode::SYNC_KEY_UNREADABLE;
+    public const REMOTE_FAILED = ErrorCode::SYNC_REMOTE_FAILED;
 
     private function __construct(
         string $message,
@@ -82,6 +83,11 @@ final class SyncException extends HttpException
             $this->getHttpStatus(),
             $this
         );
+    }
+
+    protected function defaultErrorCode(): string
+    {
+        return $this->errorCode;
     }
 
     /** The SyncException a failure is or was caused by, nearest first. */
