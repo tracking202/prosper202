@@ -1202,6 +1202,45 @@ abstract class Controller
     }
 
     /**
+     * Run $write, which opens and commits a transaction of its own, with the
+     * change records it makes held until it has returned. recordChange()
+     * inside the transaction would have its failure roll the write back and
+     * still be answered WriteCommittedException, "the write landed, never
+     * retry", about a write that did not land (CLAUDE.md #13). Inside a
+     * bulk-upsert chunk, which holds the records itself until its own
+     * commit, $write just runs.
+     *
+     * @template T
+     * @param callable(): T $write
+     * @return T
+     * @throws WriteCommittedException when the write committed and a change record failed
+     */
+    protected function recordingChangesAfter(callable $write): mixed
+    {
+        if ($this->holdingChanges) {
+            return $write();
+        }
+        $this->holdingChanges = true;
+        $this->heldChanges = [];
+        try {
+            $result = $write();
+            $held = $this->heldChanges;
+        } finally {
+            $this->holdingChanges = false;
+            $this->heldChanges = [];
+        }
+        try {
+            foreach ($held as [$operation, $record]) {
+                $this->writeChange($operation, $record);
+            }
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException($this->changeEntityName() ?? 'record', $e);
+        }
+
+        return $result;
+    }
+
+    /**
      * Read-only preview of delete(): the record that would be removed,
      * without removing it. Backs `?dry_run=1` on DELETE routes. Controllers
      * whose deletes cascade override this to report the cascade too.

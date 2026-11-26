@@ -8,8 +8,10 @@ use Api\V3\Controller;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Exception\WriteCommittedException;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
+use Prosper202\Setup\AdvancedPageMadeSimple;
 use Prosper202\Setup\AdvancedPageTextAds;
 use Prosper202\Setup\LandingPageTrackers;
 
@@ -90,10 +92,23 @@ class LandingPagesController extends Controller
         return $this->withNormalized(parent::create($payload));
     }
 
+    /**
+     * The page is locked before the update reads it and written in the same
+     * transaction, so the check that it is not made simple while something
+     * uses it (assertLinksOwned()) and the write see the same page. Its
+     * change record is written after the commit.
+     */
     #[\Override]
     public function update(int|string $id, array $payload): array
     {
-        return $this->withNormalized(parent::update($id, $payload));
+        $pageId = (int) $id;
+
+        return $this->withNormalized($this->recordingChangesAfter(
+            fn (): array => $this->inPageTransaction(
+                fn (LandingPageTrackers $trackers, ?int $type): array => parent::update($id, $payload),
+                $pageId
+            )
+        ));
     }
 
     /**
@@ -134,9 +149,12 @@ class LandingPagesController extends Controller
     }
 
     /**
-     * An advanced page is not made simple while text ads of type 1 name it:
-     * Get Links offers those only on an advanced page's links, so the change
-     * left each one offered nowhere and answered 200 (AdvancedPageTextAds).
+     * An advanced page is not made simple while text ads of type 1 or
+     * trackers use it: Get Links offers those ads only on an advanced page,
+     * and the trackers' links were built for one, so the change left the
+     * ads offered nowhere and the trackers pointing at a page that no longer
+     * takes advanced traffic, answered 200 (AdvancedPageMadeSimple). The
+     * uses are read under the page's lock, in update()'s transaction.
      * Setup › Landing Pages refuses the same change. A page already simple
      * is not refused for ads stored on it before #260 checked them.
      */
@@ -152,23 +170,41 @@ class LandingPagesController extends Controller
         }
         $pageId = (int) $current['landing_page_id'];
         try {
-            $ads = (new AdvancedPageTextAds(new Connection($this->db)))->naming($this->userId, $pageId);
+            $uses = (new AdvancedPageMadeSimple(new Connection($this->db)))->uses($this->userId, $pageId);
         } catch (QueryException $e) {
-            throw new DatabaseException('Text ad lookup failed', $e);
+            throw new DatabaseException('Text ad and tracker lookup failed', $e);
         }
-        if ($ads === []) {
+        $ads = $uses['text_ads'] ?? [];
+        $named = $uses['trackers'] ?? [];
+        if ($ads === [] && $named === []) {
             return;
         }
-        $count = count($ads);
+        $what = [];
+        $why = [];
+        $steps = [];
+        $lists = [];
+        if ($ads !== []) {
+            $what[] = count($ads) . ' text ' . (count($ads) === 1 ? 'ad' : 'ads') . ' of text_ad_type 1 (text_ad_id '
+                . AdvancedPageTextAds::ids($ads) . ')';
+            $why[] = 'Get Links offers those ads only on an advanced page, so making it simple would leave them'
+                . ' offered nowhere.';
+            $steps[] = 'point each text ad at another advanced page (PUT /text-ads/{id} with its landing_page_id) '
+                . 'or make it a campaign ad (text_ad_type 0 with aff_campaign_id)';
+            $lists[] = "GET /text-ads?filter[landing_page_id]=$pageId&filter[text_ad_type]=1";
+        }
+        if ($named !== []) {
+            $what[] = count($named) . ' ' . (count($named) === 1 ? 'tracker' : 'trackers') . ' (tracker_id '
+                . implode(', ', $named) . ')';
+            $why[] = 'The trackers were built for an advanced page, so making it simple would leave their links'
+                . ' pointing at a page that no longer takes advanced traffic.';
+            $steps[] = 'move each tracker to another advanced page (PUT /trackers/{id} with its landing_page_id) '
+                . 'or delete it (DELETE /trackers/{id}), which stops its link';
+            $lists[] = "GET /trackers?filter[landing_page_id]=$pageId";
+        }
         throw new ValidationException('Validation failed', [
-            'landing_page_type' => "landing page $pageId is advanced and $count text "
-                . ($count === 1 ? 'ad' : 'ads') . ' of text_ad_type 1 name it (text_ad_id '
-                . AdvancedPageTextAds::ids($ads) . '). '
-                . 'Get Links offers those ads only on an advanced page, '
-                . 'so making it simple would leave them offered nowhere. '
-                . 'Point each at another advanced page (PUT /text-ads/{id} with its landing_page_id) '
-                . 'or make it a campaign ad (text_ad_type 0 with aff_campaign_id), then change the type. '
-                . "GET /text-ads?filter[landing_page_id]=$pageId&filter[text_ad_type]=1 lists them.",
+            'landing_page_type' => "landing page $pageId is advanced and " . implode(' and ', $what) . ' name it. '
+                . implode(' ', $why) . ' First ' . implode(', and ', $steps) . ', then change the type. '
+                . implode(' and ', $lists) . (count($lists) === 1 ? ' lists them.' : ' list them.'),
         ]);
     }
 
@@ -236,7 +272,20 @@ class LandingPagesController extends Controller
         };
         $this->repairDone = true;
         try {
-            return $conn->inTransaction() ? $conn->joinTransaction($locked) : $conn->transaction($locked);
+            if ($conn->inTransaction()) {
+                return $conn->joinTransaction($locked);
+            }
+            try {
+                return $conn->transaction($locked);
+            } catch (WriteCommittedException $e) {
+                // Thrown after the write inside the transaction, which rolled the
+                // write back with it: what failed is the answer (CLAUDE.md #13).
+                // A failed rollback leaves the write's fate unknown, so it stays.
+                if ($conn->rollbackFailed()) {
+                    throw $e;
+                }
+                throw $e->getPrevious() ?? $e;
+            }
         } finally {
             $this->repairDone = false;
         }

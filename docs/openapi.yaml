@@ -2609,10 +2609,13 @@ paths:
       summary: Update a landing page
       description: >-
         An advanced page (landing_page_type 1) is not made simple while text
-        ads of text_ad_type 1 name it, since Get Links offers those only on an
-        advanced page: the 422 names each ad's text_ad_id under
-        landing_page_type. Point each at another advanced page, or make it a
-        campaign ad, first.
+        ads of text_ad_type 1 or trackers name it, since Get Links offers those
+        ads only on an advanced page and the trackers' links were built for
+        one: the 422 names each ad's text_ad_id and each tracker's tracker_id
+        under landing_page_type. Point each ad at another advanced page or make
+        it a campaign ad, and move each tracker to another advanced page or
+        delete it, first. The page is locked while the check and the write run, and
+        nothing is written when the change is refused.
       operationId: updateLandingPage
       requestBody:
         required: true

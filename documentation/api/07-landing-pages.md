@@ -36,6 +36,17 @@ advanced one (several offers); `GET /landing-pages/{id}/code` makes the code
 for either (an advanced page's with `?offers=campaign:<id>,rotator:<id>`),
 described in the [Setup API](27-setup.md).
 
+## Making an advanced page simple
+
+`PUT /landing-pages/{id}` with `landing_page_type` 0 does not make an advanced
+page simple while text ads of `text_ad_type` 1 or trackers name it: Get Links
+offers those ads only on an advanced page, and the trackers' links were built
+for one. The answer is `422`, with the refusal under `landing_page_type`
+naming each ad's `text_ad_id` and each tracker's `tracker_id`, and nothing in
+the request is written. Point each ad at another advanced page or make it a
+campaign ad, and move each tracker to another advanced page or delete it, then
+change the type. Setup › Landing Pages refuses the same change.
+
 ## Deleting a page
 
 `DELETE /landing-pages/{id}` removes the page (it is marked deleted). An
