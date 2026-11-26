@@ -32,8 +32,12 @@ final class Receiver
     ) {
     }
 
+    /** @var list<int> the accounts whose stored secret verified the request, for the log line */
+    private array $verifiedFor = [];
+
     public function receive(InboundRequest $request): Outcome
     {
+        $this->verifiedFor = [];
         [$outcome, $notification] = $this->decide($request);
         $logFields = [];
         if ($this->provider instanceof NotesHowItReadTheRequest) {
@@ -119,6 +123,7 @@ final class Receiver
                     . ' Prosper202 (Account > API integrations > ' . $name . '); nothing was recorded.'
                 ), null];
             }
+            $this->verifiedFor = $verification->accounts();
             $notification = $this->provider->parse($request);
         } catch (Refusal $refusal) {
             // A verified request is its account's, so the inbound log can show it there.
@@ -205,7 +210,10 @@ final class Receiver
     /**
      * What the log keeps of a notification: the outcome and the values the
      * adapter read, never a secret or the buyer's details. A request that
-     * did not verify is named by the address it came from.
+     * did not verify is named by the address it came from. One that more
+     * than one account's stored secret verifies names them all: the
+     * click's owner among them is the one credited (K4SH), and the
+     * operator sees which accounts store the key.
      */
     private function logLine(InboundRequest $request, Outcome $outcome, ?Notification $notification): string
     {
@@ -214,6 +222,9 @@ final class Receiver
             $line .= ' from ' . ($request->peerAddress !== '' ? $request->peerAddress : 'an unknown address');
         }
         $line .= ': ' . $outcome->kind->value . ' (' . $this->status($outcome) . ')';
+        if (count($this->verifiedFor) > 1) {
+            $line .= ', verified by the stored secret of accounts ' . implode(', ', $this->verifiedFor);
+        }
         if ($notification !== null) {
             $parts = [$notification->event . ' (' . $notification->kind->value . ')'];
             if ($notification->clickId !== null) {
