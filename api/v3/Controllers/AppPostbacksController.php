@@ -15,6 +15,7 @@ use Api\V3\Apps\Apple\SignatureState;
 use Api\V3\Apps\Apple\SkadnetworkProtocol;
 use Api\V3\Apps\Apple\SkanEncodingTimeline;
 use Api\V3\Support\MysqliStatements;
+use Api\V3\Support\PageRows;
 use Api\V3\Support\ResponseSanitizer;
 
 /**
@@ -185,7 +186,7 @@ class AppPostbacksController
         // the tenant's.
         $sql = 'SELECT ' . self::SELECT_COLUMNS . " FROM 202_app_postbacks $whereClause"
             . ' ORDER BY received_at DESC, postback_id DESC LIMIT ? OFFSET ?';
-        $binds[] = $limit;
+        $binds[] = PageRows::fetchLimit($limit);
         $types .= 'i';
         $binds[] = $offset;
         $types .= 'i';
@@ -204,9 +205,11 @@ class AppPostbacksController
             $rows[] = ResponseSanitizer::cleanRowFields($row, self::UNTRUSTED_FIELDS);
         }
         $stmt->close();
+        [$rows, $truncated] = PageRows::cut($rows, $limit);
 
         return [
             'data' => $rows,
+            'truncated' => $truncated,
             'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset],
         ];
     }

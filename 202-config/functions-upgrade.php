@@ -5642,7 +5642,14 @@ class UPGRADE
                 // 202_ppc_network_variables.ppc_network_id unsigned, as wide
                 // as the source id it names (_upgrade_ppc_variable_network_width()).
                 \Prosper202\Database\Tables\TrackingTables::ppcNetworkVariables(),
+                // A rotated LTV webhook secret signs alongside the new one
+                // until it expires (previous_secret, previous_secret_expires_at).
+                \Prosper202\Database\Tables\LtvTables::ltvWebhooks(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
+                // Each landing page's split test, whose variant the page's
+                // script writes into the click's C4 (Prosper202\Setup\
+                // LandingPageSplitTest).
+                \Prosper202\Database\Tables\CampaignTables::landingPageSplitTests(),
             ]);
             if ($step_ok) {
                 // Redirector criterion values the API stored untrimmed before

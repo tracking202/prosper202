@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Api\V3\Support;
 
-use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\RemoteApiException;
 use Api\V3\Exception\SyncException;
 use Api\V3\Exception\SyncRecordException;
@@ -297,8 +296,11 @@ class SyncEngine
                 $remapOps++;
                 $key = $this->naturalKeyForEntity($entity, $sourceRow, $sourceLookups);
                 if ($key === '') {
-                    if (!$this->recordSyncError($result, $entity, $key, new DatabaseException('empty natural key'), $skipErrors)) {
-                        throw new DatabaseException('Sync failed: empty natural key');
+                    $unmatched = self::unmatchable($entity);
+                    $sourceId = $this->firstStringFromRow($sourceRow, ...self::ENTITY_ID_FIELDS[$entity]);
+                    $label = 'source id ' . ($sourceId !== '' ? $sourceId : 'none');
+                    if (!$this->recordSyncError($result, $entity, $label, $unmatched, $skipErrors, 'match')) {
+                        throw $this->stopped($results, $dryRun, $result, $entity, $label, 'match', $unmatched);
                     }
                     continue;
                 }
@@ -344,11 +346,20 @@ class SyncEngine
                         continue;
                     }
 
-                    $payload = $this->buildSyncPayload($entity, $sourceRow, $sourceLookups, $targetLookups);
+                    try {
+                        $payload = $this->buildSyncPayload($entity, $sourceRow, $sourceLookups, $targetLookups);
+                    } catch (\Throwable $e) {
+                        if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, 'update')) {
+                            throw $this->stopped($results, $dryRun, $result, $entity, $key, 'update', $e);
+                        }
+                        continue;
+                    }
                     $targetId = $this->firstStringFromRow($targetRow, ...self::ENTITY_ID_FIELDS[$entity]);
                     if ($targetId === '') {
-                        if (!$this->recordSyncError($result, $entity, $key, new DatabaseException('missing target ID'), $skipErrors)) {
-                            throw new DatabaseException('Sync failed: target record missing ID');
+                        $noId = SyncException::recordUnusable('the target listed its matching record without an id ('
+                            . implode(' or ', self::ENTITY_ID_FIELDS[$entity]) . '), so it cannot be updated');
+                        if (!$this->recordSyncError($result, $entity, $key, $noId, $skipErrors, 'update')) {
+                            throw $this->stopped($results, $dryRun, $result, $entity, $key, 'update', $noId);
                         }
                         continue;
                     }
@@ -360,13 +371,25 @@ class SyncEngine
                             if (!empty($targetRow['etag'])) {
                                 $extraHeaders['If-Match'] = (string)$targetRow['etag'];
                             }
-                            $targetClient->put(self::ENTITY_ENDPOINTS[$entity] . '/' . $targetId, $payload, $extraHeaders);
-                            $putLanded = true;
-                            if (
-                                $entity === 'rotators'
+                            $withRules = $entity === 'rotators'
                                 && $sourceId !== ''
-                                && $this->envFlagEnabled('SYNC_ROTATOR_RULE_RESYNC_ENABLED', true)
-                            ) {
+                                && $this->envFlagEnabled('SYNC_ROTATOR_RULE_RESYNC_ENABLED', true);
+                            if ($withRules && $this->writesRotatorWithRules($targetClient)) {
+                                // One write: the redirector and its rules land together, or neither does.
+                                $rules = $this->targetRuleSet($sourceClient, $targetClient, $sourceId, $targetId, $sourceLookups, $targetLookups);
+                                try {
+                                    $targetClient->put('rotators/' . $targetId . '/rules', $payload + ['rules' => $rules['set']], $extraHeaders);
+                                } catch (RemoteApiException $e) {
+                                    throw self::namingSourceRules($e, $rules['source']);
+                                }
+                                $putLanded = true;
+                                $this->store->incrementMetric('rotator_rule_resync', 1);
+                                $withRules = false;
+                            } else {
+                                $targetClient->put(self::ENTITY_ENDPOINTS[$entity] . '/' . $targetId, $payload, $extraHeaders);
+                                $putLanded = true;
+                            }
+                            if ($withRules) {
                                 $this->resyncRotatorRules(
                                     $sourceClient,
                                     $targetClient,
@@ -413,8 +436,25 @@ class SyncEngine
                     continue;
                 }
 
+                $sourceId = $this->firstStringFromRow($sourceRow, ...self::ENTITY_ID_FIELDS[$entity]);
+                $rulesWritten = false;
                 try {
-                    $created = $targetClient->post(self::ENTITY_ENDPOINTS[$entity], $payload);
+                    if ($entity === 'rotators' && $sourceId !== '' && $this->writesRotatorWithRules($targetClient)) {
+                        // One write: the redirector is created with its rules, or not at all.
+                        $sourceRules = $this->fetchSourceRotatorRules($sourceClient, $sourceId);
+                        $set = [];
+                        foreach ($sourceRules as $rule) {
+                            $set[] = $this->rotatorRulePayload($rule, $sourceLookups, $targetLookups);
+                        }
+                        try {
+                            $created = $targetClient->post(self::ENTITY_ENDPOINTS[$entity], $payload + ['rules' => $set]);
+                        } catch (RemoteApiException $e) {
+                            throw self::namingSourceRules($e, $sourceRules);
+                        }
+                        $rulesWritten = true;
+                    } else {
+                        $created = $targetClient->post(self::ENTITY_ENDPOINTS[$entity], $payload);
+                    }
                 } catch (\Throwable $e) {
                     if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, 'create', '', true)) {
                         throw $this->stopped($results, $dryRun, $result, $entity, $key, 'create', $e);
@@ -434,8 +474,7 @@ class SyncEngine
                 $targetLookups = $this->buildEntityLookups($targetData);
                 $targetIndex = $this->buildEntityIndex($entity, $targetData[$entity], $targetLookups);
 
-                if ($entity === 'rotators' && $createdId !== '') {
-                    $sourceId = $this->firstStringFromRow($sourceRow, ...self::ENTITY_ID_FIELDS[$entity]);
+                if ($entity === 'rotators' && $createdId !== '' && !$rulesWritten) {
                     if ($sourceId !== '') {
                         try {
                             $this->syncRotatorRules($sourceClient, $targetClient, $sourceId, $createdId, $sourceLookups, $targetLookups);
@@ -500,6 +539,9 @@ class SyncEngine
                     try {
                         $targetClient->delete(self::ENTITY_ENDPOINTS[$entity] . '/' . $targetId);
                         $result['pruned']++;
+                        if ($eventLogger !== null) {
+                            $eventLogger('info', 'Deleted target record', ['entity' => $entity, 'key' => $targetKey]);
+                        }
                     } catch (\Throwable $e) {
                         $recorded = $this->recordSyncError($result, $entity, $targetKey, $e, $skipErrors, 'delete', $targetId, true);
                         if (!$recorded) {
@@ -610,6 +652,9 @@ class SyncEngine
      * rule at a time; so is a source redirector with no rules, which a set
      * cannot be.
      *
+     * The set carries the target's own ids where it keeps a rule or a
+     * destination (withTargetIds()), so the target's clicks keep naming them.
+     *
      * @param array<int, array<string, mixed>> $rules
      */
     private function writeRotatorRules(
@@ -624,8 +669,9 @@ class SyncEngine
             $payloads[] = $this->rotatorRulePayload($rule, $sourceLookups, $targetLookups);
         }
         if ($payloads !== []) {
+            $targetRules = $this->fetchTargetRotatorRules($targetClient, $targetRotatorId);
             try {
-                $targetClient->put('rotators/' . $targetRotatorId . '/rules', ['rules' => $payloads]);
+                $targetClient->put('rotators/' . $targetRotatorId . '/rules', ['rules' => self::withTargetIds($payloads, $targetRules)]);
                 return;
             } catch (RemoteApiException $e) {
                 if ($e->remoteStatus !== 404) {
@@ -634,6 +680,201 @@ class SyncEngine
             }
         }
         $this->replaceRotatorRulesOneByOne($targetClient, $targetRotatorId, $payloads);
+    }
+
+    /**
+     * The source redirector's rules as the target is to be sent them, with
+     * the target's ids on what it keeps (`set`), and the source's rules they
+     * were built from (`source`), for naming a refusal. Both are read before
+     * anything is written.
+     *
+     * @return array{set: list<array<string, mixed>>, source: array<int, array<string, mixed>>}
+     */
+    private function targetRuleSet(
+        RemoteApiClient $sourceClient,
+        RemoteApiClient $targetClient,
+        string $sourceRotatorId,
+        string $targetRotatorId,
+        array $sourceLookups,
+        array $targetLookups
+    ): array {
+        $sourceRules = $this->fetchSourceRotatorRules($sourceClient, $sourceRotatorId);
+        $set = [];
+        foreach ($sourceRules as $rule) {
+            $set[] = $this->rotatorRulePayload($rule, $sourceLookups, $targetLookups);
+        }
+        if ($set !== []) {
+            $set = self::withTargetIds($set, $this->fetchTargetRotatorRules($targetClient, $targetRotatorId));
+        }
+
+        return ['set' => $set, 'source' => $sourceRules];
+    }
+
+    /**
+     * Whether the target writes a redirector and its rules in one request
+     * (features.rotator_with_rules: an empty set, the redirector's fields
+     * beside its set, a create with its set), asked once per target. A
+     * target that does not answer the question stops the write: read as
+     * "no", it would be written in two steps that can part.
+     */
+    private function writesRotatorWithRules(RemoteApiClient $targetClient): bool
+    {
+        $this->rotatorWithRules ??= new \WeakMap();
+        if (!isset($this->rotatorWithRules[$targetClient])) {
+            $answer = $targetClient->get('capabilities');
+            $features = is_array($answer['data'] ?? null) ? ($answer['data']['features'] ?? null) : null;
+            if (!is_array($features)) {
+                throw new DatabaseException('The target answered GET /capabilities without its features');
+            }
+            $this->rotatorWithRules[$targetClient] = ($features['rotator_with_rules'] ?? false) === true;
+        }
+
+        return $this->rotatorWithRules[$targetClient];
+    }
+
+    /** @var \WeakMap<RemoteApiClient, bool>|null */
+    private ?\WeakMap $rotatorWithRules = null;
+
+    /**
+     * The target redirector's rules, read before the set is written. An
+     * answer that is not a list of rules with ids is refused: read as no
+     * rules, it would cost every target rule its id.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function fetchTargetRotatorRules(RemoteApiClient $targetClient, string $targetRotatorId): array
+    {
+        $answer = $targetClient->get('rotators/' . $targetRotatorId);
+        $data = $answer['data'] ?? null;
+        $rules = is_array($data) && array_key_exists('rules', $data) ? $data['rules'] : null;
+        if (!is_array($rules) || !array_is_list($rules)) {
+            throw new DatabaseException('The target redirector ' . $targetRotatorId . ' answered no list of rules');
+        }
+        foreach ($rules as $rule) {
+            if (!is_array($rule) || !is_scalar($rule['id'] ?? null)) {
+                throw new DatabaseException('The target redirector ' . $targetRotatorId . ' answered a rule with no id');
+            }
+        }
+
+        return $rules;
+    }
+
+    /**
+     * The set with the target's ids on what it keeps; the source's ids mean
+     * nothing on the target. A source rule is the target's rule of the same
+     * name (the first not yet taken, so repeated names pair in order), or,
+     * when none is left, the first target rule no name took with the same
+     * criteria and destinations: a rule renamed on the source keeps its id.
+     * A rule paired neither way is added, and a target rule left unpaired
+     * is removed. Rules are not paired by position: a rule inserted on the
+     * source would hand each target rule's id, and the clicks that name it,
+     * to its neighbour. Within a kept rule a destination is the
+     * target's with the same URL, campaign or landing page, and a criterion
+     * the target's with the same type and statement, each paired in order.
+     * A destination with none of the three (the auto-monetizer) is not
+     * paired. The target refuses an id that is not one of this redirector's.
+     *
+     * @param list<array<string, mixed>> $set the rules rotatorRulePayload() built
+     * @param list<array<string, mixed>> $targetRules
+     * @return list<array<string, mixed>>
+     */
+    private static function withTargetIds(array $set, array $targetRules): array
+    {
+        $text = static fn (mixed $v): string => is_scalar($v) ? trim((string) $v) : '';
+        $number = static fn (mixed $v): string => is_scalar($v) && (string) $v !== '' ? (string) (int) $v : '0';
+        $ruleKey = static fn (array $r): string => $text($r['rule_name'] ?? null);
+        $criterionKey = static fn (array $c): string
+            => json_encode([$text($c['type'] ?? null), $text($c['statement'] ?? null)], JSON_THROW_ON_ERROR);
+        $redirectKey = static function (array $r) use ($text, $number): ?string {
+            $parts = [$text($r['redirect_url'] ?? null), $number($r['redirect_campaign'] ?? null), $number($r['redirect_lp'] ?? null)];
+
+            return $parts === ['', '0', '0'] ? null : json_encode($parts, JSON_THROW_ON_ERROR);
+        };
+
+        $contentKey = static function (array $r) use ($text, $redirectKey): string {
+            $criteria = [];
+            foreach (is_array($r['criteria'] ?? null) ? $r['criteria'] : [] as $c) {
+                $criteria[] = is_array($c) ? [$text($c['type'] ?? null), $text($c['statement'] ?? null), $text($c['value'] ?? null)] : null;
+            }
+            $redirects = [];
+            foreach (is_array($r['redirects'] ?? null) ? $r['redirects'] : [] as $d) {
+                $redirects[] = is_array($d) ? $redirectKey($d) : null;
+            }
+            sort($criteria);
+            sort($redirects);
+
+            return json_encode([$criteria, $redirects], JSON_THROW_ON_ERROR);
+        };
+
+        // By name first; then a rule still unpaired takes an unpaired target
+        // rule with the same criteria and destinations (a renamed rule).
+        $takenRules = [];
+        $pairs = [];
+        foreach ($set as $i => $rule) {
+            $pairs[$i] = self::firstUntaken($targetRules, $ruleKey($rule), $ruleKey, $takenRules);
+        }
+        foreach ($set as $i => $rule) {
+            $pairs[$i] ??= self::firstUntaken($targetRules, $contentKey($rule), $contentKey, $takenRules);
+        }
+        foreach ($set as $i => $rule) {
+            $held = $pairs[$i];
+            if ($held === null) {
+                continue;
+            }
+            $rule = ['id' => $held['id']] + $rule;
+            $rule['criteria'] = self::withHeldIds($rule['criteria'] ?? [], $held['criteria'] ?? null, $criterionKey);
+            if (array_key_exists('redirects', $rule)) {
+                $rule['redirects'] = self::withHeldIds($rule['redirects'], $held['redirects'] ?? null, $redirectKey);
+            }
+            $set[$i] = $rule;
+        }
+
+        return $set;
+    }
+
+    /**
+     * A kept rule's criteria or destinations, each with the id of the held
+     * entry it pairs with (withTargetIds()).
+     *
+     * @param mixed $entries as rotatorRulePayload() built them
+     * @param mixed $held the target rule's, as it answered them
+     * @param callable(array<string, mixed>): ?string $key
+     * @return list<mixed>
+     */
+    private static function withHeldIds(mixed $entries, mixed $held, callable $key): array
+    {
+        $heldEntries = is_array($held) ? array_values(array_filter($held, 'is_array')) : [];
+        $taken = [];
+        $out = [];
+        foreach (is_array($entries) ? array_values($entries) : [] as $entry) {
+            $match = is_array($entry) ? $key($entry) : null;
+            $heldEntry = $match === null ? null : self::firstUntaken($heldEntries, $match, $key, $taken);
+            $out[] = $heldEntry !== null && is_scalar($heldEntry['id'] ?? null) ? ['id' => $heldEntry['id']] + $entry : $entry;
+        }
+
+        return $out;
+    }
+
+    /**
+     * The first of $candidates not yet in $taken whose key is $match, added
+     * to $taken.
+     *
+     * @param list<array<string, mixed>> $candidates
+     * @param callable(array<string, mixed>): ?string $key
+     * @param array<int, true> $taken
+     * @return array<string, mixed>|null
+     */
+    private static function firstUntaken(array $candidates, string $match, callable $key, array &$taken): ?array
+    {
+        foreach ($candidates as $at => $candidate) {
+            if (!isset($taken[$at]) && $key($candidate) === $match) {
+                $taken[$at] = true;
+
+                return $candidate;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -838,8 +1079,9 @@ class SyncEngine
                         // Do not map a failed detail fetch to "no rules": the
                         // diff would see a rule-less rotator and a force_update
                         // run would delete every rule on the other side.
-                        throw new DatabaseException(
-                            'Failed to fetch rotator ' . $rotatorId . ' detail: ' . $e->getMessage()
+                        throw SyncException::remoteFailed(
+                            'Failed to fetch rotator ' . $rotatorId . ' detail: '
+                                . SyncFailure::report($e, self::where('rotators', (string) $rotatorId, 'read'))
                         );
                     }
                     $enriched[] = $row;
@@ -1056,18 +1298,46 @@ class SyncEngine
 
             $sourceNatural = $this->referenceNaturalByEntity($refEntity, $rawSourceId, $sourceLookups);
             if ($sourceNatural === '') {
-                throw new DatabaseException("Unresolvable source foreign key {$fkField}={$rawSourceId}");
+                throw SyncException::recordUnusable(
+                    "its {$fkField} {$rawSourceId} names a {$refEntity} record the source did not list, so the "
+                    . 'sync cannot tell which record on the target it means'
+                );
             }
 
             $targetId = $this->referenceIdByNatural($refEntity, $sourceNatural, $targetLookups);
             if ($targetId === '') {
-                throw new DatabaseException("Unresolvable target foreign key {$fkField} via {$refEntity}={$sourceNatural}");
+                throw SyncException::recordUnusable(
+                    "its {$fkField} names the {$refEntity} record {$sourceNatural}, which the target does not have; "
+                    . "sync {$refEntity} first (entity all syncs them in order)"
+                );
             }
 
             $payload[$fkField] = $targetId;
         }
 
         return $payload;
+    }
+
+    /**
+     * Why a source record has no natural key: the field the sync matches
+     * records by is empty, so it cannot tell which target record is this one.
+     */
+    private static function unmatchable(string $entity): SyncException
+    {
+        $field = match ($entity) {
+            'aff-networks' => 'aff_network_name',
+            'ppc-networks' => 'ppc_network_name',
+            'ppc-accounts' => 'ppc_account_name',
+            'campaigns' => 'aff_campaign_name',
+            'landing-pages' => 'landing_page_url',
+            'text-ads' => 'text_ad_name',
+            default => 'natural key',
+        };
+
+        return SyncException::recordUnusable(
+            "its {$field} is empty on the source, and that is what the sync matches {$entity} by, so it cannot "
+            . "be matched with a record on the target; give it a {$field} on the source"
+        );
     }
 
     /**
@@ -1355,7 +1625,7 @@ class SyncEngine
         bool $refusedWrite = false
     ): bool {
         $result['failed']++;
-        $what = self::describeFailure($error);
+        $what = SyncFailure::report($error, self::where($entity, $key, $operation));
         $result['errors'][] = sprintf('%s[%s]: %s%s', $entity, $key, $operation !== '' ? $operation . ': ' : '', $what);
         if ($refusedWrite && $error instanceof RemoteApiException && $error->isConflict()) {
             $this->store->incrementMetric('conflicts', 1);
@@ -1379,10 +1649,10 @@ class SyncEngine
         return $skipErrors;
     }
 
-    /** A failure as a sync job reports it: a remote refusal by its status and message. */
-    private static function describeFailure(\Throwable $error): string
+    /** How a record's failure is named in the job and in the server's error log. */
+    private static function where(string $entity, string $key, string $operation): string
     {
-        return $error instanceof RemoteApiException ? $error->describe() : $error->getMessage();
+        return sprintf('%s[%s] %s', $entity, $key, $operation !== '' ? $operation : 'sync');
     }
 
     /**
@@ -1425,7 +1695,8 @@ class SyncEngine
             }
         }
 
-        $what = self::describeFailure($error);
+        // recordSyncError() logged it, under the same name.
+        $what = SyncFailure::describe($error, self::where($entity, $key, $operation));
 
         return new SyncRecordException($entity, $key, $operation, $what, $conflict, $error, $written);
     }
@@ -1481,7 +1752,7 @@ class SyncEngine
         if ($json === false) {
             // A random fallback would silently defeat incremental-sync
             // hash matching (every run re-syncs every record, forever).
-            throw new DatabaseException('Failed to encode record for hashing: ' . json_last_error_msg());
+            throw SyncException::recordUnusable('a record could not be read for comparison: ' . json_last_error_msg());
         }
         return sha1($json);
     }

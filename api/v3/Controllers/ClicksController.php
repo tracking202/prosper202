@@ -8,6 +8,7 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\AccountTimezone;
+use Api\V3\Support\PageRows;
 use Api\V3\Support\ReportFilter;
 use Api\V3\Support\StatementHelpers;
 
@@ -221,7 +222,7 @@ class ClicksController
             ORDER BY c.click_time DESC, c.click_id DESC
             LIMIT ? OFFSET ?";
 
-        $binds[] = $limit;
+        $binds[] = PageRows::fetchLimit($limit);
         $types .= 'i';
         $binds[] = $offset;
         $types .= 'i';
@@ -240,9 +241,11 @@ class ClicksController
             );
         }
         $stmt->close();
+        [$rows, $truncated] = PageRows::cut($rows, $limit);
 
         return [
             'data' => $rows,
+            'truncated' => $truncated,
             'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset],
         ];
     }

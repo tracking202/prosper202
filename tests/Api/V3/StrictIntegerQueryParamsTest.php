@@ -93,7 +93,8 @@ final class StrictIntegerQueryParamsTest extends TestCase
         $this->read('crud', $conn, ['limit' => '7', 'offset' => '3']);
         $rows = $conn->statementsContaining('LIMIT');
         self::assertNotSame([], $rows);
-        self::assertSame([7, 3], array_slice(end($rows)->boundValues, -2), 'the limit and offset asked for are the ones bound');
+        // One row past the page says whether rows remain (PageRows).
+        self::assertSame([8, 3], array_slice(end($rows)->boundValues, -2), 'the limit asked for, plus the row past the page, and the offset are the ones bound');
 
         // updated_since's bound, where a list can apply it (forecast events
         // keep an update time; a Setup list refuses it, ListTimeFiltersIntegrationTest).

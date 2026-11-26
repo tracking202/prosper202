@@ -7,7 +7,14 @@
 #   2. with the receiver stopped, the run records the failure on the delivery
 #      (attempts 1, the curl error, the retry 2 minutes on);
 #   3. with it back, the run after the retry is due delivers it (attempts 2);
-#   4. a delivery queued 30 days ago is expired with its reason, never sent.
+#   4. a delivery queued 30 days ago is expired with its reason, never sent;
+#   5. a rotated secret: the next delivery carries a Standard Webhooks
+#      signature by the new secret and one by the old, and X-P202-Signature
+#      by the new one.
+#
+# Every delivery's Standard Webhooks headers (webhook-id, webhook-timestamp,
+# webhook-signature) are checked by a verifier written here from the
+# specification, not by the server's code.
 #
 # The guard refuses loopback and any port but 443 and 8443, as it must, so the
 # receiver (https on 127.0.0.1:P202_RECEIVER_PORT) is reached at a public-
@@ -108,7 +115,10 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers.get('Content-Length', '0'))).decode()
         with open(log, 'a') as f:
             f.write(json.dumps({'path': self.path, 'delivery': self.headers.get('X-P202-Delivery'),
-                                'signature': self.headers.get('X-P202-Signature'), 'body': body}) + '\n')
+                                'signature': self.headers.get('X-P202-Signature'),
+                                'webhook_id': self.headers.get('webhook-id'),
+                                'webhook_timestamp': self.headers.get('webhook-timestamp'),
+                                'webhook_signature': self.headers.get('webhook-signature'), 'body': body}) + '\n')
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b'received')
@@ -120,6 +130,22 @@ ctx.load_cert_chain(tls + '/server.pem', tls + '/server.key')
 server.socket = ctx.wrap_socket(server.socket, server_side=True)
 server.serve_forever()
 PY
+# Which of the secrets given verify a logged request, as a Standard Webhooks
+# receiver checks one: key = the base64 after whsec_ (the secret's own bytes
+# otherwise), v1 = base64 HMAC-SHA256 of "id.timestamp.body", the timestamp
+# within five minutes. Prints one "yes"/"no" per secret.
+cat > "$WORK/verify.py" <<'PY'
+import base64, hashlib, hmac, json, sys, time
+r = json.loads(sys.stdin.read())
+sigs = (r.get('webhook_signature') or '').split(' ')
+fresh = r.get('webhook_timestamp', '').isdigit() and abs(time.time() - int(r['webhook_timestamp'])) <= 300
+for secret in sys.argv[1:]:
+    key = base64.b64decode(secret[6:], validate=True) if secret.startswith('whsec_') else secret.encode()
+    signed = '%s.%s.%s' % (r.get('webhook_id'), r.get('webhook_timestamp'), r['body'])
+    want = 'v1,' + base64.b64encode(hmac.new(key, signed.encode(), hashlib.sha256).digest()).decode()
+    print('yes' if fresh and any(hmac.compare_digest(want, s) for s in sigs) else 'no')
+PY
+standard() { python3 -I "$WORK/verify.py" "$@" | tr '\n' ' ' | sed 's/ $//'; }
 start_receiver() {
     python3 -I "$WORK/receiver.py" "$RECEIVER_PORT" "$WORK" "$WORK/received.log" >"$WORK/receiver.out" 2>&1 &
     RECEIVER_PID=$!
@@ -170,6 +196,10 @@ eq "$(received)" 1 'the receiver got one request'
 eq "$(delivery "$FIRST" "CONCAT(status, '/', attempts, '/', last_status_code)")" 'delivered/1/200' 'recorded as delivered'
 SIGNED=$(mine | tail -1 |"$PHP" -r '$r = json_decode(stream_get_contents(STDIN), true); echo hash_equals("sha256=" . hash_hmac("sha256", $r["body"], $argv[1]), (string) $r["signature"]) && $r["delivery"] === $argv[2] ? "yes" : "no";' "$SECRET" "$FIRST")
 eq "$SIGNED" yes 'signed with the secret, X-P202-Delivery its id'
+eq "$(mine | tail -1 | standard "$SECRET")" yes 'webhook-signature verifies with the secret, as a Standard Webhooks library checks it'
+case "$SECRET" in whsec_*) ok 'the secret is a whsec_ secret' ;; *) bad "the secret is not a whsec_ secret: $SECRET" ;; esac
+FIRST_MSG=$(mine | tail -1 | json webhook_id)
+case "$FIRST_MSG" in msg_*) ok 'webhook-id names the message' ;; *) bad "webhook-id: $FIRST_MSG" ;; esac
 cron
 eq "$(received)" 1 'the next run sends nothing again'
 
@@ -191,6 +221,7 @@ while [ "$(date +%s)" -le "$(delivery "$SECOND" next_attempt_at)" ]; do sleep 2;
 cron
 eq "$(delivery "$SECOND" "CONCAT(status, '/', attempts)")" 'delivered/2' 'delivered on the second attempt'
 eq "$(grep -c "\"delivery\": \"$SECOND\"" "$WORK/received.log")" 1 'and received once'
+eq "$(grep "\"delivery\": \"$SECOND\"" "$WORK/received.log" | standard "$SECRET")" yes 'the retry verifies too'
 
 say "4. a delivery queued 30 days ago expires unsent"
 Q "INSERT INTO 202_ltv_webhook_deliveries (webhook_id, user_id, event_name, payload, status, attempts,
@@ -204,6 +235,20 @@ eq "$(delivery "$OLD" "CONCAT(status, '/', attempts)")" 'failed/0' 'failed, neve
 case "$(delivery "$OLD" last_response_body)" in expired:*) ok 'its reason is in the log' ;; *) bad "last response: $(delivery "$OLD" last_response_body)" ;; esac
 eq "$(received)" "$BEFORE" 'and nothing was sent'
 eq "$(Q "SELECT status FROM 202_ltv_webhooks WHERE webhook_id = $WEBHOOK_ID")" active 'the webhook stays active'
+
+say "5. a rotated secret: the old one signs beside the new one"
+ROTATED=$(api -X POST "$BASE/api/v3/ltv/webhooks/$WEBHOOK_ID/rotate-secret" -d '{"overlap_hours":1}')
+NEW_SECRET=$(printf '%s' "$ROTATED" | json data.secret)
+case "$NEW_SECRET" in whsec_*) ok 'the rotation answers a new whsec_ secret' ;; *) bad "rotate-secret answered: $ROTATED" ;; esac
+eq "$(printf '%s' "$ROTATED" | json data.overlap_hours)" 1 'with the overlap asked for'
+BEFORE=$(received)
+api -X POST "$BASE/api/v3/ltv/revenue" -d "{\"customer_ref\":\"$REF\",\"amount\":7,\"idempotency_key\":\"$REF-3\"}" >/dev/null
+cron
+eq "$(received)" "$(( BEFORE + 1 ))" 'the next event is delivered'
+eq "$(mine | tail -1 | standard "$NEW_SECRET" "$SECRET")" 'yes yes' 'it verifies with the new secret and with the old one'
+eq "$(mine | tail -1 | json webhook_signature | tr ' ' '\n' | grep -c '^v1,')" 2 'two v1 signatures'
+NEW_SIGNED=$(mine | tail -1 | "$PHP" -r '$r = json_decode(stream_get_contents(STDIN), true); echo hash_equals("sha256=" . hash_hmac("sha256", $r["body"], $argv[1]), (string) $r["signature"]) ? "yes" : "no";' "$NEW_SECRET")
+eq "$NEW_SIGNED" yes 'X-P202-Signature is the new secret'"'"'s'
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

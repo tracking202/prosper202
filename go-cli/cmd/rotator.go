@@ -248,7 +248,9 @@ var rotatorSetRulesCmd = &cobra.Command{
 		"with its id keeps the id (its clicks stay its own), one without an id is added, and a rule left out is\n" +
 		"removed (the role needs remove_rotator_rule). Each rule needs a rule_name, at least one criterion\n" +
 		"(value ALL matches everyone) and at least one destination; a rule with more than one destination needs a\n" +
-		"weight on each, since the redirects split its visitors by weight whatever splittest says. --dry-run answers\n" +
+		"weight on each, since the redirects split its visitors by weight whatever splittest says. An empty set, [],\n" +
+		"removes every rule; an object may also carry the other fields `rotator get --json` shows under data, written\n" +
+		"with the set in one transaction (both from server 1.9.81). --dry-run answers\n" +
 		"the set as it would be stored and what would change, writing nothing.",
 	Example: "  p202 rotator get 3 --json | jq '.data.rules' > rules.json   # edit rules.json, then:\n" +
 		"  p202 rotator set-rules 3 --file rules.json --dry-run\n" +
@@ -359,6 +361,8 @@ func rotatorRuleSetError(err error, id string) error {
 	case apiErr.Status == 404:
 		// The router's bare 404: a server from before PUT /rotators/{id}/rules.
 		return withHint(err, "This server has no PUT /rotators/{id}/rules; upgrade it to 1.9.79 or later, or change the rules one at a time with `p202 rotator rule-create`, `p202 rotator rule-update` and `p202 rotator rule-delete`.")
+	case apiErr.Status == 422 && strings.Contains(apiErr.FieldErrors["rules"], "at least one rule"):
+		return withHint(err, "Nothing was written. This server takes no empty set; an empty set, which removes every rule, needs Prosper202 1.9.81 or later. On this one, remove the rules with `p202 rotator rule-delete %s <rule_id>`, or set each rule's status to 0.", id)
 	case apiErr.Status == 422:
 		return withHint(err, "Nothing was written. Fix the fields named (rules.N is the rule at index N of the set) and send the whole set again; `p202 rotator get %s` shows the set as stored, and --dry-run checks a set without writing it.", id)
 	}

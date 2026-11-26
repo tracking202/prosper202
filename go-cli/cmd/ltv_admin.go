@@ -209,7 +209,7 @@ const ltvWebhookListHint = "`p202 ltv webhooks list` lists the webhook ids."
 
 var ltvWebhooksCmd = &cobra.Command{
 	Use:   "webhooks",
-	Short: "Outbound LTV webhooks (customer, revenue, subscription, conversion, engagement events): list, create, deliveries, revive, delete",
+	Short: "Outbound LTV webhooks (customer, revenue, subscription, conversion, engagement events): list, create, deliveries, revive, rotate-secret, delete",
 }
 
 var ltvWebhooksListCmd = &cobra.Command{
@@ -223,8 +223,10 @@ var ltvWebhooksListCmd = &cobra.Command{
 
 var ltvWebhooksCreateCmd = &cobra.Command{
 	Use:   "create --url https://…",
-	Short: "Register an endpoint for signed LTV events; the response holds its secret, shown this once",
-	Long: "Deliveries are signed: X-P202-Signature is sha256=HMAC-SHA256(body, secret). The secret is in\n" +
+	Short: "Register an endpoint for signed LTV events; its secret is shown once",
+	Long: "Deliveries are signed the Standard Webhooks way (webhook-id, webhook-timestamp,\n" +
+		"webhook-signature), so a Standard Webhooks library verifies them with the whsec_ secret;\n" +
+		"through 1.9.82 they also carry X-P202-Signature, sha256=HMAC-SHA256(body, secret). The secret is in\n" +
 		"this command's output and nowhere else, ever: store it now. --events chooses what is sent\n" +
 		"(default every event this version sends; * also takes events later versions add).\n" +
 		"The URL must be https and must not point at a private, loopback or metadata address.\n\n" +
@@ -280,7 +282,7 @@ var ltvWebhooksCreateCmd = &cobra.Command{
 		if err := render(data); err != nil {
 			return err
 		}
-		fmt.Fprintln(cmd.ErrOrStderr(), "Note: store the secret now; it is shown only in this response and cannot be read back (`p202 ltv webhooks list` omits it). Delete and re-create the webhook to get a new one.")
+		fmt.Fprintln(cmd.ErrOrStderr(), "Note: store the secret now; it is shown only in this response and cannot be read back (`p202 ltv webhooks list` omits it). `p202 ltv webhooks rotate-secret` gives it a new one.")
 		return nil
 	}),
 }
@@ -293,7 +295,7 @@ const ltvMaxDeliveries = 100
 
 var ltvWebhooksDeliveriesCmd = &cobra.Command{
 	Use:   "deliveries <webhook-id>",
-	Short: "A webhook's delivery log, newest first: each event's status, attempts, next retry and last response or error",
+	Short: "A webhook's delivery log, newest first: status, attempts, next retry, last response",
 	Long: "What the LTV Settings tab's Log shows (its last 25 by default; --limit up to 100), and the last\n" +
 		"attempt's response body or error (\"curl: …\", \"blocked: …\", stored cut to 1,000 bytes). A\n" +
 		"delivery is retried with backoff and fails after max_attempts (6), which marks the webhook\n" +
@@ -332,7 +334,7 @@ var ltvWebhooksDeliveriesCmd = &cobra.Command{
 
 var ltvWebhooksReviveCmd = &cobra.Command{
 	Use:   "revive <webhook-id>",
-	Short: "Make a dead webhook active again, and send what it missed in the last 7 days",
+	Short: "Reactivate a dead webhook and send what it missed in the last 7 days",
 	Long: "A webhook is marked dead when one delivery fails 6 times (about an hour of retries); while it\n" +
 		"is dead its deliveries are held, never tried. Reviving keeps its id, URL and secret (the Landing\n" +
 		"Page Optimizer's pairing goes on without pairing again). Every delivery it did not deliver from\n" +
@@ -367,9 +369,53 @@ var ltvWebhooksReviveCmd = &cobra.Command{
 	}),
 }
 
+// ltvMaxOverlapHours is MysqlWebhookRepository::ROTATION_OVERLAP_MAX_SECONDS in hours.
+const ltvMaxOverlapHours = 168
+
+var ltvWebhooksRotateSecretCmd = &cobra.Command{
+	Use:   "rotate-secret <webhook-id>",
+	Short: "New signing secret, shown once; the old one also signs for --overlap-hours",
+	Long: "For --overlap-hours (default 24, up to 168) every delivery carries a second webhook-signature\n" +
+		"by the old secret, so the receiver can change to the new one without a delivery failing;\n" +
+		"--overlap-hours 0 stops the old one at once. X-P202-Signature uses the new secret from the\n" +
+		"start. The Landing Page Optimizer's webhook is refused: connect the optimizer again instead.\n\n" +
+		"  p202 ltv webhooks rotate-secret 3\n" +
+		"  p202 ltv webhooks rotate-secret 3 --overlap-hours 0",
+	Args: cobra.ExactArgs(1),
+	RunE: ltvWrite(func(cmd *cobra.Command, args []string) error {
+		id, err := ltvPathID(args[0], "webhook id", ltvWebhookListHint)
+		if err != nil {
+			return err
+		}
+		body := map[string]interface{}{}
+		if cmd.Flags().Changed("overlap-hours") {
+			v, _ := cmd.Flags().GetString("overlap-hours")
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 || n > ltvMaxOverlapHours || strconv.Itoa(n) != v {
+				return validationError("--overlap-hours must be a whole number from 0 to %d, got %q", ltvMaxOverlapHours, v).
+					WithHint("The hours the old secret still signs, e.g. --overlap-hours 48; 0 stops it at once.")
+			}
+			body["overlap_hours"] = n
+		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		data, err := c.Post("ltv/webhooks/"+id+"/rotate-secret", body)
+		if err != nil {
+			return ltvNotFound(err, ltvWebhookListHint)
+		}
+		if err := render(data); err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.ErrOrStderr(), "Note: store the new secret now; it is shown only in this response. Give it to the receiver before the old one stops (previous_secret_expires_at).")
+		return nil
+	}),
+}
+
 var ltvWebhooksDeleteCmd = &cobra.Command{
 	Use:   "delete <webhook-id>",
-	Short: "Delete a webhook and its delivery queue (pending deliveries are dropped, not sent)",
+	Short: "Delete a webhook and its queue; pending deliveries are dropped",
 	Long:  "--dry-run shows the webhook and how many deliveries, by status, go with it.",
 	Args:  deleteArgsValidator,
 	RunE: ltvWrite(func(cmd *cobra.Command, args []string) error {
@@ -505,8 +551,9 @@ func init() {
 	ltvWebhooksDeliveriesCmd.Flags().String("status", "", "Only deliveries in this state")
 	enumFlag(ltvWebhooksDeliveriesCmd, "status", newEnum(ltvDeliveryStatuses))
 	ltvWebhooksReviveCmd.Flags().Bool("requeue", true, "Send again what it did not deliver in the last 7 days (--requeue=false: new events only)")
+	ltvWebhooksRotateSecretCmd.Flags().String("overlap-hours", "", "Hours the old secret still signs beside the new one, 0-168 (default 24)")
 	ltvWebhooksCmd.AddCommand(ltvWebhooksListCmd, ltvWebhooksCreateCmd, ltvWebhooksDeliveriesCmd, ltvWebhooksReviveCmd,
-		ltvWebhooksDeleteCmd)
+		ltvWebhooksRotateSecretCmd, ltvWebhooksDeleteCmd)
 
 	ltvIntegrationsCreateCmd.Flags().String("provider", "", "The system: lowercase a-z, 0-9, - and _ (required)")
 	ltvIntegrationsCreateCmd.Flags().String("name", "", "A name for it (default the provider)")
