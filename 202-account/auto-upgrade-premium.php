@@ -305,12 +305,12 @@ template_top('1-Click Upgrade');
 							</form>
 						<?php } elseif ($upgrade_done === true) { ?>
 							<?php echo p202_flash('ok', 'Prosper202 has been upgraded. Sign in again to use the new version.'); ?>
-							<a class="btn btn-primary" href="<?php echo $e(get_absolute_url() . '202-account/signout.php'); ?>">Sign in again</a>
+							<?php echo p202_signout_form(get_absolute_url(), $_SESSION['token'] ?? null, 'Sign in again', 'btn btn-primary'); ?>
 						<?php } else { ?>
 							<?php echo p202_flash('bad', 'Prosper202 was unable to upgrade. Make sure PHP has permission to change files; your old version keeps working.'); ?>
 							<div class="p202-toolbar">
 								<a class="btn btn-secondary" href="https://support.tracking202.com/" target="_blank" rel="noopener">Get help</a>
-								<a class="btn btn-secondary" href="<?php echo $e(get_absolute_url() . '202-account/signout.php'); ?>">Continue with the old version</a>
+								<?php echo p202_signout_form(get_absolute_url(), $_SESSION['token'] ?? null, 'Continue with the old version', 'btn btn-secondary'); ?>
 							</div>
 						<?php } ?>
 					</div>

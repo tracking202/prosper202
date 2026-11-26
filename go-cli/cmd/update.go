@@ -225,8 +225,7 @@ func cpcSelection(a cpcAnswer) string {
 // flat record.
 func renderCPC(data []byte, a cpcAnswer) error {
 	if jsonOutput {
-		render(data)
-		return nil
+		return render(data)
 	}
 	row := map[string]interface{}{
 		"dry_run":          a.Data.DryRun,
@@ -254,8 +253,7 @@ func renderCPC(data []byte, a cpcAnswer) error {
 	if err != nil {
 		return fmt.Errorf("encoding the CPC update: %w", err)
 	}
-	render(encoded)
-	return nil
+	return render(encoded)
 }
 
 func runClickUpdateCPC(cmd *cobra.Command, _ []string) error {
@@ -552,8 +550,7 @@ func renderSubidRun(run subidRun, dryRun bool, counts map[string]int, withConver
 		if err != nil {
 			return fmt.Errorf("encoding the subid results: %w", err)
 		}
-		render(encoded)
-		return nil
+		return render(encoded)
 	}
 	rows := make([]map[string]interface{}, 0, len(run.Lines))
 	for _, line := range run.Lines {
@@ -763,8 +760,7 @@ type resetAnswer struct {
 // otherwise one flat record naming the category and campaign.
 func renderReset(data []byte, a resetAnswer) error {
 	if jsonOutput {
-		render(data)
-		return nil
+		return render(data)
 	}
 	row := map[string]interface{}{
 		"dry_run":     a.Data.DryRun,
@@ -784,8 +780,7 @@ func renderReset(data []byte, a resetAnswer) error {
 	if err != nil {
 		return fmt.Errorf("encoding the reset: %w", err)
 	}
-	render(encoded)
-	return nil
+	return render(encoded)
 }
 
 func (a resetAnswer) scope() string {
@@ -995,8 +990,7 @@ func readUploadAnswer(data []byte, what string, dryRun bool) (uploadAnswer, erro
 // otherwise the lines not recorded (with the reason), as the page lists them.
 func renderUpload(data []byte, a uploadAnswer) error {
 	if jsonOutput {
-		render(data)
-		return nil
+		return render(data)
 	}
 	rows := make([]map[string]interface{}, 0, len(a.Data.Lines))
 	for _, l := range a.Data.Lines {

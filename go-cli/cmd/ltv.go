@@ -183,8 +183,7 @@ func ltvGet(path string, params map[string]string) error {
 	if err != nil {
 		return ltvFilterError(err)
 	}
-	render(data)
-	return nil
+	return render(data)
 }
 
 // ltvFilterError names where the field keys and types are when the server
@@ -271,8 +270,7 @@ var ltvCustomersCmd = &cobra.Command{
 			if err != nil {
 				return ltvFilterError(err)
 			}
-			render(data)
-			return nil
+			return render(data)
 		}
 		rows, err := fetchAllRowsPaged(c, "ltv/customers", params, ltvMaxPage)
 		if err != nil {
@@ -285,8 +283,7 @@ var ltvCustomersCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("encoding %d customers: %w", len(rows), err)
 		}
-		render(encoded)
-		return nil
+		return render(encoded)
 	},
 }
 
@@ -404,13 +401,14 @@ var ltvEngagementCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(engagement)
+		if err := render(engagement); err != nil {
+			return err
+		}
 		nextOffer, err := c.Get(fmt.Sprintf("ltv/customers/%s/next-offer", args[0]), nil)
 		if err != nil {
 			return err
 		}
-		render(nextOffer)
-		return nil
+		return render(nextOffer)
 	},
 }
 

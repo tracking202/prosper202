@@ -4,7 +4,7 @@ Welcome to the Prosper202 codebase. This repository contains the source code for
 
 **Directory Structure:**
 
-* `202-account`, `202-charts`, `202-config`, etc.: Core modules handling various functionalities.
+* `202-account`, `202-config`, etc.: Core modules handling various functionalities.
 * `202-css`, `202-js`, `202-img`: Front-end assets including stylesheets, JavaScript files, and images.
 * `202-cronjobs`: Scheduled tasks for maintenance and data processing.
 * `api`: API endpoints for external integrations.

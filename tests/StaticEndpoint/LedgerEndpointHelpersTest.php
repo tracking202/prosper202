@@ -147,7 +147,7 @@ final class LedgerEndpointHelpersTest extends TestCase
         $out = p202FireTrafficSourcePixels($db, 3, ['subid' => '77', 'transactionid' => 'A&B'], function (string $url) use (&$fetched): bool {
             $fetched[] = $url;
             return true;
-        });
+        }, consent: \Prosper202\Conversion\AdPlatformConsent::given());
 
         self::assertSame(['https://s2s.example/a?tx=A%26B', 'https://s2s.example/b?id=77'], $fetched, 'every server-to-server URL, tokens filled');
         self::assertSame(2, $out['server_calls']);
@@ -163,7 +163,7 @@ final class LedgerEndpointHelpersTest extends TestCase
     {
         $db = new FakeMysqliConnection();
         $db->whenQueryContainsReturnRows('FROM 202_ppc_account_pixels', [['pixel_code' => 'https://s2s.example/a', 'pixel_type_id' => 4]]);
-        $out = p202FireTrafficSourcePixels($db, 3, [], static fn (string $url): bool => false);
+        $out = p202FireTrafficSourcePixels($db, 3, [], static fn (string $url): bool => false, consent: \Prosper202\Conversion\AdPlatformConsent::given());
         self::assertSame(1, $out['server_failures']);
     }
 
@@ -171,15 +171,48 @@ final class LedgerEndpointHelpersTest extends TestCase
     {
         $db = new FakeMysqliConnection();
         $db->whenQueryContainsReturnRows('FROM 202_ppc_account_pixels', [['pixel_code' => "https://x.example/'onerror='alert(1)", 'pixel_type_id' => 1]]);
-        $out = p202FireTrafficSourcePixels($db, 3, [], static fn (string $url): bool => true);
+        $out = p202FireTrafficSourcePixels($db, 3, [], static fn (string $url): bool => true, consent: \Prosper202\Conversion\AdPlatformConsent::given());
         self::assertStringNotContainsString("'onerror='", $out['markup']);
+    }
+
+    /** A visitor who refused consent, or an answer nobody gave, gets no pixel of any type (AdPlatformConsent). */
+    public function testNoPixelFiresWithoutConsent(): void
+    {
+        foreach ([
+            'refused' => \Prosper202\Conversion\AdPlatformConsent::refused('on the conversion\'s request'),
+            'unread' => \Prosper202\Conversion\AdPlatformConsent::unread('test'),
+            'not passed' => null,
+        ] as $case => $consent) {
+            $db = new FakeMysqliConnection();
+            $db->whenQueryContainsReturnRows('FROM 202_ppc_account_pixels WHERE ppc_account_id = ?', [
+                ['pixel_code' => 'https://img.example/p', 'pixel_type_id' => 1],
+                ['pixel_code' => 'https://s2s.example/a', 'pixel_type_id' => 4],
+                ['pixel_code' => '<script>t()</script>', 'pixel_type_id' => 5],
+                ['pixel_code' => '123456789012345', 'pixel_type_id' => 6],
+            ]);
+            $fetched = [];
+            $out = p202FireTrafficSourcePixels($db, 3, ['subid' => '77'], function (string $url) use (&$fetched): bool {
+                $fetched[] = $url;
+                return true;
+            }, true, static fn (): bool => true, $consent);
+            self::assertSame('', $out['markup'], "$case: no browser pixel, Meta Purchase included");
+            self::assertSame([], $fetched, "$case: no server postback");
+            self::assertSame(0, $out['server_calls'], $case);
+            self::assertSame([1, 4, 5, 6], $out['types'], "$case: what the account has is still said");
+            self::assertStringStartsWith('withheld: ', (string) $out['withheld'], $case);
+        }
+        $db = new FakeMysqliConnection();
+        $db->whenQueryContainsReturnRows('FROM 202_ppc_account_pixels WHERE ppc_account_id = ?', [['pixel_code' => 'https://img.example/p', 'pixel_type_id' => 1]]);
+        $given = p202FireTrafficSourcePixels($db, 3, [], null, false, null, \Prosper202\Conversion\AdPlatformConsent::given());
+        self::assertStringContainsString('img.example', $given['markup'], 'the control: consent given, it fires');
+        self::assertNull($given['withheld']);
     }
 
     public function testNoAccountFiresNothing(): void
     {
         $db = new FakeMysqliConnection();
         $out = p202FireTrafficSourcePixels($db, 0, []);
-        self::assertSame(['markup' => '', 'types' => [], 'server_calls' => 0, 'server_failures' => 0, 'browser_skipped' => 0, 'server_skipped' => 0], $out);
+        self::assertSame(['markup' => '', 'types' => [], 'server_calls' => 0, 'server_failures' => 0, 'browser_skipped' => 0, 'server_skipped' => 0, 'withheld' => null], $out);
         self::assertSame([], $db->statements);
     }
 

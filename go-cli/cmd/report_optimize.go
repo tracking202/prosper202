@@ -297,8 +297,7 @@ func renderRows(rows []map[string]interface{}) error {
 	if err != nil {
 		return err
 	}
-	render(out)
-	return nil
+	return render(out)
 }
 
 // breakdownFiguresHint is the next step when a ranking's figures cannot be encoded.
@@ -377,7 +376,9 @@ var reportBreakevenCmd = &cobra.Command{
 		if err != nil {
 			return withHint(err, "%s", breakdownFiguresHint)
 		}
-		render(out)
+		if err := render(out); err != nil {
+			return err
+		}
 		noteForPeople(cmd, breakdownMoreRowsNote(data, params, ", most clicks first (each page ranked by margin)"))
 		return nil
 	},
@@ -1018,8 +1019,7 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 			if truncated {
 				noteForPeople(cmd, coversFirstRowsNote(params["breakdown"], "most clicks first"))
 			}
-			render(out)
-			return nil
+			return render(out)
 		},
 	}
 	return c
