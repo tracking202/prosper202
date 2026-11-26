@@ -51,7 +51,7 @@ $shared = __DIR__ . '/../../../202-config/functions-shared.php';
 define('P202_CLICK_PATH', true);
 $lifted = [
     'p202OnTheClickPath', 'setCache', 'getCache', 'p202WithHeldCacheWrites',
-    '_mysqli_query', 'p202LogFailedQuery', 'p202Mysqli', 'systemHash',
+    '_mysqli_query', 'p202LogFailedQuery', 'p202Mysqli', 'systemHash', 'p202InstallPlace',
 ];
 foreach ($lifted as $name) {
     eval(lift_function($shared, $name));

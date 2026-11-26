@@ -271,8 +271,10 @@ var mcpToolSpecs = []mcpToolSpec{
 	{Name: "tracker_list", Command: []string{"tracker", "list"}, Title: "List trackers", Kind: mcpRead, HostedOmit: mcpEveryPage},
 	{Name: "tracker_get", Command: []string{"tracker", "get"}, Title: "Get a tracker", Kind: mcpRead, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list).", true)}},
 	{Name: "tracker_get_url", Command: []string{"tracker", "get-url"}, Title: "Get a tracking link", Kind: mcpRead, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list).", true)}, Note: "chatgpt_ads: what to paste into ChatGPT Ads Manager."},
-	{Name: "tracker_create_with_url", Command: []string{"tracker", "create-with-url"}, Title: "Create a tracking link", Kind: mcpCreate},
-	{Name: "tracker_update", Command: []string{"tracker", "update"}, Title: "Update a tracker", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list).", true)}},
+	{Name: "tracker_create_with_url", Command: []string{"tracker", "create-with-url"}, Title: "Create a tracking link", Kind: mcpCreate,
+		JSON: map[string]mcpProperty{"items": trackerItemsSchema("Several trackers, each with aff_campaign_id and its other fields; c1 to utm_content apply to all.")}},
+	{Name: "tracker_update", Command: []string{"tracker", "update"}, Title: "Update a tracker", Kind: mcpUpdate, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list); with items, in each.", false)},
+		JSON: map[string]mcpProperty{"items": trackerItemsSchema("Several trackers, each with its id and fields to change.")}},
 	{Name: "tracker_delete", Command: []string{"tracker", "delete"}, Title: "Delete a tracker", Kind: mcpDelete, Args: []mcpArg{idArg("id", "Tracker id (from tracker_list); or give ids for several.", false)}, Note: "Its tracking links stop working, including any running in ads. " + deleteNote},
 
 	// Landing pages
@@ -358,6 +360,13 @@ var mcpToolSpecs = []mcpToolSpec{
 // auto_monetizer) are left to the server, which takes them back with the
 // values it holds, so the objects stay open to them
 // (TestRotatorRulesSchemaIsTheControllers holds the two to each other).
+// trackerItemsSchema is items on the tracker tools (tracker_items.go): one
+// call for many, in place of the single tracker's own arguments.
+func trackerItemsSchema(what string) mcpProperty {
+	return mcpProperty{Type: "array", Description: what + " Keys as this tool's arguments; at most 50, each answered.",
+		Items: &mcpProperty{Type: "object"}}
+}
+
 func rotatorRulesSchema() mcpProperty {
 	criterion := mcpProperty{
 		Type: "object",

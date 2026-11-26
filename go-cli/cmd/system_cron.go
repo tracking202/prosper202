@@ -267,11 +267,15 @@ func runSystemCron(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return fmt.Errorf("encoding the cron summary: %w", err)
 		}
-		render(out)
+		if err := render(out); err != nil {
+			return err
+		}
 		return cronProblemError(sum)
 	}
 	if showRaw {
-		render(raw)
+		if err := render(raw); err != nil {
+			return err
+		}
 		return cronProblemError(sum)
 	}
 

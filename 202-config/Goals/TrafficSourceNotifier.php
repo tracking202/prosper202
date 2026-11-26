@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Goals;
 
+use Prosper202\Conversion\AdPlatformConsent;
 use Prosper202\Conversion\TrafficSourcePixels;
 use Prosper202\Database\Connection;
 use Prosper202\Notifications\NotificationOutbox;
@@ -35,7 +36,9 @@ use Prosper202\Notifications\NotificationOutbox;
  * Only notices of kind `reached` render browser pixels (the engine decides
  * the kind, see OutcomeNotifier). With $browser false (an API call, a
  * server-to-server intake) nothing is rendered and the browser pixels are
- * counted as skipped.
+ * counted as skipped. Nothing at all goes for an outcome whose visitor
+ * refused consent (AdPlatformConsent): `not_sent` with reason
+ * `consent_withheld`, and the outbox holds its postbacks back too.
  */
 final class TrafficSourceNotifier implements OutcomeNotifier
 {
@@ -44,11 +47,14 @@ final class TrafficSourceNotifier implements OutcomeNotifier
     /**
      * @param (\Closure(int): bool)|null $visitorMayBeTracked whether the
      *        click's visitor may be sent a Meta Purchase (type 6); held back without it
+     * @param bool $requestRefused the request being answered refused consent
+     *        (RequestSignals::consentGiven()), which stands whatever is stored
      */
     public function __construct(
         private Connection $conn,
         private bool $browser = false,
         private ?\Closure $visitorMayBeTracked = null,
+        private bool $requestRefused = false,
     ) {
     }
 
@@ -76,6 +82,14 @@ final class TrafficSourceNotifier implements OutcomeNotifier
             }
             if ($subject->clickId === null) {
                 $out[] = $entry + ['status' => 'not_sent', 'reason' => 'no_click'];
+                continue;
+            }
+            // The conversion the outcome wrote, or its click when it wrote none.
+            $consent = ($notice['conversion_id'] ?? null) !== null
+                ? AdPlatformConsent::ofConversion($this->conn, $userId, (int) $notice['conversion_id'], $this->requestRefused)
+                : AdPlatformConsent::ofClick($this->conn, $userId, $subject->clickId, $this->requestRefused);
+            if (!$consent->allows()) {
+                $out[] = $entry + ['status' => 'not_sent', 'reason' => 'consent_withheld'];
                 continue;
             }
             $click ??= TrafficSourcePixels::clickTokens($this->conn, $userId, $subject->clickId);
@@ -117,6 +131,7 @@ final class TrafficSourceNotifier implements OutcomeNotifier
                 $this->browser,
                 false,
                 $mayTrack === null ? null : static fn (): bool => $mayTrack($clickId),
+                $consent,
             );
             $this->markup .= $fired['markup'];
             $queued = (int) ($notice['queued'] ?? 0);

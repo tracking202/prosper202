@@ -125,8 +125,7 @@ var clickFilterListCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("encoding the address list: %w", err)
 		}
-		render(encoded)
-		return nil
+		return render(encoded)
 	},
 }
 
@@ -159,8 +158,7 @@ var clickFilterListAddCmd = &cobra.Command{
 		if err != nil {
 			return withHint(err, "`p202 click-filter list` shows the entries; `p202 click-filter list update <entry-id>` changes one.")
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -199,8 +197,7 @@ var clickFilterListUpdateCmd = &cobra.Command{
 		if err != nil {
 			return withHint(err, "`p202 click-filter list` shows the entries and their ids.")
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -249,8 +246,7 @@ var clickFilterTestCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -293,8 +289,7 @@ func clickFilterPath(cmd *cobra.Command) (string, *api.Client, error) {
 // --ndjson, --csv and --quiet get the answer as the API gave it.
 func renderClickFilter(data []byte) error {
 	if jsonOutput || ndjsonOutput || quietOutput || csvOutput {
-		render(data)
-		return nil
+		return render(data)
 	}
 	var answer struct {
 		Data map[string]json.RawMessage `json:"data"`
@@ -312,7 +307,9 @@ func renderClickFilter(data []byte) error {
 	if err != nil {
 		return fmt.Errorf("encoding the click filter settings: %w", err)
 	}
-	render(encoded)
+	if err := render(encoded); err != nil {
+		return err
+	}
 	var list []json.RawMessage
 	if raw, ok := answer.Data["entries"]; ok {
 		if err := json.Unmarshal(raw, &list); err != nil {
@@ -327,8 +324,7 @@ func renderClickFilter(data []byte) error {
 		return fmt.Errorf("encoding the address list: %w", err)
 	}
 	fmt.Println()
-	render(encoded)
-	return nil
+	return render(encoded)
 }
 
 func init() {

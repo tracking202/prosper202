@@ -49,8 +49,7 @@ var adSpendSyncListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -70,8 +69,7 @@ func adSpendSyncSet(enabled bool) func(cmd *cobra.Command, args []string) error 
 		if err != nil {
 			return withStatusHint(err, statusHint{http.StatusNotFound, "", adSpendSyncListHint})
 		}
-		render(data)
-		return nil
+		return render(data)
 	}
 }
 
@@ -111,7 +109,9 @@ var adSpendSyncRunCmd = &cobra.Command{
 		if err != nil {
 			return adSpendSyncRunError(err, args[0])
 		}
-		render(data)
+		if err := render(data); err != nil {
+			return err
+		}
 		var resp struct {
 			Data struct {
 				Run struct {
@@ -211,7 +211,9 @@ var adSpendConversionsCmd = &cobra.Command{
 				statusHint{http.StatusUnprocessableEntity, "limit", fmt.Sprintf("--limit takes a whole number from 1 to %d.", adSpendConversionsMaxLimit)},
 			)
 		}
-		render(data)
+		if err := render(data); err != nil {
+			return err
+		}
 		var resp struct {
 			Truncated bool `json:"truncated"`
 			Limit     int  `json:"limit"`

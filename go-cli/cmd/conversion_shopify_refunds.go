@@ -99,8 +99,7 @@ var conversionShopifyRefundsRecordCmd = &cobra.Command{
 		if err != nil {
 			return shopifyRefundError(err)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -135,8 +134,7 @@ var conversionShopifyRefundsCloseCmd = &cobra.Command{
 			return shopifyRefundError(err)
 		}
 		if jsonOutput || ndjsonOutput {
-			render(data)
-			return nil
+			return render(data)
 		}
 		fmt.Printf("Shopify refund %s was closed with nothing recorded.\n", id)
 		return nil
@@ -185,8 +183,7 @@ func shopifyRefundError(err error) error {
 // renderShopifyRefunds draws one line per refund. JSON and NDJSON pass the answer through.
 func renderShopifyRefunds(data []byte) error {
 	if jsonOutput || ndjsonOutput || quietOutput {
-		render(data)
-		return nil
+		return render(data)
 	}
 	var resp struct {
 		Data []map[string]interface{} `json:"data"`
@@ -212,7 +209,9 @@ func renderShopifyRefunds(data []byte) error {
 	if err != nil {
 		return fmt.Errorf("encoding the Shopify refunds: %w", err)
 	}
-	render(encoded)
+	if err := render(encoded); err != nil {
+		return err
+	}
 	if csvOutput {
 		return nil
 	}
