@@ -9,6 +9,7 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\ListQuery;
+use Api\V3\Support\PageRows;
 use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\QueryInt;
@@ -128,7 +129,7 @@ class RotatorsController
             'SELECT id, public_id, user_id, name, default_url, default_campaign, default_lp, auto_monetizer'
             . " FROM 202_rotators WHERE $whereClause ORDER BY $orderBy LIMIT ? OFFSET ?"
         );
-        $this->bind($stmt, $types . 'ii', ...[...$binds, $limit, $offset]);
+        $this->bind($stmt, $types . 'ii', ...[...$binds, PageRows::fetchLimit($limit), $offset]);
         $this->execute($stmt, 'List query failed');
         $result = $this->resultOf($stmt, 'List query failed');
         $rows = [];
@@ -136,8 +137,9 @@ class RotatorsController
             $rows[] = $row;
         }
         $stmt->close();
+        [$rows, $truncated] = PageRows::cut($rows, $limit);
 
-        return ['data' => $rows, 'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset]];
+        return ['data' => $rows, 'truncated' => $truncated, 'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset]];
     }
 
     public function get(int $id): array

@@ -85,6 +85,20 @@ case "$ask" in
         printf 'Created webhook %s for https://hooks.example.com/eval-ltv-revenue, sending revenue.recorded and no other event. Deliveries are signed the Standard Webhooks way (webhook-signature; give the secret to a Standard Webhooks library to verify them); the secret is shown only now, so store it: %s\n' \
             "$(printf '%s' "$out" | jq -r '.data.webhook_id')" "$(printf '%s' "$out" | jq -r '.data.secret')"
         ;;
+    *"SKU starting with EVAL-PAGE-"*)
+        # A page is 50 rows: read on with --offset until the answer says no
+        # rows remain (truncated false), then count (ltv-007).
+        n=0
+        offset=0
+        while :; do
+            page=$(p202 ltv products --offset "$offset" --json)
+            rows=$(printf '%s' "$page" | jq '.data | length')
+            n=$((n + $(printf '%s' "$page" | jq '[.data[] | select((.sku // "") | startswith("EVAL-PAGE-"))] | length')))
+            [ "$(printf '%s' "$page" | jq -r '.truncated')" = "true" ] && [ "$rows" -gt 0 ] || break
+            offset=$((offset + rows))
+        done
+        printf '%s products in the LTV catalog have a SKU starting with EVAL-PAGE-: every page of `p202 ltv products`, read until it said no rows remain.\n' "$n"
+        ;;
     *"eval ltv items"*)
         # Line items are stored on an LTV customer's revenue; with none known
         # the server refuses them (422 naming items) and writes nothing. Say
