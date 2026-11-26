@@ -204,8 +204,7 @@ func renderDeletePreviews(c *api.Client, endpoint string, ids []string) error {
 		if err != nil {
 			return withDryRunHint(err)
 		}
-		render(data)
-		return nil
+		return render(data)
 	}
 
 	previews := make([]interface{}, 0, len(ids))
@@ -237,7 +236,9 @@ func renderDeletePreviews(c *api.Client, endpoint string, ids []string) error {
 		// would exit 0 having shown the user no previews at all.
 		return fmt.Errorf("encoding delete previews: %w", err)
 	}
-	render(encoded)
+	if err := render(encoded); err != nil {
+		return err
+	}
 	if failed > 0 {
 		return partialFailureError("failed to preview %d of %d deletes", failed, len(ids))
 	}
@@ -254,8 +255,7 @@ func stageDeletes(c *api.Client, endpoint string, ids []string) error {
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	}
 
 	changes := make([]interface{}, 0, len(ids))
@@ -295,7 +295,9 @@ func stageDeletes(c *api.Client, endpoint string, ids []string) error {
 		// them silently would strand the whole batch.
 		return fmt.Errorf("encoding staged changes: %w", err)
 	}
-	render(encoded)
+	if err := render(encoded); err != nil {
+		return err
+	}
 	if failed > 0 {
 		return partialFailureError("failed to stage %d of %d deletes", failed, len(ids))
 	}
@@ -1035,8 +1037,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("encoding output: %w", err)
 				}
-				render(encoded)
-				return nil
+				return render(encoded)
 			}
 
 			if v, _ := cmd.Flags().GetString("page"); v != "" {
@@ -1078,8 +1079,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 					return fmt.Errorf("encoding output: %w", err)
 				}
 			}
-			render(data)
-			return nil
+			return render(data)
 		},
 	}
 	listCmd.Flags().String("page", "", "Page number")
@@ -1126,8 +1126,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			render(data)
-			return nil
+			return render(data)
 		},
 	}
 	if entity.PublicIDField != "" {
@@ -1172,8 +1171,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			render(data)
-			return nil
+			return render(data)
 		},
 	}
 	for _, f := range entity.Fields {
@@ -1271,8 +1269,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			render(data)
-			return nil
+			return render(data)
 		},
 	}
 	for _, f := range entity.Fields {
@@ -1539,8 +1536,7 @@ func init() {
 				if err != nil {
 					return err
 				}
-				render(clonedData)
-				return nil
+				return render(clonedData)
 			},
 		}
 		cloneCmd.Flags().String("name", "", "Optional name override for the cloned campaign")
@@ -1576,8 +1572,7 @@ func init() {
 				if err != nil {
 					return err
 				}
-				render(data)
-				return nil
+				return render(data)
 			},
 		}
 		createWithURLCmd := &cobra.Command{
@@ -1615,7 +1610,9 @@ func init() {
 					// The tracker is a proposal, so it has no tracking URL
 					// yet. Report the change instead of failing on a
 					// tracker_id that was never going to be there.
-					render(link.answer)
+					if err := render(link.answer); err != nil {
+						return err
+					}
 					output.Success(
 						"Staged the tracker create as %s. Apply it with `p202 change apply %s`, "+
 							"then `p202 tracker get-url <id>` for the tracking URL.",
@@ -1631,8 +1628,7 @@ func init() {
 				if err != nil {
 					return fmt.Errorf("encoding output: %w", err)
 				}
-				render(encoded)
-				return nil
+				return render(encoded)
 			},
 		}
 		for _, f := range trackerEntity.Fields {
@@ -1690,8 +1686,7 @@ func init() {
 					return err
 				}
 				if len(trackers) == 0 {
-					render([]byte(`{"data":[]}`))
-					return nil
+					return render([]byte(`{"data":[]}`))
 				}
 
 				if concurrency > len(trackers) {
@@ -1815,7 +1810,9 @@ func init() {
 				if err != nil {
 					return fmt.Errorf("encoding tracker URLs: %w", err)
 				}
-				render(encoded)
+				if err := render(encoded); err != nil {
+					return err
+				}
 				if failed > 0 && refused != nil {
 					return partialFailureError("failed to fetch %d of %d tracker URLs, and %d were not fetched after a licence refusal: %v",
 						failed, len(trackers), notFetched, refused)

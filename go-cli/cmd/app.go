@@ -273,8 +273,7 @@ func runPagedList(cmd *cobra.Command, endpoint string, params map[string]string)
 	if err != nil {
 		return err
 	}
-	render(data)
-	return nil
+	return render(data)
 }
 
 // newAppGetCmd builds the `get <id>` command for one app endpoint: they read
@@ -293,8 +292,7 @@ func newAppGetCmd(endpoint, short string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			render(data)
-			return nil
+			return render(data)
 		},
 	}
 }
@@ -316,8 +314,7 @@ func listAllPagedRows(c *api.Client, endpoint string, params map[string]string) 
 	if err != nil {
 		return fmt.Errorf("encoding rows: %w", err)
 	}
-	render(encoded)
-	return nil
+	return render(encoded)
 }
 
 // ── Registrations ───────────────────────────────────────────────────
@@ -375,8 +372,7 @@ var appCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -412,8 +408,7 @@ var appUpdateCmd = &cobra.Command{
 			}
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -442,8 +437,7 @@ var appRotateTokenCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -487,8 +481,7 @@ var appSchemaCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -572,8 +565,7 @@ var appVerifyCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -640,8 +632,7 @@ var appEncodingCreateCmd = &cobra.Command{
 		if err != nil {
 			return hintRegistrationID(err)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -695,8 +686,7 @@ var appEncodingUpdateCmd = &cobra.Command{
 		if err != nil {
 			return hintRegistrationID(err)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
