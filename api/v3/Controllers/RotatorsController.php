@@ -286,6 +286,9 @@ class RotatorsController
             unset($fields['rules']);
             $id = $this->transaction(function () use ($fields, $sent): int {
                 $id = $this->insertRotator($fields);
+                // The row was just written for this account; the lock is the
+                // owner check every write of rules runs after.
+                $this->lockRotator($id);
                 $plan = $this->planRuleSet($id, $sent, static function (): void {
                 });
                 $this->writeRuleSet($id, $plan);
