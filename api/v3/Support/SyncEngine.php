@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Api\V3\Support;
 
-use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\RemoteApiException;
 use Api\V3\Exception\SyncException;
 use Api\V3\Exception\SyncRecordException;
@@ -297,8 +296,11 @@ class SyncEngine
                 $remapOps++;
                 $key = $this->naturalKeyForEntity($entity, $sourceRow, $sourceLookups);
                 if ($key === '') {
-                    if (!$this->recordSyncError($result, $entity, $key, new DatabaseException('empty natural key'), $skipErrors)) {
-                        throw new DatabaseException('Sync failed: empty natural key');
+                    $unmatched = self::unmatchable($entity);
+                    $sourceId = $this->firstStringFromRow($sourceRow, ...self::ENTITY_ID_FIELDS[$entity]);
+                    $label = 'source id ' . ($sourceId !== '' ? $sourceId : 'none');
+                    if (!$this->recordSyncError($result, $entity, $label, $unmatched, $skipErrors, 'match')) {
+                        throw $this->stopped($results, $dryRun, $result, $entity, $label, 'match', $unmatched);
                     }
                     continue;
                 }
@@ -344,11 +346,20 @@ class SyncEngine
                         continue;
                     }
 
-                    $payload = $this->buildSyncPayload($entity, $sourceRow, $sourceLookups, $targetLookups);
+                    try {
+                        $payload = $this->buildSyncPayload($entity, $sourceRow, $sourceLookups, $targetLookups);
+                    } catch (\Throwable $e) {
+                        if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, 'update')) {
+                            throw $this->stopped($results, $dryRun, $result, $entity, $key, 'update', $e);
+                        }
+                        continue;
+                    }
                     $targetId = $this->firstStringFromRow($targetRow, ...self::ENTITY_ID_FIELDS[$entity]);
                     if ($targetId === '') {
-                        if (!$this->recordSyncError($result, $entity, $key, new DatabaseException('missing target ID'), $skipErrors)) {
-                            throw new DatabaseException('Sync failed: target record missing ID');
+                        $noId = SyncException::recordUnusable('the target listed its matching record without an id ('
+                            . implode(' or ', self::ENTITY_ID_FIELDS[$entity]) . '), so it cannot be updated');
+                        if (!$this->recordSyncError($result, $entity, $key, $noId, $skipErrors, 'update')) {
+                            throw $this->stopped($results, $dryRun, $result, $entity, $key, 'update', $noId);
                         }
                         continue;
                     }
@@ -500,6 +511,9 @@ class SyncEngine
                     try {
                         $targetClient->delete(self::ENTITY_ENDPOINTS[$entity] . '/' . $targetId);
                         $result['pruned']++;
+                        if ($eventLogger !== null) {
+                            $eventLogger('info', 'Deleted target record', ['entity' => $entity, 'key' => $targetKey]);
+                        }
                     } catch (\Throwable $e) {
                         $recorded = $this->recordSyncError($result, $entity, $targetKey, $e, $skipErrors, 'delete', $targetId, true);
                         if (!$recorded) {
@@ -838,8 +852,9 @@ class SyncEngine
                         // Do not map a failed detail fetch to "no rules": the
                         // diff would see a rule-less rotator and a force_update
                         // run would delete every rule on the other side.
-                        throw new DatabaseException(
-                            'Failed to fetch rotator ' . $rotatorId . ' detail: ' . $e->getMessage()
+                        throw SyncException::remoteFailed(
+                            'Failed to fetch rotator ' . $rotatorId . ' detail: '
+                                . SyncFailure::report($e, self::where('rotators', (string) $rotatorId, 'read'))
                         );
                     }
                     $enriched[] = $row;
@@ -1056,18 +1071,46 @@ class SyncEngine
 
             $sourceNatural = $this->referenceNaturalByEntity($refEntity, $rawSourceId, $sourceLookups);
             if ($sourceNatural === '') {
-                throw new DatabaseException("Unresolvable source foreign key {$fkField}={$rawSourceId}");
+                throw SyncException::recordUnusable(
+                    "its {$fkField} {$rawSourceId} names a {$refEntity} record the source did not list, so the "
+                    . 'sync cannot tell which record on the target it means'
+                );
             }
 
             $targetId = $this->referenceIdByNatural($refEntity, $sourceNatural, $targetLookups);
             if ($targetId === '') {
-                throw new DatabaseException("Unresolvable target foreign key {$fkField} via {$refEntity}={$sourceNatural}");
+                throw SyncException::recordUnusable(
+                    "its {$fkField} names the {$refEntity} record {$sourceNatural}, which the target does not have; "
+                    . "sync {$refEntity} first (entity all syncs them in order)"
+                );
             }
 
             $payload[$fkField] = $targetId;
         }
 
         return $payload;
+    }
+
+    /**
+     * Why a source record has no natural key: the field the sync matches
+     * records by is empty, so it cannot tell which target record is this one.
+     */
+    private static function unmatchable(string $entity): SyncException
+    {
+        $field = match ($entity) {
+            'aff-networks' => 'aff_network_name',
+            'ppc-networks' => 'ppc_network_name',
+            'ppc-accounts' => 'ppc_account_name',
+            'campaigns' => 'aff_campaign_name',
+            'landing-pages' => 'landing_page_url',
+            'text-ads' => 'text_ad_name',
+            default => 'natural key',
+        };
+
+        return SyncException::recordUnusable(
+            "its {$field} is empty on the source, and that is what the sync matches {$entity} by, so it cannot "
+            . "be matched with a record on the target; give it a {$field} on the source"
+        );
     }
 
     /**
@@ -1355,7 +1398,7 @@ class SyncEngine
         bool $refusedWrite = false
     ): bool {
         $result['failed']++;
-        $what = self::describeFailure($error);
+        $what = SyncFailure::report($error, self::where($entity, $key, $operation));
         $result['errors'][] = sprintf('%s[%s]: %s%s', $entity, $key, $operation !== '' ? $operation . ': ' : '', $what);
         if ($refusedWrite && $error instanceof RemoteApiException && $error->isConflict()) {
             $this->store->incrementMetric('conflicts', 1);
@@ -1379,10 +1422,10 @@ class SyncEngine
         return $skipErrors;
     }
 
-    /** A failure as a sync job reports it: a remote refusal by its status and message. */
-    private static function describeFailure(\Throwable $error): string
+    /** How a record's failure is named in the job and in the server's error log. */
+    private static function where(string $entity, string $key, string $operation): string
     {
-        return $error instanceof RemoteApiException ? $error->describe() : $error->getMessage();
+        return sprintf('%s[%s] %s', $entity, $key, $operation !== '' ? $operation : 'sync');
     }
 
     /**
@@ -1425,7 +1468,8 @@ class SyncEngine
             }
         }
 
-        $what = self::describeFailure($error);
+        // recordSyncError() logged it, under the same name.
+        $what = SyncFailure::describe($error, self::where($entity, $key, $operation));
 
         return new SyncRecordException($entity, $key, $operation, $what, $conflict, $error, $written);
     }
@@ -1481,7 +1525,7 @@ class SyncEngine
         if ($json === false) {
             // A random fallback would silently defeat incremental-sync
             // hash matching (every run re-syncs every record, forever).
-            throw new DatabaseException('Failed to encode record for hashing: ' . json_last_error_msg());
+            throw SyncException::recordUnusable('a record could not be read for comparison: ' . json_last_error_msg());
         }
         return sha1($json);
     }

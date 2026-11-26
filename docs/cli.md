@@ -1730,8 +1730,9 @@ p202 attribution export delete 7
 ```
 
 An export writes every group of a breakdown to a CSV (the minutely cron runs
-it), downloadable, and optionally POSTs it to an https webhook signed with
-HMAC-SHA256 (`X-P202-Signature: sha256=<hex>` over `<X-P202-Timestamp>.<body>`).
+it), downloadable, and optionally POSTs it to an https webhook signed the
+Standard Webhooks way (`webhook-id`, `webhook-timestamp`, `webhook-signature`;
+through 1.9.82 also `X-P202-Signature: sha256=<hex>` over `<X-P202-Timestamp>.<body>`).
 The create response carries `webhook_secret` once. Webhooks go only to public
 addresses (every resolved address is checked, the connection is pinned to it,
 redirects are not followed); a refused URL is a validation error naming the
@@ -1826,12 +1827,14 @@ p202 ltv fields update 3 --label "Plan tier" --required
 p202 ltv fields delete 3 --dry-run                     # and how many customers' values go with it
 p202 ltv webhooks create --url https://hooks.example.com/p202 --events revenue.recorded,subscription.changed
 p202 ltv webhooks deliveries 4 --status failed   # status, attempts, next retry, last response or error
+p202 ltv webhooks rotate-secret 4 --overlap-hours 48   # a new secret, shown once; the old one signs for 48 more hours
 p202 ltv webhooks delete 4 --force
 p202 ltv integrations create --provider klaviyo --config '{"list_id":"XyZ"}'
 p202 ltv integrations delete 2 --force
 ```
 
-`webhooks create` prints the signing secret once; it cannot be read back.
+`webhooks create` and `webhooks rotate-secret` print the signing secret once;
+it cannot be read back.
 Every LTV write refuses the global `--staged` flag before sending anything
 (the server stages none of them); every LTV delete takes `--dry-run`,
 `--force` and `--ids`.

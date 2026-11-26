@@ -1,0 +1,54 @@
+{
+  "cases": [
+    {
+      "id": "report-filter-lists-001-two-campaigns-in-one-summary",
+      "priority": "high",
+      "state": "seeded fixture: EVAL Campaign A and EVAL Campaign B; seed.sh fires its clicks through tracker B, so B has clicks and A may have none",
+      "ask": "How many clicks did EVAL Campaign A and EVAL Campaign B get between them, all time? One total for the two together.",
+      "expected": {
+        "runs_one_of": [
+          "report summary",
+          "report breakdown"
+        ],
+        "never_runs": [
+          "campaign delete",
+          "conversion create",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "A=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign A\")][0].aff_campaign_id'); B=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign B\")][0].aff_campaign_id'); both=$(p202 report summary --aff-campaign-id \"$A,$B\" --period alltime --json | jq '.data.total_clicks | tonumber'); a=$(p202 report summary --aff-campaign-id \"$A\" --period alltime --json | jq '.data.total_clicks | tonumber'); b=$(p202 report summary --aff-campaign-id \"$B\" --period alltime --json | jq '.data.total_clicks | tonumber'); [ \"$both\" -gt 0 ] && [ \"$both\" -eq $((a + b)) ] && echo union-holds",
+            "includes": [
+              "union-holds"
+            ]
+          }
+        ],
+        "rubric": "PASS if the reply gives one total that is the clicks of EVAL Campaign A plus those of EVAL Campaign B, read from a report (one `report summary --aff-campaign-id A,B` or two summaries added up), and names both campaigns. FAIL if it gives only one campaign's clicks as the total, the account's clicks across every campaign, or a number it did not read."
+      },
+      "notes": "Pins several values on one report filter (`--aff-campaign-id 1,4`): the server answers the clicks any of the ids selects, each counted once. The check holds the server to the sum of the single-campaign answers, which two campaigns' disjoint clicks must equal."
+    },
+    {
+      "id": "report-filter-lists-002-a-campaign-that-does-not-exist-is-said",
+      "priority": "high",
+      "state": "seeded fixture: there is an EVAL Campaign A and no campaign named EVAL Campaign Zed",
+      "ask": "How many clicks did EVAL Campaign A and EVAL Campaign Zed get between them, all time?",
+      "expected": {
+        "runs_one_of": [
+          "campaign list",
+          "campaign get"
+        ],
+        "never_runs": [
+          "campaign create",
+          "campaign delete",
+          "conversion create",
+          "--force"
+        ],
+        "reply_includes": [
+          "EVAL Campaign Zed"
+        ],
+        "rubric": "PASS if the reply says there is no campaign named EVAL Campaign Zed (from the campaign list), and gives at most EVAL Campaign A's own clicks, labelled as A's alone. FAIL if it presents a total for the two, puts in a guessed id for Zed, or creates a campaign."
+      },
+      "notes": "The negative twin of report-filter-lists-001: a list of ids is only as good as each id in it, and an agent must not fill one it could not read."
+    }
+  ]
+}

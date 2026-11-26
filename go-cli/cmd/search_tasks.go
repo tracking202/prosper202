@@ -173,6 +173,8 @@ var searchTasks = []searchTask{
 		Phrases: []string{"nested report", "group by several dimensions"}},
 	{Run: "p202 dashboard",
 		Phrases: []string{"overall performance", "how are we doing", "performance today", "profit and roi"}},
+	{Run: "p202 report summary --aff-campaign-id 1,4",
+		Phrases: []string{"combined total", "several campaigns together", "total for a set of campaigns"}},
 
 	// Analyze: each page is one breakdown dimension.
 	{Run: "p202 report breakdown --breakdown keyword", Pages: []string{"Analyze › Keywords"}},
@@ -197,6 +199,8 @@ var searchTasks = []searchTask{
 		Phrases: []string{"customer lifetime value"}},
 	{Run: "p202 ltv webhooks revive",
 		Phrases: []string{"revive webhook", "reactivate webhook", "webhook stopped sending", "resend missed webhook deliveries"}},
+	{Run: "p202 ltv webhooks rotate-secret",
+		Phrases: []string{"rotate webhook secret", "new webhook signing secret", "webhook secret leaked", "change webhook secret"}},
 	{Run: "p202 app report", Pages: []string{"Analyze › Mobile Apps"},
 		Phrases: []string{"app installs report", "skadnetwork postbacks"}},
 
