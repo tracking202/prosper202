@@ -185,11 +185,12 @@ if (!empty($version_error)) {
             echo p202_standalone_card_end();
         } elseif ($success == true) {
             unset($_SESSION['user_id']);
-            //('location: '.get_absolute_url().'202-account/signout.php');
             echo p202_standalone_card('Success!', 'Prosper202 ' . strtolower($task_202) . ' completed.'); ?>
             <p>Your database is at version <span class="p202-pill p202-pill--good"><?php echo htmlspecialchars((string) $version, ENT_QUOTES, 'UTF-8'); ?></span>. Sign in again to carry on.</p>
             <?php echo $paid_1956 ? p202_paid_1956_notes_link() : ''; ?>
-            <a class="btn btn-primary w-100" href="<?php echo get_absolute_url(); ?>202-account/signout.php">Sign in</a>
+            <?php
+            echo p202_signout_form(get_absolute_url(), $_SESSION['token'] ?? null, 'Sign in', 'btn btn-primary w-100');
+            ?>
         <?php echo p202_standalone_card_end();
         } else {
             echo p202_standalone_card($task_202 . ' to Prosper202 ' . $version, 'This could take a while, depending on the last time you updated.'); ?>

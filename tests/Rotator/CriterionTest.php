@@ -38,6 +38,7 @@ final class CriterionTest extends TestCase
         'api/v3/Controllers/RotatorsController.php' => 'reads',
         '202-config/Database/Schema/TableRegistry.php' => 'names the table; reads no value',
         '202-config/functions-upgrade.php' => 'creates the table; reads no value',
+        '202-config/Rotator/CriterionRepair.php' => 'reads',
     ];
 
     /** @return iterable<string, array{string, list<string>, bool, string}> */
@@ -142,25 +143,90 @@ final class CriterionTest extends TestCase
     }
 
     /**
+     * The name a click records for an ISP (isp_name keeps 50 characters)
+     * and Analyze › ISP lists, which a rule copied from it holds.
+     */
+    public function testTheRecordedIspIsTheVisitorsIspAsIspNameKeepsIt(): void
+    {
+        self::assertSame('Comcast Cable Communications', Criterion::recordedIsp('Comcast Cable Communications, LLC'));
+        self::assertSame('Verizon Wireless', Criterion::recordedIsp(' Verizon Wireless '));
+        self::assertSame(str_repeat('x', 50), Criterion::recordedIsp(str_repeat('x', 60)));
+        self::assertSame(str_repeat('x', 49), Criterion::recordedIsp(str_repeat('x', 49) . ' Broadband'), 'a cut ending on a space');
+        self::assertSame(str_repeat('é', 50), Criterion::recordedIsp(str_repeat('é', 55)), 'cut in characters, as the column counts');
+    }
+
+    /**
      * rtr.php compared an ISP criterion with the first part of the visitor's
      * ISP and offrtr.php with the whole of it, so one redirector sent one
-     * visitor two ways. Both now take it from Criterion::visitorIsp() only.
+     * visitor two ways; the click recorders stored the first part untrimmed,
+     * so Analyze › ISP listed a name a rule could not hold. Every reader now
+     * takes it from Criterion::visitorIsp(), but landing.php, which hands
+     * the page the visitor's ISP as getIspData() answers it and records
+     * nothing.
      */
-    public function testBothRedirectScriptsReadTheVisitorsIspThroughCriterion(): void
+    public function testEveryReaderOfTheVisitorsIspGoesThroughCriterion(): void
     {
-        foreach (['tracking202/redirect/rtr.php', 'tracking202/redirect/offrtr.php'] as $file) {
-            $source = (string) file_get_contents(SourceScan::repoRoot() . '/' . $file);
-            preg_match_all('/getIspData\s*\(/', $source, $calls, PREG_OFFSET_CAPTURE);
-            self::assertNotEmpty($calls[0], "$file no longer reads the visitor's ISP");
-            foreach ($calls[0] as [, $at]) {
-                $before = substr($source, max(0, $at - 60), min(60, $at));
-                self::assertStringContainsString(
-                    'Criterion::visitorIsp((string) ',
-                    $before,
-                    "$file reads getIspData() without Criterion::visitorIsp()"
-                );
+        $exempt = [
+            'tracking202/static/landing.php' => "hands the page getIspData()'s answer; records no ISP",
+        ];
+        $expected = [
+            'tracking202/redirect/rtr.php', 'tracking202/redirect/offrtr.php', 'tracking202/redirect/dl.php',
+            'tracking202/static/record_simple.php', 'tracking202/static/record_adv.php',
+        ];
+        $found = [];
+        $problems = [];
+        foreach (SourceScan::phpFiles() as $file => $source) {
+            if (stripos($source, 'getIspData') === false || isset($exempt[$file])) {
+                continue;
+            }
+            foreach (self::ispCalls($source) as [$line, $wrapped]) {
+                $found[$file] = true;
+                if (!$wrapped) {
+                    $problems[] = "$file:$line reads getIspData() without Criterion::visitorIsp((string) ...)";
+                }
             }
         }
+        $found = array_keys($found);
+        sort($found);
+        sort($expected);
+        self::assertSame($expected, $found, 'Files that read the visitor\'s ISP');
+        self::assertSame([], $problems);
+    }
+
+    /**
+     * Each call of getIspData() in $source, by its line, and whether it is
+     * the argument of `Criterion::visitorIsp((string) ...)`. A name after
+     * `function`, `->`, `::` or `new` is no call of it; a comment is no
+     * token.
+     *
+     * @return list<array{int, bool}>
+     */
+    private static function ispCalls(string $source): array
+    {
+        $tokens = array_values(array_filter(
+            token_get_all($source),
+            static fn ($t): bool => !is_array($t) || !in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)
+        ));
+        $text = static fn (int $i): string => isset($tokens[$i]) ? (is_array($tokens[$i]) ? $tokens[$i][1] : $tokens[$i]) : '';
+        $id = static fn (int $i): ?int => isset($tokens[$i]) && is_array($tokens[$i]) ? $tokens[$i][0] : null;
+        $calls = [];
+        foreach ($tokens as $i => $token) {
+            if (!is_array($token) || SourceScan::callableName($token[0], $token[1]) !== 'getispdata') {
+                continue;
+            }
+            if (in_array($id($i - 1), [T_FUNCTION, T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON, T_NEW], true)
+                || $text($i + 1) !== '(') {
+                continue;
+            }
+            $wrapped = $id($i - 1) === T_STRING_CAST
+                && $text($i - 2) === '('
+                && strcasecmp($text($i - 3), 'visitorIsp') === 0
+                && $id($i - 4) === T_DOUBLE_COLON
+                && preg_match('/(?:^|\\\\)Criterion$/Di', $text($i - 5)) === 1;
+            $calls[] = [$token[2], $wrapped];
+        }
+
+        return $calls;
     }
 
     /**

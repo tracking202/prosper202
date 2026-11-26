@@ -14,6 +14,23 @@ class PpcAccountsController extends Controller
 {
     protected function tableName(): string { return '202_ppc_accounts'; }
     protected function primaryKey(): string { return 'ppc_account_id'; }
+
+    #[\Override]
+    protected function listSearchColumns(): array
+    {
+        return ['ppc_account_name'];
+    }
+
+    #[\Override]
+    protected function listSortFields(): array
+    {
+        return [
+            'ppc_account_id' => 'ppc_account_id',
+            'ppc_account_name' => 'ppc_account_name',
+            'ppc_network_id' => 'ppc_network_id',
+        ];
+    }
+
     protected function deletedColumn(): ?string { return 'ppc_account_deleted'; }
 
     protected function fields(): array

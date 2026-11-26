@@ -30,7 +30,6 @@ return [
         '202-access-denied.php',
         '202-account',
         '202-appstore',
-        '202-charts',
         '202-config',
         '202-config-sample.php',
         '202-cronjobs',
