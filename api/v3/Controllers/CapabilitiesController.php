@@ -192,6 +192,13 @@ class CapabilitiesController
                     // an operator runs. Admin with access_to_settings. Not
                     // stageable.
                     'traffic_source_owners' => true,
+                    // PUT /rotators/{id}/rules takes an empty set (every
+                    // rule removed) and the redirector's own fields beside
+                    // the set, written in one transaction; POST /rotators
+                    // takes `rules`, the redirector and its set written
+                    // together. A sync writes a redirector this way when
+                    // the target advertises it.
+                    'rotator_with_rules' => true,
                     // GET /reports/payout?aff_campaign_id=: a campaign's
                     // default payout under the reports' rules (reports:read,
                     // masked for a role without access_to_campaign_data), so

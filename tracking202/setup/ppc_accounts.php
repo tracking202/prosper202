@@ -452,17 +452,15 @@ if (isset($_GET['delete_ppc_network_id'])) {
 	}
 
 	if ($userObj->hasPermission("remove_traffic_source")) {
-		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-		$mysql['ppc_network_id'] = $db->real_escape_string((string)$_GET['delete_ppc_network_id']);
-		$mysql['ppc_network_time'] = time();
-
-		$delete_sql = " UPDATE  `202_ppc_networks`
-						SET     `ppc_network_deleted`='1',
-								`ppc_network_time`='" . $mysql['ppc_network_time'] . "'
-						WHERE   `user_id`='" . $mysql['user_id'] . "'
-						AND     `ppc_network_id`='" . $mysql['ppc_network_id'] . "'";
-        if ($delete_result = _mysqli_query($delete_sql)) {
-            $delete_success = true;
+		// Removed only when it is the account's and still there; anything else
+		// says so rather than redirecting to "Removed".
+		try {
+			$delete_success = \Prosper202\Setup\SetupRemoval::mark(new \Prosper202\Database\Connection($db),
+				'traffic_source', $_GET['delete_ppc_network_id'], (int) $_SESSION['user_id'], time());
+		} catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+			record_mysql_error($db, 'UPDATE 202_ppc_networks (remove a traffic source)', $e->getMessage());
+		}
+        if ($delete_success === true) {
             // Landing Page Optimizer (segments-v2 G10): deletes change the
             // synced snapshot too (buildSnapshot omits deleted rows) — flag
             // dirty so the hourly cron re-pushes. DB-only — no HTTP here.
@@ -470,7 +468,7 @@ if (isset($_GET['delete_ppc_network_id'])) {
             if ($slack)
                 $slack->push('traffic_source_deleted', ['name' => $_GET['delete_ppc_network_name'], 'user' => $user_row['username']]);
         } else {
-            record_mysql_error($delete_sql);
+            $error['delete_ppc_network'] = 'That traffic source was not found on this account. Nothing was removed.';
         }
 	} else {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
@@ -486,48 +484,46 @@ if (isset($_GET['delete_ppc_account_id'])) {
 	}
 
 	if ($userObj->hasPermission("remove_traffic_source_account")) {
-		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-		$mysql['ppc_account_id'] = $db->real_escape_string((string)$_GET['delete_ppc_account_id']);
-		$mysql['ppc_account_time'] = time();
-
-		$delete_sql = " UPDATE  `202_ppc_accounts`
-						SET     `ppc_account_deleted`='1',
-								`ppc_account_time`='" . $mysql['ppc_account_time'] . "'
-						WHERE   `user_id`='" . $mysql['user_id'] . "'
-						AND     `ppc_account_id`='" . $mysql['ppc_account_id'] . "'";
-        // A removal is read by the traffic source repair as well (a removed
-        // account still names its source, and its time is stamped), so it
-        // takes the account and its source as every account write does.
-        // An id that is not one names no account, as the query's quoted id did.
-        $deletedAccountId = \Prosper202\Http\PostedId::read($_GET['delete_ppc_account_id']);
-        if ($deletedAccountId !== null) {
-            try {
-                \Prosper202\Setup\TrafficSourceAccountWrite::run(
-                    new \Prosper202\Database\Connection($db),
-                    [$deletedAccountId],
-                    [],
-                    static function () use ($db, $delete_sql): void {
-                        $removed = $db->query($delete_sql);
-                        if ($removed === false) {
-                            throw new \RuntimeException((string) $db->error);
-                        }
-                    }
-                );
-            } catch (\Throwable $e) {
-                record_mysql_error($db, 'removing traffic source account (202_ppc_accounts)', $e->getMessage());
-            }
+		// Removed only when it is the account's and still there; anything else
+		// says so rather than redirecting to "Removed". A removal is read by the
+		// traffic source repair as well (a removed account still names its
+		// source, and its time is stamped), so it takes the account and its
+		// source as every account write does. An id that is not one names no
+		// account.
+		$delete_success = false;
+		$deletedAccountId = \Prosper202\Http\PostedId::read($_GET['delete_ppc_account_id']);
+		if ($deletedAccountId !== null) {
+			try {
+				$delete_success = \Prosper202\Setup\TrafficSourceAccountWrite::run(
+					new \Prosper202\Database\Connection($db),
+					[$deletedAccountId],
+					[],
+					static fn (): bool => \Prosper202\Setup\SetupRemoval::mark(
+						new \Prosper202\Database\Connection($db),
+						'traffic_source_account',
+						$_GET['delete_ppc_account_id'],
+						(int) $_SESSION['user_id'],
+						time()
+					)
+				);
+			} catch (\Throwable $e) {
+				record_mysql_error($db, 'removing traffic source account (202_ppc_accounts)', $e->getMessage());
+			}
 		}
-        $delete_success = true;
-        // Landing Page Optimizer (segments-v2 G10): deletes change the
-        // synced snapshot too (buildSnapshot omits deleted rows) — flag
-        // dirty so the hourly cron re-pushes. DB-only — no HTTP here.
-        \Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
-        if ($slack) {
-            $slack->push('traffic_source_account_deleted', [
-                'account_name' => $_GET['delete_ppc_account_name'],
-                'user' => $user_row['username'],
-            ]);
-        }
+		if ($delete_success === true) {
+			// Landing Page Optimizer (segments-v2 G10): deletes change the
+			// synced snapshot too (buildSnapshot omits deleted rows) — flag
+			// dirty so the hourly cron re-pushes. DB-only — no HTTP here.
+			\Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
+			if ($slack) {
+				$slack->push('traffic_source_account_deleted', [
+					'account_name' => $_GET['delete_ppc_account_name'],
+					'user' => $user_row['username'],
+				]);
+			}
+		} else {
+			$error['delete_ppc_account'] = 'That traffic source account was not found on this account. Nothing was removed.';
+		}
 	} else {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
 	}

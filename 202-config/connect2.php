@@ -1571,8 +1571,17 @@ function getPrePopVars($vars, bool $toOwnLandingPage = false)
     return $urlvars;
 }
 
+/**
+ * $redirect_site_url with $urlvars (getPrePopVars()) added to its query, or,
+ * with $b64, packed into 202vars for cl.php or lpc.php, which add them to the
+ * page they choose. An ad click id the URL already carries (`gbraid=[[gbraid]]`
+ * filled) is not added again (PassOnClickIds).
+ */
 function setPrePopVars($urlvars, $redirect_site_url, $b64 = false)
 {
+    if (isset($urlvars) && !$b64) {
+        $urlvars = \Prosper202\Click\PassOnClickIds::withoutCarried((string) $urlvars, (string) $redirect_site_url);
+    }
     if (isset($urlvars) && $urlvars != '') {
 
         // remove & at the end of the string

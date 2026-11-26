@@ -677,7 +677,8 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   set-rules`): it takes the whole rule set as a JSON list, as `rotator_get`
   answers it under `data.rules`, and the install writes it in one
   transaction, in the order given. There are no tools for one rule; a rule
-  is added, changed, moved or removed by sending the set without or with it.
+  is added, changed, moved or removed by sending the set without or with it,
+  and an empty list removes every rule (servers from 1.9.81).
   `dry_run: true` answers what would change.
 - `p202 mcp tools` lists the tools as JSON. `p202 mcp call <tool> --input
   '<json>'` runs one as the app would (`--input -` reads the JSON from stdin).
