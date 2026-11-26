@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * Setup › Campaigns, the Goals panel (plan §2.2, PR 4b): shown while a
  * campaign is being edited, under its form. The list is the campaign's own
- * goals and the shared ones it pays for; the form adds or edits one, with
+ * goals and the ones shared with it, paid or tracked; the form adds or edits one, with
  * the common shape open (a name, an event, what it is worth) and everything
  * else under a closed Advanced disclosure (UI standard, rule 1).
  *
@@ -102,8 +102,14 @@ $gAdvancedSet = ($gv['goal_count'] !== '' && $gv['goal_count'] !== '1') || $gv['
 					$sum = p202_goal_summary($g, (int) $gp['campaign_id']); ?>
 					<li class="p202-list__item" data-goal-id="<?php echo (int) $g['goal_id']; ?>">
 						<span class="p202-list__name"><?php echo p202_setup_e($g['name']); ?></span>
-						<span class="p202-pill p202-pill--good"><?php echo p202_setup_e($sum['payout'] ?? $sum['worth']); ?></span>
-						<span class="p202-list__meta">shared <?php echo p202_setup_e($g['scope']); ?> goal on <code><?php echo p202_setup_e($sum['event']); ?></code> · paid here</span>
+						<?php if ($g['archived_at'] !== null) { ?>
+							<span class="p202-pill">archived</span>
+						<?php } elseif ($sum['paid']) { ?>
+							<span class="p202-pill p202-pill--good"><?php echo p202_setup_e($sum['payout'] ?? $sum['worth']); ?></span>
+						<?php } else { ?>
+							<span class="p202-pill">tracked</span>
+						<?php } ?>
+						<span class="p202-list__meta">shared <?php echo p202_setup_e(p202_goal_shared_from($g, (int) $gp['campaign_id'])); ?> on <code><?php echo p202_setup_e($sum['event']); ?></code> · <?php echo $sum['paid'] ? 'paid here' : 'counted here, not paid'; ?></span>
 					</li>
 				<?php } ?>
 			</ul>

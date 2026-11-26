@@ -1351,6 +1351,17 @@ try {
             // Setup page whatever owns the goal: Setup's permission alone.
             $r->put('/{id}/campaigns/{campaignId}', fn($ctx) => $campaignFigures($crud($cls)->attachCampaign(PathId::of($ctx), PathId::of($ctx, 'campaignId'), $payload), $goalFigures));
             $r->delete('/{id}/campaigns/{campaignId}', fn($ctx) => tap($crud($cls), fn($c) => $c->detachCampaign(PathId::of($ctx), PathId::of($ctx, 'campaignId'))));
+            // An account goal counting on every campaign: the account's
+            // goal, so an account-goal write ($appGoalWrite) like its edits.
+            $r->put('/{id}/every-campaign', function ($ctx) use ($crud, $cls, $payload, $campaignFigures, $goalFigures, $appGoalWrite) {
+                $appGoalWrite($crud($cls)->scopeOf(PathId::of($ctx)));
+                return $campaignFigures($crud($cls)->setEveryCampaign(PathId::of($ctx), $payload), $goalFigures);
+            });
+            $r->delete('/{id}/every-campaign', function ($ctx) use ($crud, $cls, $appGoalWrite) {
+                $appGoalWrite($crud($cls)->scopeOf(PathId::of($ctx)));
+                $crud($cls)->clearEveryCampaign(PathId::of($ctx));
+                return null; // 204
+            });
             $r->get('/{id}/reevaluation',  fn($ctx) => $campaignFigures($crud($cls)->reevaluationPreview(PathId::of($ctx), $queryParams), $outcomeFigures));
             $r->post('/{id}/reevaluation', function ($ctx) use ($crud, $cls, $payload, $campaignFigures, $outcomeFigures, $appGoalWrite) {
                 $appGoalWrite($crud($cls)->scopeOf(PathId::of($ctx)));
@@ -1659,6 +1670,11 @@ try {
             PathId::of($ctx),
             PathId::of($ctx, 'campaignId')
         ), \Api\V3\Support\CampaignFigures::GOAL));
+        $previewRouter->delete('/goals/{id}/every-campaign', function ($ctx) use ($crud, $appGoalWrite, $campaignFigures) {
+            $goals = $crud(\Api\V3\Controllers\GoalsController::class);
+            $appGoalWrite($goals->scopeOf(PathId::of($ctx)));
+            return $campaignFigures($goals->clearEveryCampaignPreview(PathId::of($ctx)), \Api\V3\Support\CampaignFigures::GOAL);
+        });
         // The LTV deletes make no authorization check inside their handlers:
         // the groups' ltv:write scope and role-permission middleware, run from
         // the main match before this router is consulted, are their only ones.
@@ -1805,6 +1821,8 @@ try {
         $r->delete('/{id}', $stageable);
         $r->put('/{id}/campaigns/{campaignId}', $stageable);
         $r->delete('/{id}/campaigns/{campaignId}', $stageable);
+        $r->put('/{id}/every-campaign', $stageable);
+        $r->delete('/{id}/every-campaign', $stageable);
         $r->post('/{id}/reevaluation', $stageable);
     });
     // An event is a write like a conversion: stageable, and applied through

@@ -244,7 +244,8 @@ final class GoalsController
             ]);
         }
         if (!$payable && ($payoutGiven || array_key_exists('notify_traffic_source', $payload))) {
-            throw new ValidationException('A tracked goal has no payout', ['payout' => 'payout and notify_traffic_source need payable: true']);
+            $field = $payoutGiven ? 'payout' : 'notify_traffic_source';
+            throw new ValidationException('A tracked goal has no payout', [$field => $field . ' needs payable: true; a tracked goal pays nothing and tells no traffic source']);
         }
 
         $goalId = $this->guard(function () use ($scope, $scopeId, $definition, $payable, $payoutUnits, $notify): int {
@@ -334,12 +335,20 @@ final class GoalsController
     /** @param array<string, mixed> $payload */
     public function attachCampaign(int $id, int $campaignId, array $payload): array
     {
-        PayloadKeys::refuseUnknown($payload, ['payout', 'notify_traffic_source'], 'a campaign goal');
-        $payoutUnits = array_key_exists('payout', $payload) && $payload['payout'] !== null ? self::amount($payload['payout'], 'payout') : null;
-        $notify = array_key_exists('notify_traffic_source', $payload) ? self::bool($payload['notify_traffic_source'], 'notify_traffic_source') : true;
+        PayloadKeys::refuseUnknown($payload, ['payable', 'payout', 'notify_traffic_source'], 'a campaign goal');
+        $payoutGiven = array_key_exists('payout', $payload) && $payload['payout'] !== null;
+        $payoutUnits = $payoutGiven ? self::amount($payload['payout'], 'payout') : null;
+        $payable = array_key_exists('payable', $payload) ? self::bool($payload['payable'], 'payable') : true;
+        $notify = !array_key_exists('notify_traffic_source', $payload) ? $payable : self::bool($payload['notify_traffic_source'], 'notify_traffic_source');
+        // A tracked row pays nothing and tells no traffic source; the values
+        // it reads back with (payout null, notify false) are accepted.
+        if (!$payable && ($payoutGiven || $notify)) {
+            $field = $payoutGiven ? 'payout' : 'notify_traffic_source';
+            throw new ValidationException('A tracked goal has no payout', [$field => $field . ' needs payable: true; a tracked goal pays nothing and tells no traffic source']);
+        }
 
-        $this->guard(function () use ($id, $campaignId, $payoutUnits, $notify): void {
-            $this->conn->transaction(function () use ($id, $campaignId, $payoutUnits, $notify): void {
+        $this->guard(function () use ($id, $campaignId, $payoutUnits, $notify, $payable): void {
+            $this->conn->transaction(function () use ($id, $campaignId, $payoutUnits, $notify, $payable): void {
                 $goal = $this->goals->lockGoal($this->userId, $id);
                 if ($goal['archived_at'] !== null) {
                     throw new ConflictException('Goal ' . $id . ' is archived and cannot be attached to a campaign.');
@@ -347,14 +356,25 @@ final class GoalsController
                 if ($this->goals->campaign($this->userId, $campaignId) === null) {
                     throw new NotFoundException('Campaign ' . $campaignId . ' not found');
                 }
+                // Any goal of the account may count on any of its campaigns,
+                // another campaign's own goal included: a funnel's goals are
+                // defined once and shared with each campaign that feeds it.
                 $scope = GoalScope::fromStored($goal['scope']);
-                if ($scope === GoalScope::CAMPAIGN && (int) $goal['scope_id'] !== $campaignId) {
-                    throw new ValidationException('A campaign goal belongs to one campaign', [
-                        'campaign_id' => 'goal ' . $id . ' is campaign ' . (int) $goal['scope_id'] . '\'s own goal; create a goal on campaign '
-                            . $campaignId . ', or use a registration or account goal to share one between campaigns',
-                    ]);
+                if (!$payable) {
+                    if ($scope === GoalScope::CAMPAIGN && (int) $goal['scope_id'] === $campaignId) {
+                        throw new ValidationException('A campaign\'s own goal is tracked there without a row', [
+                            'payable' => 'goal ' . $id . ' is campaign ' . $campaignId . '\'s own goal and always counts there; '
+                                . 'to stop paying for it, DELETE /goals/' . $id . '/campaigns/' . $campaignId,
+                        ]);
+                    }
+                    if (($goal['builtin'] ?? null) !== null) {
+                        throw new ValidationException('The built-in install goal is not shared', [
+                            'payable' => 'goal ' . $id . ' is the built-in ' . (string) $goal['builtin'] . ' goal: it counts every install of its app; '
+                                . 'a row for it on a campaign says what that campaign pays for an install, so it takes payable: true',
+                        ]);
+                    }
                 }
-                $this->goals->attach($this->userId, $campaignId, $id, $payoutUnits, $notify, time());
+                $this->goals->attach($this->userId, $campaignId, $id, $payoutUnits, $notify, time(), $payable);
             });
         });
 
@@ -371,15 +391,22 @@ final class GoalsController
         $this->mustFind($id);
         foreach ($this->guard(fn () => $this->goals->campaignsForGoal($this->userId, $id)) as $row) {
             if ((int) $row['campaign_id'] === $campaignId) {
+                $goal = $this->mustFind($id);
+                $own = GoalScope::fromStored($goal['scope']) === GoalScope::CAMPAIGN && (int) $goal['scope_id'] === $campaignId;
+                $everyCampaign = GoalScope::fromStored($goal['scope']) === GoalScope::ACCOUNT && $goal['every_campaign_since'] !== null;
+
                 return ['data' => [
                     'record' => self::presentTerm($row),
                     'action' => 'delete',
-                    'effect' => 'outcomes of goal ' . $id . ' on campaign ' . $campaignId . ' are tracked, not paid, from now on; '
-                        . 'conversions already recorded are kept',
+                    'effect' => $own || $everyCampaign
+                        ? 'outcomes of goal ' . $id . ' on campaign ' . $campaignId . ' are tracked, not paid, from now on; '
+                            . 'conversions already recorded are kept'
+                        : 'goal ' . $id . ' stops counting on campaign ' . $campaignId . '\'s clicks from now on; '
+                            . 'outcomes and conversions already recorded are kept',
                 ]];
             }
         }
-        throw new NotFoundException('Campaign ' . $campaignId . ' does not pay for goal ' . $id);
+        throw new NotFoundException('Campaign ' . $campaignId . ' does not count goal ' . $id . ' by a row');
     }
 
     public function detachCampaign(int $id, int $campaignId): void
@@ -387,8 +414,79 @@ final class GoalsController
         $this->mustFind($id);
         $removed = $this->guard(fn () => $this->goals->detach($this->userId, $campaignId, $id));
         if ($removed === 0) {
-            throw new NotFoundException('Campaign ' . $campaignId . ' does not pay for goal ' . $id);
+            throw new NotFoundException('Campaign ' . $campaignId . ' does not count goal ' . $id . ' by a row');
         }
+    }
+
+    /**
+     * Make an account goal count on every campaign of the account, from
+     * now: a click on any campaign reaches it, tracked unless a campaign
+     * pays for it by a row. Already on, it keeps the time it started.
+     *
+     * @param array<string, mixed> $payload
+     */
+    public function setEveryCampaign(int $id, array $payload): array
+    {
+        PayloadKeys::refuseUnknown($payload, [], 'an every-campaign goal (send {})');
+        $this->guard(function () use ($id): void {
+            $this->conn->transaction(function () use ($id): void {
+                $goal = $this->everyCampaignGoal($id);
+                if ($goal['every_campaign_since'] !== null) {
+                    return;
+                }
+                $now = time();
+                $this->goals->setEveryCampaign($this->userId, $id, $now, $now);
+            });
+        });
+
+        return ['data' => $this->present($this->mustFind($id), true)];
+    }
+
+    public function clearEveryCampaignPreview(int $id): array
+    {
+        $goal = $this->mustFind($id);
+        if (GoalScope::fromStored($goal['scope']) !== GoalScope::ACCOUNT || $goal['every_campaign_since'] === null) {
+            throw new NotFoundException('Goal ' . $id . ' does not count on every campaign');
+        }
+
+        return ['data' => [
+            'goal' => $this->present($goal, true),
+            'action' => 'delete',
+            'effect' => 'goal ' . $id . ' counts from now on only on the campaigns listed under its campaigns; '
+                . 'outcomes and conversions already recorded are kept',
+        ]];
+    }
+
+    public function clearEveryCampaign(int $id): void
+    {
+        $this->guard(function () use ($id): void {
+            $this->conn->transaction(function () use ($id): void {
+                $goal = $this->goals->lockGoal($this->userId, $id);
+                if (GoalScope::fromStored($goal['scope']) !== GoalScope::ACCOUNT || $goal['every_campaign_since'] === null) {
+                    throw new NotFoundException('Goal ' . $id . ' does not count on every campaign');
+                }
+                $this->goals->setEveryCampaign($this->userId, $id, null, time());
+            });
+        });
+    }
+
+    /** @return array<string, mixed> the goal, locked, when it is a live account goal of the user's own */
+    private function everyCampaignGoal(int $id): array
+    {
+        $goal = $this->goals->lockGoal($this->userId, $id);
+        if ($goal['archived_at'] !== null) {
+            throw new ConflictException('Goal ' . $id . ' is archived and cannot be shared with every campaign.');
+        }
+        self::refuseBuiltin($goal, 'shared with every campaign');
+        if (GoalScope::fromStored($goal['scope']) !== GoalScope::ACCOUNT) {
+            throw new ValidationException('Only an account goal counts on every campaign', [
+                'scope' => 'goal ' . $id . ' is a ' . (string) $goal['scope'] . ' goal; share it with each campaign by '
+                    . 'PUT /goals/' . $id . '/campaigns/{campaign_id} (payable: false to count it without paying), '
+                    . 'or create an account goal (scope "account")',
+            ]);
+        }
+
+        return $goal;
     }
 
     // ─── Computations ───────────────────────────────────────────────
@@ -747,6 +845,8 @@ final class GoalsController
             'definition_valid' => $valid,
             'effective_at' => $current['effective_at'] ?? null,
             'archived_at' => $row['archived_at'] !== null ? (int) $row['archived_at'] : null,
+            'every_campaign' => $row['every_campaign_since'] !== null,
+            'every_campaign_since' => $row['every_campaign_since'] !== null ? (int) $row['every_campaign_since'] : null,
             'created_at' => (int) $row['created_at'],
             'updated_at' => (int) $row['updated_at'],
         ];
@@ -782,6 +882,7 @@ final class GoalsController
             'campaign_id' => (int) $r['campaign_id'],
             'goal_id' => (int) $r['goal_id'],
             'campaign_name' => $r['aff_campaign_name'] ?? null,
+            'payable' => (int) $r['payable'] === 1,
             'payout_mode' => $r['payout_mode'] ?? null,
             'payout' => $r['payout'] !== null ? (string) $r['payout'] : null,
             'notify_traffic_source' => (int) $r['notify_traffic_source'] === 1,

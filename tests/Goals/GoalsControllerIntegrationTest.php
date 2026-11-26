@@ -164,7 +164,7 @@ final class GoalsControllerIntegrationTest extends TestCase
         $this->api()->update($id, ['definition' => ['name' => 'A', 'trigger' => ['event' => 'a']]]);
     }
 
-    public function testCampaignPayoutsAttachOnlyWhereTheGoalBelongs(): void
+    public function testAnyGoalIsSharedWithAnyCampaignPaidOrTracked(): void
     {
         $this->campaign(7);
         $this->campaign(8);
@@ -172,10 +172,24 @@ final class GoalsControllerIntegrationTest extends TestCase
         $own = $this->api()->create(['scope' => 'campaign', 'scope_id' => 7, 'definition' => ['name' => 'A', 'trigger' => ['event' => 'a']]])['data']['goal_id'];
         $app = $this->api()->create(['scope' => 'registration', 'scope_id' => 3, 'definition' => ['name' => 'Level 3', 'trigger' => ['event' => 'level']]])['data']['goal_id'];
 
-        self::assertArrayHasKey('campaign_id', self::fieldErrors(fn () => $this->api()->attachCampaign($own, 8, [])));
+        // Campaign 7's own goal counts on campaign 8 too, tracked there.
+        $shared = $this->api()->attachCampaign($own, 8, ['payable' => false])['data'];
+        self::assertSame(['campaign_id' => 8, 'payable' => false, 'payout' => null, 'notify_traffic_source' => false],
+            array_intersect_key($shared, array_flip(['campaign_id', 'payable', 'payout', 'notify_traffic_source'])));
+        self::assertArrayHasKey('payout', self::fieldErrors(fn () => $this->api()->attachCampaign($own, 8, ['payable' => false, 'payout' => '1.00'])));
+        self::assertArrayHasKey('notify_traffic_source', self::fieldErrors(fn () => $this->api()->attachCampaign($own, 8, ['payable' => false, 'notify_traffic_source' => true])));
+        self::assertSame($shared['created_at'], $this->api()->attachCampaign($own, 8, ['payable' => false, 'payout' => null, 'notify_traffic_source' => false])['data']['created_at'],
+            'the body a tracked share reads back with is accepted');
+        self::assertArrayHasKey('payable', self::fieldErrors(fn () => $this->api()->attachCampaign($own, 7, ['payable' => false])),
+            'a campaign\'s own goal counts there without a row');
+        self::assertArrayHasKey('payable', self::fieldErrors(fn () => $this->api()->attachCampaign($own, 8, ['payable' => 'no'])));
+        self::assertArrayHasKey('payable', self::fieldErrors(fn () => $this->api()->attachCampaign($own, 8, ['payable' => 0])));
+        self::assertArrayHasKey('scope', self::fieldErrors(fn () => $this->api()->setEveryCampaign($own, [])), 'only an account goal counts on every campaign');
+        self::assertArrayHasKey('campaign_id', self::fieldErrors(fn () => $this->api()->attachCampaign($own, 8, ['campaign_id' => 9])));
+
         $term = $this->api()->attachCampaign($app, 8, ['payout' => '4.00', 'notify_traffic_source' => false])['data'];
-        self::assertSame(['campaign_id' => 8, 'payout_mode' => 'accumulate', 'payout' => '4.00000', 'notify_traffic_source' => false],
-            array_intersect_key($term, array_flip(['campaign_id', 'payout', 'notify_traffic_source', 'payout_mode'])));
+        self::assertSame(['campaign_id' => 8, 'payable' => true, 'payout_mode' => 'accumulate', 'payout' => '4.00000', 'notify_traffic_source' => false],
+            array_intersect_key($term, array_flip(['campaign_id', 'payable', 'payout', 'notify_traffic_source', 'payout_mode'])));
         self::assertArrayHasKey('payout', self::fieldErrors(fn () => $this->api()->attachCampaign($app, 8, ['payout' => -1])));
         self::assertArrayHasKey('notify_traffic_source', self::fieldErrors(fn () => $this->api()->attachCampaign($app, 8, ['notify_traffic_source' => 'no'])));
 

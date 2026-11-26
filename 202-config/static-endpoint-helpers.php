@@ -1507,7 +1507,7 @@ if (!function_exists('p202RecordWebEvent')) {
         if (!is_int($now) || $now <= 0) {
             throw new \InvalidArgumentException('p202RecordWebEvent: at must be a positive Unix time');
         }
-        if (!$events->campaignEvaluatesGoals($click['user_id'], $click['campaign_id'], $now)) {
+        if (!$events->campaignEvaluatesEvent($click['user_id'], $click['campaign_id'], $now, $get)) {
             return ['status' => 'no_goals', 'event_name' => \Prosper202\Goals\WebEvents::nameFrom($get)];
         }
         if (p202ExtractReversal($get)['reversal']) {
@@ -1546,6 +1546,9 @@ if (!function_exists('p202RecordWebEvent')) {
                 return ['status' => 'not_found', 'reason' => 'unknown_click'];
             }
             throw $e;
+        }
+        if ($events->takenEventLeftNoOutcome($click['user_id'], $click['campaign_id'], $now, $result)) {
+            return ['status' => 'no_goals', 'event_name' => \Prosper202\Goals\WebEvents::nameFrom($get)];
         }
         if ($result['accepted'] !== []) {
             p202LinkConversionIdentity($db, $clickId, $get);
@@ -1608,12 +1611,13 @@ if (!function_exists('p202RecordPurLinkWebEvent')) {
         $notifier = new \Prosper202\Goals\TrafficSourceNotifier($conn, false);
         $engine = new \Prosper202\Goals\GoalEngine($conn, null, null, null, $notifier);
         $event = null;
+        $leftNoOutcome = false;
         try {
             $done = (new \Prosper202\Click\PurLinkExit($conn))->convert(
                 $subid,
                 $key,
-                function (int $user, int $click, int $campaign, string $payout) use ($conn, $events, $engine, $claims, $get, $now, &$event): array {
-                    if (!$events->campaignEvaluatesGoals($user, $campaign, $now)) {
+                function (int $user, int $click, int $campaign, string $payout) use ($conn, $events, $engine, $claims, $get, $now, &$event, &$leftNoOutcome): array {
+                    if (!$events->campaignEvaluatesEvent($user, $campaign, $now, $get)) {
                         throw new \Prosper202\Goals\PurLinkNoGoals();
                     }
                     if (p202ExtractReversal($get)['reversal']) {
@@ -1626,7 +1630,10 @@ if (!function_exists('p202RecordPurLinkWebEvent')) {
                     if ($subject === null) {
                         throw new \Prosper202\Goals\GoalEngineException('PurLink subject not found', \Prosper202\Goals\GoalEngineException::NOT_FOUND);
                     }
-                    return $engine->ingestPurLinkInTransaction($user, $subject, [$event], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
+                    $done = $engine->ingestPurLinkInTransaction($user, $subject, [$event], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
+                    $leftNoOutcome = $events->takenEventLeftNoOutcome($user, $campaign, $now, $done['result']);
+
+                    return $done;
                 }
             );
         } catch (\Prosper202\Goals\PurLinkNoGoals) {
@@ -1651,6 +1658,10 @@ if (!function_exists('p202RecordPurLinkWebEvent')) {
             return ['status' => 'not_found', 'reason' => 'unknown_click'];
         }
         $result = $engine->finishPurLinkIngest($claims['user_id'], $done);
+        if ($leftNoOutcome) {
+            // The goal event is kept (its progress counts); the plain conversion is written by the caller.
+            return ['status' => 'no_goals', 'event_name' => \Prosper202\Goals\WebEvents::nameFrom($get)];
+        }
         if ($result['accepted'] !== []) {
             p202LinkConversionIdentity($db, $claims['click_id'], $get);
         }

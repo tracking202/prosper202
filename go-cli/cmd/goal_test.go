@@ -96,6 +96,9 @@ func TestGoalCreateRefusesBadInputBeforeAnyRequest(t *testing.T) {
 		{[]string{"goal", "evaluate"}, "--file", "README.md"},
 		{[]string{"goal", "reevaluate", "5", "--limit", "zero"}, "--limit", ""},
 		{[]string{"goal", "campaign", "set", "5", "7", "--payout", "lots"}, "--payout", ""},
+		{[]string{"goal", "campaign", "set", "5", "7", "--not-payable", "--payout", "3"}, "--not-payable takes no", ""},
+		{[]string{"goal", "campaign", "set", "5", "all", "--payout", "3"}, "applies to one campaign", "--payout"},
+		{[]string{"goal", "campaign", "set", "5", "all", "--not-payable"}, "applies to one campaign", "goal campaign set"},
 		{[]string{"goal", "outcomes", "5", "--subject-type", "visitor"}, "--subject-type", ""},
 	}
 	for _, tc := range cases {
@@ -230,6 +233,54 @@ func TestGoalCampaignRemovePreviewsWithDryRun(t *testing.T) {
 	got := (*seen)[0]
 	if got.Method != "DELETE" || !strings.HasSuffix(got.Path, "/goals/5/campaigns/7") || !strings.Contains(got.Query, "dry_run=1") {
 		t.Errorf("request = %+v, want DELETE …/goals/5/campaigns/7?dry_run=1", got)
+	}
+}
+
+// A goal shared with another campaign as tracked sends payable false and
+// nothing else; `all` is the account goal's every-campaign route.
+func TestGoalCampaignSetSharesTrackedAndWithEveryCampaign(t *testing.T) {
+	_, seen := goalServer(t, 200, `{"data":{"campaign_id":314,"goal_id":12,"payable":false}}`)
+	if _, _, err := executeCommand("goal", "campaign", "set", "12", "314", "--not-payable"); err != nil {
+		t.Fatalf("set --not-payable: %v", err)
+	}
+	if _, _, err := executeCommand("goal", "campaign", "set", "20", "all"); err != nil {
+		t.Fatalf("set all: %v", err)
+	}
+	if _, _, err := executeCommand("goal", "campaign", "remove", "20", "all", "--dry-run"); err != nil {
+		t.Fatalf("remove all --dry-run: %v", err)
+	}
+	if _, _, err := executeCommand("goal", "campaign", "remove", "20", "all", "--force"); err != nil {
+		t.Fatalf("remove all --force: %v", err)
+	}
+	if len(*seen) != 4 {
+		t.Fatalf("requests = %+v, want 4", *seen)
+	}
+	tracked := (*seen)[0]
+	if tracked.Method != "PUT" || !strings.HasSuffix(tracked.Path, "/goals/12/campaigns/314") {
+		t.Errorf("tracked share = %+v", tracked)
+	}
+	if len(tracked.Body) != 1 || tracked.Body["payable"] != false {
+		t.Errorf("tracked share body = %v, want {payable: false} alone", tracked.Body)
+	}
+	every := (*seen)[1]
+	if every.Method != "PUT" || !strings.HasSuffix(every.Path, "/goals/20/every-campaign") || len(every.Body) != 0 {
+		t.Errorf("every-campaign = %+v, want PUT …/goals/20/every-campaign with {}", every)
+	}
+	preview := (*seen)[2]
+	if preview.Method != "DELETE" || !strings.HasSuffix(preview.Path, "/goals/20/every-campaign") || !strings.Contains(preview.Query, "dry_run=1") {
+		t.Errorf("preview = %+v, want DELETE …/goals/20/every-campaign?dry_run=1", preview)
+	}
+	off := (*seen)[3]
+	if off.Method != "DELETE" || !strings.HasSuffix(off.Path, "/goals/20/every-campaign") || strings.Contains(off.Query, "dry_run") {
+		t.Errorf("remove = %+v, want DELETE …/goals/20/every-campaign", off)
+	}
+}
+
+func TestGoalShareRefusalsNameTheNextCommand(t *testing.T) {
+	goalServer(t, 422, `{"error":true,"message":"Only an account goal counts on every campaign","status":422,"field_errors":{"scope":"goal 5 is a campaign goal"}}`)
+	_, _, err := executeCommand("goal", "campaign", "set", "5", "all")
+	if err == nil || exitCodeForError(err) != ExitValidation || !strings.Contains(hintFor(err), "--not-payable") {
+		t.Errorf("all on a campaign goal: %v / %q", err, hintFor(err))
 	}
 }
 

@@ -265,18 +265,8 @@ final class GoalEvaluator
      */
     private static function step(int $goalId, int $version, GoalDefinition $def, GoalSubject $subject, GoalEvent $event, EvaluationState $state): array
     {
-        if ($def->triggerInstall !== $event->isInstall) {
+        if (!self::triggers($def, $event)) {
             return [];
-        }
-        if (!$def->triggerInstall) {
-            if ($event->name !== $def->triggerEvent) {
-                return [];
-            }
-            foreach ($def->where as $predicate) {
-                if (!self::holds($predicate, $event)) {
-                    return [];
-                }
-            }
         }
         foreach ($def->after as $prereq) {
             if (!isset($state->reached[$prereq])) {
@@ -345,6 +335,27 @@ final class GoalEvaluator
         unset($p);
 
         return $out;
+    }
+
+    /** Whether the event is the goal's trigger: its kind, name and every `where` predicate. */
+    public static function triggers(GoalDefinition $def, GoalEvent $event): bool
+    {
+        if ($def->triggerInstall !== $event->isInstall) {
+            return false;
+        }
+        if ($def->triggerInstall) {
+            return true;
+        }
+        if ($event->name !== $def->triggerEvent) {
+            return false;
+        }
+        foreach ($def->where as $predicate) {
+            if (!self::holds($predicate, $event)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**

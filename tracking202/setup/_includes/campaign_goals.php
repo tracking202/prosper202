@@ -429,8 +429,9 @@ function p202_goal_archive(mysqli $db, int $userId, int $campaignId, string $raw
 }
 
 /**
- * The campaign's goals as the page lists them: its own, then the goals of
- * an app or the account it pays for (listed, edited elsewhere).
+ * The campaign's goals as the page lists them: its own, then the goals
+ * shared with it, paid or tracked: another campaign's, an app's or the
+ * account's (listed, edited elsewhere).
  *
  * @return array{own: list<array<string, mixed>>, attached: list<array<string, mixed>>}
  */
@@ -443,14 +444,39 @@ function p202_goal_list(mysqli $db, int $userId, int $campaignId): array
     }
     $attached = [];
     $conn = new \Prosper202\Database\Connection($db);
-    foreach ((new \Prosper202\Goals\MysqlGoalRepository($conn))->campaignTerms($campaignId, $userId) as $goalId => $term) {
-        $goal = $api->get((int) $goalId)['data'];
-        if ($goal['scope'] !== 'campaign') {
-            $attached[] = $goal;
+    foreach ((new \Prosper202\Goals\MysqlGoalRepository($conn))->sharedGoalIds($userId, $campaignId) as $goalId) {
+        $goal = $api->get($goalId)['data'];
+        // An archived account goal that counted on every campaign would
+        // otherwise be listed on every campaign for good.
+        if ($goal['archived_at'] !== null && !p202_goal_has_row($goal, $campaignId)) {
+            continue;
         }
+        $attached[] = $goal;
     }
 
     return ['own' => $own, 'attached' => $attached];
+}
+
+/** Whether a campaign names the goal by a row of its own, paid or tracked. */
+function p202_goal_has_row(array $goal, int $campaignId): bool
+{
+    foreach ($goal['campaigns'] ?? [] as $t) {
+        if ((int) $t['campaign_id'] === $campaignId) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/** Where a goal shared with a campaign comes from, in a few words. */
+function p202_goal_shared_from(array $goal, int $campaignId): string
+{
+    return match ((string) $goal['scope']) {
+        'campaign' => 'campaign ' . (int) $goal['scope_id'] . '\'s goal',
+        'registration' => 'app goal',
+        default => !p202_goal_has_row($goal, $campaignId) && ($goal['every_campaign'] ?? false) ? 'account goal on every campaign' : 'account goal',
+    };
 }
 
 /**
@@ -483,9 +509,9 @@ function p202_goal_summary(array $goal, int $campaignId): array
     return [
         'event' => $event,
         'worth' => $worth,
-        'paid' => $term !== null,
-        'payout' => $term !== null && $term['payout'] !== null ? '$' . \Prosper202\Goals\TrafficSourceNotifier::money((string) $term['payout']) : null,
-        'notify' => $term !== null && $term['notify_traffic_source'],
+        'paid' => $term !== null && $term['payable'],
+        'payout' => $term !== null && $term['payable'] && $term['payout'] !== null ? '$' . \Prosper202\Goals\TrafficSourceNotifier::money((string) $term['payout']) : null,
+        'notify' => $term !== null && $term['payable'] && $term['notify_traffic_source'],
     ];
 }
 

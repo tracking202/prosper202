@@ -234,15 +234,17 @@ final class RolePermissionTest extends TestCase
      * (an app's, the account's) asks for manage_attribution_models first,
      * as Setup › Mobile Apps' writes do. What a campaign pays for a goal is
      * set on the campaign's page, so attaching and detaching ask for Setup
-     * alone. The two computations write nothing and echo their own input,
+     * alone. Counting an account goal on every campaign is a write to the
+     * account's goal. The two computations write nothing and echo their own input,
      * so they are gated but not masked.
      */
     public function testGoalsAreSetupsAndAppGoalWritesAskForTheModelsPermission(): void
     {
         $routes = $this->mainRoutes();
         $goals = array_values(array_filter($routes, static fn (array $r): bool => preg_match('#^/goals(/|$)#', $r['path']) === 1));
-        self::assertCount(15, $goals, 'the goal routes were read');
-        $byOwner = ['POST /goals', 'PUT /goals/{id}', 'DELETE /goals/{id}', 'POST /goals/{id}/reevaluation'];
+        self::assertCount(17, $goals, 'the goal routes were read');
+        $byOwner = ['POST /goals', 'PUT /goals/{id}', 'DELETE /goals/{id}', 'POST /goals/{id}/reevaluation',
+            'PUT /goals/{id}/every-campaign', 'DELETE /goals/{id}/every-campaign'];
         foreach ($goals as $route) {
             $key = $route['method'] . ' ' . $route['path'];
             self::assertSame(['$setupSection'], $route['middleware'], "$key (line {$route['line']}) runs Setup's permission, and only it, as middleware");

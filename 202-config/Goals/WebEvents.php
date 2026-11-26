@@ -238,10 +238,83 @@ final class WebEvents
      */
     public function campaignEvaluatesGoals(int $userId, int $campaignId, int $at): bool
     {
+        return $campaignId > 0 && self::anyLive((new MysqlGoalRepository($this->conn))->specsForCampaign($userId, $campaignId), $at);
+    }
+
+    /** Whether the campaign has a goal of its own, or pays for one, live at $at. */
+    public function campaignChoseGoals(int $userId, int $campaignId, int $at): bool
+    {
+        return $campaignId > 0 && self::anyLive((new MysqlGoalRepository($this->conn))->specsForCampaign($userId, $campaignId, true), $at);
+    }
+
+    /**
+     * Whether a hit a goal took, but that wrote no outcome, is still the
+     * plain conversion: on a campaign that chose no goals, a newly accepted
+     * event that changed nothing (a count not yet met, a goal it waits for).
+     *
+     * @param array{accepted: list<string>, outcomes_written: int, outcomes_retired: int} $result
+     */
+    public function takenEventLeftNoOutcome(int $userId, int $campaignId, int $at, array $result): bool
+    {
+        return $result['accepted'] !== [] && $result['outcomes_written'] === 0 && $result['outcomes_retired'] === 0
+            && !$this->campaignChoseGoals($userId, $campaignId, $at);
+    }
+
+    /**
+     * Whether a postback or pixel hit ($get) is evaluated by goals rather
+     * than recorded as the plain conversion it always was. A campaign that
+     * chose goals (its own, or one it pays for) evaluates every event. A
+     * campaign that only receives goals it did not choose (one shared as
+     * tracked, or an account goal counting on every campaign) evaluates the
+     * events one of those goals triggers on, predicates included, so its
+     * other events stay plain conversions (plan §2.2).
+     *
+     * @param array<string, mixed> $get
+     */
+    public function campaignEvaluatesEvent(int $userId, int $campaignId, int $at, array $get): bool
+    {
         if ($campaignId <= 0) {
             return false;
         }
-        foreach ((new MysqlGoalRepository($this->conn))->specsForCampaign($userId, $campaignId) as $spec) {
+        $repo = new MysqlGoalRepository($this->conn);
+        if ($this->campaignChoseGoals($userId, $campaignId, $at)) {
+            return true;
+        }
+        try {
+            $event = self::fromQuery($get, '', $at, true);
+        } catch (InvalidGoalDefinition) {
+            return false;
+        }
+        foreach ($repo->specsForCampaign($userId, $campaignId) as $spec) {
+            if ($spec->startsAt > $at || ($spec->endsAt !== null && $at >= $spec->endsAt)) {
+                continue;
+            }
+            $inForce = null;
+            foreach ($spec->versions as $version) {
+                if ((int) $version['effective_at'] <= $at && ($inForce === null || (int) $version['version'] > (int) $inForce['version'])) {
+                    $inForce = $version;
+                }
+            }
+            if ($inForce === null) {
+                continue;
+            }
+            try {
+                $definition = GoalDefinition::parse($inForce['definition'], $spec->goalId);
+            } catch (InvalidGoalDefinition) {
+                continue;
+            }
+            if (GoalEvaluator::triggers($definition, $event)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @param list<GoalSpec> $specs */
+    private static function anyLive(array $specs, int $at): bool
+    {
+        foreach ($specs as $spec) {
             if ($spec->startsAt > $at || ($spec->endsAt !== null && $at >= $spec->endsAt)) {
                 continue;
             }

@@ -456,8 +456,10 @@ func hintGoalError(err error) error {
 			return withHint(err, "--after names live goals of the same owner: `p202 goal list --campaign-id <id>` (or --registration-id / --account) shows them.")
 		case strings.HasPrefix(field, "definition"):
 			return withHint(err, "Fix the named part of the definition; `p202 goal validate` checks one without saving, and documentation/api/22-goals.md has the format.")
-		case field == "campaign_id":
-			return withHint(err, "A campaign's own goal belongs to that campaign; share one between campaigns with a --registration-id or --account goal.")
+		case field == "payable":
+			return withHint(err, "--not-payable shares a goal with another campaign; a campaign's own goal always counts there, so `p202 goal campaign remove <goal-id> <campaign-id>` stops paying for it.")
+		case field == "scope":
+			return withHint(err, "Only an --account goal takes `all`; share any other with each campaign by `p202 goal campaign set <goal-id> <campaign-id> --not-payable`.")
 		}
 	}
 	return err
@@ -771,15 +773,19 @@ var goalReevaluateCmd = &cobra.Command{
 
 // ── Campaign payouts ────────────────────────────────────────────────
 
+// goalEveryCampaign in place of a campaign id is every campaign of the
+// account (/goals/{id}/every-campaign on the server).
+const goalEveryCampaign = "all"
+
 var goalCampaignCmd = &cobra.Command{
 	Use:     "campaign",
 	Aliases: []string{"campaigns"},
-	Short:   "Which campaigns pay for a goal, and how much",
+	Short:   "Which campaigns count and pay for a goal, and how much",
 }
 
 var goalCampaignListCmd = &cobra.Command{
 	Use:   "list <goal-id>",
-	Short: "List the campaigns paying for a goal",
+	Short: "List the campaigns a goal is set on, paid or tracked",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
@@ -797,10 +803,43 @@ var goalCampaignListCmd = &cobra.Command{
 
 var goalCampaignSetCmd = &cobra.Command{
 	Use:   "set <goal-id> <campaign-id>",
-	Short: "Make a campaign pay for a goal, or change its payout (default: the goal's own value)",
-	Args:  cobra.ExactArgs(2),
+	Short: "Make a campaign count and pay for any goal, or change its payout (all: every campaign)",
+	Long: "Shares a goal with a campaign: the campaign's clicks reach it from now on. Any goal of the\n" +
+		"account can be shared, another campaign's own included, so a funnel's goals are defined once\n" +
+		"and set on each campaign that feeds it. The campaign pays the goal's own value unless --payout\n" +
+		"says otherwise; --not-payable counts it there without paying.\n\n" +
+		"`all` in place of the campaign id makes an account goal count on every campaign of the\n" +
+		"account from now on, campaigns made later included, tracked unless a campaign pays for it.\n\n" +
+		"  p202 goal campaign set 12 314 --not-payable   # goal 12 (campaign 316's) counts on 314\n" +
+		"  p202 goal campaign set 12 315 --payout 4.00\n" +
+		"  p202 goal campaign set 20 all                 # account goal 20 counts everywhere",
+	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if args[1] == goalEveryCampaign {
+			for _, f := range []string{"payout", "clear-payout", "notify", "not-payable"} {
+				if cmd.Flags().Changed(f) {
+					return validationError("--%s applies to one campaign; `all` counts the goal on every campaign without paying", f).
+						WithHint("Set `all`, then `p202 goal campaign set <goal-id> <campaign-id> --payout …` for each campaign that pays for it.")
+				}
+			}
+			c, err := api.NewFromConfig()
+			if err != nil {
+				return err
+			}
+			data, err := c.Put("goals/"+args[0]+"/every-campaign", map[string]interface{}{})
+			if err != nil {
+				return hintGoalError(err)
+			}
+			render(data)
+			return nil
+		}
 		body := map[string]interface{}{}
+		if notPayable, _ := cmd.Flags().GetBool("not-payable"); notPayable {
+			if cmd.Flags().Changed("payout") || cmd.Flags().Changed("clear-payout") || cmd.Flags().Changed("notify") {
+				return validationError("--not-payable takes no --payout, --clear-payout or --notify")
+			}
+			body["payable"] = false
+		}
 		if err := goalPayoutBody(cmd, body); err != nil {
 			return err
 		}
@@ -819,14 +858,21 @@ var goalCampaignSetCmd = &cobra.Command{
 
 var goalCampaignRemoveCmd = &cobra.Command{
 	Use:   "remove <goal-id> <campaign-id>",
-	Short: "Stop a campaign paying for a goal (its outcomes there are tracked, not paid, from now on)",
-	Args:  cobra.ExactArgs(2),
+	Short: "Stop a campaign paying for or counting a goal (all: stop counting on every campaign)",
+	Long: "Removes the goal from the campaign: a campaign's own goal stays there, tracked, and any other\n" +
+		"goal stops counting there (outcomes already recorded are kept). `all` in place of the campaign\n" +
+		"id stops an account goal counting on every campaign; the campaigns set on it one by one stay.",
+	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
 		}
 		endpoint := "goals/" + args[0] + "/campaigns"
+		if args[1] == goalEveryCampaign {
+			endpoint = "goals/" + args[0]
+			args = []string{args[0], "every-campaign"}
+		}
 		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
 			return renderDeletePreviews(c, endpoint, []string{args[1]})
 		}
@@ -834,7 +880,11 @@ var goalCampaignRemoveCmd = &cobra.Command{
 			return stageDeletes(c, endpoint, []string{args[1]})
 		}
 		if force, _ := cmd.Flags().GetBool("force"); !force {
-			ok, err := confirmAction(cmd, "Stop campaign %s paying for goal %s?", args[1], args[0])
+			question := fmt.Sprintf("Stop campaign %s paying for or counting goal %s?", args[1], args[0])
+			if args[1] == "every-campaign" {
+				question = fmt.Sprintf("Stop goal %s counting on every campaign?", args[0])
+			}
+			ok, err := confirmAction(cmd, "%s", question)
 			if err != nil {
 				return err
 			}
@@ -846,7 +896,11 @@ var goalCampaignRemoveCmd = &cobra.Command{
 		if err := c.Delete(endpoint + "/" + args[1]); err != nil {
 			return err
 		}
-		output.Success("Campaign %s no longer pays for goal %s.", args[1], args[0])
+		if args[1] == "every-campaign" {
+			output.Success("Goal %s counts only on the campaigns set on it.", args[0])
+			return nil
+		}
+		output.Success("Goal %s is no longer set on campaign %s.", args[0], args[1])
 		return nil
 	},
 }
@@ -868,6 +922,7 @@ func init() {
 		enumFlag(cmd, "notify", goalNotifyEnum)
 	}
 	goalCampaignSetCmd.Flags().Bool("clear-payout", false, "Go back to the goal's own value")
+	goalCampaignSetCmd.Flags().Bool("not-payable", false, "Count the goal on the campaign without paying for it")
 	registerIdempotencyKeyFlag(goalCreateCmd)
 	for _, cmd := range []*cobra.Command{goalCreateCmd, goalUpdateCmd, goalValidateCmd} {
 		registerGoalDefinitionFlags(cmd)
