@@ -6,6 +6,7 @@ namespace Tests\User;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\DataSeeder;
+use Prosper202\User\ShownSettings;
 
 /**
  * Personal settings for a user with no 202_users_pref row (J3AW). The install,
@@ -109,7 +110,10 @@ final class AccountPageWithoutPreferencesRowIntegrationTest extends TestCase
      */
     private static function request(array $env = [], string $page = self::PAGE): array
     {
-        $env += ['P202_SU_USER' => (string) self::USER, 'P202_SU_SESSION_DIR' => self::$sessions];
+        // One shown-settings secret for every request, so a version read from
+        // the page in one request is current in the save that posts it back.
+        $env += ['P202_SU_USER' => (string) self::USER, 'P202_SU_SESSION_DIR' => self::$sessions,
+            'P202_SU_SHOWN_SECRET' => str_repeat('5a', 32)];
         $proc = proc_open(
             [PHP_BINARY, '-d', 'display_errors=stderr', '-d', 'error_reporting=-1',
                 dirname(__DIR__) . '/Auth/fixtures/session-user-runner.php', $page],
@@ -192,9 +196,29 @@ final class AccountPageWithoutPreferencesRowIntegrationTest extends TestCase
         self::assertStringContainsString('name="auto_database_management"', $page['output'], 'the settings were drawn');
     }
 
+    /**
+     * The version the page shows for $form, as a browser posts it back: a
+     * settings save without it is refused as stale (#553).
+     *
+     * @return array<string, string>
+     */
+    private static function shown(string $form): array
+    {
+        $page = self::request();
+        $field = ShownSettings::FIELD;
+        self::assertSame(1, preg_match(
+            '/name="' . preg_quote($field . '[' . $form . ']', '/') . '" value="([^"]+)"/',
+            $page['output'],
+            $found
+        ), "the page shows the $form form's version");
+
+        return [$form => $found[1]];
+    }
+
     public function testTheProfileSaveStoresThePreferences(): void
     {
         $post = self::request(['P202_SU_POST' => json_encode([
+            ShownSettings::FIELD => self::shown('profile'),
             'update_profile' => '1', 'token' => 'SESSION', 'user_email' => 'noprefs@example.com',
             'user_timezone' => 'UTC', 'user_keyword_searched_or_bidded' => 'bidded', 'user_referer' => 't202ref',
             'user_bid' => '0', 'user_pref_privacy' => 'all', 'user_pref_same_ip_fallback' => '0',
@@ -213,6 +237,7 @@ final class AccountPageWithoutPreferencesRowIntegrationTest extends TestCase
     public function testTheCurrencySaveStoresTheCurrency(): void
     {
         $post = self::request(['P202_SU_POST' => json_encode([
+            ShownSettings::FIELD => self::shown('account_currency'),
             'update_account_currency' => '1', 'token' => 'SESSION', 'account_currency' => 'EUR',
         ], JSON_THROW_ON_ERROR)]);
         self::assertNoPhpDiagnostics($post);

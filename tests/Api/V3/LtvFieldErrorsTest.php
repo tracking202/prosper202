@@ -49,6 +49,12 @@ final class LtvFieldErrorsTest extends TestCase
      * @var array<string, array<string, string>>
      */
     private const SERVER_FAILURES = [
+        '202-config/Ltv/DeliveryReason.php' => [
+            'The delivery answer could not be redacted' =>
+                'a fixed pattern failing on a stored answer (PCRE\'s limits) is the server\'s, never the caller\'s',
+            'The delivery answer could not be put on one line' =>
+                'the settings page\'s Log, which no /ltv route reaches',
+        ],
         '202-config/Ltv/LtvQuery.php' => [
             'At most' => 'LtvController::query() refuses the extra cf.* filters by name before it builds the query',
             'Invalid custom-field filter column' => 'built by LtvController::query() from a field definition',

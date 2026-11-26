@@ -192,8 +192,7 @@ var configTestCmd = &cobra.Command{
 				fmt.Println("Connection successful: the key is accepted (this server does not say which user it belongs to).")
 			}
 		}
-		render(encoded)
-		return nil
+		return render(encoded)
 	},
 }
 
@@ -267,8 +266,7 @@ var configGetDefaultCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("encoding output: %w", err)
 			}
-			render(payload)
-			return nil
+			return render(payload)
 		}
 
 		rows := make([]map[string]string, 0, len(p.Defaults))
@@ -281,8 +279,7 @@ var configGetDefaultCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("encoding output: %w", err)
 		}
-		render(payload)
-		return nil
+		return render(payload)
 	},
 }
 

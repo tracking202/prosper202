@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Prosper202\Rotator;
 
+use Prosper202\Repository\Mysql\MysqlLocationRepository;
+
 /**
  * How a redirector rule's criterion value is read: one rule for every
  * reader (rtr.php, offrtr.php, the Redirectors page, Overview › Rotator
@@ -61,6 +63,18 @@ final class Criterion
     public static function visitorIsp(string $isp): string
     {
         return trim(explode(',', $isp, 2)[0]);
+    }
+
+    /**
+     * The visitor's ISP as a click records it and Analyze › ISP lists it:
+     * visitorIsp() cut to what 202_locations_isp.isp_name keeps, less the
+     * spaces a cut can leave at its end, which a typed value loses to
+     * values(). A rule copied from Analyze › ISP holds this, not the whole
+     * name.
+     */
+    public static function recordedIsp(string $isp): string
+    {
+        return rtrim(MysqlLocationRepository::storedName(self::visitorIsp($isp)));
     }
 
     /** Whether one value is the one that matches every visitor. */

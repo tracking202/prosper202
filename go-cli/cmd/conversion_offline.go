@@ -163,8 +163,7 @@ func offlineExportRows(data []byte, format string) int {
 // sentences, then one line of totals. JSON and NDJSON pass the answer through.
 func renderOfflineExportSummary(data []byte) error {
 	if jsonOutput || ndjsonOutput || quietOutput {
-		render(data)
-		return nil
+		return render(data)
 	}
 	var resp struct {
 		Data struct {
@@ -205,8 +204,7 @@ func renderOfflineExportSummary(data []byte) error {
 	if err != nil {
 		return fmt.Errorf("encoding the offline export summary: %w", err)
 	}
-	render(encoded)
-	return nil
+	return render(encoded)
 }
 
 func init() {

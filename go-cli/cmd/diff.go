@@ -113,8 +113,7 @@ var diffCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("encoding output: %w", err)
 			}
-			render(payload)
-			return nil
+			return render(payload)
 		}
 
 		result := diffEntity(target, fromData[target], toData[target], fromLookups, toLookups)
@@ -127,8 +126,7 @@ var diffCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("encoding output: %w", err)
 		}
-		render(payload)
-		return nil
+		return render(payload)
 	},
 }
 
@@ -162,7 +160,9 @@ func tryServerPlan(c *api.Client, entity, fromProfile, toProfile string) (bool, 
 		}
 		return false, nil //nolint:nilerr // probe-and-fall-back: any other failure (a 404 or 405, a server error) leaves the diff to this machine
 	}
-	render(resp)
+	if err := render(resp); err != nil {
+		return true, err
+	}
 	return true, nil
 }
 

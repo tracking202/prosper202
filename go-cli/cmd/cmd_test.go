@@ -493,6 +493,7 @@ func runAsMain(args ...string) (stdout, stderr string, code int) {
 func resetCommandState() {
 	resetAllFlags(rootCmd)
 	configpkg.ResetActiveOverride()
+	api.ForgetLastAnswer()
 	jsonOutput = false
 	csvOutput = false
 	tableOutput = false
