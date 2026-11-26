@@ -33,6 +33,7 @@ $statusSub = [
     'failed' => 'every attempt refused',
     'cancelled' => 'replaced before it went out',
     'suppressed' => 'no correction URL',
+    'withheld' => 'the visitor refused consent',
 ];
 ?>
 <?php if ($rows === null) { ?>

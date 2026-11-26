@@ -826,10 +826,11 @@ class ConversionsController
 
         // The traffic-source postbacks queued for it (NotificationOutbox::
         // onReplaced(), which delete() runs): cancelled where none was
-        // attempted, retracted where one may have gone out.
+        // attempted, retracted where one may have gone out. One withheld
+        // for consent before any attempt never went out and is left alone.
         $stmt = $this->prepare(
             "SELECT COALESCE(SUM(status = 'pending' AND attempts = 0), 0) AS cancel,
-                    COALESCE(SUM(status <> 'cancelled' AND NOT (status = 'pending' AND attempts = 0)), 0) AS retract
+                    COALESCE(SUM(status <> 'cancelled' AND NOT (status IN ('pending', 'withheld') AND attempts = 0)), 0) AS retract
              FROM 202_notification_pending WHERE conv_id = ? AND user_id = ? AND kind = 'reached'"
         );
         $this->bind($stmt, 'ii', $id, $this->userId);

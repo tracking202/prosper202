@@ -76,8 +76,7 @@ var clickListCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("encoding %d clicks: %w", len(rows), err)
 			}
-			render(encoded)
-			return nil
+			return render(encoded)
 		}
 
 		for _, f := range []string{"limit", "offset"} {
@@ -106,8 +105,7 @@ var clickListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -132,8 +130,7 @@ var clickGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -193,8 +190,7 @@ type clickBreakdown struct {
 // and the table ends with the click's value.
 func renderClickConversions(data []byte) error {
 	if jsonOutput || ndjsonOutput || quietOutput {
-		render(data)
-		return nil
+		return render(data)
 	}
 	var b clickBreakdown
 	if err := json.Unmarshal(data, &b); err != nil {
@@ -230,7 +226,9 @@ func renderClickConversions(data []byte) error {
 	if err != nil {
 		return fmt.Errorf("encoding the click's conversions: %w", err)
 	}
-	render(encoded)
+	if err := render(encoded); err != nil {
+		return err
+	}
 	if csvOutput {
 		return nil
 	}

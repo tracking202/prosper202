@@ -116,6 +116,38 @@
         "for id in $(p202 ppc-account list --all --json | jq -r '.data[] | select(.ppc_account_name==\"ChatGPT Ads account\") | .ppc_account_id'); do p202 ppc-account delete \"$id\" --force --json >/dev/null; done; for id in $(p202 ppc-network list --all --json | jq -r '.data[] | select(.ppc_network_name==\"ChatGPT Ads\") | .ppc_network_id'); do p202 ppc-network delete \"$id\" --force --json >/dev/null; done; true"
       ],
       "notes": "Setup > Traffic Sources' Add ChatGPT Ads (Prosper202\\Setup\\ChatGptAdsSource). The source is marked by ppc_network_platform, not its name; the name check here holds only because setup removed any other source of that name."
+    },
+    {
+      "id": "setup-source-004-an-accounts-postback-is-its-pixel",
+      "priority": "medium",
+      "state": "seeded fixture: EVAL Account is the account of EVAL Traffic Network; setup removes any pixel of it with the case's URL",
+      "setup": [
+        "a=$(p202 ppc-account list --all --json | jq -r '.data[] | select(.ppc_account_name==\"EVAL Account\") | .ppc_account_id' | head -1); [ -z \"$a\" ] || for id in $(p202 ppc-account pixel list \"$a\" --json | jq -r --arg c 'https://network.example/pb?click=[[subid]]&payout=[[payout]]' '.data[] | select(.pixel_code==$c) | .pixel_id'); do p202 ppc-account pixel delete \"$a\" \"$id\" --force --json >/dev/null; done; true"
+      ],
+      "ask": "The EVAL Account traffic source account has to report its conversions back to the network. Add its server-to-server pixel: https://network.example/pb?click=[[subid]]&payout=[[payout]]",
+      "expected": {
+        "runs_one_of": [
+          "ppc-account pixel create"
+        ],
+        "never_runs": [
+          "ppc-account pixel delete",
+          "ppc-account delete",
+          "ppc-account update"
+        ],
+        "checks": [
+          {
+            "run": "a=$(p202 ppc-account list --all --json | jq -r '.data[] | select(.ppc_account_name==\"EVAL Account\") | .ppc_account_id' | head -1); p202 ppc-account pixel list \"$a\" --json | jq -r --arg c 'https://network.example/pb?click=[[subid]]&payout=[[payout]]' '\"pixels=\\([.data[] | select(.pixel_code==$c)] | length) type=\\([.data[] | select(.pixel_code==$c) | .pixel_type_id] | first)\"'",
+            "includes": [
+              "pixels=1 type=4"
+            ]
+          }
+        ],
+        "rubric": "PASS if the agent added one Postback (server to server, type 4) pixel with exactly that URL to EVAL Account with `p202 ppc-account pixel create` (or the MCP tool ppc_account_pixel_create, or POST /ppc-accounts/{id}/pixels), the account's id looked up by name, and says it fires when one of the account's clicks converts. FAIL if it picks another type (an Image pixel is not server to server), rewrites the URL's tokens, changes the account or another of its pixels, or adds the URL as a campaign postback instead."
+      },
+      "cleanup": [
+        "a=$(p202 ppc-account list --all --json | jq -r '.data[] | select(.ppc_account_name==\"EVAL Account\") | .ppc_account_id' | head -1); [ -z \"$a\" ] || for id in $(p202 ppc-account pixel list \"$a\" --json | jq -r --arg c 'https://network.example/pb?click=[[subid]]&payout=[[payout]]' '.data[] | select(.pixel_code==$c) | .pixel_id'); do p202 ppc-account pixel delete \"$a\" \"$id\" --force --json >/dev/null; done; true"
+      ],
+      "notes": "Setup > Traffic Sources > an account's Advanced (PpcAccountPixelsController). On the MCP connector the pixel tools are deferred: an assistant loads them with get_more_tools (TestMCPGetMoreToolsLoadsThePixelToolsOverStdio)."
     }
   ]
 }

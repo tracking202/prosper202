@@ -51,8 +51,7 @@ var appIntegrityStatusCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -129,8 +128,7 @@ var appIntegrityCredentialSetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -173,8 +171,7 @@ var appIntegrityCredentialClearCmd = &cobra.Command{
 			}
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 

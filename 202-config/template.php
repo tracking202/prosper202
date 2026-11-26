@@ -371,7 +371,7 @@ function p202_chrome_header(array $navigation, ?object $userObj, array $userData
 		. '<button type="button" data-theme-choice="dark" aria-pressed="false" title="Dark">' . p202_chrome_icon('moon') . '</button>'
 		. '</div></li>';
 	$html .= '</ul></details>';
-	$html .= '<a class="p202c-nav__link" href="' . $e($base . '202-account/signout.php') . '" id="SignoutPage">' . p202_chrome_icon('exit') . '<span>Sign Out</span></a>';
+	$html .= p202_signout_form($base, $_SESSION['token'] ?? null, 'Sign Out', 'p202c-nav__link', 'p202c-signout', 'SignoutPage', 'exit');
 	$html .= '</div>';
 
 	$html .= '</div></header>';
