@@ -106,7 +106,13 @@ is not a field is a `422` naming it (`cf.nope`).
 more orders; `subscribers`: an active subscription; `at_risk`: a past-due
 one). A value off a list, or a `limit` that is not a whole number in range
 (`abc`, `1000`), is a `422` naming the parameter and its range — never one
-row, never the first 500 read as all of them.
+row, never the first 500 read as all of them. Every answer to a request that
+takes `offset` (customers, breakdown, abm, products, companies,
+subscriptions) carries `truncated`: `true` when rows remain after the page,
+`false` on the last one, a page of exactly the remaining rows included. Read
+on with `offset` plus `limit` until it is `false` before summing or ranking.
+`breakdown`, `abm` and `products`, which have no `pagination`, also answer the
+`limit` and `offset` of the page.
 
 **Numbers.** Every `/ltv` read answers money, averages and rates as a JSON
 number and a count or a unix time as an integer: a customer's
@@ -210,7 +216,7 @@ p202 ltv revenue record --customer-id 42 --amount 49 --event-type refund --idemp
 | `billing_interval` | `day`, `week`, `month` (default) or `year`; `billing_interval_count` intervals per charge (default 1; 3 with `month` is quarterly) |
 | `status` | `trialing`, `active` (default), `past_due`, `paused` or `canceled` |
 | `plan_name`, `currency`, `grace_days` | `grace_days`: days past the period end before it is past due |
-| `started_at`, `current_period_start`, `current_period_end` | Unix seconds; the period end must be after its start |
+| `started_at`, `current_period_start`, `current_period_end` | Unix seconds; the period end must be after its start. A trial's period end is the trial's end, a pause's the date it ends ([Trials and pauses](#trials-and-pauses)) |
 | the customer keys | Required |
 
 `POST /ltv/subscriptions/{external_sub_id}/events` records what happened to
@@ -242,7 +248,7 @@ A subscription no renewal reaches lapses on its own: once its
 `active` again. The cron job's hourly run (`202-cronjobs/index.php`, which
 every default install schedules) makes the change, so a status is at most an
 hour late, and the customer's cached `mrr` and `active_subscription_count`
-change with it. A `trialing` or `paused` subscription is left as it is.
+change with it.
 
 - `GET /ltv/mrr` counts only `active` subscriptions, so a lapsed one leaves
   MRR at `past_due`. Monthly churn is the subscriptions canceled in the last
@@ -278,6 +284,40 @@ change with it. A `trialing` or `paused` subscription is left as it is.
   keeps going (300 by default), `--batch-size=N` how many rows a statement
   takes (500). It and the cron take one database lock, so they never run at
   once; a copy started while the other runs says so and exits.
+
+#### Trials and pauses
+
+A `trialing` or `paused` subscription lapses by the same rule, from its own
+`current_period_end`:
+
+- **A trial** ends at its `current_period_end`, and the renewal that reaches
+  it is its first charge. A trial no renewal reaches by its period end and
+  `grace_days` is `past_due` (its first charge is owed and unpaid), and
+  `canceled` 30 days after that. It never becomes `active` on its own: that
+  would count in MRR a subscription that has paid nothing. Its `mrr` stays 0
+  until a renewal or an upsert sets it.
+- **A pause** ends at its `current_period_end`: send the date the pause ends
+  (Chargebee's `resume_date`, Stripe's `pause_collection.resumes_at`) as
+  `current_period_end`, and send it again when the pause is extended. A
+  pause still `paused` once that date and `grace_days` are over resumes into
+  the state its unpaid period then has: `past_due`, and `canceled` 30 days
+  after that. It is not made `active`, for the same reason. For a pause with
+  no end date (Stripe's `paused` status), send as `current_period_end` the
+  date to hold it until (at most 2106-02-07); otherwise it lapses from the
+  period end it has.
+- A renewal (`POST /ltv/subscriptions/{external_sub_id}/events`) or an
+  upsert from the billing system always decides: the sweep locks each row
+  and moves it only if it still has the status it read and is still
+  lapsed, so a trial converted or a pause extended while it ran is left as
+  sent, and a lapsed one that is renewed or upserted later takes what it is
+  sent.
+- `GET /ltv/mrr` then counts a lapsed trial or pause under `past_due` (and
+  later `canceled`), no longer under `trialing` or `paused`; it was never in
+  MRR. A trial or pause canceled this way counts in monthly churn as any
+  cancel does, dated period end + grace + 30 days.
+- The times are instants: a period end is a Unix time and a grace day is
+  86,400 seconds, so the account's time zone does not move when a
+  subscription lapses.
 
 ## Customers
 
@@ -349,12 +389,64 @@ p202 ltv company create --name Acme --domain acme.com
 ## Webhooks
 
 `POST /ltv/webhooks` registers an https endpoint (`url`, on port 443 or
-8443) for signed events. The response holds the webhook's `secret` once; it
-is never shown again. Each delivery is `POST {event, occurred_at, data}`
-with `X-P202-Signature: sha256=<HMAC-SHA256 of the body with the secret>`
-(and `X-P202-Event`, `X-P202-Delivery`), retried with backoff and failed
-after 6 attempts, which marks the webhook dead until it is revived
-([A dead webhook](#a-dead-webhook)).
+8443) for signed events. The response holds the webhook's `secret` once (a
+`whsec_` secret); it is never shown again, and
+[rotating it](#rotating-a-webhooks-secret) gives a new one. Each delivery is
+retried with backoff and failed after 6 attempts, which marks the webhook
+dead until it is revived ([A dead webhook](#a-dead-webhook)).
+
+### Verifying a delivery
+
+Deliveries are signed the [Standard Webhooks](https://www.standardwebhooks.com/)
+way, so a receiver verifies one with that project's library (or Svix's) and
+the secret:
+
+| Header | Value |
+|---|---|
+| `webhook-id` | The event's message id (`msg_…`): the same on every retry, and for every webhook of the account the event went to. De-duplicate by it |
+| `webhook-timestamp` | When this attempt was sent, Unix seconds. A library refuses one more than 5 minutes from its clock, which stops a captured request being replayed |
+| `webhook-signature` | `v1,` and the base64 HMAC-SHA256 of `<webhook-id>.<webhook-timestamp>.<body>`. Two, space-separated, while a rotation's overlap runs; either verifying is enough |
+
+The HMAC key is the secret after `whsec_`, base64-decoded. A webhook created
+before 1.9.81 has a hex secret, which is used as its own bytes: give a
+library `whsec_` followed by the base64 of the secret
+(`"whsec_" + base64(secret)`), or rotate it for a `whsec_` one.
+
+The body is the envelope
+
+```json
+{"type": "revenue.recorded.v1", "timestamp": "2026-11-25T14:03:07Z", "data": {…},
+ "id": "msg_…", "event": "revenue.recorded", "occurred_at": 1795615387}
+```
+
+`type` is the event's name and the version of its `data`: a change to
+`data` that a receiver could misread takes a new version. `timestamp` is
+when the event was queued (ISO 8601, UTC), and `id` is the `webhook-id`.
+
+Through 1.9.82 each delivery also carries the headers it carried before
+1.9.81: `X-P202-Signature: sha256=<hex HMAC-SHA256 of the body alone, keyed
+by the secret's text>`, `X-P202-Event` and `X-P202-Delivery` (one id per
+webhook and event), and the body keeps `event` and `occurred_at`. **1.9.83
+stops sending them**: move a receiver that checks `X-P202-Signature` to
+`webhook-signature` before then. `X-P202-Signature` carries no timestamp,
+so a captured delivery verifies whenever it is replayed.
+
+### Rotating a webhook's secret
+
+`POST /ltv/webhooks/{id}/rotate-secret` gives the webhook a new `whsec_`
+secret, in the answer once. For `overlap_hours` (default 24, 0 to 168) each
+delivery is signed by the old secret too, so the receiver can change over
+without one failing; `0` stops the old one at once, and a second rotation
+inside an overlap stops the secret it replaced. `previous_secret_expires_at`
+says when the old one stops. `X-P202-Signature` uses the new secret from the
+start. The Landing Page Optimizer's webhook is refused (a `422` naming
+`webhook_id`): the optimizer holds its secret, and connecting it again
+gives a new one. The LTV Settings tab's Rotate secret button does the same
+with the 24-hour overlap, and is not shown on the optimizer's webhook.
+
+```bash
+p202 ltv webhooks rotate-secret 3 --overlap-hours 48
+```
 
 The URL is held to the export webhooks' rules
 ([13-attribution.md](13-attribution.md#exports)): spelled plainly (no user
@@ -398,7 +490,8 @@ alerts](../features/money-loss-alerts.md).
 `subscription.changed` carries `{subscription_id, customer_id, action}`:
 `upsert`, `renewal`, `cancel` or `refund` for a write through the API, and
 `upsert` (to `past_due`) or `cancel` when the hourly sweep moves a
-subscription that stopped renewing (see [When a subscription stops
+subscription that stopped renewing, a trial no first charge reached, or a
+pause past its end (see [When a subscription stops
 renewing](#when-a-subscription-stops-renewing)). Read the subscription for
 its status.
 

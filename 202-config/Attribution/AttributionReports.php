@@ -205,7 +205,9 @@ final class AttributionReports
         }
 
         return [
-            'rows' => array_slice($rows, max(0, $offset), max(1, min(self::MAX_LIMIT, $limit))),
+            // One past MAX_LIMIT: the API reads a page with one row after it
+            // to say whether rows remain (PageRows).
+            'rows' => array_slice($rows, max(0, $offset), max(1, min(self::MAX_LIMIT + 1, $limit))),
             'totals' => $all['totals'],
             'groups' => count($rows),
         ];

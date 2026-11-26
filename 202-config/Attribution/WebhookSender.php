@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Prosper202\Attribution;
 
+use Prosper202\Webhooks\StandardWebhook;
+
 /**
  * Sends one export to its webhook, safely (plan §6.3 "Exports", §7.1), one
  * LTV webhook delivery (Ltv\DeliverySender) and one Slack notice
@@ -23,10 +25,13 @@ namespace Prosper202\Attribution;
  * with the pinned one; a difference is reported as a failure, because it
  * would mean the pin did not hold.
  *
- * The body is the export's CSV, signed: `X-P202-Signature: sha256=<hex>`,
- * the HMAC-SHA256 of "<X-P202-Timestamp>.<body>" under the export's secret.
- * A receiver recomputes it and refuses a timestamp more than a few minutes
- * old, which stops a captured request being replayed.
+ * The body is the export's CSV, signed the Standard Webhooks way
+ * (StandardWebhook::headers(): webhook-id, webhook-timestamp,
+ * webhook-signature), which a receiver checks with a library and which
+ * refuses a timestamp more than a few minutes old, so a captured request
+ * cannot be replayed; and, through StandardWebhook::LEGACY_SIGNATURE_LAST_RELEASE,
+ * as before 1.9.81: `X-P202-Signature: sha256=<hex>`, the HMAC-SHA256 of
+ * "<X-P202-Timestamp>.<body>" under the export's secret.
  *
  * @phpstan-type Posted array{
  *     refused: string|null, retryable: bool, strayed: string|null, pinned: string, status: int,
@@ -71,6 +76,17 @@ final class WebhookSender
     }
 
     /**
+     * An export's webhook-id: the same on every attempt at one job, and
+     * another job's (on this install or another) never, since it is derived
+     * under the job's own secret.
+     */
+    public static function exportMessageId(string $secret, int $exportId): string
+    {
+        return 'msg_export_' . $exportId . '_'
+            . substr(hash_hmac('sha256', 'p202-export-message:' . $exportId, $secret), 0, 24);
+    }
+
+    /**
      * Deliver the body. Never throws for a delivery failure: the result says
      * what happened, and whether trying again could change it.
      */
@@ -82,6 +98,15 @@ final class WebhookSender
         }
 
         $timestamp ??= time();
+        try {
+            $standard = StandardWebhook::headers([$secret], self::exportMessageId($secret, $exportId), $timestamp, $body);
+        } catch (\InvalidArgumentException $e) {
+            // A secret no receiver's library could check against (a whsec_
+            // secret that is not base64) is not sent with a signature that
+            // cannot match; trying again cannot change it.
+            return WebhookResult::failed(null, 'Not sent: the export\'s webhook secret cannot sign: '
+                . $e->getMessage() . '.', false);
+        }
         $headers = [
             'Content-Type: text/csv; charset=utf-8',
             'User-Agent: Prosper202-Webhook/1',
@@ -90,6 +115,7 @@ final class WebhookSender
             'X-P202-Delivery-Attempt: ' . $attempt,
             'X-P202-Timestamp: ' . $timestamp,
             'X-P202-Signature: ' . self::signature($secret, $timestamp, $body),
+            ...$standard,
             // No "Expect: 100-continue" round trip.
             'Expect:',
         ];

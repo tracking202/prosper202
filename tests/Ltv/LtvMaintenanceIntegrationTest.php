@@ -214,8 +214,9 @@ final class LtvMaintenanceIntegrationTest extends TestCase
         $renewed = self::subscription($c, 'active', $now + 20 * self::DAY, 57.0);
         $overdue = self::subscription($c, 'past_due', $now - 40 * self::DAY, 40.0);
         $stillDue = self::subscription($c, 'past_due', $now - 10 * self::DAY, 50.0);
-        $trial = self::subscription($c, 'trialing', $now - 300 * self::DAY, 0.0);
-        $paused = self::subscription($c, 'paused', $now - 300 * self::DAY, 60.0);
+        // Lapse as an active one does (SweepLapsesTrialsAndPausesIntegrationTest): not yet.
+        $trial = self::subscription($c, 'trialing', $now - self::DAY, 0.0);
+        $paused = self::subscription($c, 'paused', $now + 10 * self::DAY, 60.0);
         $canceled = self::subscription($c, 'canceled', $now - 300 * self::DAY, 70.0, self::USER, 3, 12345);
         $longGrace = self::subscription($c, 'active', $now - 10 * self::DAY, 0.0, self::USER, 14);
 
