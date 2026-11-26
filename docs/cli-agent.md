@@ -1311,8 +1311,12 @@ p202 ltv integrations list | create --provider P [--name S] [--config JSON | --c
   and `held`. A 409 means a cron run was still sending after 20 seconds and
   nothing changed: run it again in a minute. The Landing Page Optimizer's
   pairing webhook needs no pairing again.
-- `ltv webhooks create` prints the signing secret once (`X-P202-Signature:
-  sha256=HMAC(body, secret)`); `webhooks list` never shows it. `--events`
+- `ltv webhooks create` prints the signing secret once (a `whsec_` secret a
+  Standard Webhooks library verifies `webhook-signature` with; through 1.9.82
+  also `X-P202-Signature: sha256=HMAC(body, secret)`); `webhooks list` never
+  shows it. `ltv webhooks rotate-secret <id> [--overlap-hours N]` prints a new
+  one once, and the old one still signs for N hours (default 24, 0 to 168);
+  the Landing Page Optimizer's webhook is refused (a 422 on `webhook_id`). `--events`
   takes the known names or `*` (every event, including future ones), and is
   always sent as a list. The server holds the same list: a name it never
   sends is a 422 naming `events.<i>` with the names, never a webhook that
@@ -1403,7 +1407,7 @@ Notes for agents:
 - If the API reports `sync_plan` and `async_jobs` capabilities, CLI auto-routes to server-side `/sync/*` endpoints.
 - If server capabilities are unavailable, CLI falls back to local diff/sync behavior.
 - When async jobs are enabled server-side, ensure the sync worker is running (`POST /sync/worker/run` or cron script `202-cronjobs/sync-worker.php`).
-- A server-side sync or diff calls both profiles' URLs from the `--from` profile's install, at public `https://` addresses only. A refused profile URL exits 1 with a hint naming the profile to repoint (`p202 --profile <name> config set-url https://…`) and `P202_WEBHOOK_ALLOW_NETWORKS`, the setting that admits an install on that server's own machine or network; it is not run from this machine instead. A job stopped by a refusal or by a cap carries `error_code` (`sync_url_refused`, `sync_url_unresolved`, `sync_limit`, `sync_key_unreadable`) and exits 5 with that reason's next step.
+- A server-side sync or diff calls both profiles' URLs from the `--from` profile's install, at public `https://` addresses only. A refused profile URL exits 1 with a hint naming the profile to repoint (`p202 --profile <name> config set-url https://…`) and `P202_WEBHOOK_ALLOW_NETWORKS`, the setting that admits an install on that server's own machine or network; it is not run from this machine instead. A job stopped by a refusal or by a cap carries `error_code` (`sync_url_refused`, `sync_url_unresolved`, `sync_limit`, `sync_key_unreadable`, `sync_record_unusable`, `sync_worker_lost`, `sync_internal`) and exits 5 with that reason's next step.
 - `tracker list --resolve-names` enriches FK IDs with companion name fields; IDs remain unchanged in output.
 
 ### System

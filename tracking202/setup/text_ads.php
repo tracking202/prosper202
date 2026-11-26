@@ -212,21 +212,19 @@ if (isset($_GET['delete_text_ad_id'])) {
 	}
 
 	if ($userObj->hasPermission("remove_text_ad")) {
-		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-		$mysql['text_ad_id'] = $db->real_escape_string((string)$_GET['delete_text_ad_id']);
-		$mysql['text_ad_time'] = time();
-		
-		$delete_sql = " UPDATE  `202_text_ads`
-						SET     `text_ad_deleted`='1',
-								`text_ad_time`='".$mysql['text_ad_time']."'
-						WHERE   `user_id`='".$mysql['user_id']."'
-						AND     `text_ad_id`='".$mysql['text_ad_id']."'";
-        if ($db->query($delete_sql)) {
-            $delete_success = true;
+		// Removed only when it is the account's and still there; anything else
+		// says so rather than redirecting to "Removed".
+		try {
+			$delete_success = \Prosper202\Setup\SetupRemoval::mark(new \Prosper202\Database\Connection($db),
+				'text_ad', $_GET['delete_text_ad_id'], (int) $_SESSION['user_id'], time());
+		} catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+			record_mysql_error($db, 'UPDATE 202_text_ads (remove a text ad)', $e->getMessage());
+		}
+        if ($delete_success === true) {
             if($slack)
                 $slack->push('ad_copy_deleted', ['name' => $_GET['delete_text_ad_name'], 'user' => $user_row['username']]);
         } else {
-            record_mysql_error($delete_sql);
+            $error['delete_text_ad'] = 'That text ad was not found on this account. Nothing was removed.';
         }
 	} else {
 		header('location: '.get_absolute_url().'tracking202/setup/text_ads.php');

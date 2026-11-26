@@ -104,6 +104,8 @@ function page(serverData, query, elements, options = {}) {
         createCookie: (name, value, days) => { jar.set(name, {value: String(value), days}); },
         p202ConsentGiven: () => consent,
         p202PurLinkRevoked: !!options.revoked,
+        // The split test's variant (split-test-harness.js runs that block).
+        p202Variant: options.variant || '',
         t202kw: get('t202kw'), c1: get('c1'), c2: get('c2'), c3: get('c3'), c4: get('c4'),
         utm_source: get('utm_source'), utm_medium: get('utm_medium'), utm_term: get('utm_term'),
         utm_content: get('utm_content'), utm_campaign: get('utm_campaign'),
@@ -448,6 +450,17 @@ for (const options of [{consent: false}, {revoked: true}]) {
         window.dcs = {};
         old.updateDataObj({t202C1: 'stale'});
         assert.strictEqual(posts.length, 0);
+    }
+    {
+        // The split test's variant is a key like any other: t202Default stands in when there is none.
+        const shown = new Element('span', {t202attribute: 't202Variant', t202Default: 'control'});
+        const field = new Element('input', {name: 'lead_t202Variant'});
+        const {window} = page(server, query, [shown, field], {variant: 'headline-b'});
+        assert.deepStrictEqual([shown.textContent, field.value, window.dcs.t202DataObj.t202Variant],
+            ['headline-b', 'headline-b', 'headline-b']);
+        const none = new Element('span', {t202attribute: 't202Variant', t202Default: 'control'});
+        page(server, query, [none]);
+        assert.strictEqual(none.textContent, 'control');
     }
     console.log('Dynamic content harness passed');
 })().catch((e) => { console.error(e); process.exitCode = 1; });

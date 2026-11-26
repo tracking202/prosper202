@@ -5663,7 +5663,14 @@ class UPGRADE
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
+                // A rotated LTV webhook secret signs alongside the new one
+                // until it expires (previous_secret, previous_secret_expires_at).
+                \Prosper202\Database\Tables\LtvTables::ltvWebhooks(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
+                // Each landing page's split test, whose variant the page's
+                // script writes into the click's C4 (Prosper202\Setup\
+                // LandingPageSplitTest).
+                \Prosper202\Database\Tables\CampaignTables::landingPageSplitTests(),
                 // The sealed integration secrets store and its record of changes (0H6C).
                 \Prosper202\Database\Tables\SecretTables::integrationSecrets(),
                 \Prosper202\Database\Tables\SecretTables::integrationSecretEvents(),

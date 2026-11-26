@@ -640,8 +640,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				}
 
 				// The webhook secret is generated where it is used and
-				// transported to the SaaS exactly once, in pair/complete.
-				$lpo_created = $lpo_webhooks->create($lpo_user_id, $lpo_hook_url, ['*']);
+				// transported to the SaaS exactly once, in pair/complete. It
+				// keeps the hex form the SaaS has always been handed (not a
+				// whsec_ secret), and is not rotated in LTV Settings.
+				$lpo_created = $lpo_webhooks->create($lpo_user_id, $lpo_hook_url, ['*'], false);
 				try {
 					$lpo_client->pairComplete($lpo_api_key, $lpo_install_hash, $lpo_created['webhookId'], $lpo_created['secret']);
 				} catch (Throwable $lpo_complete_error) {

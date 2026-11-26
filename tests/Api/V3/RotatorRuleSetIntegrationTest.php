@@ -1323,25 +1323,141 @@ final class RotatorRuleSetIntegrationTest extends TestCase
         }
     }
 
-    public function testAnEmptySetIsRefused(): void
+    /** A set that is not a list is refused; the Setup page's save still needs a rule. */
+    public function testASetThatIsNoListIsRefused(): void
     {
         $id = $this->rotator();
-        foreach ([[], null] as $rules) {
+        foreach ([null, 'none'] as $rules) {
             try {
                 $this->rotators()->setRules($id, ['rules' => $rules], false, static function (): void {
                 });
-                self::fail('an empty set was accepted');
+                self::fail('a set that is no list was accepted');
             } catch (ValidationException $e) {
                 self::assertSame(['rules'], array_keys($e->getFieldErrors()));
             }
         }
         try {
-            $this->rotators()->setRules($id, ['rules' => [], 'default_url' => 'https://x.example/'], false, static function (): void {
+            $this->rotators()->setRules($id, ['rules' => [], 'default_campagin' => 3], false, static function (): void {
             });
             self::fail('a key a rule set does not take was accepted');
         } catch (ValidationException $e) {
-            self::assertSame(['default_url'], array_keys($e->getFieldErrors()));
+            self::assertSame(['default_campagin'], array_keys($e->getFieldErrors()));
         }
+        try {
+            $this->rotators()->setDefaultAndRules($id, ['rules' => []], static function (): void {
+            });
+            self::fail("the page's save took an empty set");
+        } catch (ValidationException $e) {
+            self::assertStringContainsString('A set has at least one rule', $e->getFieldErrors()['rules']);
+        }
+    }
+
+    /**
+     * An empty set removes every rule in one write, which needs
+     * remove_rotator_rule: refused, nothing is removed. A dry run answers
+     * the removals and writes nothing.
+     */
+    public function testAnEmptySetRemovesEveryRule(): void
+    {
+        $id = $this->rotator();
+        $this->set($id, [['rule_name' => 'a'] + self::EVERYONE, ['rule_name' => 'b'] + self::EVERYONE]);
+        $before = self::stored($id);
+
+        try {
+            $this->set($id, [], false, static function (): void {
+                throw new AuthException('Forbidden', 403);
+            });
+            self::fail('an empty set removed rules without remove_rotator_rule');
+        } catch (AuthException) {
+        }
+        self::assertSame($before, self::stored($id));
+
+        $preview = $this->set($id, [], true);
+        self::assertSame([0, 0, 0, 2], [$preview['changes']['added'], $preview['changes']['updated'],
+            $preview['changes']['unchanged'], $preview['changes']['removed']]);
+        self::assertSame($before, self::stored($id));
+
+        $written = $this->set($id, []);
+        self::assertSame([], $written['rules']);
+        self::assertSame(2, $written['changes']['removed']);
+        self::assertSame([], $this->rotators()->listRules($id)['data']);
+    }
+
+    /**
+     * The redirector's own fields sent beside its set are written with it,
+     * in one transaction: a rule refused leaves the name and default as they
+     * were, a field refused leaves the rules, and both kinds of problem are
+     * refused together.
+     */
+    public function testTheRedirectorsFieldsAndItsSetLandTogether(): void
+    {
+        $id = $this->rotator();
+        $this->set($id, [['rule_name' => 'kept'] + self::EVERYONE]);
+        $rotator = $this->rotators()->get($id)['data'];
+        $before = [self::stored($id), json_encode(self::$db->query("SELECT * FROM 202_rotators WHERE id = $id")->fetch_all(MYSQLI_ASSOC))];
+        $badRule = ['rule_name' => 'bad', 'criteria' => [['type' => 'nonsense', 'value' => 'x']], 'redirects' => [['redirect_url' => 'https://x.example/']]];
+
+        foreach ([
+            'a rule refused' => [['name' => 'renamed'], [$badRule], ['rules.0.criteria.0.type']],
+            'a field refused' => [['default_url' => 'ftp://x'], [['rule_name' => 'new'] + self::EVERYONE], ['default_url']],
+            'both' => [['name' => ''], [$badRule], ['name', 'rules.0.criteria.0.type']],
+        ] as $case => [$fields, $rules, $named]) {
+            try {
+                $this->rotators()->setRules($id, $fields + ['rules' => $rules], false, static function (): void {
+                });
+                self::fail("$case: written");
+            } catch (ValidationException $e) {
+                $got = array_keys($e->getFieldErrors());
+                sort($got);
+                sort($named);
+                self::assertSame($named, $got, $case);
+            }
+            self::assertSame($before, [self::stored($id), json_encode(self::$db->query("SELECT * FROM 202_rotators WHERE id = $id")->fetch_all(MYSQLI_ASSOC))], $case);
+        }
+
+        $sent = ['name' => 'renamed', 'default_url' => 'https://new-default.example/'] + $rotator;
+        $sent['rules'] = [['rule_name' => 'added'] + self::EVERYONE];
+        $preview = $this->rotators()->setRules($id, $sent, true, static function (): void {
+        })['data'];
+        self::assertSame(['renamed', 'https://new-default.example/'], [$preview['rotator']['name'], $preview['rotator']['default_url']]);
+        self::assertSame($before[0], self::stored($id));
+
+        $written = $this->rotators()->setRules($id, $sent, false, static function (): void {
+        })['data'];
+        $stored = $this->rotators()->get($id)['data'];
+        self::assertSame(['renamed', 'https://new-default.example/'], [$stored['name'], $stored['default_url']]);
+        self::assertSame(['added'], array_column($stored['rules'], 'rule_name'));
+        self::assertSame('renamed', $written['rotator']['name']);
+        self::assertArrayNotHasKey('rules', $written['rotator']);
+    }
+
+    /** A redirector created with its rules is created with them, or not at all. */
+    public function testACreateWithRulesWritesBothOrNeither(): void
+    {
+        $count = static fn (): int => (int) self::$db->query('SELECT COUNT(*) FROM 202_rotators WHERE user_id = ' . self::USER)->fetch_row()[0];
+        $before = $count();
+        try {
+            $this->rotators()->create(['name' => 'r', 'default_url' => 'https://d.example/', 'rules' => [
+                ['rule_name' => 'good'] + self::EVERYONE,
+                ['rule_name' => 'bad', 'criteria' => [['type' => 'nonsense', 'value' => 'x']], 'redirects' => [['redirect_url' => 'https://x.example/']]],
+            ]]);
+            self::fail('a create with a refused rule was written');
+        } catch (ValidationException $e) {
+            self::assertSame(['rules.1.criteria.0.type'], array_keys($e->getFieldErrors()));
+        }
+        self::assertSame($before, $count(), 'no redirector was left');
+
+        $made = $this->rotators()->create(['name' => 'r', 'default_url' => 'https://d.example/', 'rules' => [
+            ['rule_name' => 'first'] + self::EVERYONE, ['rule_name' => 'second'] + self::EVERYONE,
+        ]])['data'];
+        self::assertSame(['first', 'second'], array_column($made['rules'], 'rule_name'));
+        try {
+            $this->rotators()->create(['name' => 'r', 'rules' => [['id' => (int) $made['rules'][0]['id'], 'rule_name' => 'x'] + self::EVERYONE]]);
+            self::fail("a create took another redirector's rule id");
+        } catch (ValidationException $e) {
+            self::assertSame(['rules.0.id'], array_keys($e->getFieldErrors()));
+        }
+        self::assertSame($before + 1, $count());
     }
 
     /** A rule added on its own goes after the set; a kept rule omitted splittest and status keeps them. */

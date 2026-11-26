@@ -396,8 +396,8 @@ func rotatorRulesSchema() mcpProperty {
 	}
 	return mcpProperty{
 		Type: "array",
-		Description: "Every rule, in the order tried (the first active rule whose criteria all match sends the visitor). " +
-			"Send rotator_get's data.rules, edited: a rule with its id is kept, one without is added, one left out is removed.",
+		Description: "Every rule, in the order tried (the first active rule whose criteria all match wins). " +
+			"Send rotator_get's data.rules, edited: a rule with its id is kept, one without is added, one left out is removed ([] removes all).",
 		Items: &mcpProperty{
 			Type: "object",
 			Properties: map[string]mcpProperty{

@@ -99,6 +99,7 @@ final class TableRegistry
     public const string PPC_ACCOUNT_PIXELS = '202_ppc_account_pixels';
     public const string LANDING_PAGES = '202_landing_pages';
     public const string LANDING_PAGE_CHECKS = '202_landing_page_checks';
+    public const string LANDING_PAGE_SPLIT_TESTS = '202_landing_page_split_tests';
     public const string TEXT_ADS = '202_text_ads';
 
     // Attribution tables
