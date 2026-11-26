@@ -1172,8 +1172,7 @@ func runConversionUploads(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return updateRequestError(err, "")
 	}
-	render(data)
-	return nil
+	return render(data)
 }
 
 func newConversionUploadsCmd() *cobra.Command {
@@ -1296,8 +1295,7 @@ func (a undoUploadAnswer) settles() string {
 // renderUndoPreview lists the rows the undo removes: under --json the API's shape.
 func renderUndoPreview(data []byte, a undoUploadAnswer) error {
 	if jsonOutput {
-		render(data)
-		return nil
+		return render(data)
 	}
 	rows := make([]map[string]interface{}, 0, len(a.Data.Rows))
 	for _, r := range a.Data.Rows {
@@ -1362,7 +1360,9 @@ func runConversionUndoUpload(cmd *cobra.Command, args []string) error {
 	}
 	if *check.Data.WouldRemove == 0 {
 		if jsonOutput {
-			render(data)
+			if err := render(data); err != nil {
+				return err
+			}
 		}
 		output.Success("Batch %s (%s) has no conversions left to delete: nothing to undo.", id, check.Data.Batch.FileName)
 		return nil
@@ -1388,8 +1388,7 @@ func runConversionUndoUpload(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if jsonOutput {
-		render(data)
-		return nil
+		return render(data)
 	}
 	output.Success("Undid batch %s (%s): %d conversion(s) deleted on %d click(s); each click's value is what it was before the upload.",
 		id, done.Data.Batch.FileName, *done.Data.Removed, *done.Data.Clicks)
