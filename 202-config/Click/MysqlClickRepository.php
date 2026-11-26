@@ -467,7 +467,13 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                     return false;
                 }
                 if ($obref === null) {
-                    $this->write('DELETE FROM 202_click_openai_refs WHERE click_id = ?', 'i', [$clickId]);
+                    $this->write(
+                        'DELETE r FROM 202_click_openai_refs AS r'
+                            . ' JOIN 202_clicks AS c ON c.click_id = r.click_id AND c.user_id = ?'
+                            . ' WHERE r.click_id = ? AND ' . LatestVisit::isLatest('c'),
+                        'ii',
+                        [$userId, $clickId]
+                    );
 
                     return true;
                 }
