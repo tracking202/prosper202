@@ -1178,7 +1178,7 @@ func runConversionUploads(cmd *cobra.Command, _ []string) error {
 func newConversionUploadsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "uploads",
-		Short: "Revenue uploads, newest first, with their batch ids",
+		Short: "Revenue uploads by batch id, newest first",
 		Long: "Lists the account's revenue uploads (`conversion upload-revenue`, the UI's Upload Revenue\n" +
 			"Reports), newest first: the batch id, the file name, when it was uploaded, how many lines it\n" +
 			"recorded and skipped, and when it was last undone (undone_at, undone_rows). The batch id is\n" +
