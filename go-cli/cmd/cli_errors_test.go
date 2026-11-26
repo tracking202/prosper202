@@ -114,7 +114,7 @@ func TestErrorEnvelope(t *testing.T) {
 	activeCommandPath = "p202 campaign create"
 
 	err := fmt.Errorf("creating campaign: %w", &api.APIError{
-		Status: 422, Message: "validation failed",
+		Status: 422, Message: "validation failed", Code: "validation_failed",
 		FieldErrors: map[string]string{"campaign_name": "required"},
 	})
 	env := errorEnvelope(err)["error"].(map[string]interface{})
@@ -123,6 +123,13 @@ func TestErrorEnvelope(t *testing.T) {
 	}
 	if env["http_status"] != 422 {
 		t.Errorf("http_status = %v", env["http_status"])
+	}
+	if env["api_code"] != "validation_failed" {
+		t.Errorf("api_code = %v", env["api_code"])
+	}
+	// A server older than the codes sends none, and the envelope names none.
+	if _, ok := errorEnvelope(&api.APIError{Status: 404, Message: "Not found"})["error"].(map[string]interface{})["api_code"]; ok {
+		t.Error("api_code without a code from the server")
 	}
 	if env["command"] != "p202 campaign create" {
 		t.Errorf("command = %v", env["command"])

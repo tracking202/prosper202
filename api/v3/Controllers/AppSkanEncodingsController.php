@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\ErrorCode;
 use Api\V3\Apps\AppIdentity;
 use Api\V3\Controller;
 use Api\V3\Exception\ConflictException;
@@ -453,7 +454,9 @@ class AppSkanEncodingsController extends Controller
         $stmt->close();
 
         if (is_array($row) && ($excludeId === null || (int)$row['encoding_id'] !== $excludeId)) {
-            throw new ConflictException('An encoding for this conversion value already exists for this registration.');
+            throw (new ConflictException(
+                'An encoding for this conversion value already exists for this registration.'
+            ))->coded(ErrorCode::ALREADY_EXISTS);
         }
     }
 }

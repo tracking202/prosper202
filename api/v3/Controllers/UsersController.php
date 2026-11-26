@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\ErrorCode;
 use Api\V3\Exception\ConflictException;
 use Api\V3\HttpException;
 use Api\V3\Exception\DatabaseException;
@@ -415,7 +416,7 @@ class UsersController
             if ($v === '') {
                 $errors['user_name'] = 'Required';
             } elseif ($this->takenByAnother('user_name', $v, $selfId)) {
-                throw new ConflictException('Username already exists');
+                throw (new ConflictException('Username already exists'))->coded(ErrorCode::NAME_TAKEN);
             } else {
                 $out['user_name'] = ['s', $v];
             }

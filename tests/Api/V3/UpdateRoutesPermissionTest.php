@@ -30,14 +30,29 @@ use PHPUnit\Framework\TestCase;
  */
 final class UpdateRoutesPermissionTest extends TestCase
 {
-    /** Path => the UpdateController method its handler calls, and the permissions its handler asks for first. */
+    private const WRITE_ARGS = '($payload,writeDryRunRequested($queryParams))';
+
+    /**
+     * "METHOD path" => the UpdateController method its handler calls, the
+     * permissions its handler asks for first, and the arguments it passes.
+     */
     private const ROUTES = [
-        '/clicks/cpc' => ['cpc', []],
-        '/conversions/subids' => ['markSubids', []],
-        '/conversions/subids/delete' => ['deleteSubids', ['delete_individual_subids']],
-        '/conversions/subids/reset' => ['resetSubids', []],
-        '/conversions/uploads' => ['uploadRevenue', []],
+        'POST /clicks/cpc' => ['cpc', [], self::WRITE_ARGS],
+        'POST /conversions/subids' => ['markSubids', [], self::WRITE_ARGS],
+        'POST /conversions/subids/delete' => ['deleteSubids', ['delete_individual_subids'], self::WRITE_ARGS],
+        'POST /conversions/subids/reset' => ['resetSubids', [], self::WRITE_ARGS],
+        'POST /conversions/uploads' => ['uploadRevenue', [], self::WRITE_ARGS],
+        'GET /conversions/uploads' => ['listUploads', [], '($queryParams)'],
+        'POST /conversions/uploads/{id}/undo' => ['undoUpload', [], '(PathId::of($ctx),$payload,writeDryRunRequested($queryParams))'],
     ];
+
+    /** @return array{0: string, 1: string} [HTTP method, a path the route matches] */
+    private static function request(string $key): array
+    {
+        [$http, $path] = explode(' ', $key, 2);
+
+        return [$http, str_replace('{id}', '7', $path)];
+    }
 
     use ReadsRouteRegistrations;
 
@@ -52,29 +67,31 @@ final class UpdateRoutesPermissionTest extends TestCase
         $main = $this->router($registrations, '$router');
         self::assertGreaterThan(150, count(array_filter($registrations, static fn (array $r): bool => $r['router'] === '$router')), 'the scan reads the main router');
 
-        foreach (self::ROUTES as $path => [$method, $permissions]) {
-            $match = $main->match('POST', $path);
-            self::assertNotNull($match, "POST $path is served");
+        foreach (self::ROUTES as $key => [$method, $permissions, $args]) {
+            [$http, $path] = self::request($key);
+            $match = $main->match($http, $path);
+            self::assertNotNull($match, "$key is served");
+            $path = $key;
             $route = $registrations[($match['handler'])()];
-            self::assertSame(['$updateSection'], $route['middleware'], "POST $path (line {$route['line']}) runs the access_to_update_section middleware, and only it");
+            self::assertSame(['$updateSection'], $route['middleware'], "$path (line {$route['line']}) runs the access_to_update_section middleware, and only it");
             self::assertStringContainsString(
-                '->' . $method . '($payload,writeDryRunRequested($queryParams))',
+                '->' . $method . $args,
                 $route['handler'],
-                "POST $path (line {$route['line']}) calls UpdateController::$method with the body and the strictly-read dry_run"
+                "$path (line {$route['line']}) calls UpdateController::$method with what it reads (the body and the strictly-read dry_run for a write)"
             );
             self::assertTrue(
                 str_contains($route['handler'], 'UpdateController::class)->' . $method . '(')
                     || (str_contains($route['handler'], '$crud($cls)->' . $method . '(') && str_contains($route['group'], '$cls=\Api\V3\Controllers\UpdateController::class;')),
-                "POST $path (line {$route['line']}) builds an UpdateController"
+                "$path (line {$route['line']}) builds an UpdateController"
             );
 
             $first = $this->firstStatement($route['handler']);
             if ($permissions === []) {
-                self::assertStringNotContainsString('requirePermission', $route['handler'], "POST $path asks for nothing beyond the group's permission");
+                self::assertStringNotContainsString('requirePermission', $route['handler'], "$path asks for nothing beyond the group's permission");
                 continue;
             }
             foreach ($permissions as $permission) {
-                self::assertSame('$auth->requirePermission($db,\'' . $permission . '\');', $first, "POST $path (line {$route['line']}) asks for $permission before anything else");
+                self::assertSame('$auth->requirePermission($db,\'' . $permission . '\');', $first, "$path (line {$route['line']}) asks for $permission before anything else");
             }
         }
 
@@ -82,9 +99,9 @@ final class UpdateRoutesPermissionTest extends TestCase
         $reached = array_filter($registrations, static fn (array $r): bool => str_contains($r['handler'], 'UpdateController') || str_contains($r['handler'], '$crud($cls)->' . 'markSubids'));
         foreach ($registrations as $route) {
             $callsUpdate = str_contains($route['handler'], 'UpdateController::class')
-                || ((bool) preg_match('/->(cpc|markSubids|deleteSubids|resetSubids|uploadRevenue)\(/', $route['handler']));
+                || ((bool) preg_match('/->(cpc|markSubids|deleteSubids|resetSubids|uploadRevenue|listUploads|undoUpload)\(/', $route['handler']));
             if ($callsUpdate) {
-                self::assertArrayHasKey($route['path'], self::ROUTES, "line {$route['line']}: {$route['method']} {$route['path']} reaches UpdateController without being an Update route checked here");
+                self::assertArrayHasKey($route['method'] . ' ' . $route['path'], self::ROUTES, "line {$route['line']}: {$route['method']} {$route['path']} reaches UpdateController without being an Update route checked here");
             }
         }
         self::assertNotEmpty($reached);
@@ -107,8 +124,9 @@ final class UpdateRoutesPermissionTest extends TestCase
         $registrations = $this->registrations(self::source());
         $stageable = $this->router($registrations, '$stageableRouter');
         self::assertNotNull($stageable->match('POST', '/conversions'), 'the scan reads the stageable router (POST /conversions is stageable)');
-        foreach (array_keys(self::ROUTES) as $path) {
-            self::assertNull($stageable->match('POST', $path), "POST $path must not be stageable: ?staged=1 is refused, never recorded");
+        foreach (array_keys(self::ROUTES) as $key) {
+            [$http, $path] = self::request($key);
+            self::assertNull($stageable->match($http, $path), "$key must not be stageable: ?staged=1 is refused, never recorded");
         }
     }
 

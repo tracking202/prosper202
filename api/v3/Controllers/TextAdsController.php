@@ -14,6 +14,12 @@ class TextAdsController extends Controller
     protected function primaryKey(): string { return 'text_ad_id'; }
 
     #[\Override]
+    protected function libraryResource(): ?string
+    {
+        return 'text-ads';
+    }
+
+    #[\Override]
     protected function listSearchColumns(): array
     {
         return ['text_ad_name'];

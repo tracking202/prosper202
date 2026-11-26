@@ -15,6 +15,7 @@ require_once dirname(__DIR__, 2) . '/202-config.php';
 use Api\V3\Auth;
 use Api\V3\AuthException;
 use Api\V3\Bootstrap;
+use Api\V3\ErrorCode;
 use Api\V3\HttpException;
 use Api\V3\InsufficientScopeException;
 use Api\V3\RequestContext;
@@ -115,7 +116,8 @@ if ($path === '/apps/installs' || preg_match('#^/apps/installs/([^/]+)/events$#D
         }
         Bootstrap::errorResponse(
             $pending ?? 'The install could not be recorded; retry later',
-            $pending !== null ? 503 : 500
+            $pending !== null ? 503 : 500,
+            $pending !== null ? ['code' => ErrorCode::UPGRADE_PENDING] : []
         );
         exit;
     }
@@ -154,7 +156,7 @@ if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
     if ($raw !== '' && $raw !== false) {
         $payload = json_decode($raw, true);
         if ($payload === null && json_last_error() !== JSON_ERROR_NONE) {
-            Bootstrap::errorResponse('Invalid JSON body', 400);
+            Bootstrap::errorResponse('Invalid JSON body', 400, ['code' => ErrorCode::INVALID_JSON]);
             exit;
         }
         // A body of literal `null` decodes without a JSON error, so it slips
@@ -163,7 +165,7 @@ if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
         // it were the reviewed body. Error pattern #4: a malformed body is
         // rejected, never silently emptied.
         if (!is_array($payload)) {
-            Bootstrap::errorResponse('Invalid JSON body', 400);
+            Bootstrap::errorResponse('Invalid JSON body', 400, ['code' => ErrorCode::INVALID_JSON]);
             exit;
         }
     }
@@ -174,7 +176,11 @@ if ($requestedVersion !== '' && !in_array($requestedVersion, ['v3', '3'], true))
     Bootstrap::errorResponse(
         'Unsupported API version',
         400,
-        ['supported_versions' => ['v3'], 'requested_version' => $requestedVersion]
+        [
+            'code' => ErrorCode::UNSUPPORTED_API_VERSION,
+            'supported_versions' => ['v3'],
+            'requested_version' => $requestedVersion,
+        ]
     );
     exit;
 }
@@ -245,7 +251,11 @@ try {
     if ($path === '/connect/token' || $path === '/connect/revoke') {
         $withheld = \Api\V3\Support\AiConnect::withheldFlag($queryParams);
         if ($withheld !== null) {
-            Bootstrap::errorResponse($withheld . ' is not supported on ' . $path . '; it writes or does nothing', 422);
+            Bootstrap::errorResponse(
+                $withheld . ' is not supported on ' . $path . '; it writes or does nothing',
+                422,
+                ['code' => ErrorCode::DRY_RUN_UNSUPPORTED]
+            );
             exit;
         }
     }
@@ -396,7 +406,7 @@ try {
                 \Api\V3\Controllers\CapabilitiesController::notLicensedMessage('The Prosper202 CLI is free')
             ),
             402,
-            ['category' => 'licence']
+            ['category' => 'licence', 'code' => ErrorCode::LICENCE]
         );
         exit;
     }
@@ -498,6 +508,34 @@ try {
                 $r->delete('/{id}', fn($ctx) => tap($crud($class), fn($c) => $c->delete(PathId::of($ctx))));
             }, isset($setupRemove[$resource]) ? [$setupRemove[$resource], $setupSection] : []);
         }
+
+        // Where a Library record is used (LibraryUsage): reads, held to Setup as the records are.
+        $router->group('', function (Router $r) use ($crud) {
+            $r->get(
+                '/campaigns/{id}/uses',
+                fn($ctx) => $crud(\Api\V3\Controllers\CampaignsController::class)->uses(PathId::of($ctx))
+            );
+            $r->get(
+                '/aff-networks/{id}/uses',
+                fn($ctx) => $crud(\Api\V3\Controllers\AffNetworksController::class)->uses(PathId::of($ctx))
+            );
+            $r->get(
+                '/ppc-networks/{id}/uses',
+                fn($ctx) => $crud(\Api\V3\Controllers\PpcNetworksController::class)->uses(PathId::of($ctx))
+            );
+            $r->get(
+                '/ppc-accounts/{id}/uses',
+                fn($ctx) => $crud(\Api\V3\Controllers\PpcAccountsController::class)->uses(PathId::of($ctx))
+            );
+            $r->get(
+                '/landing-pages/{id}/uses',
+                fn($ctx) => $crud(\Api\V3\Controllers\LandingPagesController::class)->uses(PathId::of($ctx))
+            );
+            $r->get(
+                '/text-ads/{id}/uses',
+                fn($ctx) => $crud(\Api\V3\Controllers\TextAdsController::class)->uses(PathId::of($ctx))
+            );
+        }, [$setupSection]);
 
         // Tracker sub-resource: Setup › Get Links' link.
         $router->group('/trackers', function (Router $r) use ($crud, $queryParams) {
@@ -682,6 +720,12 @@ try {
             $r->post('/shopify-refunds/{id}/close', fn($ctx) => (new $cls($db, $actorUserId))
                 ->close(PathId::of($ctx), $payload));
         }, [$shopifyRefundsSettled]);
+        // The revenue uploads, a page of the Update section like the upload
+        // itself (below); before /{id}, which would read the segment as an id.
+        $router->group('/conversions', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\UpdateController::class;
+            $r->get('/uploads', fn() => $crud($cls)->listUploads($queryParams));
+        }, [$updateSection]);
         $router->group('/conversions', function (Router $r) use ($crud, $queryParams, $campaignFigures, $recordMoney, $matchFigures) {
             $cls = \Api\V3\Controllers\ConversionsController::class;
             $r->get('',        fn() => $campaignFigures($crud($cls)->list($queryParams), $recordMoney));
@@ -742,6 +786,8 @@ try {
             });
             $r->post('/subids/reset',  fn() => $crud($cls)->resetSubids($payload, writeDryRunRequested($queryParams)));
             $r->post('/uploads',       fn() => $crud($cls)->uploadRevenue($payload, writeDryRunRequested($queryParams)));
+            // The upload's inverse, asked as the upload is.
+            $r->post('/uploads/{id}/undo', fn($ctx) => $crud($cls)->undoUpload(PathId::of($ctx), $payload, writeDryRunRequested($queryParams)));
         }, [$updateSection]);
 
         // ── Reports ──────────────────────────────────────────────────────
@@ -1768,6 +1814,7 @@ try {
         $r->post('/subids/delete', $writePreview);
         $r->post('/subids/reset', $writePreview);
         $r->post('/uploads', $writePreview);
+        $r->post('/uploads/{id}/undo', $writePreview);
     });
     $writePreviewRouter->post('/system/retention/delete-before', $writePreview);
     $writePreviewRouter->put('/rotators/{id}/rules', $writePreview);
@@ -2172,24 +2219,36 @@ try {
         error_log(p202UncaughtLogLine('API v3 answered ' . $code, $e));
         $pending = Bootstrap::pendingUpgrade($db);
         if ($pending !== null) {
-            [$message, $code] = [$pending, 503];
+            [$message, $code, $extra] = [$pending, 503, ['code' => ErrorCode::UPGRADE_PENDING]];
         }
     }
     Bootstrap::errorResponse($message, $code, $extra);
 } catch (ValidationException $e) {
-    Bootstrap::errorResponse($e->getMessage(), 422, $e->getFieldErrors() ? ['field_errors' => $e->getFieldErrors()] : []);
+    Bootstrap::errorResponse(
+        $e->getMessage(),
+        422,
+        ['code' => $e->errorCode()] + ($e->getFieldErrors() ? ['field_errors' => $e->getFieldErrors()] : [])
+    );
 } catch (ConflictException $e) {
-    Bootstrap::errorResponse($e->getMessage(), 409, $e->getDetails() ? ['details' => $e->getDetails()] : []);
+    Bootstrap::errorResponse(
+        $e->getMessage(),
+        409,
+        ['code' => $e->errorCode()] + ($e->getDetails() ? ['details' => $e->getDetails()] : [])
+    );
 } catch (WriteCommittedException $e) {
     error_log(p202UncaughtLogLine('API v3 write committed, then failed', $e));
-    Bootstrap::errorResponse($e->getMessage(), $e->getHttpStatus());
+    Bootstrap::errorResponse($e->getMessage(), $e->getHttpStatus(), ['code' => $e->errorCode()]);
 } catch (TooManyRequestsException $e) {
     header('Retry-After: ' . $e->retryAfter);
-    Bootstrap::errorResponse($e->getMessage(), 429, ['retry_after_seconds' => $e->retryAfter] + $e->getDetails());
+    Bootstrap::errorResponse(
+        $e->getMessage(),
+        429,
+        ['code' => $e->errorCode(), 'retry_after_seconds' => $e->retryAfter] + $e->getDetails()
+    );
 } catch (UpstreamUnavailableException $e) {
     // Another service's failure, in its own words: nothing here is broken, so the upgrade is not named for it.
     error_log(p202UncaughtLogLine('API v3 answered ' . $e->getHttpStatus() . ' for an ad platform', $e));
-    $extra = ['details' => $e->getDetails()];
+    $extra = ['code' => $e->errorCode(), 'details' => $e->getDetails()];
     if ($e->retryAfter !== null) {
         header('Retry-After: ' . $e->retryAfter);
         $extra = ['retry_after_seconds' => $e->retryAfter] + $extra;
@@ -2198,17 +2257,24 @@ try {
 } catch (HttpException $e) {
     $code = $e->getHttpStatus();
     $message = $e->getMessage();
+    $errorCode = $e->errorCode();
     if ($code >= 500) {
         // The answer names no cause but a pending upgrade; the log keeps it.
         error_log(p202UncaughtLogLine('API v3 answered ' . $code, $e));
         $pending = Bootstrap::pendingUpgrade($db);
-        [$message, $code] = $pending !== null ? [$pending, 503] : ['Internal server error', $code];
+        [$message, $code, $errorCode] = $pending !== null
+            ? [$pending, 503, ErrorCode::UPGRADE_PENDING]
+            : ['Internal server error', $code, $errorCode];
     }
-    Bootstrap::errorResponse($message, $code);
+    Bootstrap::errorResponse($message, $code, ['code' => $errorCode]);
 } catch (\Throwable $e) {
     error_log(p202UncaughtLogLine('API v3 answered 500', $e));
     $pending = Bootstrap::pendingUpgrade($db);
-    Bootstrap::errorResponse($pending ?? 'Internal server error', $pending !== null ? 503 : 500);
+    Bootstrap::errorResponse(
+        $pending ?? 'Internal server error',
+        $pending !== null ? 503 : 500,
+        ['code' => $pending !== null ? ErrorCode::UPGRADE_PENDING : ErrorCode::SERVER_ERROR]
+    );
 }
 
 // ─── Helper ──────────────────────────────────────────────────────────

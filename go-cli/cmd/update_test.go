@@ -590,6 +590,7 @@ func TestUpdateCommandsRefuseStagedBeforeAnyRequest(t *testing.T) {
 		{"--staged", "conversion", "delete-subids", list, "--force"},
 		{"--staged", "conversion", "reset-subids", "--aff-network-id", "3", "--force"},
 		{"--staged", "conversion", "upload-revenue", csv, "--force"},
+		{"--staged", "conversion", "undo-upload", "7", "--force"},
 	} {
 		t.Run(args[2]+" "+args[3], func(t *testing.T) {
 			seen := updateServer(t, func(updateRequest) (int, string) { return 200, `{"data":{}}` })
@@ -637,4 +638,117 @@ func TestUpdateErrorsAreCategorizedAndSayWhatToDo(t *testing.T) {
 			}
 		})
 	}
+}
+
+const undoUploadPreview = `{"data":{"dry_run":true,"batch":{"batch_id":7,"file_name":"march.csv","uploaded_at":1,"line_count":3,"recorded_count":2,"skipped_count":0,"undone_at":null,"undone_rows":null},` +
+	`"would_remove":2,"amounts":[{"currency":"USD","amount":"11.50000"}],"clicks":2,"reversals_stop_netting":1,"postbacks_cancelled":0,"postbacks_retracted":0,` +
+	`"rows":[{"conv_id":31,"click_id":940001,"line":2,"payout":"5.00000","currency":"USD"},{"conv_id":32,"click_id":940002,"line":3,"payout":"6.50000","currency":"USD"}],"rows_unlisted":0,` +
+	`"click_values":[{"click_id":940001,"before":{"lead":true,"value":"5.00000"},"after":{"lead":true,"value":"3.00000"}}],"click_values_unlisted":0}}`
+
+const undoUploadDone = `{"data":{"dry_run":false,"removed":2,"clicks":2,"batch":{"batch_id":7,"file_name":"march.csv","uploaded_at":1,"line_count":3,"recorded_count":2,"skipped_count":0,"undone_at":2,"undone_rows":2},"message":"Deleted 2 conversions of batch 7 on 2 clicks; each click's value is what it was before the upload."}}`
+
+func TestUndoUploadPreviewsThenUndoesTheBatch(t *testing.T) {
+	seen := updateServer(t, func(r updateRequest) (int, string) {
+		if r.dryRun() {
+			return 200, undoUploadPreview
+		}
+		return 200, undoUploadDone
+	})
+	_, stderr, err := executeCommand("conversion", "undo-upload", "7", "--force")
+	if err != nil {
+		t.Fatalf("undo-upload: %v\n%s", err, stderr)
+	}
+	if len(*seen) != 2 || !(*seen)[0].dryRun() || (*seen)[1].dryRun() {
+		t.Fatalf("requests = %+v, want the dry run then the undo", *seen)
+	}
+	for _, r := range *seen {
+		if r.Method != "POST" || r.Path != "/conversions/uploads/7/undo" || len(r.Body) != 0 {
+			t.Errorf("request = %+v, want POST /conversions/uploads/7/undo with an empty body", r)
+		}
+	}
+	if !strings.Contains(stderr, "Undid batch 7 (march.csv): 2 conversion(s) deleted on 2 click(s)") {
+		t.Errorf("stderr = %q", stderr)
+	}
+}
+
+func TestUndoUploadDryRunListsTheRowsAndWritesNothing(t *testing.T) {
+	seen := updateServer(t, func(updateRequest) (int, string) { return 200, undoUploadPreview })
+	stdout, stderr, err := executeCommand("conversion", "undo-upload", "7", "--dry-run")
+	if err != nil {
+		t.Fatalf("undo-upload --dry-run: %v\n%s", err, stderr)
+	}
+	if len(*seen) != 1 {
+		t.Fatalf("requests = %+v, want only the dry run", *seen)
+	}
+	for _, want := range []string{"31", "940001", "940002", "6.50", "USD"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout = %q, want the rows listed (%s)", stdout, want)
+		}
+	}
+	if !strings.Contains(stderr, "would delete 2 conversion(s) on 2 click(s), 11.5 USD in all") || !strings.Contains(stderr, "1 reversal(s) of these rows stop netting") {
+		t.Errorf("stderr = %q", stderr)
+	}
+}
+
+func TestUndoUploadNeverAddsAmountsOfDifferentCurrencies(t *testing.T) {
+	updateServer(t, func(updateRequest) (int, string) {
+		return 200, strings.Replace(undoUploadPreview, `"amounts":[{"currency":"USD","amount":"11.50000"}]`,
+			`"amounts":[{"currency":"EUR","amount":"6.50000"},{"currency":null,"amount":"5.00000"}]`, 1)
+	})
+	_, stderr, err := executeCommand("conversion", "undo-upload", "7", "--dry-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr, "6.5 EUR and 5 (currency not recorded) in all") {
+		t.Errorf("stderr = %q, want each currency's sum on its own", stderr)
+	}
+}
+
+func TestUndoUploadRefusesABadIDAndAMalformedAnswer(t *testing.T) {
+	seen := updateServer(t, func(updateRequest) (int, string) {
+		return 200, `{"data":{"dry_run":true,"batch":{"batch_id":7},"clicks":1,"rows":[]}}`
+	})
+	_, _, err := executeCommand("conversion", "undo-upload", "07")
+	assertValidationError(t, err)
+	if !strings.Contains(hintFor(err), "p202 conversion uploads") {
+		t.Errorf("hint = %q", hintFor(err))
+	}
+	if len(*seen) != 0 {
+		t.Errorf("sent %+v for a bad id", *seen)
+	}
+	_, _, err = executeCommand("conversion", "undo-upload", "7", "--force")
+	if err == nil || exitCodeForError(err) != ExitServer || !strings.Contains(err.Error(), "a count or the rows are missing") {
+		t.Fatalf("err = %v, want the answer refused as malformed", err)
+	}
+	if len(*seen) != 1 {
+		t.Errorf("requests = %+v, want no undo after a malformed preview", *seen)
+	}
+}
+
+func TestUndoUploadOfABatchNotTheAccountsSaysWhereTheIDsAre(t *testing.T) {
+	updateServer(t, func(updateRequest) (int, string) {
+		return 404, `{"error":true,"status":404,"message":"Upload batch 9 not found: GET /conversions/uploads lists this account's batch ids"}`
+	})
+	_, _, err := executeCommand("conversion", "undo-upload", "9", "--dry-run")
+	if err == nil || !strings.Contains(hintFor(err), "p202 conversion uploads") {
+		t.Fatalf("err = %v / hint %q", err, hintFor(err))
+	}
+}
+
+func TestConversionUploadsListsTheBatches(t *testing.T) {
+	seen := updateServer(t, func(updateRequest) (int, string) {
+		return 200, `{"data":[{"batch_id":8,"file_name":"april.csv","uploaded_at":5,"line_count":2,"recorded_count":2,"skipped_count":0,"undone_at":null,"undone_rows":null}],"next_before":null}`
+	})
+	stdout, _, err := executeCommand("conversion", "uploads", "--limit", "10", "--before", "9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*seen) != 1 || (*seen)[0].Method != "GET" || (*seen)[0].Path != "/conversions/uploads" || (*seen)[0].Query != "before=9&limit=10" {
+		t.Fatalf("requests = %+v", *seen)
+	}
+	if !strings.Contains(stdout, "april.csv") {
+		t.Errorf("stdout = %q", stdout)
+	}
+	_, _, err = executeCommand("conversion", "uploads", "--limit", "0")
+	assertValidationError(t, err)
 }

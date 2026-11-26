@@ -19,6 +19,12 @@ class PpcNetworksController extends Controller
     protected function primaryKey(): string { return 'ppc_network_id'; }
 
     #[\Override]
+    protected function libraryResource(): ?string
+    {
+        return 'ppc-networks';
+    }
+
+    #[\Override]
     protected function listSearchColumns(): array
     {
         return ['ppc_network_name'];

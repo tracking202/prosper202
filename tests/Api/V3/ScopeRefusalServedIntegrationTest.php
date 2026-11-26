@@ -256,6 +256,7 @@ final class ScopeRefusalServedIntegrationTest extends TestCase
         self::requireScratch();
         [$status, $body, $raw] = self::request('GET', '/sync/status', self::$keys['viewer']);
         self::assertSame(403, $status, $raw . $this->serverLog());
-        self::assertSame(['error', 'message', 'status'], array_keys($body), $raw);
+        self::assertSame(['error', 'message', 'status', 'code'], array_keys($body), $raw);
+        self::assertSame('forbidden', $body['code'], $raw);
     }
 }

@@ -5695,6 +5695,7 @@ class UPGRADE
             // The Shopify refund tables, which a database upgraded by an
             // early 1.9.80 build can lack (Prosper202\PaymentNotification\
             // Shopify\SettlementSchema), reconciled on the way up.
+            // A revenue upload's undo log (undone_at, undone_rows).
             //
             // The re-click backfill's stopped_at, when a stop began, which
             // Settings and the cron output show (Prosper202\Click\ReClickBackfill).
@@ -5705,6 +5706,7 @@ class UPGRADE
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
+                \Prosper202\Database\Tables\ConversionTables::conversionUploads(),
                 // 202_ppc_network_variables.ppc_network_id unsigned, as wide
                 // as the source id it names (_upgrade_ppc_variable_network_width()).
                 \Prosper202\Database\Tables\TrackingTables::ppcNetworkVariables(),
@@ -5716,6 +5718,10 @@ class UPGRADE
                 \Prosper202\Database\Tables\SecretTables::egressProxy(),
                 // Slack notices waiting to be sent (Prosper202\Notifications\SlackNoticeQueue).
                 \Prosper202\Database\Tables\MiscTables::slackNotices(),
+                // When each landing page last had a click, which the landing
+                // page list reads (Prosper202\Click\LandingPageLastSeen).
+                // Pages start with none: no old click is scanned for one.
+                \Prosper202\Database\Tables\CampaignTables::landingPageLastSeen(),
                 // Each landing page's split test, whose variant the page's
                 // script writes into the click's C4 (Prosper202\Setup\
                 // LandingPageSplitTest).

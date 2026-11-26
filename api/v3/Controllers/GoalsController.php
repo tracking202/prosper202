@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\ErrorCode;
 use Api\V3\Apps\Apple\SkanEncodingRules;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
@@ -617,7 +618,9 @@ final class GoalsController
     private function assertNameFree(GoalScope $scope, int $scopeId, string $name, ?int $exceptId): void
     {
         if ($this->goals->nameTaken($this->userId, $scope, $scopeId, $name, $exceptId)) {
-            throw new ConflictException('A goal named "' . $name . '" already exists for this ' . $scope->value . '; goal names are unique per owner.');
+            throw (new ConflictException(
+                'A goal named "' . $name . '" already exists for this ' . $scope->value . '; goal names are unique per owner.'
+            ))->coded(ErrorCode::NAME_TAKEN);
         }
     }
 
