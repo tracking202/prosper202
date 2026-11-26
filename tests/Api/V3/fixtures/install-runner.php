@@ -11,7 +11,9 @@
  * installer reads the connection from the DB class, which 202-config.php
  * declares. Here DB is a stand-in that hands back the scratch connection.
  *
- * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME
+ * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME; P202_TEST_MEMCACHED or
+ *       P202_TEST_CACHE_FILE for install.php's memcache
+ *       (tests/Database/fixtures/test-cache-client.php)
  * Prints the API key; what goes wrong goes to stderr, with a non-zero exit.
  */
 
@@ -64,6 +66,11 @@ $stand_in = new class {
 $stand_in::$connection = $db;
 class_alias($stand_in::class, 'DB');
 $GLOBALS['db'] = $db;
+// install.php's memcache, where the test gives one (InstallIdCacheIntegrationTest).
+if ((string) getenv('P202_TEST_MEMCACHED') !== '' || (string) getenv('P202_TEST_CACHE_FILE') !== '') {
+    require $root . '/tests/Database/fixtures/test-cache-client.php';
+    p202_test_cache_globals();
+}
 
 require $root . '/202-config/version.php';
 require $root . '/202-config/functions-tracking202.php';

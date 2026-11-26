@@ -85,8 +85,7 @@ var eventSendCmd = &cobra.Command{
 		if err != nil {
 			return hintEventError(err)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 

@@ -314,8 +314,7 @@ func setupGet(path, page string) error {
 	if err != nil {
 		return setupRequestError(c, err, page)
 	}
-	render(data)
-	return nil
+	return render(data)
 }
 
 // setupWrite renders one Setup write (or, under --staged, the proposal it
@@ -329,6 +328,5 @@ func setupWrite(do func(*api.Client) ([]byte, error)) error {
 	if err != nil {
 		return setupRequestError(c, err, "Setup > Traffic Sources")
 	}
-	render(data)
-	return nil
+	return render(data)
 }

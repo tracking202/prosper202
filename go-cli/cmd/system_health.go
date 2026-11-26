@@ -212,7 +212,9 @@ func runSystemHealth(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("encoding health: %w", err)
 	}
-	render(out)
+	if err := render(out); err != nil {
+		return err
+	}
 	if cert.status != tlsStatusOK && cert.status != tlsStatusNotUsed {
 		return cert.problemError(warnDays)
 	}
