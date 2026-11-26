@@ -83,8 +83,7 @@ func inboundLogError(err error) error {
 // renderInboundLog draws one line per request. JSON and NDJSON pass the answer through.
 func renderInboundLog(data []byte) error {
 	if jsonOutput || ndjsonOutput || quietOutput {
-		render(data)
-		return nil
+		return render(data)
 	}
 	var resp struct {
 		Data       []map[string]interface{} `json:"data"`
@@ -116,7 +115,9 @@ func renderInboundLog(data []byte) error {
 	if err != nil {
 		return fmt.Errorf("encoding the inbound log: %w", err)
 	}
-	render(encoded)
+	if err := render(encoded); err != nil {
+		return err
+	}
 	if resp.NextBefore != nil && !csvOutput {
 		fmt.Printf("Older requests: p202 conversion inbound-log --before %d\n", *resp.NextBefore)
 	}
@@ -164,8 +165,7 @@ var conversionInboundLogRecordCmd = &cobra.Command{
 			}
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 

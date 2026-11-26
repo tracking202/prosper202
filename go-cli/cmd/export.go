@@ -81,8 +81,7 @@ var exportCmd = &cobra.Command{
 			return nil
 		}
 
-		render(encoded)
-		return nil
+		return render(encoded)
 	},
 }
 

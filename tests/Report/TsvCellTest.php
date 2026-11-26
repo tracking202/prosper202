@@ -24,7 +24,7 @@ final class TsvCellTest extends TestCase
     private const OTHER_TABS = [
         '202-config/functions-standalone-ui.php' => 'indents the page head\'s asset tags',
         '202-config/connect2.php' => 'the access log line, whose fields it cleans of tabs and line breaks itself',
-        '202-config/Http/ForwardedHeader.php' => 'skips the spaces and tabs a Forwarded header holds between its parts',
+        '202-config/Http/ForwardedHeader.php' => 'reads a Forwarded header: skips the tabs RFC 7230 allows as whitespace, writes none',
     ];
 
     public function testATabOrALineBreakBecomesOneSpace(): void

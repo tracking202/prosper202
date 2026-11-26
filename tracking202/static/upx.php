@@ -241,7 +241,14 @@ if (is_numeric($mysql['click_id'])) {
             $tokens,
             null,
             false,
-            static fn (): bool => p202ConversionMayTrack($db, $clickId, $_GET)
+            static fn (): bool => p202ConversionMayTrack($db, $clickId, $_GET),
+            // None at all for a visitor who refused consent, here or on any visit of the click.
+            \Prosper202\Conversion\AdPlatformConsent::ofConversion(
+                new \Prosper202\Database\Connection($db),
+                (int) ($cvar_sql_row['user_id'] ?? 0),
+                (int) $conversionId,
+                !\Prosper202\Identity\RequestSignals::consentGiven($_GET)
+            )
         )['markup'];
 	}
 

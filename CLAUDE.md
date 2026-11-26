@@ -205,7 +205,8 @@ answer in `reference-agent.sh`: Agent Evals runs only after landing
   commit (`p202WithHeldCacheWrites()`). When a lookup's answer changes,
   change its key subject and pin the old key unserved. A namespace is a
   claim about whose values and when: `systemHash()` names the install
-  (directory and database) with no shared fallback
+  (directory, database and `InstallIdCache`'s id, so a reinstall in place
+  starts cold) with no shared fallback
   (`SystemHashNamesTheDatabaseTest`), and click-path keys carry the code
   version (`LookupRepositoryFactory::cacheNamespace()`,
   `CacheKeyNamespaceTest`). `Ipv6RowJoinIsGuardedTest` holds every join of

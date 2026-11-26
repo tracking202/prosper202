@@ -27,9 +27,13 @@ final class FilterChoicesCacheTest extends TestCase
         }
         $server = $_SERVER;
         try {
+            // The install's id, held as memcached holds it (InstallIdCache): no database here to read it from.
             $client = new class {
                 public array $values = [];
-                public function get(string $key): mixed { return $this->values[$key] ?? false; }
+                public function get(string $key): mixed
+                {
+                    return str_starts_with($key, 'p202:install-id:v1:') ? str_repeat('a', 64) . ':' . time() : ($this->values[$key] ?? false);
+                }
                 public function set(string $key, array $value, int $ttl): bool
                 {
                     $this->values[$key] = $value;
@@ -76,6 +80,7 @@ final class FilterChoicesCacheTest extends TestCase
                 mkdir($root . '/' . $install);
                 copy(dirname(__DIR__, 2) . '/202-config/functions-shared.php', $root . '/' . $install . '/shared.php');
                 $program = <<<'PHP'
+                    require $argv[3];
                     require $argv[1];
                     require $argv[2];
                     $_SERVER['HTTP_HOST'] = 'example.com';
@@ -85,13 +90,16 @@ final class FilterChoicesCacheTest extends TestCase
                     $GLOBALS['memcacheWorking'] = true;
                     $GLOBALS['whatCache'] = 'memcached';
                     $GLOBALS['memcache'] = new class {
-                        public function get(string $key): bool { return false; }
+                        public function get(string $key): string|bool
+                        {
+                            return str_starts_with($key, 'p202:install-id:v1:') ? str_repeat('a', 64) . ':' . time() : false;
+                        }
                         public function set(string $key, array $value, int $ttl): bool { echo $key; return true; }
                     };
                     \Prosper202\Report\FilterChoicesCache::fromGlobals()->remember('isp_id', 7, 1, 2, 300, fn () => [1 => 'value']);
                     PHP;
                 $process = proc_open(
-                    [PHP_BINARY, '-r', $program, $root . '/' . $install . '/shared.php', dirname(__DIR__, 2) . '/202-config/Report/FilterChoicesCache.php'],
+                    [PHP_BINARY, '-r', $program, $root . '/' . $install . '/shared.php', dirname(__DIR__, 2) . '/202-config/Report/FilterChoicesCache.php', dirname(__DIR__, 2) . '/vendor/autoload.php'],
                     [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
                     $pipes
                 );

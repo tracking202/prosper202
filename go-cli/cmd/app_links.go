@@ -52,8 +52,7 @@ var appLinkCmd = &cobra.Command{
 			return withHint(err, "`p202 app list` lists your apps; `p202 campaign list` your campaigns.")
 		}
 		if !apply {
-			render(data)
-			return nil
+			return render(data)
 		}
 		var envelope struct {
 			Data struct {
@@ -68,8 +67,7 @@ var appLinkCmd = &cobra.Command{
 		}
 		if envelope.Data.Campaign.Ready || len(envelope.Data.Campaign.Apply) == 0 {
 			// Nothing to write: say so in the same shape as a read.
-			render(data)
-			return nil
+			return render(data)
 		}
 		body := map[string]interface{}{}
 		for field, value := range envelope.Data.Campaign.Apply {
@@ -86,14 +84,13 @@ var appLinkCmd = &cobra.Command{
 		if err != nil {
 			return withHint(err, "%s", "The campaign was not changed. `p202 campaign get "+campaign+"` shows it as it is.")
 		}
-		render(updated)
-		return nil
+		return render(updated)
 	},
 }
 
 // ── Notification outbox ─────────────────────────────────────────────
 
-var appNotificationStatuses = []string{"pending", "sent", "failed", "cancelled", "suppressed"}
+var appNotificationStatuses = []string{"pending", "sent", "failed", "cancelled", "suppressed", "withheld"}
 var appNotificationKinds = []string{"reached", "correction", "retraction"}
 
 var appNotificationsCmd = &cobra.Command{
@@ -102,7 +99,8 @@ var appNotificationsCmd = &cobra.Command{
 	Long: "Lists the notification outbox rows for app installs, newest first: the postback URL, its\n" +
 		"kind (reached, correction, retraction) and status — pending (waiting or backing off),\n" +
 		"sent, failed (attempts ran out; last_error says why), cancelled (replaced before it went\n" +
-		"out) or suppressed (a correction the traffic source has no correction URL for).\n" +
+		"out), suppressed (a correction the traffic source has no correction URL for) or\n" +
+		"withheld (the visitor refused consent, so nothing is sent about the install).\n" +
 		"meta.summary counts every status under the same filters.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		params := map[string]string{}

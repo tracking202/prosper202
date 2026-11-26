@@ -171,6 +171,43 @@ final class ServerPostbacksAreQueuedTest extends TestCase
         }
     }
 
+    /**
+     * Every caller says whether the visitor consented (AdPlatformConsent):
+     * fire() sends nothing without the answer, so a call that leaves it out
+     * would hold back every pixel, and one that passes null would too.
+     */
+    public function testEveryCallerPassesTheVisitorsConsent(): void
+    {
+        $arg = static function (array $args, int $position): string {
+            foreach ($args as $a) {
+                if (preg_match('/\Aconsent :\s*(.*)\z/s', $a, $m) === 1) {
+                    return trim($m[1]);
+                }
+            }
+
+            return $args[$position] ?? '(omitted)';
+        };
+        $seen = [];
+        foreach (self::files() as $file) {
+            if ($file === '202-config/Conversion/TrafficSourcePixels.php') {
+                continue;
+            }
+            $src = (string) file_get_contents(self::ROOT . $file);
+            foreach ([['p202FireTrafficSourcePixels', null, 6], ['fire', 'TrafficSourcePixels', 7]] as [$name, $class, $position]) {
+                foreach (self::calls($src, $name, $class) as [$line, $args]) {
+                    $consent = $arg($args, $position);
+                    self::assertNotContains(strtolower($consent), ['(omitted)', 'null'], "$file:$line calls $name() without the visitor's consent: pass AdPlatformConsent::ofConversion() (or ofClick(), or the answer already read)");
+                    $seen[] = "$file $name";
+                }
+            }
+        }
+        foreach (['tracking202/static/gpb.php p202FireTrafficSourcePixels', 'tracking202/static/upx.php p202FireTrafficSourcePixels',
+            '202-config/Click/PurLinkPixels.php fire', '202-config/Goals/TrafficSourceNotifier.php fire',
+            '202-config/static-endpoint-helpers.php fire'] as $caller) {
+            self::assertContains($caller, $seen, 'the scan found ' . $caller);
+        }
+    }
+
     public function testNoRequestPathSendsTheQueue(): void
     {
         $sending = [];

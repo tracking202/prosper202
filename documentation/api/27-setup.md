@@ -434,6 +434,11 @@ URL, and a removed pixel is erased with its correction URL. Beyond the form:
 the type must be one `202_pixel_types` names, and a Postback's URLs must be
 http(s) — the only ones the postback sender calls.
 
+**A visitor who refused consent** (`p202_consent`) is sent none of an
+account's pixels, of any type, and none of its postbacks: the conversion
+counts, and its outbox rows are `withheld` with the reason
+([destinations.md](../features/destinations.md#privacy-and-personal-data)).
+
 **Where a postback goes.** This server sends a Postback pixel's URLs (and its
 correction URLs) itself, on behalf of whoever saved the pixel and of anyone
 who sends `gpb.php` a click id, so it sends them only to public addresses.

@@ -18,7 +18,8 @@ use Prosper202\Conversion\ConversionLog;
 final class ConversionLogCsv
 {
     public const HEADER = ['conversion_id', 'subid', 'campaign', 'click_time', 'conversion_time', 'elapsed', 'ip_address', 'type',
-        'reverses_conversion_id', 'transaction_id', 'payout', 'currency', 'sent_payout', 'sent_currency', 'deleted', 'user_agent'];
+        'reverses_conversion_id', 'transaction_id', 'payout', 'currency', 'sent_payout', 'sent_currency', 'deleted', 'user_agent',
+        'held_back_for_consent'];
 
     private function __construct()
     {
@@ -45,6 +46,8 @@ final class ConversionLogCsv
                     $masked ? '?' : (string) ($row['stated_amount'] ?? ''),
                     $row['stated_amount'] === null ? '' : $row['stated_currency'],
                     $row['deleted'] ? 'yes' : 'no', $cell($row['user_agent']),
+                    // Told to no ad platform or traffic source: the visitor refused consent.
+                    $row['consent_withheld'] !== null ? 'yes' : 'no',
                 ]);
             }, 1000, $max);
             if ($written['more']) {

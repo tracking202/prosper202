@@ -121,9 +121,25 @@ function getCache(string $key, mixed $default = false): mixed
  * The namespace of every cache key: the host, and the install the ids and
  * rows a key names belong to. Its directory is shared by no other install on
  * the server and is known in every scope; its database also tells a
- * reinstall into a new one apart.
+ * reinstall into a new one apart, and its id (InstallIdCache) a reinstall
+ * into the same one.
  */
 function systemHash(): string
+{
+    $install = p202InstallPlace();
+
+    return hash('ripemd160', ($_SERVER['HTTP_HOST'] ?? '') . ($_SERVER['SERVER_ADDR'] ?? '')
+        . "\0" . implode("\0", $install)
+        . "\0" . \Prosper202\Database\InstallIdCache::forBootstrap($install));
+}
+
+/**
+ * Where the install is: this directory and its database settings, which an
+ * in-place reinstall keeps.
+ *
+ * @return list<string>
+ */
+function p202InstallPlace(): array
 {
     $install = [__DIR__];
     foreach (['dbhost', 'dbname'] as $setting) {
@@ -131,8 +147,7 @@ function systemHash(): string
         $install[] = is_string($value) ? $value : '';
     }
 
-    return hash('ripemd160', ($_SERVER['HTTP_HOST'] ?? '') . ($_SERVER['SERVER_ADDR'] ?? '')
-        . "\0" . implode("\0", $install));
+    return $install;
 }
 
 /** The install's path below the document root, with forward slashes. */
