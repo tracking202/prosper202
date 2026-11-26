@@ -2611,6 +2611,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
         - name: click_lead
           in: query
           description: "0 = clicks only, 1 = conversions only"
@@ -4211,8 +4212,9 @@ paths:
       description: >-
         Aggregate metrics for the selected time period and filters. Every
         report endpoint takes the Analyze pages' filters, which combine; a
-        parameter the endpoint does not take, a list where one value goes, or
-        a value outside a filter's form is a 422 whose `field_errors` names
+        parameter the endpoint does not take, an array (`name[]`; several
+        values are one value with commas), or a value outside a filter's
+        form is a 422 whose `field_errors` names
         the parameter (they used to be ignored, and the answer covered
         everything). The ratios are MySQL's DECIMAL division of the sums,
         truncated where it stops (9 decimals, 18 for roi) and rounded half
@@ -4240,6 +4242,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
       responses:
         "200":
           description: Summary metrics
@@ -4328,6 +4331,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
       responses:
         "200":
           description: The groups as a tree (`data`, each with `children` but the innermost), `totals`, and `by`
@@ -4525,6 +4529,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
       responses:
         "200":
           description: Breakdown results
@@ -4612,6 +4617,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
       responses:
         "200":
           description: Timeseries data
@@ -4723,6 +4729,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
       responses:
         "200":
           description: Day-parting rows
@@ -4904,6 +4911,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
       responses:
         "200":
           description: The rotator's figures
@@ -10443,6 +10451,7 @@ paths:
       - $ref: '#/components/parameters/filterIp'
       - $ref: '#/components/parameters/filterReferer'
       - $ref: '#/components/parameters/filterPublisherId'
+      - $ref: '#/components/parameters/filterClickId'
       responses:
         '200':
           description: One row per weekday (`day_of_week` 0 = Monday … 6 = Sunday, `day_name`) with the same metrics
@@ -14869,90 +14878,160 @@ components:
     filterCampaign:
       name: aff_campaign_id
       in: query
+      description: >-
+        Clicks of this campaign. Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterAffNetwork:
       name: aff_network_id
       in: query
+      description: >-
+        Clicks of a campaign of this affiliate network. Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterPpcAccount:
       name: ppc_account_id
       in: query
+      description: >-
+        Clicks of this traffic source account. Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterPpcNetwork:
       name: ppc_network_id
       in: query
       description: >-
         A traffic source's id, or `none` for the clicks with no traffic
         source (the Analyze pages' "No traffic source", which they send as
-        16777215; that is accepted too).
+        16777215; that is accepted too). Several separated by commas
+        (`3,none`) select the clicks any of them selects, at most 100; 0 or
+        absent is no filter and stands alone, and an empty item is a 422.
       schema:
-        oneOf:
-          - type: integer
-          - type: string
-            enum: [none]
+        type: string
+        pattern: '^(0|([1-9][0-9]*|none)(,([1-9][0-9]*|none))*)$'
+        example: "3,none"
     filterLandingPage:
       name: landing_page_id
       in: query
+      description: >-
+        Clicks through this landing page. Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterCountry:
       name: country_id
       in: query
+      description: >-
+        Clicks from this country (the id of a `breakdown=country` row). Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterTextAd:
       name: text_ad_id
       in: query
-      description: Filter by text ad. 0 or empty is no filter; anything but a whole number is a 422.
+      description: >-
+        Clicks of this text ad. Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterRegion:
       name: region_id
       in: query
-      description: Filter by region (the id of a `breakdown=region` row)
+      description: >-
+        Clicks from this region (the id of a `breakdown=region` row). Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterIsp:
       name: isp_id
       in: query
-      description: Filter by ISP/carrier (the id of a `breakdown=isp` row)
+      description: >-
+        Clicks from this ISP or carrier (the id of a `breakdown=isp` row). Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterBrowser:
       name: browser_id
       in: query
-      description: Filter by browser (the id of a `breakdown=browser` row)
+      description: >-
+        Clicks from this browser (the id of a `breakdown=browser` row). Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterPlatform:
       name: platform_id
       in: query
-      description: Filter by platform/OS (the id of a `breakdown=platform` row)
+      description: >-
+        Clicks from this platform or OS (the id of a `breakdown=platform` row). Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterDeviceType:
       name: device_type
       in: query
-      description: "Filter by device type: 1 Desktop, 2 Mobile, 3 Tablet, 4 Bot (the ids of `breakdown=device_type` rows); every device model of that type."
+      description: >-
+        Device type: 1 Desktop, 2 Mobile, 3 Tablet, 4 Bot (the ids of
+        `breakdown=device_type` rows); every device model of that type.
+        Several separated by commas (`2,3`) select any of them; 0 or absent
+        is no filter.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "2,3"
     filterMethodOfPromotion:
       name: method_of_promotion
       in: query
-      description: Only direct-link clicks (no landing page) or only landing-page clicks
+      description: >-
+        Only direct-link clicks (no landing page) or only landing-page
+        clicks; both, separated by a comma, is every click.
       schema:
         type: string
-        enum: [directlink, landingpage]
+        pattern: '^(directlink|landingpage)(,(directlink|landingpage))*$'
+        example: directlink
     filterShow:
       name: show
       in: query
-      description: "Which clicks count, as the Analyze pages' show menu: all (default), real (not filtered), filtered, filtered_bot (filtered as bots), leads (converted)."
+      description: >-
+        Which clicks count, as the Analyze pages' show menu: all (default),
+        real (not filtered), filtered, filtered_bot (filtered as bots), leads
+        (converted). Several separated by commas (`filtered,leads`) count the
+        clicks any of them counts; `all` stands alone.
       schema:
         type: string
-        enum: [all, real, filtered, filtered_bot, leads]
+        pattern: '^(all|(real|filtered|filtered_bot|leads)(,(real|filtered|filtered_bot|leads))*)$'
+        example: filtered,leads
     filterKeyword:
       name: keyword
       in: query
@@ -14963,7 +15042,11 @@ components:
     filterIp:
       name: ip
       in: query
-      description: Clicks from this one address, IPv4 or IPv6 (any spelling of an IPv6 address). Not an address is a 422.
+      description: >-
+        Clicks from this address, IPv4 or IPv6 (any spelling of an IPv6
+        address). Several separated by commas (`203.0.113.7,2001:db8::1`)
+        select the clicks from any of them, at most 100. Anything that is not
+        an address, or an empty item, is a 422.
       schema:
         type: string
         example: 2001:db8::1
@@ -14978,11 +15061,26 @@ components:
       name: publisher_id
       in: query
       description: >-
-        Clicks a publisher link credited to this publisher (a user id, the `id` of a
-        `breakdown=publisher` row), or `none` for the clicks credited to no publisher. 0 is no filter.
+        Clicks a publisher link credited to this publisher (a user id, the
+        `id` of a `breakdown=publisher` row), or `none` for the clicks
+        credited to no publisher. Several separated by commas (`7,none`)
+        select the clicks any of them selects, at most 100; 0 or absent is
+        no filter and stands alone.
       schema:
         type: string
-        pattern: '^([0-9]+|none)$'
+        pattern: '^(0|([1-9][0-9]*|none)(,([1-9][0-9]*|none))*)$'
+    filterClickId:
+      name: click_id
+      in: query
+      description: >-
+        Only these clicks: one click id, or several separated by commas, at
+        most 100. A click a redirector link re-clicked has a row for each
+        visit, and its id selects every one. Another account's click selects
+        nothing.
+      schema:
+        type: string
+        pattern: '^[1-9][0-9]*(,[1-9][0-9]*)*$'
+        example: "81360001"
 
     # App postback filters (list + report)
     postbackRegistrationId:
