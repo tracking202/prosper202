@@ -5714,6 +5714,8 @@ class UPGRADE
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
                 // The egress proxy set on Account › Settings (Prosper202\Http\EgressProxyStore).
                 \Prosper202\Database\Tables\SecretTables::egressProxy(),
+                // Slack notices waiting to be sent (Prosper202\Notifications\SlackNoticeQueue).
+                \Prosper202\Database\Tables\MiscTables::slackNotices(),
                 // Each landing page's split test, whose variant the page's
                 // script writes into the click's C4 (Prosper202\Setup\
                 // LandingPageSplitTest).

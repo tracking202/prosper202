@@ -73,7 +73,7 @@ final class OutboundCurlCallsAreListedTest extends TestCase
             "a sync profile's url: WebhookGuard::checkSync() at every request, " . self::ROUTED . ', no redirects',
             self::GUARDED,
         ],
-        '202-cronjobs/process_dataengine_job.php' => [2, "this server's own listener: DataEngine\\SelfCall's pin", self::SELF_CALL],
+        '202-cronjobs/process_dataengine_job.php' => [1, "this server's own listener: DataEngine\\SelfCall's pin", self::SELF_CALL],
         'cli/ApiClient.php' => [1, "the PHP CLI's own configured server, on the operator's machine", self::OPERATOR_MACHINE],
         'tracking202/Apps/StoreListing.php' => [
             1,

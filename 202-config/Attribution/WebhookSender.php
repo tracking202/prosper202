@@ -177,7 +177,8 @@ final class WebhookSender
      *
      * @param list<string> $headers
      * @param list<int> $ports the ports the URL may name (WebhookGuard::check()), any when empty
-     * @param int $timeout seconds the transfer may take, at most TIMEOUT (a Slack notice's is shorter)
+     * @param int $timeout seconds the request may take, the host's lookup included, at most TIMEOUT
+     *        (a Slack notice's is shorter)
      * @return Posted
      */
     public function post(
@@ -221,9 +222,11 @@ final class WebhookSender
             return ['refused' => 'the body is ' . strlen($body) . ' bytes, more than the ' . self::MAX_BODY_BYTES
                 . ' a webhook carries'] + $none;
         }
+        $timeout = max(1, min(self::TIMEOUT, $timeout));
+        $deadline = microtime(true) + $timeout;
         try {
             $this->guard ??= new WebhookGuard();
-            $target = $this->guard->check($url, $ports);
+            $target = $this->guard->check($url, $ports, $deadline);
             $proxy = EgressProxy::configured();
         } catch (WebhookRefused | \UnexpectedValueException $e) {
             // A host that does not resolve now, or the operator's unparseable allowlist or proxy, may be fine on a later try.
@@ -232,7 +235,16 @@ final class WebhookSender
             return ['refused' => $e->getMessage(), 'retryable' => $retryable] + $none;
         }
 
-        $options = self::curlOptions($target, $body ?? '', $headers, $timeout, $proxy);
+        $remaining = $deadline - microtime(true);
+        if ($remaining < 0.001) {
+            return ['refused' => 'looking up ' . $target->host . ' took all of the ' . $timeout
+                . ' seconds the request may take', 'retryable' => true] + $none;
+        }
+        $left = (int) ceil($remaining);
+        $options = self::curlOptions($target, $body ?? '', $headers, $left, $proxy);
+        // The lookup came out of $timeout. curl keeps whichever of
+        // CURLOPT_TIMEOUT and CURLOPT_TIMEOUT_MS is set last: this one, to the millisecond.
+        $options[CURLOPT_TIMEOUT_MS] = max(1, (int) floor($remaining * 1000));
         if ($body === null) {
             unset($options[CURLOPT_POST], $options[CURLOPT_POSTFIELDS]);
             $options[CURLOPT_HTTPGET] = true;
@@ -335,11 +347,12 @@ final class WebhookSender
 
             return strlen($line);
         };
-        if (!curl_setopt_array($ch, $options)) {
-            $error = curl_error($ch);
+        try {
+            \Prosper202\Http\CurlOptions::set($ch, $options);
+        } catch (\Prosper202\Http\CurlOptionRefused $e) {
             curl_close($ch);
 
-            return ['status' => 0, 'error' => 'curl refused an option: ' . $error, 'primary_ip' => null, 'location' => null, 'body' => ''];
+            return ['status' => 0, 'error' => $e->getMessage(), 'primary_ip' => null, 'location' => null, 'body' => ''];
         }
         $ok = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);

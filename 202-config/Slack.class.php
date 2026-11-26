@@ -2,15 +2,24 @@
 declare(strict_types=1);
 class Slack {
 
+    /**
+     * @param \Prosper202\Notifications\SlackNoticeQueue|null $queue where push()
+     *        queues the notice for $accountId; null sends it at once, in this request
+     */
     public function __construct(
         private $webhook_url,
-        private ?\Prosper202\Notifications\SlackWebhook $webhook = null
+        private ?\Prosper202\Notifications\SlackWebhook $webhook = null,
+        private ?\Prosper202\Notifications\SlackNoticeQueue $queue = null,
+        private int $accountId = 0,
+        private ?\Prosper202\Database\Connection $conn = null
     ) {
     }
 
     /**
      * A notifier for the account's own saved webhook (SlackWebhook::ofAccount()),
-     * or null when it has none or it could not be read, which is logged.
+     * or null when it has none or it could not be read, which is logged. Its
+     * notices are queued (SlackNoticeQueue) and sent by the cron job, or by
+     * this request once its answer has gone.
      */
     public static function forAccount(\mysqli $db, int $accountId): ?self
     {
@@ -22,21 +31,51 @@ class Slack {
             return null;
         }
 
-        return $url === null ? null : new self($url);
+        return $url === null
+            ? null
+            : new self($url, null, new \Prosper202\Notifications\SlackNoticeQueue($conn), $accountId, $conn);
     }
 
     /**
-     * Send a notice: true when the webhook took it. A notice that was not
-     * sent or not taken is logged here with why, and answers false; it never
-     * throws, so the action that sent it goes on and answers for itself.
+     * Queue a notice, or with no queue send it: true when it was queued or
+     * the webhook took it. A notice that was not is logged here with why,
+     * and answers false; it never throws, so the action that sent it goes on
+     * and answers for itself. A notice the queue cannot take (its table not
+     * there until the upgrade has run) is sent at once instead.
      */
     public function push($placeholder, $vars = []): bool
     {
         $message = $this->getMessage($placeholder, $vars);
-        $why = $message === '' ? 'no message is defined for it' : $this->sendMessage($message);
+        if ($message === '') {
+            $why = 'no message is defined for it';
+        } elseif ($this->queue !== null && $this->queued((string) $placeholder, $message)) {
+            return true;
+        } else {
+            $why = $this->sendMessage($message);
+        }
         if ($why !== null) {
             error_log('Slack: the "' . $placeholder . '" notice was not sent: ' . $why);
             return false;
+        }
+
+        return true;
+    }
+
+    /** Whether the queue took the notice; why not is logged. */
+    private function queued(string $placeholder, string $message): bool
+    {
+        if ($this->queue === null) {
+            return false;
+        }
+        try {
+            $id = $this->queue->queue($this->accountId, $placeholder, $this->payload($message));
+        } catch (\Throwable $e) {
+            error_log('Slack: the "' . $placeholder . '" notice could not be queued, so it is sent now: '
+                . $e->getMessage());
+            return false;
+        }
+        if ($this->conn !== null) {
+            \Prosper202\Notifications\SlackNoticeQueue::afterAnswer($this->conn, $id);
         }
 
         return true;

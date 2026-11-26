@@ -121,8 +121,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 
 	if ($error && $user_row && !empty($user_row['user_slack_incoming_webhook'])) {
-		$slack = new Slack($user_row['user_slack_incoming_webhook']);
-		$slack->push('failed_login', ['username' => $username, 'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown']);
+		$slack = Slack::forAccount($db, (int) $user_row['user_id']);
+		$slack?->push('failed_login', ['username' => $username, 'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown']);
 	}
 
 	// Before the attempt is logged, so a sign-in that stops here logs as not

@@ -122,6 +122,7 @@ final class TableRegistry
     public const string CONVERSION_UPLOADS = '202_conversion_uploads';
     public const string NOTIFICATION_PENDING = '202_notification_pending';
     public const string NOTIFICATION_CORRECTION_URLS = '202_notification_correction_urls';
+    public const string SLACK_NOTICES = '202_slack_notices';
     public const string OFFLINE_CONVERSION_FEEDS = '202_offline_conversion_feeds';
     public const string OFFLINE_CONVERSION_NAMES = '202_offline_conversion_names';
     public const string LEGACY_GOOGLE_FEED_FETCHES = '202_legacy_google_feed_fetches';

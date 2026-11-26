@@ -32,26 +32,38 @@ final class FixedHostRoute
 {
     public const MAX_BYTES = 8 * 1024 * 1024;
 
-    /** @var (callable(string): list<string>)|null */
+    /** @var (callable(string, float): list<string>)|null */
     private static $resolver = null;
 
-    /** @param (callable(string): list<string>)|null $resolver host => addresses; null for the system's */
+    /**
+     * @param (callable(string, float): list<string>)|null $resolver (host, seconds) => addresses;
+     *        null for the system's
+     */
     public static function resolveWith(?callable $resolver): void
     {
         self::$resolver = $resolver;
     }
 
-    /** curl_exec() of a request whose options are all set, routed and capped. */
-    public static function exec(\CurlHandle $ch, int $maxBytes = self::MAX_BYTES): string|bool
+    /**
+     * curl_exec() of the request, its options set here (CurlOptions::set()),
+     * then routed and capped. An option curl refuses sends nothing (false,
+     * the option logged), as a route that cannot be taken does.
+     *
+     * @param array<int, mixed> $options the request's own options, URL included
+     */
+    public static function exec(\CurlHandle $ch, array $options = [], int $maxBytes = self::MAX_BYTES): string|bool
     {
-        $options = self::options((string) curl_getinfo($ch, CURLINFO_EFFECTIVE_URL), $maxBytes);
-        if (is_string($options)) {
-            error_log('FixedHostRoute: not sent: ' . $options);
+        try {
+            CurlOptions::set($ch, $options);
+            $route = self::options((string) curl_getinfo($ch, CURLINFO_EFFECTIVE_URL), $maxBytes);
+            if (is_string($route)) {
+                error_log('FixedHostRoute: not sent: ' . $route);
 
-            return false;
-        }
-        if (!curl_setopt_array($ch, $options)) {
-            error_log('FixedHostRoute: not sent: curl refused an option: ' . curl_error($ch));
+                return false;
+            }
+            CurlOptions::set($ch, $route);
+        } catch (CurlOptionRefused $e) {
+            error_log('FixedHostRoute: not sent: ' . $e->getMessage());
 
             return false;
         }
@@ -112,7 +124,14 @@ final class FixedHostRoute
             $host = strtolower($named[1]);
             $port = isset($named[2]) ? (int) $named[2] : $port;
             $literal = filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false;
-            $addresses = $literal ? [$host] : (self::$resolver ?? [WebhookGuard::class, 'systemResolve'])($host);
+            try {
+                $resolve = self::$resolver ?? [WebhookGuard::class, 'systemResolve'];
+                $addresses = $literal ? [$host] : $resolve($host, WebhookGuard::LOOKUP_SECONDS);
+            } catch (DnsLookupFailed $e) {
+                return $e->getMessage()
+                    . ' With an egress proxy, this server still looks up every host itself;'
+                    . ' the proxy is never asked to.';
+            }
         } else {
             return 'the host of ' . $shown . ' could not be read, so it cannot be routed through the egress proxy.';
         }

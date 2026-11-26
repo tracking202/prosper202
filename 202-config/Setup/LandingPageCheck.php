@@ -85,15 +85,16 @@ final class LandingPageCheck
         for ($redirects = 0;; $redirects++) {
             $where = PostbackSender::origin($hop);
             try {
-                $target = $this->guard->checkPage($hop);
+                $target = $this->guard->checkPage($hop, $deadline);
             } catch (WebhookRefused $e) {
                 return self::error(($redirects === 0
                     ? 'Your page was not fetched: '
                     : 'Your page redirected to ' . $where . ', which was not followed: ') . $e->getMessage());
             }
 
-            $left = (int) ceil($deadline - microtime(true));
-            if ($left < 1) {
+            $remaining = $deadline - microtime(true);
+            $left = (int) ceil($remaining);
+            if ($remaining < 0.001) {
                 return self::error('Checking your page took more than ' . self::TIMEOUT . ' seconds (looking up its host'
                     . ($redirects > 0 ? ' and following ' . $redirects . ' redirects' : '') . '), so it was stopped. Try again.');
             }
@@ -102,7 +103,11 @@ final class LandingPageCheck
             } catch (\UnexpectedValueException $e) {
                 return self::error('Your page was not fetched: ' . $e->getMessage());
             }
-            $answer = ($this->transport)(self::curlOptions($target, $left, $proxy));
+            $options = self::curlOptions($target, $left, $proxy);
+            // The lookup came out of TIMEOUT. curl keeps whichever of
+            // CURLOPT_TIMEOUT and CURLOPT_TIMEOUT_MS is set last: this one, to the millisecond.
+            $options[CURLOPT_TIMEOUT_MS] = max(1, (int) floor($remaining * 1000));
+            $answer = ($this->transport)($options);
 
             $status = $answer['status'];
             if ($status === 0) {
@@ -334,10 +339,10 @@ final class LandingPageCheck
 
             return strlen($chunk);
         };
-        if (!curl_setopt_array($ch, $options)) {
-            $error = curl_error($ch);
-
-            return ['error' => 'curl refused an option: ' . $error] + $none;
+        try {
+            \Prosper202\Http\CurlOptions::set($ch, $options);
+        } catch (\Prosper202\Http\CurlOptionRefused $e) {
+            return ['error' => $e->getMessage()] + $none;
         }
         $ok = curl_exec($ch);
         $errno = curl_errno($ch);

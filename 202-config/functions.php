@@ -585,10 +585,10 @@ require_once __DIR__ . '/functions-standalone-ui.php';
 	function getAdsFromS3($user, $key)
 	{
 		$ch = curl_init();
-		\Prosper202\Http\OutboundTimeouts::apply($ch);
-		curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/get-ads/' . $user . '/' . $key);
-		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-		$results = \Prosper202\Http\FixedHostRoute::exec($ch);
+		$results = \Prosper202\Http\FixedHostRoute::exec($ch, [
+			CURLOPT_URL => 'https://my.tracking202.com/api/v2/premium-p202/get-ads/' . $user . '/' . $key,
+			CURLOPT_RETURNTRANSFER => true,
+		] + \Prosper202\Http\OutboundTimeouts::options());
 		curl_close($ch);
 		return json_decode($results, true);
 	}
@@ -603,14 +603,14 @@ require_once __DIR__ . '/functions-standalone-ui.php';
 		$fields = http_build_query($fields);
 
 		$ch = curl_init();
-		\Prosper202\Http\OutboundTimeouts::apply($ch);
-		curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/delete-ad/' . $user . '/' . $key);
-		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-		curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-		curl_setopt($ch, CURLOPT_POST, true);
-		curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-		$results = \Prosper202\Http\FixedHostRoute::exec($ch);
+		$results = \Prosper202\Http\FixedHostRoute::exec($ch, [
+			CURLOPT_URL => 'https://my.tracking202.com/api/v2/premium-p202/delete-ad/' . $user . '/' . $key,
+			CURLOPT_SSL_VERIFYPEER => true,
+			CURLOPT_SSL_VERIFYHOST => 2,
+			CURLOPT_RETURNTRANSFER => true,
+			CURLOPT_POST => true,
+			CURLOPT_POSTFIELDS => $fields,
+		] + \Prosper202\Http\OutboundTimeouts::options());
 		curl_close($ch);
 		echo $results;
 	}
@@ -658,14 +658,13 @@ require_once __DIR__ . '/functions-standalone-ui.php';
 		$fields = http_build_query($fields);
 
 		$ch = curl_init();
-		curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/ads/wallpapers/extern');
-		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-		curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-		curl_setopt($ch, CURLOPT_POST, true);
-		curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
-		curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-		$result = \Prosper202\Http\FixedHostRoute::exec($ch);
+		$result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+			CURLOPT_URL => 'https://my.tracking202.com/api/ads/wallpapers/extern',
+			CURLOPT_SSL_VERIFYPEER => true,
+			CURLOPT_SSL_VERIFYHOST => 2,
+			CURLOPT_RETURNTRANSFER => true,
+			CURLOPT_POST => true,
+		] + \Prosper202\Http\OutboundTimeouts::options(5, 3));
 		curl_close($ch);
 
 		$fallback = [

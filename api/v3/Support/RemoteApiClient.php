@@ -387,7 +387,7 @@ class RemoteApiClient
 
         try {
             $this->guard ??= new WebhookGuard();
-            $target = $this->guard->checkSync($this->baseUrl, self::operatorHosts());
+            $target = $this->guard->checkSync($this->baseUrl, self::operatorHosts(), $this->deadline);
             $proxy = EgressProxy::configured();
         } catch (WebhookUnresolved $e) {
             throw SyncException::urlUnresolved('Not sent to ' . $this->remote() . ': ' . $e->getMessage(), $e);
@@ -395,6 +395,11 @@ class RemoteApiClient
             throw SyncException::urlRefused('Not sent to ' . $this->remote() . ': ' . $e->getMessage(), $e);
         } catch (\UnexpectedValueException $e) {
             throw SyncException::urlRefused('Not sent to ' . $this->remote() . ': ' . $e->getMessage(), $e);
+        }
+        // The lookup came out of the sync's time.
+        $left = (int) floor($this->deadline - microtime(true));
+        if ($left < 1) {
+            throw $this->outOfTime($what);
         }
 
         $answer = ($this->transport)(self::curlOptions($target, $method, $url, $headers, $body, $left, $proxy));
@@ -497,11 +502,12 @@ class RemoteApiClient
 
             return strlen($chunk);
         };
-        if (!curl_setopt_array($ch, $options)) {
-            $error = curl_error($ch);
+        try {
+            \Prosper202\Http\CurlOptions::set($ch, $options);
+        } catch (\Prosper202\Http\CurlOptionRefused $e) {
             curl_close($ch);
 
-            return self::noAnswer('curl refused an option' . ($error !== '' ? ': ' . $error : ''));
+            return self::noAnswer($e->getMessage());
         }
         $ok = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
