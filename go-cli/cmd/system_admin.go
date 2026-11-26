@@ -82,8 +82,7 @@ func systemGet(path string, params map[string]string) error {
 	if err != nil {
 		return systemAdminError(err)
 	}
-	render(data)
-	return nil
+	return render(data)
 }
 
 // systemMalformed is a 2xx answer that is not the Administration API's.
@@ -201,8 +200,7 @@ var systemIntegrationsCmd = &cobra.Command{
 			return systemAdminError(err)
 		}
 		if jsonOutput || ndjsonOutput {
-			render(data)
-			return nil
+			return render(data)
 		}
 		var resp struct {
 			Data struct {
@@ -220,8 +218,7 @@ var systemIntegrationsCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("encoding the integrations: %w", err)
 		}
-		render(encoded)
-		return nil
+		return render(encoded)
 	},
 }
 
@@ -265,8 +262,7 @@ var systemIntegrationsRecordHeldCmd = &cobra.Command{
 		if err != nil {
 			return systemAdminError(err)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -365,7 +361,9 @@ var systemRetentionSetCmd = &cobra.Command{
 		if err != nil {
 			return systemAdminError(err)
 		}
-		render(data)
+		if err := render(data); err != nil {
+			return err
+		}
 		if days == 0 {
 			output.Success("Automatic deletion is off; click data is kept.")
 		} else {
@@ -461,7 +459,9 @@ func runSystemRetentionDeleteBefore(cmd *cobra.Command, _ []string) error {
 	}
 	where := fmt.Sprintf("from before %s (%s)", check.Data.Before, check.Data.Timezone)
 	if dryRun {
-		render(data)
+		if err := render(data); err != nil {
+			return err
+		}
 		if *check.Data.Clicks == 0 {
 			output.Success("Dry run: no click is %s, so there is nothing to delete. Nothing was scheduled.", where)
 		} else {
@@ -471,7 +471,9 @@ func runSystemRetentionDeleteBefore(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 	if *check.Data.Clicks == 0 {
-		render(data)
+		if err := render(data); err != nil {
+			return err
+		}
 		output.Success("No click is %s, so there is nothing to delete. Nothing was scheduled.", where)
 		return nil
 	}
@@ -501,7 +503,9 @@ func runSystemRetentionDeleteBefore(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	render(data)
+	if err := render(data); err != nil {
+		return err
+	}
 	if !done.Data.Scheduled {
 		output.Success("No click is %s any more, so nothing was scheduled.", where)
 		return nil
@@ -565,7 +569,9 @@ func setIspLookup(cmd *cobra.Command, enabled bool) error {
 		}
 		return systemAdminError(err)
 	}
-	render(data)
+	if err := render(data); err != nil {
+		return err
+	}
 	if enabled {
 		output.Success("ISP and carrier lookup is on. Live traffic picks it up within five minutes.")
 	} else {

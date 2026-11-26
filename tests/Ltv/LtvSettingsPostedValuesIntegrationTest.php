@@ -260,6 +260,48 @@ final class LtvSettingsPostedValuesIntegrationTest extends TestCase
         self::assertStringNotContainsString('Pick the webhook', self::post([]), 'no log asked for is no refusal');
     }
 
+    /**
+     * The Log shows why each delivery failed, beside its status: the stored
+     * last response, escaped, on one line, cut, with a credential an answer
+     * stored before the dispatcher redacted it taken out. Before 1.9.81 the
+     * reason was in the row and only the API and the CLI showed it.
+     */
+    public function testTheDeliveryLogShowsWhyEachDeliveryFailed(): void
+    {
+        $t = time();
+        $answers = [
+            96101 => "curl: Could not resolve host: hooks.example",
+            96102 => "401 <b>Unauthorized</b>\nAuthorization: Bearer leaked-token-value\r\nretry",
+            96103 => 'blocked: ' . str_repeat('x', 300) . 'END-OF-REASON',
+        ];
+        foreach ($answers as $id => $answer) {
+            self::row('202_ltv_webhook_deliveries', [
+                'delivery_id' => $id, 'webhook_id' => self::HOOK, 'user_id' => self::USER,
+                'event_name' => 'revenue.recorded', 'payload' => '{}', 'status' => 'failed', 'attempts' => 6,
+                'next_attempt_at' => 0, 'last_status_code' => $id === 96102 ? 401 : null,
+                'last_response_body' => $answer, 'created_at' => $t, 'updated_at' => $t,
+            ]);
+        }
+
+        $page = self::post(['show_deliveries' => (string) self::HOOK], true);
+
+        self::assertStringContainsString('<th>Status</th><th>Last Response</th>', $page);
+        self::assertStringContainsString('>curl: Could not resolve host: hooks.example</td>', $page);
+        self::assertStringContainsString(
+            '>401 &lt;b&gt;Unauthorized&lt;/b&gt; Authorization: [removed] retry</td>',
+            $page,
+            'escaped, one line, the credential out'
+        );
+        self::assertStringNotContainsString('leaked-token-value', $page);
+        self::assertStringNotContainsString('<b>Unauthorized</b>', $page);
+        self::assertStringContainsString('>blocked: ' . str_repeat('x', 130) . '…</td>', $page, 'cut to a line');
+        self::assertStringContainsString(
+            'title="blocked: ' . str_repeat('x', 300) . 'END-OF-REASON"',
+            $page,
+            'whole on hover'
+        );
+    }
+
     public function testTheCustomerCparamIsOneOfTheMenusValues(): void
     {
         $prefs = ['action' => 'save_prefs', 'p13n_fields' => '', 'rec_fatigue' => ''];
@@ -352,8 +394,11 @@ final class LtvSettingsPostedValuesIntegrationTest extends TestCase
         }
     }
 
-    /** @param array<string, mixed> $fields the page's own token is added */
-    private static function post(array $fields): string
+    /**
+     * @param array<string, mixed> $fields the page's own token is added
+     * @param bool $asSent the page as it was sent, entities and all (by default they are decoded)
+     */
+    private static function post(array $fields, bool $asSent = false): string
     {
         self::requireScratch();
         $env = [
@@ -384,7 +429,7 @@ final class LtvSettingsPostedValuesIntegrationTest extends TestCase
         self::assertStringNotContainsString('Warning', $err, 'the page warned: ' . $err);
         self::assertStringNotContainsString('could not be loaded', $out, $err);
 
-        return html_entity_decode($out, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        return $asSent ? $out : html_entity_decode($out, ENT_QUOTES | ENT_HTML5, 'UTF-8');
     }
 
     private static function rows(string $table, string $where): int

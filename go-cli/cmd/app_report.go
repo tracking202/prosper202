@@ -70,8 +70,7 @@ var appReportCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(reshapeAppReport(data))
-		return nil
+		return render(reshapeAppReport(data))
 	},
 }
 

@@ -134,8 +134,7 @@ var ltvFieldsCreateCmd = &cobra.Command{
 			}
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	}),
 }
 
@@ -181,8 +180,7 @@ var ltvFieldsUpdateCmd = &cobra.Command{
 		if err != nil {
 			return ltvNotFound(err, ltvFieldListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	}),
 }
 
@@ -281,7 +279,9 @@ var ltvWebhooksCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
+		if err := render(data); err != nil {
+			return err
+		}
 		fmt.Fprintln(cmd.ErrOrStderr(), "Note: store the secret now; it is shown only in this response and cannot be read back (`p202 ltv webhooks list` omits it). `p202 ltv webhooks rotate-secret` gives it a new one.")
 		return nil
 	}),
@@ -328,8 +328,7 @@ var ltvWebhooksDeliveriesCmd = &cobra.Command{
 		if err != nil {
 			return ltvNotFound(err, ltvWebhookListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -366,8 +365,7 @@ var ltvWebhooksReviveCmd = &cobra.Command{
 		if err != nil {
 			return ltvNotFound(err, ltvWebhookListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	}),
 }
 
@@ -407,7 +405,9 @@ var ltvWebhooksRotateSecretCmd = &cobra.Command{
 		if err != nil {
 			return ltvNotFound(err, ltvWebhookListHint)
 		}
-		render(data)
+		if err := render(data); err != nil {
+			return err
+		}
 		fmt.Fprintln(cmd.ErrOrStderr(), "Note: store the new secret now; it is shown only in this response. Give it to the receiver before the old one stops (previous_secret_expires_at).")
 		return nil
 	}),
@@ -506,8 +506,7 @@ var ltvIntegrationsCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	}),
 }
 

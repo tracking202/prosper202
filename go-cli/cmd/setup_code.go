@@ -204,8 +204,7 @@ func newLandingPageCodeCmd(entity crudEntity) *cobra.Command {
 			// --quiet prints the landing page's id, as every record's does:
 			// the code is several snippets, none of which stands for the rest.
 			if setupMachineOutput() || quietOutput {
-				render(data)
-				return nil
+				return render(data)
 			}
 			return printLandingPageCode(data)
 		},
@@ -263,8 +262,7 @@ func newLandingPageCheckCmd(entity crudEntity) *cobra.Command {
 				return setupRequestError(c, err, "Setup > Get LP Code")
 			}
 			if setupMachineOutput() || quietOutput {
-				render(data)
-				return nil
+				return render(data)
 			}
 			var check struct {
 				Data struct {
@@ -514,8 +512,7 @@ var conversionPostbackURLCmd = &cobra.Command{
 			return err
 		}
 		if setupMachineOutput() {
-			render(data)
-			return nil
+			return render(data)
 		}
 		url := code.Data.Simple.PostbackURL
 		if kind == "advanced" {
@@ -569,8 +566,7 @@ var conversionPixelCmd = &cobra.Command{
 			return err
 		}
 		if setupMachineOutput() {
-			render(data)
-			return nil
+			return render(data)
 		}
 		noteWithheldToken(code)
 		switch {
