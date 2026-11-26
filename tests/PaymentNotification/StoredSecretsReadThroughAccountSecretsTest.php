@@ -15,7 +15,11 @@ use Tests\Support\SourceScan;
  * the keys they held (an integration test per adapter runs it against a
  * deleted account storing a live account's key).
  *
- * This holds every adapter's storedSecrets() to that call, with no statement
+ * A secret kept in the sealed store (IntegrationSecretStore, the Shopify
+ * webhook secret's from 1.9.81) is read with its openEach(), which keeps
+ * the same rule (IntegrationSecretStoreIntegrationTest).
+ *
+ * This holds every adapter's storedSecrets() to one of those calls, with no statement
  * of its own naming 202_users_pref, and every other statement in the
  * payment-notification code and its endpoints that names 202_users_pref to a
  * listed reason: each reads or writes the one account a notification was
@@ -29,17 +33,13 @@ use Tests\Support\SourceScan;
 final class StoredSecretsReadThroughAccountSecretsTest extends TestCase
 {
     private const ACCOUNT_SECRETS = 'Prosper202\\PaymentNotification\\AccountSecrets';
+    private const SECRET_STORE = 'Prosper202\\Security\\IntegrationSecretStore';
 
     /** @var array<string, array<string, string>> file => statement => why it may name 202_users_pref */
     private const ALLOWED = [
         '202-config/PaymentNotification/ClickBank/ClickBankAdapter.php' => [
             'UPDATE 202_users_pref SET cb_verified = 1 WHERE user_id = ?' => 'marks the key of the one account a'
                 . ' TEST decrypted for verified (confirmTest(); a key two accounts store is refused before it)',
-        ],
-        '202-config/PaymentNotification/Shopify/ShopifyWebhookSecret.php' => [
-            'SELECT shopify_webhook_secret AS secret FROM 202_users_pref WHERE user_id = ? LIMIT 1' => 'whether the'
-                . ' signed-in account, or the API key\'s, stores a secret: it decides what that account is shown of'
-                . ' the inbound log, never which account a webhook is for (accountStores())',
         ],
     ];
 
@@ -220,6 +220,37 @@ final class StoredSecretsReadThroughAccountSecretsTest extends TestCase
         return false;
     }
 
+    /**
+     * Whether the body calls openEach() on an IntegrationSecretStore it makes:
+     * `(new IntegrationSecretStore(…))->openEach(`.
+     *
+     * @param list<mixed> $file
+     * @param list<mixed> $body
+     */
+    private static function opensEachFromTheStore(array $file, array $body): bool
+    {
+        foreach ($body as $i => $t) {
+            if (!(is_array($t) && $t[0] === T_NEW && is_array($body[$i + 1] ?? null)
+                && self::resolve($file, $body[$i + 1][1]) === self::SECRET_STORE && ($body[$i + 2] ?? null) === '(')) {
+                continue;
+            }
+            $depth = 0;
+            for ($j = $i + 2; isset($body[$j]); $j++) {
+                if ($body[$j] === '(') {
+                    $depth++;
+                } elseif ($body[$j] === ')' && --$depth === 0) {
+                    break;
+                }
+            }
+            if (($body[$j + 1] ?? null) === ')' && is_array($body[$j + 2] ?? null) && $body[$j + 2][0] === T_OBJECT_OPERATOR
+                && is_array($body[$j + 3] ?? null) && $body[$j + 3][1] === 'openEach' && ($body[$j + 4] ?? null) === '(') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function testEveryAdapterReadsItsSecretsThroughAccountSecrets(): void
     {
         $found = [];
@@ -229,9 +260,9 @@ final class StoredSecretsReadThroughAccountSecretsTest extends TestCase
                 $found[] = $class;
                 self::assertNotNull($body, $relative . ': ' . $class . ' has no storedSecrets() of its own to read');
                 self::assertTrue(
-                    self::callsAccountSecrets($tokens, $body),
+                    self::callsAccountSecrets($tokens, $body) || self::opensEachFromTheStore($tokens, $body),
                     $relative . ': ' . $class . '::storedSecrets() reads its secrets other than through'
-                    . ' AccountSecrets::stored(), which leaves out deleted accounts'
+                    . ' AccountSecrets::stored() or IntegrationSecretStore::openEach(), which leave out deleted accounts'
                 );
                 $source = '<?php ' . implode('', array_map(
                     static fn ($t): string => is_array($t) ? $t[1] . ' ' : $t,
@@ -246,7 +277,7 @@ final class StoredSecretsReadThroughAccountSecretsTest extends TestCase
                 }
             }
         }
-        foreach (['PayKickstartAdapter', 'ClickBankAdapter'] as $adapter) {
+        foreach (['PayKickstartAdapter', 'ClickBankAdapter', 'ShopifyAdapter'] as $adapter) {
             self::assertContains($adapter, $found, 'the scan finds the adapters it holds');
         }
     }

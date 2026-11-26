@@ -287,6 +287,70 @@ if (!function_exists('_upgrade_seed_licence_answers')) {
     }
 }
 
+if (!function_exists('_upgrade_shopify_secret_into_store')) {
+    /**
+     * The Shopify webhook secret leaves 202_users_pref for the sealed
+     * integration secrets store (Prosper202\Security\IntegrationSecretStore):
+     * every account's value moved and read back in one transaction
+     * (PreferenceSecretMigration), then the plaintext column dropped. It
+     * makes the store's tables itself, as it runs before the step's
+     * reconcile, which converges them after. A database that never had the
+     * column (upgraded from a tag before 1.9.80) has nothing to move. Any
+     * failure keeps the column and answers false, so the version stays and
+     * the next run retries; a run after a failed drop moves nothing twice.
+     */
+    function _upgrade_shopify_secret_into_store(): bool
+    {
+        global $db;
+
+        foreach ([
+            \Prosper202\Database\Tables\SecretTables::integrationSecrets(),
+            \Prosper202\Database\Tables\SecretTables::integrationSecretEvents(),
+        ] as $definition) {
+            if (_upgrade_query($definition->createStatement) === false) {
+                _upgrade_note('could not create ' . $definition->tableName . ' for the Shopify webhook secrets; they move on the next run.');
+                return false;
+            }
+        }
+
+        $column = _upgrade_query("SHOW COLUMNS FROM `202_users_pref` LIKE 'shopify\\_webhook\\_secret'");
+        if (!$column instanceof \mysqli_result) {
+            _upgrade_note('could not read whether 202_users_pref still holds the Shopify webhook secret; it moves on the next run.');
+            return false;
+        }
+        $present = $column->num_rows > 0;
+        $column->free();
+        if (!$present) {
+            return true;
+        }
+        try {
+            $conn = new \Prosper202\Database\Connection(($db instanceof \mysqli) ? $db : $db->getConnection());
+            $counts = \Prosper202\Security\PreferenceSecretMigration::move(
+                $conn,
+                new \Prosper202\Security\IntegrationSecretStore($conn),
+                'shopify_webhook_secret',
+                \Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret::NAME,
+                time()
+            );
+        } catch (\Throwable $e) {
+            _upgrade_note('the Shopify webhook secrets could not be moved into the encrypted store; none was, and the'
+                . ' next run retries', ': ' . $e->getMessage());
+            return false;
+        }
+        if ($counts['kept'] > 0) {
+            error_log('Prosper202 upgrade: ' . $counts['kept'] . ' account(s) already had a Shopify webhook secret in the'
+                . ' encrypted store, saved after this code was deployed; that one is kept.');
+        }
+        if (_upgrade_query('ALTER TABLE `202_users_pref` DROP COLUMN `shopify_webhook_secret`') === false) {
+            _upgrade_note('the Shopify webhook secrets were moved into the encrypted store, but their plaintext column'
+                . ' could not be dropped; the next run drops it.');
+            return false;
+        }
+
+        return true;
+    }
+}
+
 if (!function_exists('_upgrade_purlink_carryover')) {
     /**
      * Paid 1.9.56's pending PurLink click-outs, carried into the PurLink
@@ -1238,6 +1302,42 @@ if (!function_exists('_upgrade_1956_baseline')) {
     }
 }
 
+if (!function_exists('_upgrade_ppc_variable_network_width')) {
+    /**
+     * 202_ppc_network_variables.ppc_network_id as wide as the source id it
+     * names, written as TrackingTables declares it; run by
+     * _upgrade_measurement_tables() whenever a step reconciles the table.
+     * Signed, it stores a source past 8388607 as 8388607 under the empty
+     * sql_mode. Widening keeps every source id; only a negative one, which
+     * names no source, becomes 0. A failed read is not "already wide"
+     * (CLAUDE.md #11).
+     */
+    function _upgrade_ppc_variable_network_width(): bool
+    {
+        $read = _upgrade_query("SHOW COLUMNS FROM `202_ppc_network_variables` LIKE 'ppc_network_id'");
+        $column = $read instanceof mysqli_result ? $read->fetch_assoc() : null;
+        if (!is_array($column)) {
+            _upgrade_note('could not read 202_ppc_network_variables.ppc_network_id; the step will retry.');
+
+            return false;
+        }
+        if (preg_match('/^mediumint(?:\(\d+\))?\s+unsigned\b/i', (string) ($column['Type'] ?? '')) === 1) {
+            return true;
+        }
+
+        $ddl = \Prosper202\Database\SchemaReconciler::requiredColumns(
+            \Prosper202\Database\Tables\TrackingTables::ppcNetworkVariables()
+        )['ppc_network_id'];
+        if (_upgrade_query('ALTER TABLE `202_ppc_network_variables` MODIFY COLUMN ' . $ddl) === false) {
+            _upgrade_note('failed to widen 202_ppc_network_variables.ppc_network_id; the step will retry.');
+
+            return false;
+        }
+
+        return true;
+    }
+}
+
 if (!function_exists('_upgrade_measurement_tables')) {
     /**
      * Create the measurement tables — the app registry and the Apple
@@ -1369,6 +1469,12 @@ if (!function_exists('_upgrade_measurement_tables')) {
             if ($hashApiKeys
                 && $definition->tableName === \Prosper202\Database\Schema\TableRegistry::API_KEYS
                 && !_upgrade_hash_api_keys()) {
+                $ok = false;
+            }
+            // The reconciler retypes no column; a custom variable's source id
+            // is widened to the source's own type here, once the table exists.
+            if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::PPC_NETWORK_VARIABLES
+                && !_upgrade_ppc_variable_network_width()) {
                 $ok = false;
             }
         }
@@ -5451,9 +5557,7 @@ class UPGRADE
             $history_ok = _upgrade_currency_history_start();
             $before_ok = $baseline_ok && $carried_ok && $campaigns_ok && $history_ok;
             $step_ok = _upgrade_measurement_tables([
-                // 202_users_pref gains shopify_webhook_secret, which Shopify's
-                // order webhooks are verified with (ShopifyWebhookSecret),
-                // jvzoo_roleless_role, how the 1.9.56 JVZoo URL is read (JVZooRole),
+                // 202_users_pref gains jvzoo_roleless_role, how the 1.9.56 JVZoo URL is read (JVZooRole),
                 // the consent columns (ConsentPolicy; the messaging tables carry them),
                 // and user_pref_click_id_params, the postback parameters an
                 // account's networks send an ad click id back in (ClickIdParameters).
@@ -5594,9 +5698,16 @@ class UPGRADE
             //
             // The re-click backfill's stopped_at, when a stop began, which
             // Settings and the cron output show (Prosper202\Click\ReClickBackfill).
+            //
+            // The Shopify webhook secret moves into the sealed integration
+            // secrets store (0H6C), which this makes, and its plaintext column goes.
+            $secrets_ok = _upgrade_shopify_secret_into_store();
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
+                // 202_ppc_network_variables.ppc_network_id unsigned, as wide
+                // as the source id it names (_upgrade_ppc_variable_network_width()).
+                \Prosper202\Database\Tables\TrackingTables::ppcNetworkVariables(),
                 // A rotated LTV webhook secret signs alongside the new one
                 // until it expires (previous_secret, previous_secret_expires_at).
                 \Prosper202\Database\Tables\LtvTables::ltvWebhooks(),
@@ -5607,7 +5718,10 @@ class UPGRADE
                 // script writes into the click's C4 (Prosper202\Setup\
                 // LandingPageSplitTest).
                 \Prosper202\Database\Tables\CampaignTables::landingPageSplitTests(),
-            ]);
+                // The sealed integration secrets store and its record of changes (0H6C).
+                \Prosper202\Database\Tables\SecretTables::integrationSecrets(),
+                \Prosper202\Database\Tables\SecretTables::integrationSecretEvents(),
+            ]) && $secrets_ok;
             if ($step_ok) {
                 // Redirector criterion values the API stored untrimmed before
                 // 1.9.79, stored as the writers store them now.

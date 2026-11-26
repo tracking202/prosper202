@@ -35,6 +35,13 @@ $mchost = 'localhostmemcache'; // this is the memcache server host, if you don't
 //
 // define('P202_EGRESS_PROXY', 'http://proxy.example:3128');
 
+// ** Optional: the integration secrets key ** //
+// The key that seals the integration secrets (documentation/features/integration-secrets.md),
+// kept outside the database: a file holding 64 hexadecimal characters (openssl rand -hex 32).
+// Unset, a key kept in the database is used. Uncomment to use one:
+//
+// define('P202_SECRETS_KEY_FILE', '/etc/prosper202/secrets.key');
+
 /*---DONT EDIT ANYTHING BELOW THIS LINE!---*/
 
 //Database connection class
