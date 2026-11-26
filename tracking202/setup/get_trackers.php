@@ -362,7 +362,7 @@ $nothingToLink = $campaignOptions === [] && $advancedPageOptions === [] && $rota
 							<?php } ?>
 							<?php if ($grantedPublishers !== []) { ?>
 								<span class="form-label d-block mt-2">Publishers your links credit</span>
-								<ul class="p202-list" id="granted-publishers" data-revoke-url="<?php echo p202_setup_e($base . 'tracking202/ajax/revoke_publisher.php'); ?>">
+								<ul class="p202-list" id="granted-publishers" data-revoke-url="<?php echo p202_setup_e($base . 'tracking202/ajax/revoke_publisher.php'); ?>" data-revoke-token="<?php echo p202_setup_e((string) ($_SESSION['token'] ?? '')); ?>">
 									<?php foreach ($grantedPublishers as $granted) { ?>
 										<li class="p202-list__item" data-publisher-id="<?php echo (int) $granted['user_id']; ?>">
 											<span class="p202-list__name"><?php echo p202_setup_e($granted['name']); ?></span>

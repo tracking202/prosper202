@@ -17,7 +17,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     die('Send this as a POST.');
 }
 
-// The page posts through jQuery, whose prefilter attaches the token.
+// The page posts the session token with the publisher id.
 if (!AUTH::check_csrf_token()) {
     http_response_code(403);
     die('Invalid token, please reload the page and try again.');
