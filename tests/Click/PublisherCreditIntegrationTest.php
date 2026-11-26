@@ -45,6 +45,9 @@ final class PublisherCreditIntegrationTest extends TestCase
     private const BLANK_PUBLISHER = 990811;
     /** A second Admin of the same install, who granted no publisher. */
     private const OTHER_OWNER = 990812;
+    /** An Admin and a Publisher the account delete removes, made by that test alone. */
+    private const DELETED_OWNER = 990815;
+    private const DELETED_PUBLISHER = 990816;
     private const FIRST_CLICK = 99080101;
 
     /** user => [role, install, active, deleted, public id] */
@@ -86,11 +89,7 @@ final class PublisherCreditIntegrationTest extends TestCase
         self::q("INSERT IGNORE INTO 202_permissions (permission_id, permission_description) VALUES (1, 'add_users')");
         self::q('INSERT IGNORE INTO 202_role_permission (role_id, permission_id) VALUES (2, 1)');
         foreach (self::USERS as $user => [$role, $install, $active, $deleted, $publicId]) {
-            self::q('INSERT INTO 202_users SET user_id = ' . $user . ", user_name = 'pc$user', user_fname = 'Pub',"
-                . " user_lname = '$user', user_pass = '', user_email = '', user_dash_email = '', user_time_register = 1,"
-                . " install_hash = '$install', user_hash = '', user_active = $active, user_deleted = $deleted,"
-                . " user_public_publisher_id = '$publicId'");
-            self::q("INSERT INTO 202_user_role SET user_id = $user, role_id = $role");
+            self::addUser($user, $role, $install, $active, $deleted, $publicId);
         }
         $found = self::$db->query('SELECT version FROM 202_version');
         self::$versions = $found instanceof \mysqli_result
@@ -113,9 +112,30 @@ final class PublisherCreditIntegrationTest extends TestCase
         }
     }
 
+    private static function addUser(
+        int $user,
+        int $role,
+        string $install,
+        int $active,
+        int $deleted,
+        string $publicId
+    ): void {
+        self::q('INSERT INTO 202_users SET user_id = ' . $user . ", user_name = 'pc$user', user_fname = 'Pub',"
+            . " user_lname = '$user', user_pass = '', user_email = '', user_dash_email = '', user_time_register = 1,"
+            . " install_hash = '$install', user_hash = '', user_active = $active, user_deleted = $deleted,"
+            . " user_public_publisher_id = '$publicId'");
+        self::q("INSERT INTO 202_user_role SET user_id = $user, role_id = $role");
+    }
+
+    /** Every user id the class writes. */
+    private static function userList(): string
+    {
+        return implode(',', [...array_keys(self::USERS), self::DELETED_OWNER, self::DELETED_PUBLISHER]);
+    }
+
     private static function removeGrants(): void
     {
-        $users = implode(',', array_keys(self::USERS));
+        $users = self::userList();
         self::q("DELETE FROM 202_publisher_grants WHERE user_id IN ($users) OR publisher_user_id IN ($users)");
     }
 
@@ -130,7 +150,7 @@ final class PublisherCreditIntegrationTest extends TestCase
 
     private static function cleanUp(): void
     {
-        $users = implode(',', array_keys(self::USERS));
+        $users = self::userList();
         self::removeGrants();
         self::q("DELETE FROM 202_user_role WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_users WHERE user_id IN ($users)");
@@ -181,6 +201,51 @@ final class PublisherCreditIntegrationTest extends TestCase
             self::credit()->forClick(self::OTHER_OWNER, 'c0c0c0c0c0'),
             'another account\'s grant stands'
         );
+    }
+
+    /** A deleted account's grants go on both sides; every other account's stay. */
+    public function testDeletingAUserRemovesTheGrantsThatNameIt(): void
+    {
+        $pairs = static function (): array {
+            $found = self::$db->query("SELECT CONCAT(user_id, '>', publisher_user_id) FROM 202_publisher_grants"
+                . ' WHERE user_id IN (' . self::userList() . ') ORDER BY 1');
+            self::assertInstanceOf(\mysqli_result::class, $found);
+
+            return array_column($found->fetch_all(), 0);
+        };
+        self::addUser(self::DELETED_OWNER, 2, self::INSTALL, 1, 0, 'a4a4a4a4a4');
+        self::addUser(self::DELETED_PUBLISHER, 6, self::INSTALL, 1, 0, 'b4b4b4b4b4');
+        try {
+            $made = [
+                [self::OWNER, self::DELETED_PUBLISHER],
+                [self::OTHER_OWNER, self::DELETED_PUBLISHER],
+                [self::DELETED_OWNER, self::PUBLISHER],
+            ];
+            foreach ($made as [$owner, $publisher]) {
+                self::credit()->grant($owner, $publisher, 7);
+            }
+            $before = $pairs();
+            self::assertContains(self::OTHER_OWNER . '>' . self::DELETED_PUBLISHER, $before, 'the fixture landed');
+
+            $purge = new \Prosper202\User\UserDataPurge(self::requireScratch());
+            $purge->deleteUser(self::DELETED_PUBLISHER);
+            $purge->deleteUser(self::DELETED_OWNER);
+
+            $gone = [
+                self::OWNER . '>' . self::DELETED_PUBLISHER,
+                self::OTHER_OWNER . '>' . self::DELETED_PUBLISHER,
+                self::DELETED_OWNER . '>' . self::PUBLISHER,
+            ];
+            $expected = array_values(array_diff($before, $gone));
+            self::assertCount(count($before) - 3, $expected);
+            self::assertSame($expected, $pairs());
+            self::assertContains(self::OWNER . '>' . self::PUBLISHER, $expected, 'another grant of the publisher stays');
+        } finally {
+            $doomed = self::DELETED_OWNER . ', ' . self::DELETED_PUBLISHER;
+            self::removeGrants();
+            self::q("DELETE FROM 202_user_role WHERE user_id IN ($doomed)");
+            self::q("DELETE FROM 202_users WHERE user_id IN ($doomed)");
+        }
     }
 
     public function testAGrantMadeAgainKeepsItsFirstTime(): void

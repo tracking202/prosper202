@@ -6,6 +6,7 @@ namespace Prosper202\User;
 
 use Api\V3\Apps\AppDataPurge;
 use Prosper202\Attribution\ExportFiles;
+use Prosper202\Click\PublisherCredit;
 use Prosper202\Database\Connection;
 
 /**
@@ -193,10 +194,13 @@ final class UserDataPurge
         'DELETE FROM 202_alert_log WHERE user_id = ?',
         // Each change of the account's currency.
         'DELETE FROM 202_currency_changes WHERE user_id = ?',
-        // The publishers the account's links credit, and the accounts whose links credit it.
+        // The publishers the account's links credit (the accounts whose
+        // links credit the user lose their grants by removeGrantsOfUser()).
         'DELETE FROM 202_publisher_grants WHERE user_id = ?',
-        'DELETE FROM 202_publisher_grants WHERE publisher_user_id = ?',
     ];
+
+    /** The accounts whose links credit the user, read under lock. */
+    public const GRANTING_OWNERS = 'SELECT user_id FROM 202_publisher_grants WHERE publisher_user_id = ? FOR UPDATE';
 
     /**
      * Every purge statement, in the order deleteUser() runs them.
@@ -239,6 +243,11 @@ final class UserDataPurge
             }
             $cascade[] = ['resource' => $m[1], 'action' => 'delete', 'where' => 'belongs to user ' . $userId];
         }
+        $cascade[] = [
+            'resource' => '202_publisher_grants',
+            'action' => 'delete',
+            'where' => 'another account\'s links credit user ' . $userId,
+        ];
         $cascade[] = [
             'resource' => 'attribution export files',
             'action' => 'removed from disk once the delete commits',
@@ -285,7 +294,8 @@ final class UserDataPurge
         }
 
         try {
-            [$exportFileNames, $unlinked] = (new Connection($this->db))->transaction(function () use ($userId): array {
+            $conn = new Connection($this->db);
+            [$exportFileNames, $unlinked] = $conn->transaction(function () use ($conn, $userId): array {
                 // The user row is locked first, before anything is purged. The
                 // attribution worker reads user_deleted with a shared lock on
                 // that row before it writes a conversion's journey and credits,
@@ -301,6 +311,7 @@ final class UserDataPurge
                 foreach (self::statements() as $sql) {
                     $this->run($sql, $userId);
                 }
+                $this->removeGrantsOfUser($conn, $userId);
                 $unlinked = (new AppDataPurge($this->db))->purgeUser($userId);
                 // Every open session of the user ends with the delete
                 // (SessionGeneration), so a row restored by hand stays signed out.
@@ -348,6 +359,20 @@ final class UserDataPurge
             } catch (\Throwable $e) {
                 error_log('UserDataPurge: an attribution export file of deleted user ' . $userId . ' was not removed: ' . $e->getMessage());
             }
+        }
+    }
+
+    /**
+     * Each grant another account's links hold for the user, removed by its
+     * owner and the user, as Get Links removes one.
+     */
+    private function removeGrantsOfUser(Connection $conn, int $userId): void
+    {
+        $stmt = $conn->prepareWrite(self::GRANTING_OWNERS);
+        $conn->bind($stmt, 'i', [$userId]);
+        $grants = new PublisherCredit($conn);
+        foreach ($conn->fetchAll($stmt) as $row) {
+            $grants->revoke((int) $row['user_id'], $userId);
         }
     }
 
