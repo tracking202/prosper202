@@ -84,7 +84,7 @@ The area files list about 110 rows. The ones that recur:
 - **Reports return less.** `/reports/breakdown` groups by id rather than name, drops the "[no keyword]" and "[direct link]" rows, has no CTR, S/U, average payout, totals or row count, and sorts by clicks. `/reports/groups` lacks three levels and stops at 5,000 groups; `/reports/timeseries` has no year interval.
 - **Saved preferences.** `PUT /users/{id}/preferences` saves only the row limit, the time preset and CPC/CPV, not the saved report filters or groupings.
 - **Whole-set saves.** Pages save pixels, traffic source variables and PayKickstart keys as one set; v3 works one item at a time.
-- **No stale-page check.** Pages refuse a save when the record changed since the form opened (models, settings, profile); v3 has no version or If-Match.
+- **Stale-page check on some routes only.** Pages refuse a save when the record changed since the form opened (models, settings, profile). v3's CRUD base honours If-Match, but about a third of its PUT and PATCH routes do (10 of 34 counted), none of its DELETEs, and the models, settings and profile routes do not.
 - **Keys.** Replacing or revoking an API key needs the full key, which no list returns.
 
 ## Things the reading turned up
