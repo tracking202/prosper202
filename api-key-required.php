@@ -101,7 +101,7 @@ if ($success) {
 } else {
 	echo p202_standalone_card('Your license key is missing or expired', 'Prosper202 ClickServer needs a valid license key (your API key from my.tracking202.com) to run.');
 	if ($has_existing_key) { ?>
-		<div class="alert alert-warning p202-flash" role="status"><i class="bi bi-exclamation-triangle"></i><div class="p202-flash__body">A key is saved (<code><?php echo htmlspecialchars(substr((string) $existing_api_key, 0, 8) . '…' . substr((string) $existing_api_key, -4), ENT_QUOTES, 'UTF-8'); ?></code>) but it does not validate: it may have expired, or the license service may be unreachable. Enter a new key to replace it.</div></div>
+		<div class="alert alert-warning p202-flash" role="status"><i class="bi bi-exclamation-triangle"></i><div class="p202-flash__body">A license key is saved, but it does not validate: it may have expired, or the license service may be unreachable. Enter a new key to replace it.</div></div>
 	<?php }
 	if ($error !== '') { ?>
 		<div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><?php echo htmlspecialchars($error, ENT_QUOTES, 'UTF-8'); ?></div></div>
