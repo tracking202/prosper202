@@ -892,6 +892,7 @@ try {
             $r->delete('/fields/{id}',            fn($ctx) => tap($crud($cls), fn($c) => $c->deleteField(PathId::of($ctx))));
             $r->post('/webhooks',                 fn() => ['_status' => 201] + $crud($cls)->createWebhook($payload));
             $r->put('/webhooks/{id}', fn($ctx) => $crud($cls)->updateWebhook(PathId::of($ctx), $payload));
+            $r->post('/webhooks/{id}/rotate-secret', fn($ctx) => $crud($cls)->rotateWebhookSecret(PathId::of($ctx), $payload));
             $r->delete('/webhooks/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteWebhook(PathId::of($ctx))));
             $r->post('/integrations',             fn() => ['_status' => 201] + $crud($cls)->createIntegration($payload));
             $r->delete('/integrations/{id}',      fn($ctx) => tap($crud($cls), fn($c) => $c->deleteIntegration(PathId::of($ctx))));
@@ -1643,7 +1644,7 @@ try {
                 'update'        => '/clicks/cpc, /conversions/{subids|subids/delete|subids/reset|uploads}',
                 'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart|groups|payout}',
                 'spend_ledger'  => '/spend-ledger[/conversions|/sync[/{id}[/run]]]',
-                'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}[/{id}][/deliveries]',
+                'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}[/{id}][/deliveries|/rotate-secret]',
                 'rotators'      => '/rotators[/{id}/rules|/{id}/stats]',
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
                 'apps'          => '/apps/{id|skan-encodings|postbacks|report|notifications|verify|schema|installs}[/installs|/install-token|/store-link|/integrity|/integrity-credential]',

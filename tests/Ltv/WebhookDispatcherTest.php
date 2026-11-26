@@ -60,13 +60,18 @@ final class WebhookDispatcherTest extends TestCase
     {
         $delivery = self::delivery('https://hooks.example.com/p202');
 
+        $headers = WebhookDispatcher::headers($delivery);
         self::assertSame([
             'Content-Type: application/json',
             'X-P202-Signature: sha256=' . hash_hmac('sha256', (string) $delivery['payload'], 'the-secret'),
             'X-P202-Event: revenue.recorded',
             'X-P202-Delivery: 42',
             'User-Agent: Prosper202-LTV-Webhook/1.0',
-        ], WebhookDispatcher::headers($delivery));
+            'webhook-id: msg_ltv_42',
+        ], array_slice($headers, 0, 6));
+        self::assertMatchesRegularExpression('/^webhook-timestamp: [0-9]+$/D', $headers[6]);
+        self::assertStringStartsWith('webhook-signature: v1,', $headers[7]);
+        self::assertCount(8, $headers);
         self::assertSame(
             MysqlWebhookRepository::signature((string) $delivery['payload'], 'the-secret'),
             substr(WebhookDispatcher::headers($delivery)[1], strlen('X-P202-Signature: '))

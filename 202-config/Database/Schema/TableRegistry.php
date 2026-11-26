@@ -100,6 +100,7 @@ final class TableRegistry
     public const string LANDING_PAGES = '202_landing_pages';
     public const string LANDING_PAGE_CHECKS = '202_landing_page_checks';
     public const string LANDING_PAGE_LAST_SEEN = '202_landing_page_last_seen';
+    public const string LANDING_PAGE_SPLIT_TESTS = '202_landing_page_split_tests';
     public const string TEXT_ADS = '202_text_ads';
 
     // Attribution tables
