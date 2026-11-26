@@ -133,7 +133,9 @@ var dataImportCmd = &cobra.Command{
 			// change_ids that are the only handle on staged proposals.
 			return fmt.Errorf("encoding import summary: %w", err)
 		}
-		render(encoded)
+		if err := render(encoded); err != nil {
+			return err
+		}
 		// --skip-errors goes on past a failed record; it does not make the
 		// import a success. It exited 0 with every record failed, which a
 		// script reads as everything imported. The summary lists each.

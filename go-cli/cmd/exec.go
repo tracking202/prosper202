@@ -132,7 +132,9 @@ var execCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("encoding output: %w", err)
 			}
-			render(data)
+			if err := render(data); err != nil {
+				return err
+			}
 
 			if anyFailed {
 				return execFailure(resultMap)

@@ -44,8 +44,7 @@ var rotatorListCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("encoding output: %w", err)
 			}
-			render(encoded)
-			return nil
+			return render(encoded)
 		}
 		params := map[string]string{}
 		if v, _ := cmd.Flags().GetString("limit"); v != "" {
@@ -58,8 +57,7 @@ var rotatorListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -76,8 +74,7 @@ var rotatorGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -114,8 +111,7 @@ var rotatorStatsCmd = &cobra.Command{
 			}
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -142,8 +138,7 @@ var rotatorCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -174,8 +169,7 @@ var rotatorUpdateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -283,8 +277,7 @@ var rotatorSetRulesCmd = &cobra.Command{
 		if err != nil {
 			return rotatorRuleSetError(err, id)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -441,8 +434,7 @@ var rotatorRuleCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -527,8 +519,7 @@ var rotatorRuleUpdateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 

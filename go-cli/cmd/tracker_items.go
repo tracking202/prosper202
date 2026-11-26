@@ -295,7 +295,9 @@ func (r *itemsRun) renderAnswers() error {
 	if err != nil {
 		return fmt.Errorf("encoding the items' answers: %w", err)
 	}
-	render(encoded)
+	if err := render(encoded); err != nil {
+		return err
+	}
 	if len(r.notDone) == 0 {
 		return nil
 	}

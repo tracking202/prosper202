@@ -334,8 +334,7 @@ var destinationListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -355,8 +354,7 @@ var destinationGetCmd = &cobra.Command{
 		if err != nil {
 			return withHint(err, "%s", destinationListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -408,8 +406,7 @@ var destinationCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -441,8 +438,7 @@ func createOpenAiDestination(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	render(data)
-	return nil
+	return render(data)
 }
 
 func createGoogleAdsDestination(cmd *cobra.Command) error {
@@ -477,8 +473,7 @@ func createGoogleAdsDestination(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	render(data)
-	return nil
+	return render(data)
 }
 
 var destinationConnectCmd = &cobra.Command{
@@ -500,8 +495,7 @@ var destinationConnectCmd = &cobra.Command{
 		if err != nil {
 			return withHint(err, "%s", destinationListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -526,8 +520,7 @@ var destinationAccountsCmd = &cobra.Command{
 		if err != nil {
 			return googleAdsReadError(err, fmt.Sprintf("The destination must be a connected Google Ads one: `p202 destination get %s` shows its status, `p202 destination connect %s` connects it.", args[0], args[0]))
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -575,8 +568,7 @@ var destinationConversionActionsCmd = &cobra.Command{
 		if err != nil {
 			return googleAdsReadError(err, destinationPickHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -614,8 +606,7 @@ var destinationPickCmd = &cobra.Command{
 		if err != nil {
 			return googleAdsReadError(err, destinationPickHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -716,8 +707,7 @@ var destinationUpdateCmd = &cobra.Command{
 		if err != nil {
 			return withHint(err, "%s", destinationListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -790,8 +780,7 @@ var destinationTestCmd = &cobra.Command{
 			}
 			return withHint(err, "%s", destinationListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -823,8 +812,7 @@ var destinationDeliveriesCmd = &cobra.Command{
 		if err != nil {
 			return withHint(err, "%s", destinationListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -868,8 +856,7 @@ var destinationResendCmd = &cobra.Command{
 		if err != nil {
 			return withHint(err, "`p202 destination deliveries %s` shows its deliveries; %s", args[0], destinationListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -898,8 +885,7 @@ var destinationBackfillCmd = &cobra.Command{
 		if err != nil {
 			return withHint(err, "%s", destinationListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 

@@ -59,8 +59,7 @@ var conversionPostbackAuthGetCmd = &cobra.Command{
 		if err != nil {
 			return withHint(err, "%s", "Reading it needs a role with access_to_api_integrations, as Account > API Integrations does.")
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -86,8 +85,7 @@ var conversionPostbackAuthReadinessCmd = &cobra.Command{
 		if err != nil {
 			return withHint(err, "%s", "Reading it needs a role with access_to_api_integrations, as Account > API Integrations does.")
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -116,8 +114,7 @@ var conversionPostbackAuthSetCmd = &cobra.Command{
 		if err != nil {
 			return withHint(err, "%s", "Changing it needs a role with access_to_api_integrations.")
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -149,8 +146,7 @@ var conversionPostbackAuthRotateCmd = &cobra.Command{
 		if err != nil {
 			return withHint(err, "%s", "Rotating it needs a role with access_to_api_integrations.")
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 

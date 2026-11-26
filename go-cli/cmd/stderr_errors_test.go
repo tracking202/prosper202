@@ -21,7 +21,6 @@ var printedFailures = map[string]struct {
 }{
 	"campaign_urls.go": {1, "one line per campaign of a bulk update; the command still returns the failure"},
 	"crud.go":          {6, "one line per id of a bulk delete, archive or URL fetch; the command still returns the failure"},
-	"render.go":        {1, "a payload that could not be encoded; render() returns nothing to carry it"},
 	"shell.go":         {5, "the interactive shell prints a command's error and reads the next command"},
 }
 
