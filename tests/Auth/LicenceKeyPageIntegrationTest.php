@@ -80,10 +80,7 @@ final class LicenceKeyPageIntegrationTest extends TestCase
                 }
             }
         }
-        if (self::$sessions !== '' && is_dir(self::$sessions)) {
-            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
-            rmdir(self::$sessions);
-        }
+        \Tests\Support\ScratchDir::remove(self::$sessions);
     }
 
     protected function setUp(): void
