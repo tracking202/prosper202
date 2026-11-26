@@ -6,6 +6,7 @@ namespace Api\V3\Apps\Apple;
 
 use Api\V3\Apps\PublicIntake;
 use Api\V3\Bootstrap;
+use Api\V3\ErrorCode;
 
 /**
  * The Apple /.well-known/ postback endpoints: PublicIntake's steps in the
@@ -66,7 +67,7 @@ final class PostbackIntake
         // failure may name its likely cause without changing what happens.
         $pending = $result['status'] >= 500 ? Bootstrap::pendingUpgrade($db) : null;
         if ($pending !== null) {
-            Bootstrap::errorResponse($pending, 503);
+            Bootstrap::errorResponse($pending, 503, ['code' => ErrorCode::UPGRADE_PENDING]);
             exit;
         }
 

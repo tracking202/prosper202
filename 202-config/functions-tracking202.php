@@ -967,16 +967,12 @@ function clickserver_api_upgrade_url($key)
 
     // Initiate curl
     $ch = curl_init();
-    \Prosper202\Http\OutboundTimeouts::apply($ch);
-    // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    // Will return the response, if false it print the response
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/auth/?apiKey=' . $key . '&clickserverId=' . base64_encode((string) $_SERVER['HTTP_HOST']));
-    // Execute
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_URL => 'https://my.tracking202.com/api/v1/auth/?apiKey=' . $key . '&clickserverId=' . base64_encode((string) $_SERVER['HTTP_HOST']),
+    ] + \Prosper202\Http\OutboundTimeouts::options());
 
     $data = json_decode($result, true);
 
@@ -1003,17 +999,18 @@ function clickserver_api_key_validate($key): ?bool
     if ($ch === false) {
         return null;
     }
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/auth/?' . http_build_query([
-        'apiKey' => (string) $key,
-        'clickserverId' => base64_encode((string) ($_SERVER['HTTP_HOST'] ?? '')),
-    ]));
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => false,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_TIMEOUT => 10,
+        CURLOPT_URL => 'https://my.tracking202.com/api/v1/auth/?' . http_build_query([
+            'apiKey' => (string) $key,
+            'clickserverId' => base64_encode((string) ($_SERVER['HTTP_HOST'] ?? '')),
+        ]),
+    ]);
     $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
     return clickserver_auth_answer(is_string($result) ? $result : null, $status);
 }
@@ -1102,17 +1099,14 @@ function getSurveyData($install_hash)
 
     // Initiate curl
     $ch = curl_init();
-    // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    // Will return the response, if false it print the response
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/deep/survey/' . $install_hash);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-    // Execute
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_URL => 'https://my.tracking202.com/api/v1/deep/survey/' . $install_hash,
+        CURLOPT_CONNECTTIMEOUT => 3,
+        CURLOPT_TIMEOUT => 5,
+    ]);
     // close connection
     curl_close($ch);
 
@@ -1127,20 +1121,14 @@ function updateSurveyData($install_hash, $post)
 
     // Initiate curl
     $ch = curl_init();
-    \Prosper202\Http\OutboundTimeouts::apply($ch);
-    // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/deep/survey/' . $install_hash);
-    // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    // Will return the response, if false it print the response
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Set to post
-    curl_setopt($ch, CURLOPT_POST, true);
-    // Set post fields
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    // Execute
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_URL => 'https://my.tracking202.com/api/v1/deep/survey/' . $install_hash,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $fields,
+    ] + \Prosper202\Http\OutboundTimeouts::options());
 
     $data = json_decode($result, true);
 
@@ -1155,20 +1143,17 @@ function rotator_data($query, $type)
 {
     // Initiate curl
     $ch = curl_init();
-    // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/deep/rotator/' . $type . '/' . $query);
-    // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    // Will return the response, if false it print the response
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Bounded: Setup › Redirector asks this as the user types, and an
-    // upstream that hangs must cost a missing suggestion, not a worker held
-    // for the default connect timeout.
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-    // Execute
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_URL => 'https://my.tracking202.com/api/v1/deep/rotator/' . $type . '/' . $query,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+        // Bounded: Setup › Redirector asks this as the user types, and an
+        // upstream that hangs must cost a missing suggestion, not a worker held
+        // for the default connect timeout.
+        CURLOPT_CONNECTTIMEOUT => 3,
+        CURLOPT_TIMEOUT => 5,
+    ]);
 
     // close connection
     curl_close($ch);
@@ -1232,16 +1217,15 @@ function changelog_bundled(): array
 function changelog_remote(): array
 {
     $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/clickserver/currentversion/paid/changelogs.php');
-    // Disable SSL verification (legacy endpoint).
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Bounded timeouts so a slow/offline endpoint can never hang the upgrade screen.
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_URL => 'https://my.tracking202.com/clickserver/currentversion/paid/changelogs.php',
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+        // Bounded timeouts so a slow/offline endpoint can never hang the upgrade screen.
+        CURLOPT_CONNECTTIMEOUT => 3,
+        CURLOPT_TIMEOUT => 5,
+    ]);
     $http_code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
@@ -1274,18 +1258,15 @@ function callAutoCron($endpoint)
 
     // Initiate curl
     $ch = curl_init();
-    // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/autocron/' . $endpoint . '/' . $domain);
-    // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    // Will return the response, if false it print the response
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Bound the wait so a slow/unreachable service can't hang the caller (e.g. install)
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-    // Execute
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_URL => 'https://my.tracking202.com/api/v2/autocron/' . $endpoint . '/' . $domain,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+        // Bound the wait so a slow/unreachable service can't hang the caller (e.g. install)
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_TIMEOUT => 10,
+    ]);
 
     // close connection
     curl_close($ch);
@@ -1302,16 +1283,12 @@ function getAllDniNetworks($install_hash)
 {
     // Initiate curl
     $ch = curl_init();
-    \Prosper202\Http\OutboundTimeouts::apply($ch);
-    // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $install_hash . '/networks/all');
-    // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    // Will return the response, if false it print the response
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Execute
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_URL => 'https://my.tracking202.com/api/v2/dni/' . $install_hash . '/networks/all',
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+    ] + \Prosper202\Http\OutboundTimeouts::options());
 
     curl_close($ch);
 
@@ -1346,14 +1323,14 @@ function authDniNetworks($hash, $network, $key, $affId)
     $fields = http_build_query($fields);
 
     $ch = curl_init();
-    \Prosper202\Http\OutboundTimeouts::apply($ch);
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/auth/' . $network);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_URL => 'https://my.tracking202.com/api/v2/dni/' . $hash . '/auth/' . $network,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $fields,
+    ] + \Prosper202\Http\OutboundTimeouts::options());
     $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     if ($httpcode !== 200) {
@@ -1383,14 +1360,14 @@ function getDniOffers($hash, $network, $key, $affId, $offset, $limit, $sort_by, 
     $fields = http_build_query($fields);
 
     $ch = curl_init();
-    \Prosper202\Http\OutboundTimeouts::apply($ch);
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/all/' . $offset . '/' . $limit);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_URL => 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/all/' . $offset . '/' . $limit,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $fields,
+    ] + \Prosper202\Http\OutboundTimeouts::options());
     curl_close($ch);
     return $result;
 }
@@ -1405,14 +1382,14 @@ function getDniOfferById($hash, $network, $key, $affId, $id)
     $fields = http_build_query($fields);
 
     $ch = curl_init();
-    \Prosper202\Http\OutboundTimeouts::apply($ch);
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/id/' . $id);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_URL => 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/id/' . $id,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $fields,
+    ] + \Prosper202\Http\OutboundTimeouts::options());
     curl_close($ch);
     return $result;
 }
@@ -1427,14 +1404,14 @@ function requestDniOfferAccess($hash, $network, $key, $affId, $id, $type)
     $fields = http_build_query($fields);
 
     $ch = curl_init();
-    \Prosper202\Http\OutboundTimeouts::apply($ch);
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/' . $type . '/' . $id);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_URL => 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/' . $type . '/' . $id,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $fields,
+    ] + \Prosper202\Http\OutboundTimeouts::options());
     curl_close($ch);
     return $result;
 }
@@ -1449,14 +1426,14 @@ function submitDniOfferAnswers($hash, $network, $api_key, $affId, $id, $answers)
     ];
     $fields = http_build_query($fields);
     $ch = curl_init();
-    \Prosper202\Http\OutboundTimeouts::apply($ch);
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/answers/' . $id);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_URL => 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/answers/' . $id,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $fields,
+    ] + \Prosper202\Http\OutboundTimeouts::options());
     curl_close($ch);
     return $result;
 }
@@ -1473,14 +1450,14 @@ function setupDniOffer($hash, $network, $key, $affId, $currency, $id, $ddlci)
     $fields = http_build_query($fields);
 
     $ch = curl_init();
-    \Prosper202\Http\OutboundTimeouts::apply($ch);
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/setup/' . $id);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_URL => 'https://my.tracking202.com/api/v2/dni/' . $hash . '/offers/' . $network . '/setup/' . $id,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $fields,
+    ] + \Prosper202\Http\OutboundTimeouts::options());
     curl_close($ch);
     return $result;
 }
@@ -1495,16 +1472,16 @@ function getDNICacheProgress($hash, $data)
         return false;
     }
     $ch = curl_init();
-    \Prosper202\Http\OutboundTimeouts::apply($ch);
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/dni/' . $hash . '/cache/progress');
-    curl_setopt($ch, CURLOPT_HEADER, false);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, false);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        "Content-type: application/json"
-    ]);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
-    $results = curl_exec($ch);
+    $results = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_URL => 'https://my.tracking202.com/api/v2/dni/' . $hash . '/cache/progress',
+        CURLOPT_HEADER => false,
+        CURLOPT_RETURNTRANSFER => false,
+        CURLOPT_HTTPHEADER => [
+            "Content-type: application/json"
+        ],
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $body,
+    ] + \Prosper202\Http\OutboundTimeouts::options());
     curl_close($ch);
     return $results;
 }
@@ -1527,14 +1504,14 @@ function setupDniOfferTrack($hash, $network, $key, $affId, $id, $ddlci = false)
     $fields = http_build_query($fields);
 
     $ch = curl_init();
-    \Prosper202\Http\OutboundTimeouts::apply($ch);
-    curl_setopt($ch, CURLOPT_URL, $url . $id);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_URL => $url . $id,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $fields,
+    ] + \Prosper202\Http\OutboundTimeouts::options());
     curl_close($ch);
     return $result;
 }
@@ -1551,14 +1528,14 @@ function getForeignPayout($currency, $payout_currency, $payout)
     $fields = http_build_query($fields);
 
     $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/get-foreign-payout');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    \Prosper202\Http\OutboundTimeouts::apply($ch, 60);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_URL => 'https://my.tracking202.com/api/v2/get-foreign-payout',
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $fields,
+    ] + \Prosper202\Http\OutboundTimeouts::options(60));
     curl_close($ch);
     $result = json_decode($result, true);
     return $result;
@@ -1574,14 +1551,14 @@ function validateRevContentCredentials($id, $secret)
     $fields = http_build_query($fields);
 
     $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/validate-revcontent-credentials');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    \Prosper202\Http\OutboundTimeouts::apply($ch, 60);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_URL => 'https://my.tracking202.com/api/v2/premium-p202/validate-revcontent-credentials',
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $fields,
+    ] + \Prosper202\Http\OutboundTimeouts::options(60));
     curl_close($ch);
     $result = json_decode($result, true);
     return $result;
@@ -1600,14 +1577,14 @@ function pushToRevContent($id, $secret, $boost, $boost_id, array $ads)
     $fields = http_build_query($fields);
 
     $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/push-revcontent');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    \Prosper202\Http\OutboundTimeouts::apply($ch, 60);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_URL => 'https://my.tracking202.com/api/v2/premium-p202/push-revcontent',
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $fields,
+    ] + \Prosper202\Http\OutboundTimeouts::options(60));
     curl_close($ch);
     $result = json_decode($result, true);
     return $result;
@@ -1624,14 +1601,14 @@ function pushToFacebook($api_key, $group, $ad_set_id, array $ads)
     $fields = http_build_query($fields);
 
     $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/facebook-ads/push-facebook/' . $api_key);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    \Prosper202\Http\OutboundTimeouts::apply($ch, 60);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_URL => 'https://my.tracking202.com/api/v2/premium-p202/facebook-ads/push-facebook/' . $api_key,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $fields,
+    ] + \Prosper202\Http\OutboundTimeouts::options(60));
     curl_close($ch);
     $result = json_decode($result, true);
     return $result;
@@ -1640,12 +1617,12 @@ function pushToFacebook($api_key, $group, $ad_set_id, array $ads)
 function getFacebookCampaignsAndAdSets($api_key)
 {
     $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/premium-p202/facebook-ads/get-ad-sets/' . $api_key);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    \Prosper202\Http\OutboundTimeouts::apply($ch, 60);
-    $result = curl_exec($ch);
+    $result = \Prosper202\Http\FixedHostRoute::exec($ch, [
+        CURLOPT_URL => 'https://my.tracking202.com/api/v2/premium-p202/facebook-ads/get-ad-sets/' . $api_key,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_RETURNTRANSFER => true,
+    ] + \Prosper202\Http\OutboundTimeouts::options(60));
     curl_close($ch);
     $result = json_decode($result, true);
     return $result;
@@ -1653,37 +1630,7 @@ function getFacebookCampaignsAndAdSets($api_key)
 
 function getData($url, int $timeout = 60, int $connectTimeout = 5)
 {
-    $timeout = max(1, $timeout);
-    $connectTimeout = max(1, min($timeout, $connectTimeout));
-
-    if (function_exists('curl_version')) {
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $connectTimeout);
-        curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
-        $result = curl_exec($ch);
-        curl_close($ch);
-        return $result;
-    } else {
-        if (ini_get('allow_url_fopen')) {
-            $context = stream_context_create([
-                'http' => [
-                    'timeout' => $timeout,
-                ],
-                'ssl' => [
-                    'verify_peer' => true,
-                    'verify_peer_name' => true,
-                ],
-            ]);
-            return @file_get_contents($url, false, $context);
-        } else {
-            return false;
-        }
-    }
+    return \Prosper202\Http\VendorFetch::fetch((string) $url, $timeout, $connectTimeout) ?? false;
 }
 
 /**

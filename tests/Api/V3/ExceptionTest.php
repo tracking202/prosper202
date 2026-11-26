@@ -56,6 +56,7 @@ final class ExceptionTest extends TestCase
         $this->assertSame('Validation failed', $arr['message']);
         $this->assertSame(422, $arr['status']);
         $this->assertSame($fieldErrors, $arr['field_errors']);
+        $this->assertSame('validation_failed', $arr['code']);
     }
 
     public function testValidationExceptionToArrayOmitsFieldErrorsWhenEmpty(): void

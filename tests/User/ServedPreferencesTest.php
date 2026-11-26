@@ -32,7 +32,9 @@ final class ServedPreferencesTest extends TestCase
         foreach (['user_id', 'user_pref_limit', 'cb_key', 'lpo_bridge_config', 'user_delete_data_before'] as $anchor) {
             self::assertContains($anchor, $columns, "column discovery missed $anchor");
         }
-        $listed = ServedPreferences::columns();
+        $listed = ServedPreferences::tableColumns();
+        self::assertSame([], array_values(array_intersect(ServedPreferences::SEALED, $columns)),
+            'a sealed secret is a column again: its plaintext would be read beside the store');
 
         $unclassified = array_values(array_diff($columns, $listed));
         self::assertSame([], $unclassified, 'these 202_users_pref columns are on neither list, so GET answers them '
@@ -85,7 +87,8 @@ final class ServedPreferencesTest extends TestCase
 
         $served = (new UsersController($db))->getPreferences(1)['data'];
 
-        self::assertSame(ServedPreferences::serve([...self::row(), 'chart_time_range' => 'hours']), $served);
+        self::assertSame(ServedPreferences::serve([...self::row(), 'chart_time_range' => 'hours'])
+            + ['shopify_webhook_secret' => ['stored' => false]], $served, 'the sealed secret by whether a row is in the store');
         self::assertSame(['stored' => true], $served['cb_key']);
         self::assertSame(['stored' => false], $served['jvzoo_ipn_secret_key']);
         self::assertSame('hours', $served['chart_time_range']);

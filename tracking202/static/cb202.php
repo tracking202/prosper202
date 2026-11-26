@@ -10,7 +10,7 @@ include_once(substr(__DIR__, 0, -19) . '/202-config/static-endpoint-helpers.php'
 // account is the one whose stored ClickBank secret key decrypts the
 // notification (ClickBankAdapter); a key two accounts store is refused. A
 // test marks that account's key verified and, once answered (ClickBank waits
-// 3 seconds), tells that account's own Slack webhook. The sender is
+// 3 seconds), queues a notice for that account's own Slack webhook. The sender is
 // ClickBank's server: no visitor, so no privacy state applies.
 
 $body = file_get_contents('php://input');
@@ -28,13 +28,7 @@ if ($outcome->kind === \Prosper202\PaymentNotification\OutcomeKind::TEST && $out
         fastcgi_finish_request();
     }
     try {
-        $webhook = \Prosper202\PaymentNotification\ClickBank\ClickBankAdapter::slackWebhook(
-            new \Prosper202\Database\Connection($db),
-            $outcome->accountId
-        );
-        if ($webhook !== null) {
-            (new Slack($webhook))->push('cb_key_verified', []);
-        }
+        Slack::forAccount($db, $outcome->accountId)?->push('cb_key_verified', []);
     } catch (\Throwable $e) {
         error_log('ClickBank notification: the Slack notice for account ' . $outcome->accountId
             . ' could not be sent: ' . $e->getMessage());

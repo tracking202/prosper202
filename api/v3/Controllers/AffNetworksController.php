@@ -12,6 +12,12 @@ class AffNetworksController extends Controller
     protected function primaryKey(): string { return 'aff_network_id'; }
 
     #[\Override]
+    protected function libraryResource(): ?string
+    {
+        return 'aff-networks';
+    }
+
+    #[\Override]
     protected function listSearchColumns(): array
     {
         return ['aff_network_name'];

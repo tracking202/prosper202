@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Bootstrap;
+use Api\V3\ErrorCode;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\ReportFilter;
 use Prosper202\OfflineConversion\ExportOptions;
@@ -126,7 +127,7 @@ final class OfflineConversionsController
         $pending = Bootstrap::pendingUpgrade($db);
         if ($pending !== null) {
             header('Retry-After: 300');
-            Bootstrap::errorResponse($pending, 503);
+            Bootstrap::errorResponse($pending, 503, ['code' => ErrorCode::UPGRADE_PENDING]);
             return;
         }
         $conn = new Connection($db);

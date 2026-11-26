@@ -12,6 +12,7 @@ use Api\V3\Exception\NothingToUpdateException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\PageRows;
 use Api\V3\Support\PayloadKeys;
+use Api\V3\Support\LibraryUsage;
 use Api\V3\Support\ListQuery;
 use Api\V3\Support\QueryInt;
 use Api\V3\Support\ServerStateStore;
@@ -464,7 +465,7 @@ abstract class Controller
                 continue;
             }
             $this->stateStore()->incrementMetric('conflicts', 1);
-            throw new ConflictException(
+            throw (new ConflictException(
                 'Version mismatch',
                 [
                     'expected_version' => is_scalar($payload[$key]) ? trim((string) $payload[$key], '" ') : null,
@@ -472,7 +473,7 @@ abstract class Controller
                     'diff_hint' => "The body's $key is from an older read of this record. Re-fetch it (GET) and "
                         . "send your changes on that, or omit $key and send only the fields to change.",
                 ]
-            );
+            ))->coded(ErrorCode::VERSION_CONFLICT);
         }
     }
 
@@ -750,15 +751,26 @@ abstract class Controller
         $stmt->close();
         $message = $this->duplicateKeyConflictMessage();
         if ($message !== null && (int)$e->getCode() === 1062) {
-            throw new ConflictException($message);
+            throw (new ConflictException($message))->coded(ErrorCode::ALREADY_EXISTS);
         }
         throw $e;
     }
 
     // ─── CRUD Operations ─────────────────────────────────────────────
 
+    /**
+     * The Library resource these records are (LibraryUsage: where each is
+     * used), or null for records no Library list shows.
+     */
+    protected function libraryResource(): ?string
+    {
+        return null;
+    }
+
     public function list(array $params): array
     {
+        $library = $this->libraryResource();
+        $with = $library === null ? [] : LibraryUsage::withOf($library, $params);
         $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
         $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
         // Absent and '' are no cursor; anything else is decoded or refused.
@@ -882,6 +894,9 @@ abstract class Controller
         }
         $stmt->close();
         [$rows, $truncated] = PageRows::cut($rows, $limit);
+        if ($library !== null) {
+            $rows = (new LibraryUsage($this->db, $this->userId))->addTo($library, $this->primaryKey(), $rows, $with);
+        }
 
         $nextCursor = null;
         $cursorExpiresAt = null;
@@ -1240,7 +1255,41 @@ abstract class Controller
             'mode' => $this->deletedColumn() !== null ? 'soft' : 'hard',
             'record' => $existing['data'],
             'cascade' => [],
-        ]];
+        ] + $this->inUseBy((int) $id)];
+    }
+
+    /**
+     * Where one of the account's Library records is used: GET
+     * /<resource>/{id}/uses. A record that is not the account's is a 404,
+     * as its GET is.
+     */
+    public function uses(int $id): array
+    {
+        $library = $this->libraryResource() ?? throw new \LogicException(static::class . ' is no Library resource');
+        $this->get($id);
+        $uses = (new LibraryUsage($this->db, $this->userId))->named($library, $id);
+        $total = 0;
+        foreach ($uses as $kind) {
+            $total += $kind['count'];
+        }
+
+        return ['data' => ['resource' => $library, 'id' => $id, 'total' => $total, 'uses' => $uses]];
+    }
+
+    /**
+     * A Library record's delete preview names what still points at it: a
+     * soft delete takes it out of the Library and leaves those pointing.
+     *
+     * @return array{}|array{in_use_by: array<string, mixed>}
+     */
+    private function inUseBy(int $id): array
+    {
+        $library = $this->libraryResource();
+        if ($library === null) {
+            return [];
+        }
+
+        return ['in_use_by' => (new LibraryUsage($this->db, $this->userId))->named($library, $id)];
     }
 
     public function bulkUpsert(array $payload): array
@@ -1274,12 +1323,12 @@ abstract class Controller
         $scope = ServerStateStore::idempotencyScopeForUser($this->userId);
         $lookup = $this->stateStore()->lookupIdempotent($scope, $idempotencyKey, $requestHash);
         if ($lookup['state'] === 'mismatch') {
-            throw new ValidationException(
+            throw (new ValidationException(
                 'This Idempotency-Key was already used for a different request. Resend the original '
                 . 'rows to this same endpoint to replay the recorded response, or send a new '
                 . 'Idempotency-Key for a different batch.',
                 ['idempotency_key' => 'Already used for a different request']
-            );
+            ))->coded(ErrorCode::IDEMPOTENCY_KEY_REUSED);
         }
         if ($lookup['state'] === 'replay' && is_array($lookup['response'])) {
             $existing = $lookup['response'];
@@ -1735,14 +1784,14 @@ abstract class Controller
         $currentVersion = $this->computeVersionHash($currentRow);
         if ($expected !== $currentVersion) {
             $this->stateStore()->incrementMetric('conflicts', 1);
-            throw new ConflictException(
+            throw (new ConflictException(
                 'Version mismatch',
                 [
                     'expected_version' => $expected,
                     'current_version' => $currentVersion,
                     'diff_hint' => 'Re-fetch resource and retry update with latest ETag.',
                 ]
-            );
+            ))->coded(ErrorCode::VERSION_CONFLICT);
         }
     }
 

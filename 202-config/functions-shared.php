@@ -292,6 +292,24 @@ function p202Mysqli(): \mysqli
 }
 
 /**
+ * The egress proxy saved on Account › Settings (Http\EgressProxyStore), or
+ * null. EgressProxy::configured() asks it whenever P202_EGRESS_PROXY is not
+ * defined; a failed read throws, and nothing that would go through the
+ * proxy is sent.
+ */
+function p202EgressProxyStored(): ?\Prosper202\Http\StoredEgressProxy
+{
+    // A process that loaded no 202-config.php has no database to hold a
+    // saved proxy (a test, a script run outside an install). Anything with
+    // one reads it, and a read that fails throws.
+    if (!($GLOBALS['db'] ?? null) instanceof \mysqli && !class_exists('DB', false)) {
+        return null;
+    }
+
+    return (new \Prosper202\Http\EgressProxyStore(new \Prosper202\Database\Connection(p202Mysqli())))->read();
+}
+
+/**
  * An address as the $ip_address global holds it: its type, and the address
  * in standard form, masked (StoredVisitorIp::mask()) when asked. Anything
  * that is not an address is the unspecified 0.0.0.0.
