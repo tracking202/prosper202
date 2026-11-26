@@ -20,7 +20,9 @@ use Prosper202\Database\Schema\TableRegistry;
  * state directory, is minted the same way, by the installer and by every
  * rung that reconciles this table (the 1.9.78 → 1.9.79 rung among them).
  *
- * No user owns a row here, so the user-deletion purge never touches it.
+ * No user owns a row of those, so the user-deletion purge never touches
+ * them. The integration secrets beside them are each account's, and are
+ * purged with it.
  */
 final class SecretTables
 {
@@ -33,6 +35,8 @@ final class SecretTables
             self::deploymentSecrets(),
             self::geoipRefresh(),
             self::licenceAnswers(),
+            self::integrationSecrets(),
+            self::integrationSecretEvents(),
         ];
     }
 
@@ -84,6 +88,60 @@ final class SecretTables
                 PRIMARY KEY (`key_sha256`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
               COMMENT='The last licence answer per ClickServer key, for the grace period'"
+        );
+    }
+
+    /**
+     * Each account's integration secrets (Prosper202\Security\
+     * IntegrationSecretStore): sealed under a data key of the row's own,
+     * which is sealed under the key `key_id` names, with the value it
+     * replaced while that is still accepted. From 1.9.81, added by its rung;
+     * the Shopify webhook secret is the first to move here from
+     * 202_users_pref. Purged with the account (UserDataPurge).
+     */
+    public static function integrationSecrets(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::INTEGRATION_SECRETS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::INTEGRATION_SECRETS . "` (
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `secret_name` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `key_id` varchar(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `wrapped_key` varchar(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `sealed` varchar(2048) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `set_at` int(10) unsigned NOT NULL,
+                `previous_sealed` varchar(2048) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                `previous_expires_at` int(10) unsigned DEFAULT NULL,
+                `updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`user_id`,`secret_name`),
+                KEY `secret_name` (`secret_name`),
+                KEY `key_id` (`key_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Integration secrets, sealed; never served'"
+        );
+    }
+
+    /**
+     * Every change of an integration secret: set, replaced, rotated (with
+     * how long the old one is still accepted), cleared or migrated, who
+     * asked and how, and the key it was sealed with. Never the value.
+     */
+    public static function integrationSecretEvents(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::INTEGRATION_SECRET_EVENTS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::INTEGRATION_SECRET_EVENTS . "` (
+                `event_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `secret_name` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `action` varchar(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `actor_user_id` mediumint(8) unsigned DEFAULT NULL,
+                `via` varchar(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                `key_id` varchar(40) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+                `previous_expires_at` int(10) unsigned DEFAULT NULL,
+                `created_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`event_id`),
+                KEY `user_secret` (`user_id`,`secret_name`,`event_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Changes of integration secrets; never a value'"
         );
     }
 

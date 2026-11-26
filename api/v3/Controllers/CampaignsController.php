@@ -12,6 +12,12 @@ class CampaignsController extends Controller
     protected function primaryKey(): string { return 'aff_campaign_id'; }
 
     #[\Override]
+    protected function libraryResource(): ?string
+    {
+        return 'campaigns';
+    }
+
+    #[\Override]
     protected function listSearchColumns(): array
     {
         return ['aff_campaign_name'];

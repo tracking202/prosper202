@@ -100,6 +100,7 @@ final class TableRegistry
     public const string PPC_ACCOUNT_PIXELS = '202_ppc_account_pixels';
     public const string LANDING_PAGES = '202_landing_pages';
     public const string LANDING_PAGE_CHECKS = '202_landing_page_checks';
+    public const string LANDING_PAGE_LAST_SEEN = '202_landing_page_last_seen';
     public const string LANDING_PAGE_SPLIT_TESTS = '202_landing_page_split_tests';
     public const string TEXT_ADS = '202_text_ads';
 
@@ -141,6 +142,9 @@ final class TableRegistry
     public const string DEPLOYMENT_SECRETS = '202_deployment_secrets';
     public const string GEOIP_REFRESH = '202_geoip_refresh';
     public const string LICENCE_ANSWERS = '202_licence_answers';
+    // Each account's integration secrets, sealed (Prosper202\Security\IntegrationSecretStore), and their changes
+    public const string INTEGRATION_SECRETS = '202_integration_secrets';
+    public const string INTEGRATION_SECRET_EVENTS = '202_integration_secret_events';
 
     // Identity graph (IdentityTables)
     public const string IDENTITY_KEYS = '202_identity_keys';

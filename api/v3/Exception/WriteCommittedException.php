@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Exception;
 
+use Api\V3\ErrorCode;
 use Api\V3\HttpException;
 
 /**
@@ -46,5 +47,10 @@ final class WriteCommittedException extends HttpException
             500,
             $previous
         );
+    }
+
+    protected function defaultErrorCode(): string
+    {
+        return ErrorCode::WRITE_COMMITTED;
     }
 }

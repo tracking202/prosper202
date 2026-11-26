@@ -8,7 +8,6 @@ use Prosper202\Click\ClickRef;
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Database\Connection;
-use Prosper202\PaymentNotification\AccountSecrets;
 use Prosper202\PaymentNotification\AnswersWithItsOwnStatus;
 use Prosper202\PaymentNotification\ClickField;
 use Prosper202\PaymentNotification\InboundRequest;
@@ -19,6 +18,9 @@ use Prosper202\PaymentNotification\ProviderAdapter;
 use Prosper202\PaymentNotification\Refusal;
 use Prosper202\PaymentNotification\Response;
 use Prosper202\PaymentNotification\Verification;
+use Prosper202\Database\SchemaVersion;
+use Prosper202\Security\IntegrationSecretStore;
+use Prosper202\Security\UnreadableSecret;
 
 /**
  * Shopify's order webhooks: a JSON body signed in X-Shopify-Hmac-Sha256
@@ -58,6 +60,12 @@ final class ShopifyAdapter implements ProviderAdapter, AnswersWithItsOwnStatus
 
     /** @var list<int> */
     private array $accounts = [];
+
+    /** The schema version whose upgrade moved the secrets into the store. */
+    public const SECRETS_SINCE = '1.9.81';
+
+    /** @var list<int> the accounts whose stored secret storedSecrets() could not open */
+    private array $unopened = [];
 
     /** When the refund parse() read happened, or null when it read no refund. */
     private ?int $refundAt = null;
@@ -126,18 +134,43 @@ final class ShopifyAdapter implements ProviderAdapter, AnswersWithItsOwnStatus
         return new ClickField('t202subid', 'the cart', 'properties[t202subid]=[[subid]]');
     }
 
+    /**
+     * Each live account's secrets from the sealed store (ShopifyWebhookSecret):
+     * the current one, and the one it replaced while its overlap lasts. One
+     * account's secret that cannot be opened is logged and left out, and
+     * noted, so a webhook no other secret verifies is answered as a failure
+     * to retry rather than as unverified (verify()). Before the 1.9.81
+     * upgrade has moved the secrets into the store, nothing is read: the
+     * answer is a failure, which the receiver names as the pending upgrade.
+     */
     public function storedSecrets(Connection $conn): array
     {
+        if (SchemaVersion::pendingUpgrade($conn->writeConnection(), self::SECRETS_SINCE) !== null) {
+            throw new \RuntimeException('the Shopify webhook secrets move into the encrypted store in the '
+                . self::SECRETS_SINCE . ' upgrade, which has not run');
+        }
+        $this->unopened = [];
         $secrets = [];
-        foreach (AccountSecrets::stored($conn, ShopifyWebhookSecret::COLUMN) as $accountId => $column) {
-            $secret = ShopifyWebhookSecret::stored($column);
-            if ($secret !== null) {
-                $secrets[$accountId] = [$secret];
-            } elseif (ShopifyWebhookSecret::unreadable($column)) {
-                error_log(sprintf(
-                    'Shopify notification: account %d\'s stored webhook secret is not a secret; it verifies nothing',
-                    $accountId
-                ));
+        foreach ((new IntegrationSecretStore($conn))->openEach(ShopifyWebhookSecret::NAME, $this->now ?? time()) as $accountId => $stored) {
+            if ($stored instanceof UnreadableSecret) {
+                $this->unopened[] = $accountId;
+                error_log('Shopify notification: ' . $stored->getMessage());
+                continue;
+            }
+            $keys = [];
+            foreach ($stored->accepted() as $value) {
+                $secret = ShopifyWebhookSecret::stored($value);
+                if ($secret !== null) {
+                    $keys[] = $secret;
+                } elseif (ShopifyWebhookSecret::unreadable($value)) {
+                    error_log(sprintf(
+                        'Shopify notification: account %d\'s stored webhook secret is not a secret; it verifies nothing',
+                        $accountId
+                    ));
+                }
+            }
+            if ($keys !== []) {
+                $secrets[$accountId] = $keys;
             }
         }
 
@@ -154,7 +187,7 @@ final class ShopifyAdapter implements ProviderAdapter, AnswersWithItsOwnStatus
                 . ' recorded.'
             );
         }
-        if ($secrets === []) {
+        if ($secrets === [] && $this->unopened === []) {
             throw Refusal::of(
                 OutcomeKind::UNVERIFIED,
                 'No Prosper202 account stores a Shopify webhook secret, so this webhook cannot be verified and'
@@ -171,6 +204,14 @@ final class ShopifyAdapter implements ProviderAdapter, AnswersWithItsOwnStatus
                     break;
                 }
             }
+        }
+        if ($verified === [] && $this->unopened !== []) {
+            // It may be signed with a secret that could not be opened: not unverified, a failure to retry.
+            throw Refusal::of(
+                OutcomeKind::FAILED,
+                'The webhook could not be verified just now: a stored Shopify webhook secret could not be opened'
+                . ' (the server\'s error log names the account). Nothing was recorded; Shopify sends it again.'
+            );
         }
         if ($verified === []) {
             return null;

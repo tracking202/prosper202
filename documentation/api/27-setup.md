@@ -8,6 +8,7 @@ the web UI:
 | ------ | ---- | -------------- |
 | `GET` | `/landing-pages/{id}/code` | Get LP Code (simple and advanced) |
 | `POST` | `/landing-pages/{id}/check` | Get LP Code's "Check my page": whether the page at the saved URL carries its code |
+| `GET` | `/{resource}/{id}/uses` | Where an offer, network, traffic source or account, landing page or text ad is used |
 | `GET` | `/conversions/postback-code` | Postback / Pixel |
 | `GET` | `/ppc-networks/{id}/variables` | Traffic Sources › variables |
 | `POST` | `/ppc-networks/{id}/variables` | |
@@ -130,6 +131,71 @@ that the answer is a `429` with `Retry-After`, `retry_after_seconds` and
  "message": "This API key has had the 10 landing page fetches it may have this minute: nothing was fetched. Try again in 37 seconds.",
  "retry_after_seconds": 37,
  "rate_limit": {"limit": 10, "window_seconds": 60, "per": "api_key"}}
+```
+
+## Where a Library record is used — `GET /{resource}/{id}/uses`
+
+A soft delete takes a record out of the Library and leaves everything that
+points at it pointing: a link keeps sending clicks to a deleted offer. So the
+Library records say what uses them, three ways, all from one reader and all
+the account's own live records (another account's rows that name an id never
+count, and a deleted landing page, text ad, offer, account or ad connection
+does not):
+
+- **A list's counts**: `?with=usage` on `/campaigns`, `/aff-networks`,
+  `/ppc-networks`, `/ppc-accounts`, `/landing-pages` and `/text-ads` adds a
+  `usage` object to each row. `/landing-pages` also takes `with=health` and
+  `with=last_seen`, in any combination (`with=usage,health,last_seen`). The fields are opt-in, so a row read for a
+  `PUT` body carries nothing the record does not have. Any other value, an
+  empty item or a repeat is a `422` naming `with`.
+- **One record's uses**: `GET /campaigns/{id}/uses` (and the same under the
+  other five) names them, the first 25 of each kind, lowest id first.
+- **A delete's dry run**: `DELETE /campaigns/{id}?dry_run=1` carries the
+  same object as `in_use_by`.
+
+| Resource | Kinds of use |
+| -------- | ------------ |
+| `campaigns` | `trackers`, `landing_pages`, `text_ads`, `rotators` (its default, or any rule's redirect) |
+| `aff-networks` | `campaigns` |
+| `ppc-networks` | `ppc_accounts` |
+| `ppc-accounts` | `trackers`, `ad_connections` |
+| `landing-pages` | `trackers`, `text_ads`, `rotators` |
+| `text-ads` | `trackers` |
+
+A rotator counts once however many of its redirects name the record.
+
+```json
+GET /campaigns?with=usage
+{"data": [{"aff_campaign_id": 7, "aff_campaign_name": "Spring offer", …,
+           "usage": {"trackers": 3, "landing_pages": 1, "text_ads": 0,
+                     "rotators": 1, "total": 5}}], …}
+
+GET /campaigns/7/uses
+{"data": {"resource": "campaigns", "id": 7, "total": 5, "uses": {
+  "trackers": {"count": 3, "records": [{"id": 41, "name": null, "path": "/trackers/41"}, …]},
+  "landing_pages": {"count": 1, "records": [{"id": 12, "name": "Spring LP", "path": "/landing-pages/12"}]},
+  "text_ads": {"count": 0, "records": []},
+  "rotators": {"count": 1, "records": [{"id": 3, "name": "Spring split", "path": "/rotators/3"}]}}}}
+```
+
+`health` on a landing page is its stored code check (above) for the URL it
+has now: `status`, `level` (`good`, `warn`, `bad` or `unchecked`), `label`
+(the words Setup › Landing Pages shows), `message` and `checked_at`. A page
+with no check of its present URL is `"status": "unchecked"` with a null
+`message` and `checked_at`. Reading it fetches nothing.
+
+`last_seen_at` on a landing page is when it last had a click, in unix
+seconds. Each click on the page notes its time once the click is stored, at
+most once a minute a page, so the answer can be up to 60 seconds behind the
+latest click, and a click recorded late never moves it back. A page with no
+click since the install was upgraded to 1.9.81 is `null`: the time starts
+then, and older clicks are not scanned for it.
+
+```json
+GET /landing-pages?with=last_seen
+{"data": [{"landing_page_id": 12, "landing_page_nickname": "Spring LP", …,
+           "last_seen_at": 1764150000},
+          {"landing_page_id": 13, …, "last_seen_at": null}], …}
 ```
 
 ## Pixels and postback URLs — `GET /conversions/postback-code`

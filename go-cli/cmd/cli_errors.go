@@ -252,6 +252,9 @@ func errorEnvelope(err error) map[string]interface{} {
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) {
 		env["http_status"] = apiErr.Status
+		if apiErr.Code != "" {
+			env["api_code"] = apiErr.Code
+		}
 		if apiErr.RetryAfter > 0 {
 			env["retry_after_seconds"] = apiErr.RetryAfter
 		}
