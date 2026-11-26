@@ -19,10 +19,21 @@ use PHPUnit\Framework\TestCase;
  * database. With no database
  * settings in scope the directory still tells two installs apart, so no
  * scope falls back to the namespace two installs shared.
+ *
+ * The directory and database are a place, which an in-place reinstall keeps:
+ * the install's id (InstallIdCache) is in the namespace too, so a database
+ * installed again where another was is a new namespace.
  */
 final class SystemHashNamesTheDatabaseTest extends TestCase
 {
     private const SHARED = '202-config/functions-shared.php';
+    private const FOR_BOOTSTRAP = '\Prosper202\Database\InstallIdCache::forBootstrap(';
+
+    /** What the copies' stand-in for InstallIdCache::forBootstrap() answers. */
+    public static string $installId = 'install-id-a';
+
+    /** @var list<string> the place the stand-in was last asked for */
+    public static array $askedFor = [];
 
     /** @var array<string, mixed> */
     private array $saved = [];
@@ -34,6 +45,8 @@ final class SystemHashNamesTheDatabaseTest extends TestCase
             $this->saved[$name] = $GLOBALS[$name] ?? null;
         }
         $this->saved['server'] = $_SERVER;
+        self::$installId = 'install-id-a';
+        self::$askedFor = [];
     }
 
     protected function tearDown(): void
@@ -50,10 +63,10 @@ final class SystemHashNamesTheDatabaseTest extends TestCase
 
     public function testTheOneCopyNamesTheInstall(): void
     {
-        $source = lift_function(dirname(__DIR__, 2) . '/' . self::SHARED, 'systemHash');
+        $place = lift_function(dirname(__DIR__, 2) . '/' . self::SHARED, 'p202InstallPlace');
 
-        self::assertStringContainsString('dbname', $source);
-        self::assertStringContainsString('__DIR__', $source);
+        self::assertStringContainsString('dbname', $place);
+        self::assertStringContainsString('__DIR__', $place);
         self::assertSame('202-config', basename(dirname(self::SHARED)), 'the directory the bootstraps are in');
     }
 
@@ -95,14 +108,60 @@ final class SystemHashNamesTheDatabaseTest extends TestCase
         self::assertSame($a, self::copy('/var/www/install-a/202-config')());
     }
 
-    /** The shared copy as it runs from $directory, under a name no test has declared. */
+    /** A reinstall in place keeps the directory and database; its new id is a new namespace. */
+    public function testANewInstallIdAtOnePlaceIsANewNamespace(): void
+    {
+        $hash = self::copy();
+        $_SERVER['HTTP_HOST'] = 'track.example';
+        $_SERVER['SERVER_ADDR'] = '203.0.113.7';
+        $GLOBALS['dbhost'] = 'localhost';
+        $GLOBALS['dbname'] = 'install_a';
+
+        $old = $hash();
+        self::$installId = 'install-id-b';
+        self::assertNotSame($old, $hash());
+        self::$installId = 'install-id-a';
+        self::assertSame($old, $hash(), 'the id, not the moment, decides');
+    }
+
+    /** The id is asked for the place the namespace names. */
+    public function testTheIdIsAskedForThePlaceTheNamespaceNames(): void
+    {
+        $GLOBALS['dbhost'] = 'db.internal';
+        $GLOBALS['dbname'] = 'install_a';
+        self::copy('/var/www/p202/202-config')();
+
+        self::assertSame(['/var/www/p202/202-config', 'db.internal', 'install_a'], self::$askedFor);
+    }
+
+    /** @param list<string> $place */
+    public static function forBootstrap(array $place): string
+    {
+        self::$askedFor = $place;
+
+        return self::$installId;
+    }
+
+    /**
+     * The shared copy as it runs from $directory, under names no test has
+     * declared, with the install id answered by self::forBootstrap().
+     */
     private static function copy(string $directory = '/var/www/p202/202-config'): \Closure
     {
-        $name = 'p202SystemHashUnderTest_' . md5($directory);
+        $suffix = md5($directory);
+        $name = 'p202SystemHashUnderTest_' . $suffix;
         if (!function_exists($name)) {
-            $source = lift_function(dirname(__DIR__, 2) . '/' . self::SHARED, 'systemHash');
-            $source = str_replace('__DIR__', var_export($directory, true), $source);
-            eval(str_replace('function systemHash(', 'function ' . $name . '(', $source));
+            $shared = dirname(__DIR__, 2) . '/' . self::SHARED;
+            $hash = lift_function($shared, 'systemHash');
+            self::assertSame(1, substr_count($hash, self::FOR_BOOTSTRAP), 'systemHash() asks for the id once');
+            self::assertSame(1, substr_count($hash, 'p202InstallPlace('), 'and for the place once');
+            $hash = str_replace(self::FOR_BOOTSTRAP, '\\' . self::class . '::forBootstrap(', $hash);
+            $hash = str_replace('p202InstallPlace(', 'p202InstallPlaceUnderTest_' . $suffix . '(', $hash);
+            eval(str_replace('function systemHash(', 'function ' . $name . '(', $hash));
+
+            $place = lift_function($shared, 'p202InstallPlace');
+            $place = str_replace('__DIR__', var_export($directory, true), $place);
+            eval(str_replace('function p202InstallPlace(', 'function p202InstallPlaceUnderTest_' . $suffix . '(', $place));
         }
 
         return \Closure::fromCallable($name);
