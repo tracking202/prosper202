@@ -216,7 +216,7 @@ p202 ltv revenue record --customer-id 42 --amount 49 --event-type refund --idemp
 | `billing_interval` | `day`, `week`, `month` (default) or `year`; `billing_interval_count` intervals per charge (default 1; 3 with `month` is quarterly) |
 | `status` | `trialing`, `active` (default), `past_due`, `paused` or `canceled` |
 | `plan_name`, `currency`, `grace_days` | `grace_days`: days past the period end before it is past due |
-| `started_at`, `current_period_start`, `current_period_end` | Unix seconds; the period end must be after its start |
+| `started_at`, `current_period_start`, `current_period_end` | Unix seconds; the period end must be after its start. A trial's period end is the trial's end, a pause's the date it ends ([Trials and pauses](#trials-and-pauses)) |
 | the customer keys | Required |
 
 `POST /ltv/subscriptions/{external_sub_id}/events` records what happened to
@@ -248,7 +248,7 @@ A subscription no renewal reaches lapses on its own: once its
 `active` again. The cron job's hourly run (`202-cronjobs/index.php`, which
 every default install schedules) makes the change, so a status is at most an
 hour late, and the customer's cached `mrr` and `active_subscription_count`
-change with it. A `trialing` or `paused` subscription is left as it is.
+change with it.
 
 - `GET /ltv/mrr` counts only `active` subscriptions, so a lapsed one leaves
   MRR at `past_due`. Monthly churn is the subscriptions canceled in the last
@@ -284,6 +284,40 @@ change with it. A `trialing` or `paused` subscription is left as it is.
   keeps going (300 by default), `--batch-size=N` how many rows a statement
   takes (500). It and the cron take one database lock, so they never run at
   once; a copy started while the other runs says so and exits.
+
+#### Trials and pauses
+
+A `trialing` or `paused` subscription lapses by the same rule, from its own
+`current_period_end`:
+
+- **A trial** ends at its `current_period_end`, and the renewal that reaches
+  it is its first charge. A trial no renewal reaches by its period end and
+  `grace_days` is `past_due` (its first charge is owed and unpaid), and
+  `canceled` 30 days after that. It never becomes `active` on its own: that
+  would count in MRR a subscription that has paid nothing. Its `mrr` stays 0
+  until a renewal or an upsert sets it.
+- **A pause** ends at its `current_period_end`: send the date the pause ends
+  (Chargebee's `resume_date`, Stripe's `pause_collection.resumes_at`) as
+  `current_period_end`, and send it again when the pause is extended. A
+  pause still `paused` once that date and `grace_days` are over resumes into
+  the state its unpaid period then has: `past_due`, and `canceled` 30 days
+  after that. It is not made `active`, for the same reason. For a pause with
+  no end date (Stripe's `paused` status), send as `current_period_end` the
+  date to hold it until (at most 2106-02-07); otherwise it lapses from the
+  period end it has.
+- A renewal (`POST /ltv/subscriptions/{external_sub_id}/events`) or an
+  upsert from the billing system always decides: the sweep locks each row
+  and moves it only if it still has the status it read and is still
+  lapsed, so a trial converted or a pause extended while it ran is left as
+  sent, and a lapsed one that is renewed or upserted later takes what it is
+  sent.
+- `GET /ltv/mrr` then counts a lapsed trial or pause under `past_due` (and
+  later `canceled`), no longer under `trialing` or `paused`; it was never in
+  MRR. A trial or pause canceled this way counts in monthly churn as any
+  cancel does, dated period end + grace + 30 days.
+- The times are instants: a period end is a Unix time and a grace day is
+  86,400 seconds, so the account's time zone does not move when a
+  subscription lapses.
 
 ## Customers
 
@@ -456,7 +490,8 @@ alerts](../features/money-loss-alerts.md).
 `subscription.changed` carries `{subscription_id, customer_id, action}`:
 `upsert`, `renewal`, `cancel` or `refund` for a write through the API, and
 `upsert` (to `past_due`) or `cancel` when the hourly sweep moves a
-subscription that stopped renewing (see [When a subscription stops
+subscription that stopped renewing, a trial no first charge reached, or a
+pause past its end (see [When a subscription stops
 renewing](#when-a-subscription-stops-renewing)). Read the subscription for
 its status.
 
