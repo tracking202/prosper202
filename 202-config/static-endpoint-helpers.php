@@ -1611,11 +1611,12 @@ if (!function_exists('p202RecordPurLinkWebEvent')) {
         $notifier = new \Prosper202\Goals\TrafficSourceNotifier($conn, false);
         $engine = new \Prosper202\Goals\GoalEngine($conn, null, null, null, $notifier);
         $event = null;
+        $leftNoOutcome = false;
         try {
             $done = (new \Prosper202\Click\PurLinkExit($conn))->convert(
                 $subid,
                 $key,
-                function (int $user, int $click, int $campaign, string $payout) use ($conn, $events, $engine, $claims, $get, $now, &$event): array {
+                function (int $user, int $click, int $campaign, string $payout) use ($conn, $events, $engine, $claims, $get, $now, &$event, &$leftNoOutcome): array {
                     if (!$events->campaignEvaluatesEvent($user, $campaign, $now, $get)) {
                         throw new \Prosper202\Goals\PurLinkNoGoals();
                     }
@@ -1630,9 +1631,7 @@ if (!function_exists('p202RecordPurLinkWebEvent')) {
                         throw new \Prosper202\Goals\GoalEngineException('PurLink subject not found', \Prosper202\Goals\GoalEngineException::NOT_FOUND);
                     }
                     $done = $engine->ingestPurLinkInTransaction($user, $subject, [$event], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
-                    if ($events->takenEventLeftNoOutcome($user, $campaign, $now, $done['result'])) {
-                        throw new \Prosper202\Goals\PurLinkNoGoals();
-                    }
+                    $leftNoOutcome = $events->takenEventLeftNoOutcome($user, $campaign, $now, $done['result']);
 
                     return $done;
                 }
@@ -1659,6 +1658,10 @@ if (!function_exists('p202RecordPurLinkWebEvent')) {
             return ['status' => 'not_found', 'reason' => 'unknown_click'];
         }
         $result = $engine->finishPurLinkIngest($claims['user_id'], $done);
+        if ($leftNoOutcome) {
+            // The goal event is kept (its progress counts); the plain conversion is written by the caller.
+            return ['status' => 'no_goals', 'event_name' => \Prosper202\Goals\WebEvents::nameFrom($get)];
+        }
         if ($result['accepted'] !== []) {
             p202LinkConversionIdentity($db, $claims['click_id'], $get);
         }

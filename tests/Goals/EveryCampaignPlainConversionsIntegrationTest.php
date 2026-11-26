@@ -152,6 +152,8 @@ final class EveryCampaignPlainConversionsIntegrationTest extends TestCase
 
         $hit = static fn (string $id): ?array => p202RecordPurLinkWebEvent(self::$db, $subid, $key, ['event' => 'purchase', 'event_id' => $id]);
         self::assertSame('no_goals', $hit('s1')['status'] ?? null, 'a taken event that reaches no outcome');
+        self::assertSame('1', (string) self::$db->query('SELECT COUNT(*) FROM 202_goal_events')->fetch_row()[0], 'its progress is kept');
+        self::assertSame('recorded', $hit('s3')['status'] ?? null, 'the second purchase reaches the count of 2');
         self::assertSame('recorded', p202RecordPurLinkWebEvent(self::$db, $subid, $key, ['event' => 'signup', 'event_id' => 's2'])['status'] ?? null, 'one that does');
     }
 
