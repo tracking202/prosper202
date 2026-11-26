@@ -1,0 +1,2 @@
+-- Fixed: A traffic source's custom variables store its id as wide as the source's own (202_ppc_network_variables.ppc_network_id is now unsigned). Before, a source numbered past 8388607 had its variables stored under source 8388607, another source's, on a server without strict mode. The upgrade widens the column, and splitting a shared traffic source now reads back the copy's variables and refuses the split if they did not land on the copy.
+app: Fixed: Custom variables of a traffic source numbered past 8388607 are no longer stored under another source.

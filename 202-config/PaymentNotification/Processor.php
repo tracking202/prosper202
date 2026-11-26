@@ -13,6 +13,7 @@ use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\Ledger\AmountOutOfRange;
 use Prosper202\Conversion\Ledger\ReversalException;
+use Prosper202\Conversion\Ledger\TransactionSale;
 use Prosper202\Conversion\PurLinkCampaignChanged;
 use Prosper202\Database\Connection;
 
@@ -282,7 +283,7 @@ final class Processor
         if ($owner === null) {
             return $this->unknownClick($clickId, $provider->clickField());
         }
-        $currency = $this->currency($n, $owner, $provider, $request, $this->saleCurrency($clickId, $original, $owner));
+        $currency = $this->currency($n, $owner, $provider, $request, $this->saleCurrency($clickId, $original, $owner, $provider->source()));
         if ($currency instanceof Outcome) {
             return $currency;
         }
@@ -367,7 +368,7 @@ final class Processor
         $on = 'Transaction ' . $original . ' on click ' . $clickId;
         // A refund is dated when it happened, the sale keeping its own day;
         // never before the sale it takes back.
-        $sale = $this->saleOnFile($clickId, $original, $owner);
+        $sale = $this->saleOnFile($clickId, $original, $owner, $provider->source());
         [$time, $dated] = self::dated($n->occurredAt, $sale['time'] ?? 0, 'the sale');
         // A refund recorded under the key its provider used before, sent
         // again, is that refund, whether or not its reversal still stands.
@@ -423,7 +424,7 @@ final class Processor
             }
         } catch (ReversalException $e) {
             $standing = !$ownId && $e->kind === ReversalException::CONFLICT
-                ? $this->liveReversalOfTransaction($clickId, $original, $owner)
+                ? $this->liveReversalOfTransaction($clickId, $original, $owner, $provider->source())
                 : null;
             if ($standing !== null) {
                 return $this->repeatedReversal($n, $on, $standing, $owner, $exact);
@@ -603,11 +604,12 @@ final class Processor
 
     /**
      * When the sale a transaction id names on a click is dated and what it
-     * recorded, as positive units (the writer's target), or null with none.
+     * recorded, as positive units (the writer's target: the provider's own
+     * sale under the id, TransactionSale), or null with none.
      *
      * @return array{conv_id: int, time: int, units: int}|null
      */
-    private function saleOnFile(int $clickId, string $transactionId, int $owner): ?array
+    private function saleOnFile(int $clickId, string $transactionId, int $owner, ConversionSource $source): ?array
     {
         $conn = new Connection($this->db);
         // From the primary: the writer reverses what the primary holds, and a
@@ -615,7 +617,8 @@ final class Processor
         $stmt = $conn->prepareWrite(
             'SELECT conv_id, conv_time, click_payout FROM 202_conversion_logs'
             . ' WHERE click_id = ? AND transaction_id = ? AND reverses_conv_id IS NULL AND user_id = ?'
-            . ' ORDER BY conv_id LIMIT 1'
+            . TransactionSale::restriction('source', $source)
+            . ' ORDER BY ' . TransactionSale::order('', $source) . ' LIMIT 1'
         );
         $conn->bind($stmt, 'isi', [$clickId, $transactionId, $owner]);
         $row = $conn->fetchOne($stmt);
@@ -785,11 +788,12 @@ final class Processor
     }
 
     /**
-     * The currency recorded on the sale a transaction id names on a click:
-     * its code, UNKNOWN when the sale is on file with none recorded, or null
-     * when there is no such sale or the upgrade has not added the column.
+     * The currency recorded on the sale a transaction id names on a click
+     * (the one saleOnFile() names): its code, UNKNOWN when the sale is on
+     * file with none recorded, or null when there is no such sale or the
+     * upgrade has not added the column.
      */
-    private function saleCurrency(int $clickId, string $transactionId, int $owner): ?string
+    private function saleCurrency(int $clickId, string $transactionId, int $owner, ConversionSource $source): ?string
     {
         $conn = new Connection($this->db);
         if (!RowCurrency::columnsPresent($conn)) {
@@ -798,7 +802,8 @@ final class Processor
         $stmt = $conn->prepareWrite(
             'SELECT currency FROM 202_conversion_logs'
             . ' WHERE click_id = ? AND transaction_id = ? AND reverses_conv_id IS NULL AND user_id = ?'
-            . ' ORDER BY conv_id LIMIT 1'
+            . TransactionSale::restriction('source', $source)
+            . ' ORDER BY ' . TransactionSale::order('', $source) . ' LIMIT 1'
         );
         $conn->bind($stmt, 'isi', [$clickId, $transactionId, $owner]);
         $row = $conn->fetchOne($stmt);
@@ -911,10 +916,10 @@ final class Processor
 
     /**
      * The reversal that stands against the sale a transaction id names on a
-     * click (the sale the writer reverses: its first row under that id), or
-     * null when none does.
+     * click (the sale the writer reverses: the provider's own under that id,
+     * TransactionSale), or null when none does.
      */
-    private function liveReversalOfTransaction(int $clickId, string $transactionId, int $owner): ?int
+    private function liveReversalOfTransaction(int $clickId, string $transactionId, int $owner, ConversionSource $source): ?int
     {
         $conn = new Connection($this->db);
         $stmt = $conn->prepareRead(
@@ -922,7 +927,8 @@ final class Processor
             . ' JOIN 202_conversion_logs r ON r.reverses_conv_id = s.conv_id AND r.user_id = s.user_id'
             . ' AND r.deleted = 0'
             . ' WHERE s.click_id = ? AND s.transaction_id = ? AND s.reverses_conv_id IS NULL AND s.user_id = ?'
-            . ' ORDER BY s.conv_id, r.conv_id LIMIT 1'
+            . TransactionSale::restriction('s.source', $source)
+            . ' ORDER BY ' . TransactionSale::order('s.', $source) . ', r.conv_id LIMIT 1'
         );
         $conn->bind($stmt, 'isi', [$clickId, $transactionId, $owner]);
         $row = $conn->fetchOne($stmt);

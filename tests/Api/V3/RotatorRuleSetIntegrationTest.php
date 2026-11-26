@@ -1460,6 +1460,34 @@ final class RotatorRuleSetIntegrationTest extends TestCase
         self::assertSame($before + 1, $count());
     }
 
+    /** A create naming another account's rule by id is refused and writes nothing for either account. */
+    public function testACreateWithAnotherAccountsRuleIdWritesNothing(): void
+    {
+        $theirs = $this->rotators()->create(['name' => 'theirs', 'default_url' => 'https://d.example/', 'rules' => [
+            ['rule_name' => 'held'] + self::EVERYONE,
+        ]])['data'];
+        $ruleId = (int) $theirs['rules'][0]['id'];
+        $snapshot = static fn (): array => self::$db->query(
+            'SELECT (SELECT COUNT(*) FROM 202_rotators), (SELECT COUNT(*) FROM 202_rotator_rules),'
+            . ' (SELECT COUNT(*) FROM 202_rotator_rules_criteria), (SELECT COUNT(*) FROM 202_rotator_rules_redirects)'
+        )->fetch_row();
+        $before = $snapshot();
+        try {
+            $this->rotators(self::OTHER)->create(['name' => 'mine', 'rules' => [[
+                'id' => $ruleId,
+                'rule_name' => 'taken',
+                'criteria' => [['type' => 'country', 'value' => 'US']],
+                'redirects' => [['redirect_url' => 'https://other.example/']],
+            ]]]);
+            self::fail("a create took another account's rule id");
+        } catch (ValidationException $e) {
+            self::assertSame(['rules.0.id'], array_keys($e->getFieldErrors()));
+            self::assertStringContainsString("is not the id of one of this redirector's rules", $e->getFieldErrors()['rules.0.id']);
+        }
+        self::assertSame($before, $snapshot(), 'nothing was written');
+        self::assertSame($theirs['rules'], $this->rotators()->get((int) $theirs['id'])['data']['rules'], "the owner's rule is as it was");
+    }
+
     /** A rule added on its own goes after the set; a kept rule omitted splittest and status keeps them. */
     public function testARuleAddedOnItsOwnGoesLast(): void
     {
