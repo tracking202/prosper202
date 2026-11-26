@@ -5598,6 +5598,10 @@ class UPGRADE
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
+                // Each landing page's split test, whose variant the page's
+                // script writes into the click's C4 (Prosper202\Setup\
+                // LandingPageSplitTest).
+                \Prosper202\Database\Tables\CampaignTables::landingPageSplitTests(),
             ]);
             if ($step_ok) {
                 // Redirector criterion values the API stored untrimmed before
