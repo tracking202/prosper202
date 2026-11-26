@@ -5695,6 +5695,7 @@ class UPGRADE
             // The Shopify refund tables, which a database upgraded by an
             // early 1.9.80 build can lack (Prosper202\PaymentNotification\
             // Shopify\SettlementSchema), reconciled on the way up.
+            // A revenue upload's undo log (undone_at, undone_rows).
             //
             // The re-click backfill's stopped_at, when a stop began, which
             // Settings and the cron output show (Prosper202\Click\ReClickBackfill).
@@ -5705,6 +5706,7 @@ class UPGRADE
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
+                \Prosper202\Database\Tables\ConversionTables::conversionUploads(),
                 // 202_ppc_network_variables.ppc_network_id unsigned, as wide
                 // as the source id it names (_upgrade_ppc_variable_network_width()).
                 \Prosper202\Database\Tables\TrackingTables::ppcNetworkVariables(),

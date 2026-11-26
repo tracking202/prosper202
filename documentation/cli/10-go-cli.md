@@ -155,6 +155,8 @@ still needs the browser, see [UI parity](12-ui-parity.md).
 | `p202 conversion delete-subids <file\|->` | Clear the conversions of a subid list (the UI's Delete Subids); previews, asks (`--force`), `--dry-run` |
 | `p202 conversion reset-subids` | Clear every conversion of a category (`--aff-network-id`) or one of its campaigns (`--aff-campaign-id`) (the UI's Reset Campaign Subids) |
 | `p202 conversion upload-revenue <file.csv>` | Record a network's revenue report as a new upload batch (the UI's Upload Revenue Reports): columns read from the header or named with `--subid-column`/`--amount-column`; the newest report replaces earlier uploads' values |
+| `p202 conversion uploads` | List the account's revenue uploads, newest first, with their batch ids (`--limit`, `--before`) |
+| `p202 conversion undo-upload <batch-id>` | Undo a revenue upload: delete its conversions and put each click back to its value before the upload (`--dry-run` lists the rows) |
 | `p202 conversion postback-url` | The server-to-server postback URL to give your network (Setup > Postback / Pixel), on this install's tracking domain: `--subid` your network's sub id macro, `--amount` a number or its payout macro, `--campaign` for the advanced postback's `cid`, `--scheme`; stdout is the URL alone |
 | `p202 conversion pixel` | The conversion pixel for the thank-you page: `--type simple\|advanced\|universal` (`--iframe` for the universal pixel's iframe), the same value flags; `--json` prints every pixel and postback the page shows |
 | `p202 conversion list` | List conversions, with their provenance (`--click-id`, `--source`, `--match-method`, `--goal` filter by click, by what produced them, by how their click was found and by goal) |
@@ -435,6 +437,11 @@ p202 conversion reset-subids --aff-network-id 3 --aff-campaign-id 12
 # A commission report: one batch, a click's lines summed, the newest report replacing the last.
 p202 conversion upload-revenue march.csv --dry-run
 p202 conversion upload-revenue march.csv --subid-column 'Sub ID 2' --amount-column Commission
+
+# Take an upload back: find its batch id, preview, then undo.
+p202 conversion uploads
+p202 conversion undo-upload 7 --dry-run
+p202 conversion undo-upload 7
 ```
 
 - **`click update-cpc`** sets the cost of the account's clicks between
@@ -469,6 +476,12 @@ p202 conversion upload-revenue march.csv --subid-column 'Sub ID 2' --amount-colu
   column number. The table lists the lines not recorded, with the reason; a
   report that would record nothing is refused (exit 1) with the subid column
   it read.
+- **`conversion undo-upload <batch-id>`** deletes the conversions that upload
+  recorded on the account's clicks and recomputes each click, so it goes back
+  to the earlier upload or postback. It always previews first (`--dry-run`
+  stops there and lists the rows), then asks unless `--force`. A failure part
+  way leaves the clicks before it undone; running it again finishes the rest.
+  `conversion uploads` lists the batch ids.
 
 Under `--json` each prints the API's answer (for a list in parts, the parts
 put together); otherwise a table of the lines, and a summary on stderr.

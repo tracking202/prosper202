@@ -1133,6 +1133,8 @@ p202 conversion delete-subids wrong.txt               # Delete Subids: previews,
 p202 conversion reset-subids --aff-network-id 3 --aff-campaign-id 12   # Reset Campaign Subids
 p202 conversion upload-revenue march.csv --dry-run    # Upload Revenue Reports
 p202 conversion upload-revenue march.csv --subid-column 'Sub ID 2' --amount-column Commission --force
+p202 conversion uploads                               # the upload batches, newest first
+p202 conversion undo-upload 7 --dry-run               # what undoing batch 7 would delete
 ```
 
 The rest of the UI's Update section, over the same code the pages run.
@@ -1146,7 +1148,9 @@ batch: a click's lines are summed and the newest report replaces earlier
 uploads' values (unlike `conversion import`, which records each sale with its
 transaction id); its table lists the lines not recorded, with the reason (the
 first 1,000; the summary counts every skipped line by reason).
-`delete-subids`, `reset-subids` and `upload-revenue` ask before writing
+`undo-upload <batch-id>` takes an upload back: it deletes the batch's
+conversions and recomputes each click, so it reads as before the upload.
+`delete-subids`, `reset-subids`, `upload-revenue` and `undo-upload` ask before writing
 (`--force` skips). All need the `access_to_update_section` role permission
 (`delete-subids` also `delete_individual_subids`), refuse `--staged`, and are
 safe to run again.
