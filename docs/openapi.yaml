@@ -4601,6 +4601,78 @@ paths:
                               the account has none set). Servers before 1.9.79
                               do not answer it; a client adding two servers'
                               money adds it only when both state the same one.
+                          unique_visitors:
+                            type: integer
+                            nullable: true
+                            description: >-
+                              The distinct people among the clicks: a person is
+                              a visitor of the identity graph (keys merged into
+                              one count as one), and each click with no visitor
+                              key counts as one more. Null when masked. From
+                              1.9.81.
+                          unidentified_clicks:
+                            type: integer
+                            nullable: true
+                            description: >-
+                              How many of `unique_visitors` are clicks with no
+                              visitor key (the visitor refused consent, or
+                              capture is off), so nothing tied them to another
+                              click. Null when masked. From 1.9.81.
+                          total_conversions:
+                            type: integer
+                            nullable: true
+                            description: >-
+                              The clicks' counted conversions in the ledger,
+                              reversals left out. `total_leads` counts clicks
+                              that converted, so a click with two sales is one
+                              lead and two conversions. Null when masked. From
+                              1.9.81.
+                          total_refunds:
+                            type: integer
+                            nullable: true
+                            description: >-
+                              The counted reversals (refunds and chargebacks) of
+                              the clicks' conversions, a partial one included.
+                              By the click's time, as every report figure is: a
+                              refund this week of a sale from last month is in
+                              last month's summary. Null when masked. From
+                              1.9.81.
+                          total_refund_amount:
+                            type: number
+                            nullable: true
+                            description: >-
+                              What those reversals took back, as a positive
+                              amount. `total_income` is already net of it. Added
+                              as recorded, as `total_income` is: a reversal is in
+                              its sale's currency, and `other_currencies` (net of
+                              refunds) says how much of the period is in another
+                              one. Null when masked. From 1.9.81.
+                          refund_rate:
+                            type: number
+                            description: >-
+                              total_refunds / total_conversions * 100, 0 when
+                              there are no conversions. A ratio, so a masked
+                              answer keeps it. From 1.9.81.
+                  unmatched_conversions:
+                    type: object
+                    description: >-
+                      The conversions the inbound log refused because they named
+                      no click here (an unknown subid, none, or one that is not
+                      a click id), received in the summary's window. A refusal
+                      names no click, so it has no campaign or traffic source:
+                      this is the account's for the window, whatever else the
+                      summary filters by. From 1.9.81.
+                    properties:
+                      conversions:
+                        type: integer
+                        nullable: true
+                        description: How many. Null when masked.
+                      complete:
+                        type: boolean
+                        description: >-
+                          False when the inbound log's limits (5,000 refused
+                          requests kept, 60 logged a minute) may have dropped
+                          some in the window, so `conversions` is a floor.
                   other_currencies:
                     type: array
                     description: >-

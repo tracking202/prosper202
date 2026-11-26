@@ -15,8 +15,10 @@ use Api\V3\Support\ReportFilter;
 use Api\V3\Support\ResponseSanitizer;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\TimeBound;
+use Prosper202\Conversion\Ledger\LedgerReportSql;
 use Prosper202\Conversion\Ledger\RevenueCurrencies;
 use Prosper202\Database\Connection;
+use Prosper202\InboundLog\InboundLog;
 use Prosper202\Report\LocalTime;
 use Prosper202\Spend\LedgerCost;
 use Prosper202\Rotator\RuleOrder;
@@ -319,6 +321,7 @@ class ReportsController
             return $this->comparedSummary($params, $compare);
         }
         [$where, $binds, $types] = $this->filtered($params);
+        $people = $this->visitorsAndRefunds($where, $binds, $types);
         $ledger = $this->ledger($params);
         $sum = self::summed($ledger);
         if ($ledger !== null) {
@@ -348,10 +351,110 @@ class ReportsController
         $stmt->close();
 
         // Beside data, not in it: data is what a client adds across servers.
-        $data = self::typedMetrics($row ?? []) + ['currency' => $this->accountCurrency()];
+        $data = self::typedMetrics($row ?? []) + $people + ['currency' => $this->accountCurrency()];
 
-        return ['data' => $data, 'other_currencies' => $this->money($params, $data['currency'])['other_currencies']]
-            + $this->ledgerMeta($ledger);
+        return [
+            'data' => $data,
+            'other_currencies' => $this->money($params, $data['currency'])['other_currencies'],
+            'unmatched_conversions' => $this->unmatchedConversions($params),
+        ] + $this->ledgerMeta($ledger);
+    }
+
+    /**
+     * The summary's people and refunds, over the clicks its WHERE selects:
+     *
+     *  - unique_visitors: the distinct people among the clicks, a person
+     *    being a canonical visitor key of the identity graph (an alias is
+     *    read as the key it was merged into), and each click with no visitor
+     *    key one more, since nothing ties it to another;
+     *    unidentified_clicks is how many of them that was.
+     *  - total_conversions: the clicks' counted conversions (the ledger's
+     *    counted rows that are not reversals, LedgerReportSql), and
+     *    total_refunds the counted reversals among the same clicks, with
+     *    total_refund_amount what they took back. refund_rate is
+     *    refunds / conversions * 100.
+     *
+     * Like every figure of a report they are the clicks' of the window, so a
+     * refund this week of a sale last month is last month's.
+     *
+     * @param list<string> $where
+     * @param list<int|string> $binds
+     * @return array{unique_visitors: int, unidentified_clicks: int, total_conversions: int,
+     *     total_refunds: int, total_refund_amount: float, refund_rate: float}
+     */
+    private function visitorsAndRefunds(array $where, array $binds, string $types): array
+    {
+        $whereClause = 'WHERE ' . implode(' AND ', $where);
+        $stmt = $this->prepare(
+            "SELECT
+                COUNT(DISTINCT CASE WHEN cv.visitor_key IS NOT NULL THEN COALESCE(iv.alias_of, cv.visitor_key) END)
+                    + COALESCE(SUM(cv.visitor_key IS NULL), 0) as unique_visitors,
+                COALESCE(SUM(cv.visitor_key IS NULL), 0) as unidentified_clicks
+            FROM 202_dataengine de
+            LEFT JOIN 202_clicks_visitor cv ON cv.click_id = de.click_id AND cv.user_id = de.user_id
+            LEFT JOIN 202_identity_visitors iv ON iv.visitor_key = cv.visitor_key AND iv.user_id = de.user_id
+            $whereClause"
+        );
+        $this->bind($stmt, $types, ...$binds);
+        $this->execute($stmt, 'Summary visitor count failed');
+        $visitors = $this->resultOf($stmt, 'Summary visitor count failed')->fetch_assoc();
+        $stmt->close();
+
+        $refund = 'l.reverses_conv_id IS NOT NULL';
+        $conversions = 'SUM(l.reverses_conv_id IS NULL)';
+        $refunds = "SUM($refund)";
+        $ledgerWhereClause = $whereClause . ' AND ' . LedgerReportSql::countedPredicate('l');
+        $stmt = $this->prepare(
+            "SELECT
+                COALESCE($conversions, 0) as total_conversions,
+                COALESCE($refunds, 0) as total_refunds,
+                COALESCE(-SUM(CASE WHEN $refund THEN l.click_payout ELSE 0 END), 0) as total_refund_amount,
+                CASE WHEN $conversions > 0 THEN $refunds / $conversions * 100 ELSE 0 END as refund_rate
+            FROM 202_dataengine de
+            INNER JOIN 202_conversion_logs l ON l.click_id = de.click_id AND l.user_id = de.user_id
+            $ledgerWhereClause"
+        );
+        $this->bind($stmt, $types, ...$binds);
+        $this->execute($stmt, 'Summary refund count failed');
+        $ledger = $this->resultOf($stmt, 'Summary refund count failed')->fetch_assoc();
+        $stmt->close();
+        if ($visitors === null || $ledger === null) {
+            // An aggregate always returns one row: none is a failure, not zero.
+            throw new DatabaseException('Summary visitor or refund count answered no row');
+        }
+
+        $out = [];
+        foreach ([...$visitors, ...$ledger] as $field => $value) {
+            if (!is_int($value) && !is_float($value) && !(is_string($value) && is_numeric($value))) {
+                throw new DatabaseException("Report metric $field is not a number");
+            }
+            $out[$field] = in_array($field, ['total_refund_amount', 'refund_rate'], true)
+                ? (float) $value
+                : (int) $value;
+        }
+
+        return $out;
+    }
+
+    /**
+     * The account's conversions the inbound log refused for naming no click
+     * here (InboundLog::unmatched()), received in the summary's window:
+     * `conversions`, and `complete`, false when the log's limits may have
+     * dropped some, so the count is a floor. A refusal names no click, so it
+     * has no traffic source or campaign to filter by: the figure is the
+     * account's for the window, whatever else the summary filters by.
+     *
+     * @param array<string, mixed> $params already through rejectUnknown()
+     * @return array{conversions: int, complete: bool}
+     */
+    private function unmatchedConversions(array $params): array
+    {
+        [$from, $to] = ReportFilter::bounds($params, fn (): string => $this->accountTimezone());
+        try {
+            return (new InboundLog($this->db))->unmatched($this->userId, $from, $to);
+        } catch (\Throwable $e) {
+            throw new DatabaseException('Summary unmatched conversion count failed', $e);
+        }
     }
 
     /**

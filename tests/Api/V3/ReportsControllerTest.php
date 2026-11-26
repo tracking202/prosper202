@@ -665,7 +665,12 @@ final class ReportsControllerTest extends TestCase
             $stmt->method('bind_param')->willReturn(true);
             $stmt->method('execute')->willReturn(true);
             $stmt->method('get_result')->willReturnCallback(
-                fn () => str_contains($sql, '202_users_pref') ? false : $this->buildResultMock($sql, [])
+                fn () => str_contains($sql, '202_users_pref')
+                    ? false
+                    : $this->buildResultMock(
+                        $sql,
+                        ($extra = self::summaryExtraRow($sql)) === null ? [] : [$sql => $extra]
+                    )
             );
 
             return $stmt;
@@ -720,6 +725,9 @@ final class ReportsControllerTest extends TestCase
                 // A test that stores a currency reads it back, and sees the read.
                 if (self::isMoneyRead($sql) && !(isset($results['FROM 202_users_pref']) && str_contains($sql, '202_users_pref'))) {
                     return $this->buildStmtMock($sql, []);
+                }
+                if (($extra = self::summaryExtraRow($sql)) !== null) {
+                    return $this->buildStmtMock($sql, [$sql => $extra]);
                 }
                 $prepared[] = $sql;
                 /** @var \mysqli_stmt&\PHPUnit\Framework\MockObject\MockObject $stmt */
@@ -777,6 +785,27 @@ final class ReportsControllerTest extends TestCase
      * and none) and keep them out of what a test reads the report's own
      * statements from.
      */
+    /**
+     * The row the server answers the summary's other aggregates with over no
+     * clicks (its people and refunds, and the inbound log's counts), which
+     * every summary reads beside its metrics; null for any other statement.
+     *
+     * @return ?array<string, int|string|null>
+     */
+    private static function summaryExtraRow(string $sql): ?array
+    {
+        return match (true) {
+            str_contains($sql, 'as unique_visitors') => ['unique_visitors' => 0, 'unidentified_clicks' => '0'],
+            str_contains($sql, 'as total_refunds') => [
+                'total_conversions' => '0', 'total_refunds' => '0',
+                'total_refund_amount' => '0.00000', 'refund_rate' => '0',
+            ],
+            str_contains($sql, 'COUNT(*) AS n, MIN(received_at)') => ['n' => 0, 'oldest' => null],
+            str_contains($sql, 'COUNT(*) AS n FROM 202_inbound_log') => ['n' => 0],
+            default => null,
+        };
+    }
+
     private static function isMoneyRead(string $sql): bool
     {
         return str_starts_with($sql, 'SELECT user_account_currency FROM 202_users_pref')

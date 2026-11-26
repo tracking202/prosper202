@@ -1101,6 +1101,15 @@ EOF
             printf 'At $%s a sale these traffic sources lose money, per `p202 report losers --breakdown ppc_account --payout %s`: %s.\n' "$payout" "$payout" "$rows"
         fi
         ;;
+    # The summary's people and refunds (report-summary-people-refunds.json):
+    # people are unique_visitors, not clicks, and refunds are total_refunds.
+    *"different people clicked"*"refunded"*)
+        d=$(p202 report summary --period alltime --json)
+        printf 'All time, %s different people made %s clicks, per `p202 report summary --period alltime` (unique_visitors; %s of those clicks carried no visitor key and count as one person each). %s of %s recorded conversions were refunded, for %s.\n' \
+            "$(printf '%s' "$d" | jq -r '.data.unique_visitors')" "$(printf '%s' "$d" | jq -r '.data.total_clicks')" \
+            "$(printf '%s' "$d" | jq -r '.data.unidentified_clicks')" "$(printf '%s' "$d" | jq -r '.data.total_refunds')" \
+            "$(printf '%s' "$d" | jq -r '.data.total_conversions')" "$(printf '%s' "$d" | jq -r '.data.total_refund_amount')"
+        ;;
     # Several values on one report filter (report-filter-lists.json): look
     # each campaign up by name, refuse one that is not there, and read the
     # two together with one comma list.

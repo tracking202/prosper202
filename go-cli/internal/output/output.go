@@ -42,6 +42,12 @@ var friendlyHeaders = map[string]string{
 	"breakeven_cpc":        "Breakeven CPC",
 	"margin":               "Margin",
 	"payout_net":           "Profit at payout",
+	"unique_visitors":      "Visitors",
+	"unidentified_clicks":  "Unidentified clicks",
+	"total_conversions":    "Recorded conversions",
+	"total_refunds":        "Refunds",
+	"total_refund_amount":  "Refunded",
+	"refund_rate":          "Refund %",
 }
 
 // metricOrder is the fixed business sequence for metric columns so the row
@@ -50,6 +56,7 @@ var metricOrder = []string{
 	"window", "period", "group_name", "geo", "device", "name", "keyword",
 	"total_clicks", "total_click_throughs", "total_leads", "conv_rate", "click_conv_rate",
 	"total_income", "total_cost", "total_net", "roi", "epc", "cpa", "avg_cpc",
+	"unique_visitors", "unidentified_clicks", "total_conversions", "total_refunds", "total_refund_amount", "refund_rate",
 	"payout_net", "breakeven_cpc", "margin", "verdict", "bucket", "reason",
 	"matched_rule", "status", "destination", "criteria",
 }
