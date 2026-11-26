@@ -82,7 +82,7 @@ case "$ask" in
         # One event, named from the list the server sends; the secret is in
         # this response and nowhere else.
         out=$(p202 ltv webhooks create --url https://hooks.example.com/eval-ltv-revenue --events revenue.recorded --json)
-        printf 'Created webhook %s for https://hooks.example.com/eval-ltv-revenue, sending revenue.recorded and no other event. Deliveries are signed with X-P202-Signature (sha256 HMAC of the body); the secret is shown only now, so store it: %s\n' \
+        printf 'Created webhook %s for https://hooks.example.com/eval-ltv-revenue, sending revenue.recorded and no other event. Deliveries are signed the Standard Webhooks way (webhook-signature; give the secret to a Standard Webhooks library to verify them); the secret is shown only now, so store it: %s\n' \
             "$(printf '%s' "$out" | jq -r '.data.webhook_id')" "$(printf '%s' "$out" | jq -r '.data.secret')"
         ;;
     *"eval ltv items"*)
