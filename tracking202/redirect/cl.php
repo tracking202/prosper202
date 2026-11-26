@@ -44,6 +44,13 @@ if ($tracker_row === null) {
 	$html['aff_campaign_name'] = $tracker_row['aff_campaign_name'] ?? '';
 } 
 
+// An ad click id the page's URL carries (its token filled) is not added again.
+if (isset($mysql['202vars'])) {
+    $mysql['202vars'] = \Prosper202\Click\PassOnClickIds::withoutCarried(
+        (string) $mysql['202vars'],
+        (string) $redirect_site_url
+    );
+}
 if(isset($mysql['202vars'])&&$mysql['202vars']!=''){
 	// split any #fragment off first: the vars must join the QUERY string —
 	// appended after a fragment they stay client-side and never reach the

@@ -34,6 +34,8 @@ final class TrafficSourceAccountWritersTest extends TestCase
     private const WRITERS = [
         'tracking202/setup/ppc_accounts.php' => 'Setup › Traffic Sources: the add, edit and remove run inside'
             . ' TrafficSourceAccountWrite::run(), and the source is asked for again under the lock',
+        '202-config/Setup/SetupRemoval.php' => 'the Remove of a traffic source account: the one caller, ppc_accounts.php,'
+            . ' runs mark() inside TrafficSourceAccountWrite::run() with the account locked',
         '202-config/Setup/TrafficSourceOwners.php' => 'the split: the users, then the accounts it moves (FOR'
             . ' UPDATE, by id), then the source, the order a writer keeps',
         '202-config/Setup/ChatGptAdsSource.php' => "add(): the user's row FOR UPDATE first, as the repair locks the"

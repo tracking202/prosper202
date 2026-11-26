@@ -14,6 +14,9 @@ use Prosper202\Database\Connection;
  */
 final class LandingPageDelete
 {
+    public const NOT_FOUND = 'That landing page was not found on this account.'
+        . ' Nothing was removed.';
+
     public function __construct(private readonly Connection $conn)
     {
     }
@@ -26,7 +29,7 @@ final class LandingPageDelete
     {
         $landingPageId = \Prosper202\Http\PostedId::read($postedId);
         if ($landingPageId === null) {
-            return 'That landing page could not be found, so nothing was removed.';
+            return self::NOT_FOUND;
         }
         try {
             return (new self(new Connection($db)))->remove($userId, $landingPageId);
@@ -40,7 +43,8 @@ final class LandingPageDelete
     /**
      * Remove the account's page, or say in the page's words why not.
      *
-     * @return string|null the refusal, or null once the page is removed (or was not the account's live page)
+     * @return string|null the refusal, or null once the page is removed; NOT_FOUND
+     *                     when it was not the account's live page
      * @throws \Prosper202\Database\Exceptions\QueryException when a read or the write fails; nothing is changed
      */
     public function remove(int $userId, int $landingPageId): ?string
@@ -56,12 +60,9 @@ final class LandingPageDelete
                     return $refusal;
                 }
             }
-            $remove = $this->conn->prepareWrite(
-                'UPDATE 202_landing_pages SET landing_page_deleted = 1, landing_page_time = ?
-                 WHERE user_id = ? AND landing_page_id = ?'
-            );
-            $this->conn->bind($remove, 'iii', [time(), $userId, $landingPageId]);
-            $this->conn->executeUpdate($remove);
+            if (!SetupRemoval::mark($this->conn, 'landing_page', (string) $landingPageId, $userId, time())) {
+                return self::NOT_FOUND;
+            }
 
             return null;
         });

@@ -36,6 +36,10 @@ final class EventBridgeTest extends TestCase
         $wire = json_decode($body, true);
         self::assertSame('conversion.recorded', $wire['event'], 'wire body keeps the dispatcher contract {event, occurred_at, data}');
         self::assertIsInt($wire['occurred_at']);
+        // The Standard Webhooks envelope around the same data (NRS0).
+        self::assertSame('conversion.recorded.v1', $wire['type']);
+        self::assertSame(gmdate('Y-m-d\TH:i:s\Z', $wire['occurred_at']), $wire['timestamp']);
+        self::assertMatchesRegularExpression('/^msg_[0-9a-f]{32}$/D', $wire['id'], 'the webhook-id every attempt sends');
 
         $envelope = $wire['data'];
         self::assertSame(EventBridge::BRIDGE_VERSION, $envelope['bridge_version']);

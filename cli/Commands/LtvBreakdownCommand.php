@@ -8,6 +8,7 @@ use P202Cli\ServerLists;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Output\ConsoleOutputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 
 class LtvBreakdownCommand extends BaseCommand
@@ -31,6 +32,12 @@ class LtvBreakdownCommand extends BaseCommand
     {
         $result = $this->client()->get('ltv/breakdown', $this->collectOptions($input, LtvSummaryCommand::LTV_PARAMS));
         $this->render($output, $result, $input);
+        // --json carries `truncated` itself; a table says it on stderr, as
+        // report:breakdown does (both pages take a --limit up to 500).
+        $note = $this->isJson($input) ? null : ReportBreakdownCommand::moreRowsNote($result);
+        if ($note !== null) {
+            ($output instanceof ConsoleOutputInterface ? $output->getErrorOutput() : $output)->writeln($note);
+        }
         return Command::SUCCESS;
     }
 }

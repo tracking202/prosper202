@@ -27,6 +27,7 @@ final class CampaignTables
             self::ppcAccountPixels(),
             self::landingPages(),
             self::landingPageChecks(),
+            self::landingPageSplitTests(),
             self::textAds(),
         ];
     }
@@ -192,6 +193,29 @@ final class CampaignTables
                 PRIMARY KEY (`landing_page_id`),
                 KEY `user_id` (`user_id`),
                 KEY `checked_at` (`checked_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * A landing page's split test (Prosper202\Setup\LandingPageSplitTest):
+     * whether it is on, its variants as a JSON list of {name, weight}, and
+     * whether the variant replaces a C4 the visit already has. One row per
+     * page, from 1.9.81 on; a page with no row has no test.
+     */
+    public static function landingPageSplitTests(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::LANDING_PAGE_SPLIT_TESTS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::LANDING_PAGE_SPLIT_TESTS . "` (
+                `landing_page_id` mediumint(8) unsigned NOT NULL,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `split_status` tinyint(1) NOT NULL DEFAULT '0',
+                `split_overwrite_c4` tinyint(1) NOT NULL DEFAULT '0',
+                `split_variants` text NOT NULL,
+                `split_updated_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`landing_page_id`),
+                KEY `user_id` (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }
