@@ -1070,9 +1070,10 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				}
 				var parsed map[string]interface{}
 				resp := map[string]interface{}{"data": rows}
-				if err := json.Unmarshal(data, &parsed); err == nil {
-					if pg, ok := parsed["pagination"]; ok {
-						resp["pagination"] = pg
+				_ = json.Unmarshal(data, &parsed)
+				for _, key := range []string{"pagination", "truncated"} {
+					if v, ok := parsed[key]; ok {
+						resp[key] = v
 					}
 				}
 				if data, err = json.Marshal(resp); err != nil {

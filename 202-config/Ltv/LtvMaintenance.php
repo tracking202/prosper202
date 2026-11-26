@@ -11,7 +11,11 @@ use Prosper202\Database\Connection;
  *
  * - SWEEP, the subscription lifecycle: an active subscription past
  *   current_period_end + grace_days with no renewal is past_due, and 30 days
- *   after that it is canceled, dated the moment the rule says it lapsed, not
+ *   after that it is canceled. A trialing one lapses the same way (its period
+ *   end is the trial's end, and the renewal its first charge), and so does a
+ *   paused one (its period end is when the pause ends and billing resumes): it
+ *   takes the state its unpaid period has, never active, which would put
+ *   unpaid MRR in the reports. A cancel is dated the moment the rule says, not
  *   the moment a run noticed: MysqlLtvRepository::mrr() counts churn by
  *   canceled_at over 90 days, and an install whose sweep never ran (none did
  *   by default before 1.9.79) would otherwise put every subscription that
@@ -49,7 +53,8 @@ use Prosper202\Database\Connection;
  * after it run. The reconcile starts from the first customer each run.
  *
  * @phpstan-type Report array{
- *     jobs: list<string>, past_due: int, canceled: int, swept_customers: int, announced: int, unannounced: int,
+ *     jobs: list<string>, past_due: int, canceled: int, lapsed_trials: int, lapsed_pauses: int,
+ *     swept_customers: int, announced: int, unannounced: int,
  *     reconciled: int, checked: int, full: bool, transitions: int, recommendation_conversions: int,
  *     companies_linked: int, company_strings: int, tokens_purged: int,
  *     more: list<string>, failed: array<string, string>
@@ -190,6 +195,8 @@ final class LtvMaintenance
             'jobs' => [],
             'past_due' => 0,
             'canceled' => 0,
+            'lapsed_trials' => 0,
+            'lapsed_pauses' => 0,
             'swept_customers' => 0,
             'announced' => 0,
             'unannounced' => 0,
@@ -240,22 +247,26 @@ final class LtvMaintenance
     }
 
     /**
-     * Active subscriptions lapsed past their grace (to past_due, or straight
-     * to canceled when they lapsed past that too), then past_due ones past
-     * the cancel window. Oldest period end first, by the period_end_sweep
-     * index; a cursor keeps a run from reading a row twice.
+     * Active, trialing and paused subscriptions lapsed past their grace (to
+     * past_due, or straight to canceled when they lapsed past that too), then
+     * past_due ones past the cancel window. Oldest period end first, by the
+     * period_end_sweep index, one status at a time; a cursor keeps a run from
+     * reading a row twice.
      *
      * @param Report $report
      */
     private function sweep(array &$report): bool
     {
-        $phases = [
-            // active: lapsed when its period and grace are over
-            ['active', 'current_period_end + grace_days * 86400'],
-            // past_due: canceled once the cancel window is over too
-            ['past_due', 'current_period_end + (grace_days + ' . self::CANCEL_AFTER_DAYS . ') * 86400'],
-        ];
+        $lapse = 'current_period_end + grace_days * 86400';
         $cancelAt = 'current_period_end + (grace_days + ' . self::CANCEL_AFTER_DAYS . ') * 86400';
+        $phases = [
+            // lapsed when its period (a trial's, or a pause's) and grace are over
+            ['active', $lapse],
+            ['trialing', $lapse],
+            ['paused', $lapse],
+            // canceled once the cancel window is over too
+            ['past_due', $cancelAt],
+        ];
         foreach ($phases as [$status, $lapsedAt]) {
             $now = time();
             $afterEnd = 0;
@@ -297,6 +308,11 @@ final class LtvMaintenance
                 );
                 $report['past_due'] += $pastDue;
                 $report['canceled'] += $canceled;
+                if ($status === 'trialing') {
+                    $report['lapsed_trials'] += $pastDue + $canceled;
+                } elseif ($status === 'paused') {
+                    $report['lapsed_pauses'] += $pastDue + $canceled;
+                }
                 $report['swept_customers'] += $customers;
                 $report['announced'] += $announced;
                 $report['unannounced'] += $unannounced;
@@ -618,8 +634,16 @@ final class LtvMaintenance
         $jobs = $report['jobs'];
         $parts = [];
         if (in_array(self::SWEEP, $jobs, true)) {
+            $lapsed = [];
+            if ($report['lapsed_trials'] > 0) {
+                $lapsed[] = (int) $report['lapsed_trials'] . ' from trialing';
+            }
+            if ($report['lapsed_pauses'] > 0) {
+                $lapsed[] = (int) $report['lapsed_pauses'] . ' from paused';
+            }
             $parts[] = 'subscriptions ' . (int) $report['past_due'] . ' to past_due, ' . (int) $report['canceled']
-                . ' to canceled, ' . (int) $report['swept_customers'] . ' customer rollups refreshed, '
+                . ' to canceled' . ($lapsed !== [] ? ' (' . implode(', ', $lapsed) . ')' : '') . ', '
+                . (int) $report['swept_customers'] . ' customer rollups refreshed, '
                 . (int) $report['announced'] . ' announced as subscription.changed'
                 . ($report['unannounced'] > 0
                     ? ' (' . (int) $report['unannounced'] . ' that took effect more than '

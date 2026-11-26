@@ -167,11 +167,14 @@ final class AttributionReportsIntegrationTest extends TestCase
         $first = $page('0');
         self::assertSame(['1'], array_column($first['data'], 'key'));
         self::assertSame([2, 1, 0], [$first['meta']['groups'], $first['meta']['limit'], $first['meta']['offset']]);
+        self::assertTrue($first['truncated'], 'campaign 2 remains');
         $second = $page('1');
         self::assertSame(['2'], array_column($second['data'], 'key'));
         self::assertSame(1, $second['meta']['offset']);
+        self::assertFalse($second['truncated'], 'the last page');
+        self::assertFalse($this->api->breakdown(['group_by' => 'campaign', 'limit' => '2'])['truncated'], 'a page of exactly the groups there are');
         self::assertSame($first['totals'], $second['totals'], 'totals cover every group on every page');
-        self::assertSame([], $page('2')['data'], 'past the last group: no rows, not an error');
+        self::assertSame([[], false], [$page('2')['data'], $page('2')['truncated']], 'past the last group: no rows, not an error');
         self::assertSame(0, $this->api->breakdown(['group_by' => 'campaign'])['meta']['offset'], 'no offset reads from the top');
     }
 
