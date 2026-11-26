@@ -107,12 +107,15 @@ foreach (p202_setup_rows($db, "SELECT pa.ppc_account_id, pa.ppc_account_name, pn
 	$accountOptions[$group]['options'][(string) $account['ppc_account_id']] = ['label' => (string) $account['ppc_account_name'], 'data' => ['source' => (string) $account['ppc_network_id']]];
 }
 
-// Publishers this account may credit on a link (t202pubid): users with the
-// Publisher role, offered only to an account that may grant it.
+// Publishers this account may put on a link (t202pubid): users with the
+// Publisher role, offered only to an account that may grant it. Making a
+// link for one grants it; the granted ones are listed to take back.
+$publisherCredit = new \Prosper202\Click\PublisherCredit(new \Prosper202\Database\Connection($db));
 $publisherOptions = [];
-foreach ((new \Prosper202\Click\PublisherCredit(new \Prosper202\Database\Connection($db)))->grantable($uid) as $publisher) {
+foreach ($publisherCredit->grantable($uid) as $publisher) {
 	$publisherOptions[(string) $publisher['user_id']] = $publisher['name'];
 }
+$grantedPublishers = $publisherCredit->granted($uid);
 
 // The form's starting values: a tracker being edited, or the common case.
 $row = $showEdit ? $edit_tracker_row : [];
@@ -348,13 +351,30 @@ $nothingToLink = $campaignOptions === [] && $advancedPageOptions === [] && $rota
 						<div class="form-text">Grouped by traffic source. Without one, clicks on this link report under no source.</div>
 					</div>
 
-					<?php if ($publisherOptions !== []) { ?>
+					<?php if ($publisherOptions !== [] || $grantedPublishers !== []) { ?>
 						<div class="mb-3">
-							<label class="form-label" for="publisher_id">Publisher</label>
-							<select class="form-select" id="publisher_id" name="publisher_id">
-								<?php echo p202_setup_options($publisherOptions, '', 'None', ''); ?>
-							</select>
-							<div class="form-text">For a link you hand to a publisher: each click on it records the publisher, and [[t202pubid]] in your offer URL sends their publisher id. Analyze &rsaquo; Publishers shows what the link did. Publishers are users with the Publisher role in User management.</div>
+							<?php if ($publisherOptions !== []) { ?>
+								<label class="form-label" for="publisher_id">Publisher</label>
+								<select class="form-select" id="publisher_id" name="publisher_id">
+									<?php echo p202_setup_options($publisherOptions, '', 'None', ''); ?>
+								</select>
+								<div class="form-text">For a link you hand to a publisher: each click on it records the publisher, and [[t202pubid]] in your offer URL sends their publisher id. Analyze &rsaquo; Publishers shows what the link did. Publishers are users with the Publisher role in User management. A click credits only a publisher you have made a link for here or given the Publisher role.</div>
+							<?php } ?>
+							<?php if ($grantedPublishers !== []) { ?>
+								<span class="form-label d-block mt-2">Publishers your links credit</span>
+								<ul class="p202-list" id="granted-publishers" data-revoke-url="<?php echo p202_setup_e($base . 'tracking202/ajax/revoke_publisher.php'); ?>" data-revoke-token="<?php echo p202_setup_e((string) ($_SESSION['token'] ?? '')); ?>">
+									<?php foreach ($grantedPublishers as $granted) { ?>
+										<li class="p202-list__item" data-publisher-id="<?php echo (int) $granted['user_id']; ?>">
+											<span class="p202-list__name"><?php echo p202_setup_e($granted['name']); ?></span>
+											<?php if (!$granted['credits']) { ?><span class="p202-pill p202-pill--warn" title="Switched off, or without the Publisher role, in User management">not credited now</span><?php } ?>
+											<span class="p202-list__actions">
+												<button type="button" class="p202-list__action p202-list__action--danger" data-revoke-publisher="<?php echo (int) $granted['user_id']; ?>">stop crediting</button>
+											</span>
+										</li>
+									<?php } ?>
+								</ul>
+								<div class="form-text">A click on any of your links credits one of these publishers when it carries their publisher id. If you stop crediting one, clicks on their links still count, credited to no publisher, until you make a link for them again.</div>
+							<?php } ?>
 						</div>
 					<?php } ?>
 

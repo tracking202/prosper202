@@ -1477,7 +1477,7 @@ try {
             $r->post('/{id}/roles', function ($ctx) use ($auth, $make, $payload, $db, $liveUser) {
                 $auth->requireMayChangeRoles($db, PathId::of($ctx), \Api\V3\Controllers\UsersController::roleIdFrom($payload));
                 $liveUser(PathId::of($ctx));
-                return $make()->assignRole(PathId::of($ctx), $payload);
+                return $make()->assignRole(PathId::of($ctx), $payload, $auth->userId());
             });
             $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make, $db, $liveUser) {
                 $auth->requireMayChangeRoles($db, PathId::of($ctx), null);

@@ -1155,6 +1155,47 @@
             });
     });
 
+    // ─── Get Links: stop crediting a publisher ──────────────────────────
+    document.addEventListener('click', function (event) {
+        var button = event.target.closest ? event.target.closest('[data-revoke-publisher]') : null;
+        if (!button) {
+            return;
+        }
+        event.preventDefault();
+        var list = button.closest('[data-revoke-url]');
+        var item = button.closest('[data-publisher-id]');
+        if (!list || !item || !window.confirm('Stop crediting this publisher? Clicks already credited stay theirs; new clicks on your links are credited to no publisher until you make a link for them again.')) {
+            return;
+        }
+        button.disabled = true;
+        var failed = function (reason) {
+            button.disabled = false;
+            list.parentNode.insertBefore(flashHtml('bad', 'The publisher is still credited: ' + (reason || 'the request failed') + '.'), list);
+        };
+        fetch(list.getAttribute('data-revoke-url'), {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                publisher_id: button.getAttribute('data-revoke-publisher'),
+                token: list.getAttribute('data-revoke-token') || ''
+            }).toString()
+        }).then(function (response) {
+            if (!response.ok) {
+                return response.text().then(failed);
+            }
+            item.remove();
+            if (list.querySelectorAll('[data-publisher-id]').length === 0) {
+                var none = document.createElement('p');
+                none.className = 'text-body-secondary mb-0';
+                none.textContent = 'Your links credit no publisher now.';
+                list.replaceWith(none);
+            }
+        }).catch(function () {
+            failed('');
+        });
+    });
+
     window.p202setup = { flash: flashHtml, refresh: refresh, filterList: filterList };
 
     document.addEventListener('DOMContentLoaded', function () {

@@ -328,7 +328,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			// never commits without one.
 			$conn = new \Prosper202\Database\Connection($db);
 			$savedUserId = p202_account_save_user($conn, $editing === true ? (int) $mysql['form_user_id'] : null, $userSet, (int) $mysql['user_role'],
-				static fn (int $newUserId): int => \Prosper202\Attribution\DefaultModel::ensureFor($conn, $newUserId));
+				static fn (int $newUserId): int => \Prosper202\Attribution\DefaultModel::ensureFor($conn, $newUserId),
+				(int) $_SESSION['user_id']);
 			$saved = true;
 		} catch (DomainException $missing) {
 			$gone = true;

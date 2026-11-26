@@ -130,8 +130,12 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
 	}
 
 	// A publisher link (t202pubid) names a publisher this account may credit,
-	// re-checked here: the posted user id is a claim. Not stored on the tracker.
+	// re-checked here: the posted user id is a claim. Not stored on the
+	// tracker: making the link grants the publisher to the account's links
+	// (202_publisher_grants, in the link's transaction below), and a click
+	// credits only a publisher its link's account granted (PublisherCredit).
 	$publisherParam = '';
+	$linkPublisher = null;
 	$rawPublisher = $_POST['publisher_id'] ?? '';
 	if (!is_string($rawPublisher)) {
 		die(p202_flash('bad', 'That publisher was sent more than once.'));
@@ -267,8 +271,17 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
             $mysql,
             $cost_sql,
             $get_tracker_result,
-            $get_tracker_row
+            $get_tracker_row,
+            $linkPublisher,
+            $trackerConn
         ): array {
+            // Written with the link, after it: a link refused below grants nothing.
+            $grant = static function () use ($linkPublisher, $trackerConn): void {
+                if ($linkPublisher !== null) {
+                    (new \Prosper202\Click\PublisherCredit($trackerConn))
+                        ->grant((int) $_SESSION['user_id'], $linkPublisher['user_id'], time());
+                }
+            };
             if (isset($get_tracker_result) && $get_tracker_result->num_rows > 0) {
                 $edit_tracker_id = $db->real_escape_string((string)$get_tracker_row['tracker_id']);
                 // Lock the row first: a link removed since it was read is refused, not recreated.
@@ -297,6 +310,7 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
                 if (!$db->query($edit_sql)) {
                     record_mysql_error($db, $edit_sql);
                 }
+                $grant();
 
                 return [['tracker_id' => $get_tracker_row['tracker_id']], (string) $get_tracker_row['tracker_id_public']];
             }
@@ -345,6 +359,7 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
                 record_mysql_error($db, $tracker_sql);
                 die('Error setting tracker ID');
             }
+            $grant();
 
             return [$tracker_row, $tracker_id_public];
         });

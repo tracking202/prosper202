@@ -5,15 +5,22 @@ declare(strict_types=1);
 namespace Prosper202\Click;
 
 use Prosper202\Database\Connection;
+use Prosper202\Database\Schema\TableRegistry;
 use Prosper202\User\InstallHash;
 
 /**
  * Publisher links (`t202pubid`, paid 1.9.48 to 1.9.56): a click arriving on
  * one is credited to the publisher it names only when the link's account has
- * granted that publisher. A grant is the Publisher role on an active user of
- * the same install, and an account that may grant it (one whose role holds
- * add_users, as User management asks). Any other id names nobody: the link's
- * request is the visitor's, so an id is a claim, never trusted on its own.
+ * granted that publisher. A grant is a row of 202_publisher_grants naming the
+ * account and the publisher, made when the account makes a link for the
+ * publisher in Get Links (grant()) or gives them the Publisher role
+ * (grantWithRole()), and removed in Get Links (revoke()); the publisher
+ * must still hold the Publisher role on an active user of the same install,
+ * and the account still be one that may grant it (its role holds add_users,
+ * as User management asks). Any other id names nobody: the link's request is
+ * the visitor's, so an id is a claim, never trusted on its own. Until 1.9.81
+ * the role and the install were the whole grant, so any visitor could credit
+ * any publisher on any granting account's link.
  *
  * The click stays the link's account's (202_clicks.user_id): every record it
  * names is that account's, and a click moved to another account reads them
@@ -25,6 +32,9 @@ final readonly class PublisherCredit
 
     /** 202_roles: Publisher. */
     public const PUBLISHER_ROLE_ID = 6;
+
+    /** The schema version that made 202_publisher_grants. */
+    private const GRANTS_SINCE = '1.9.81';
 
     /** The permission that assigns roles (User management). */
     public const GRANT_PERMISSION = 'add_users';
@@ -99,8 +109,126 @@ final readonly class PublisherCredit
         if ($installHash === null || !InstallHash::matches($installHash, self::text($row, 'install_hash'))) {
             return null;
         }
+        if (!$this->isGranted($ownerUserId, $publisherId)) {
+            return null;
+        }
 
         return ['user_id' => $publisherId, 'public_id' => $publicId];
+    }
+
+    /**
+     * Get Links: $ownerUserId's links credit $publisherUserId from now on.
+     * The caller has asked grantableById() first; a grant already there keeps
+     * the time it was first made.
+     */
+    public function grant(int $ownerUserId, int $publisherUserId, int $now): void
+    {
+        if ($ownerUserId < 1 || $publisherUserId < 1 || $ownerUserId === $publisherUserId) {
+            throw new \InvalidArgumentException('PublisherCredit: a grant names two different users');
+        }
+        try {
+            $stmt = $this->conn->prepareWrite(
+                'INSERT INTO 202_publisher_grants (user_id, publisher_user_id, granted_at) VALUES (?, ?, ?)'
+                    . ' ON DUPLICATE KEY UPDATE granted_at = granted_at'
+            );
+            $this->conn->bind($stmt, 'iii', [$ownerUserId, $publisherUserId, $now]);
+            // 0 rows for a grant already there: nothing to tell apart from 1.
+            $this->conn->executeUpdate($stmt);
+        } catch (\RuntimeException $e) {
+            // Before the 1.9.81 rung has run, the pair is one it will grant:
+            // the caller asked grantableById() first. The link or the role saves.
+            if (!self::grantsMissing($e) || !$this->schemaPredatesGrants()) {
+                throw $e;
+            }
+        }
+    }
+
+    /**
+     * $actorUserId gave $userId the role $roleId (User management, the API's
+     * role assignment): giving someone the Publisher role grants them to the
+     * account that gave it, when it may grant them, as paid 1.9.56 credited
+     * the account that made the publisher. Run in the write's transaction,
+     * after the role row.
+     */
+    public function grantWithRole(int $actorUserId, int $userId, int $roleId, int $now): void
+    {
+        if ($roleId !== self::PUBLISHER_ROLE_ID || $actorUserId === $userId) {
+            return;
+        }
+        if ($this->grantableById($actorUserId, $userId) === null) {
+            return;
+        }
+        $this->grant($actorUserId, $userId, $now);
+    }
+
+    /**
+     * Get Links: $ownerUserId's links credit $publisherUserId no more. True
+     * when a grant was removed, false when there was none to remove.
+     */
+    public function revoke(int $ownerUserId, int $publisherUserId): bool
+    {
+        if ($ownerUserId < 1 || $publisherUserId < 1) {
+            return false;
+        }
+        $stmt = $this->conn->prepareWrite(
+            'DELETE FROM 202_publisher_grants WHERE user_id = ? AND publisher_user_id = ?'
+        );
+        $this->conn->bind($stmt, 'ii', [$ownerUserId, $publisherUserId]);
+
+        return $this->conn->executeUpdate($stmt) > 0;
+    }
+
+    /**
+     * Get Links: the publishers $ownerUserId has granted, by name, with
+     * whether a click on its links credits each now (a grant outlives a
+     * publisher switched off, or a role taken away, until it is removed).
+     *
+     * @return list<array{user_id: int, name: string, credits: bool}>
+     */
+    public function granted(int $ownerUserId): array
+    {
+        if ($ownerUserId < 1) {
+            return [];
+        }
+        $grantable = $this->grantable($ownerUserId);
+        try {
+            $stmt = $this->conn->prepareRead(
+                'SELECT p.user_id, p.user_fname, p.user_lname, p.user_name'
+                    . ' FROM 202_publisher_grants AS g'
+                    . ' INNER JOIN 202_users AS p ON p.user_id = g.publisher_user_id'
+                    . ' WHERE g.user_id = ? AND p.user_deleted = 0'
+                    . ' ORDER BY p.user_fname, p.user_lname, p.user_name, p.user_id'
+            );
+            $this->conn->bind($stmt, 'i', [$ownerUserId]);
+            $rows = $this->conn->fetchAll($stmt);
+        } catch (\RuntimeException $e) {
+            // Before the 1.9.81 rung: what it will grant, as isGranted() answers.
+            if (!self::grantsMissing($e) || !$this->schemaPredatesGrants()) {
+                throw $e;
+            }
+
+            return array_map(
+                static fn (array $publisher): array => [
+                    'user_id' => $publisher['user_id'],
+                    'name' => $publisher['name'],
+                    'credits' => true,
+                ],
+                $grantable
+            );
+        }
+        $crediting = array_column($grantable, 'user_id');
+        $granted = [];
+        foreach ($rows as $row) {
+            $userId = self::int($row, 'user_id');
+            $name = trim(self::text($row, 'user_fname') . ' ' . self::text($row, 'user_lname'));
+            $granted[] = [
+                'user_id' => $userId,
+                'name' => $name !== '' ? $name : self::text($row, 'user_name'),
+                'credits' => in_array($userId, $crediting, true),
+            ];
+        }
+
+        return $granted;
     }
 
     /**
@@ -179,6 +307,61 @@ final readonly class PublisherCredit
         $publicId = $publisher === null ? '' : self::text($publisher, 'user_public_publisher_id');
 
         return $publicId !== '' ? $publicId : null;
+    }
+
+    /**
+     * Whether $ownerUserId granted $publisherUserId. Between a deploy and its
+     * upgrade the table is not there yet (CLAUDE.md #35): the 1.9.81 rung
+     * grants every pair that could be credited before it, so while the stored
+     * version is older the answer is the one the rung will write. A missing
+     * table on a schema that should have it grants nothing, and says so.
+     */
+    private function isGranted(int $ownerUserId, int $publisherUserId): bool
+    {
+        try {
+            $stmt = $this->conn->prepareRead(
+                'SELECT 1 FROM 202_publisher_grants WHERE user_id = ? AND publisher_user_id = ?'
+            );
+            $this->conn->bind($stmt, 'ii', [$ownerUserId, $publisherUserId]);
+
+            return $this->conn->fetchOne($stmt) !== null;
+        } catch (\RuntimeException $e) {
+            if (!self::grantsMissing($e)) {
+                throw $e;
+            }
+            if ($this->schemaPredatesGrants()) {
+                return true;
+            }
+            throw new \RuntimeException('202_publisher_grants is missing on a 1.9.81 schema', 0, $e);
+        }
+    }
+
+    private static function grantsMissing(\Throwable $e): bool
+    {
+        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+            $missing = Connection::isMysqlError($current, 1146, '');
+            if ($missing && str_contains($current->getMessage(), TableRegistry::PUBLISHER_GRANTS)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** Whether the stored schema version is older than the one that makes the grants. */
+    private function schemaPredatesGrants(): bool
+    {
+        $stmt = $this->conn->prepareRead('SELECT version FROM 202_version LIMIT 2');
+        $rows = $this->conn->fetchAll($stmt);
+        if (count($rows) !== 1) {
+            throw new \RuntimeException('202_version does not hold one version');
+        }
+        $version = self::text($rows[0], 'version');
+        if (preg_match('/\A\d+\.\d+\.\d+\z/', $version) !== 1) {
+            throw new \RuntimeException('202_version holds no version it can read');
+        }
+
+        return version_compare($version, self::GRANTS_SINCE, '<');
     }
 
     /**

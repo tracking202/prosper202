@@ -7,6 +7,7 @@ namespace Prosper202\User;
 use Api\V3\Apps\AppDataPurge;
 use Prosper202\Attribution\ExportFiles;
 use Prosper202\Click\MysqlClickRepository;
+use Prosper202\Click\PublisherCredit;
 use Prosper202\Database\Connection;
 
 /**
@@ -200,7 +201,13 @@ final class UserDataPurge
         'DELETE FROM 202_alert_log WHERE user_id = ?',
         // Each change of the account's currency.
         'DELETE FROM 202_currency_changes WHERE user_id = ?',
+        // The publishers the account's links credit (the accounts whose
+        // links credit the user lose their grants by removeGrantsOfUser()).
+        'DELETE FROM 202_publisher_grants WHERE user_id = ?',
     ];
+
+    /** The accounts whose links credit the user, read under lock. */
+    public const GRANTING_OWNERS = 'SELECT user_id FROM 202_publisher_grants WHERE publisher_user_id = ? FOR UPDATE';
 
     /**
      * Every purge statement, in the order deleteUser() runs them.
@@ -247,6 +254,11 @@ final class UserDataPurge
         foreach (MysqlClickRepository::ACCOUNT_PURGED_TABLES as $table) {
             $cascade[] = ['resource' => $table, 'action' => 'delete', 'where' => 'joined to a click of user ' . $userId];
         }
+        $cascade[] = [
+            'resource' => '202_publisher_grants',
+            'action' => 'delete',
+            'where' => 'another account\'s links credit user ' . $userId,
+        ];
         $cascade[] = [
             'resource' => 'attribution export files',
             'action' => 'removed from disk once the delete commits',
@@ -310,6 +322,7 @@ final class UserDataPurge
                 foreach (self::statements() as $sql) {
                     $this->run($sql, $userId);
                 }
+                $this->removeGrantsOfUser($conn, $userId);
                 // The clicks' browser references, by the click writer (ClickRowsWrittenOnlyByTheWriterTest).
                 (new MysqlClickRepository($conn))->purgeAccount($userId);
                 $unlinked = (new AppDataPurge($this->db))->purgeUser($userId);
@@ -359,6 +372,20 @@ final class UserDataPurge
             } catch (\Throwable $e) {
                 error_log('UserDataPurge: an attribution export file of deleted user ' . $userId . ' was not removed: ' . $e->getMessage());
             }
+        }
+    }
+
+    /**
+     * Each grant another account's links hold for the user, removed by its
+     * owner and the user, as Get Links removes one.
+     */
+    private function removeGrantsOfUser(Connection $conn, int $userId): void
+    {
+        $stmt = $conn->prepareWrite(self::GRANTING_OWNERS);
+        $conn->bind($stmt, 'i', [$userId]);
+        $grants = new PublisherCredit($conn);
+        foreach ($conn->fetchAll($stmt) as $row) {
+            $grants->revoke((int) $row['user_id'], $userId);
         }
     }
 

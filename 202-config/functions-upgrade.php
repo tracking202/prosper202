@@ -511,6 +511,60 @@ if (!function_exists('_upgrade_currency_history_start')) {
     }
 }
 
+if (!function_exists('_upgrade_publisher_grants')) {
+    /**
+     * The publishers each account's links may credit, for the 1.9.81 rung
+     * (Prosper202\Click\PublisherCredit). Until 1.9.81 any active Publisher
+     * of the install could be credited on the link of any account that may
+     * grant one, so every such pair is granted here, and a link made before
+     * the upgrade (a paid 1.9.56 one included) credits as it did; a pair
+     * after it is granted by making a link for it in Get Links or giving the
+     * user the Publisher role. A
+     * switched-off user is granted too, as reactivating them credited again.
+     * Made as UserTables declares it; a table that already holds grants is
+     * left alone, so a re-run of the rung grants nothing taken back since.
+     */
+    function _upgrade_publisher_grants(): bool
+    {
+        if (_upgrade_query(\Prosper202\Database\Tables\UserTables::publisherGrants()->createStatement) === false) {
+            _upgrade_note('could not make 202_publisher_grants; the publisher grants step will retry.');
+            return false;
+        }
+        $held = _upgrade_query('SELECT 1 FROM `202_publisher_grants` LIMIT 1');
+        if (!$held instanceof \mysqli_result) {
+            _upgrade_note('could not read 202_publisher_grants; the publisher grants step will retry.');
+            return false;
+        }
+        $seeded = $held->num_rows > 0;
+        $held->free();
+        if ($seeded) {
+            return true;
+        }
+        $granting = "SELECT 1 FROM `202_user_role` ur"
+            . " INNER JOIN `202_role_permission` rp ON rp.`role_id` = ur.`role_id`"
+            . " INNER JOIN `202_permissions` pm ON pm.`permission_id` = rp.`permission_id`"
+            . " WHERE ur.`user_id` = o.`user_id` AND pm.`permission_description` = '"
+            . \Prosper202\Click\PublisherCredit::GRANT_PERMISSION . "'";
+        $publisher = 'SELECT 1 FROM `202_user_role` pr WHERE pr.`user_id` = p.`user_id` AND pr.`role_id` = '
+            . \Prosper202\Click\PublisherCredit::PUBLISHER_ROLE_ID;
+        $seed = 'INSERT INTO `202_publisher_grants` (`user_id`, `publisher_user_id`, `granted_at`)'
+            . ' SELECT o.`user_id`, p.`user_id`, ' . time()
+            . ' FROM `202_users` o INNER JOIN `202_users` p'
+            . ' ON CAST(p.`install_hash` AS BINARY) = CAST(o.`install_hash` AS BINARY)'
+            . ' AND p.`user_id` <> o.`user_id`'
+            . " WHERE o.`install_hash` <> '' AND o.`user_deleted` = 0 AND p.`user_deleted` = 0"
+            . " AND EXISTS ($granting) AND EXISTS ($publisher)"
+            . ' ON DUPLICATE KEY UPDATE `granted_at` = `granted_at`';
+        if (_upgrade_query($seed) === false) {
+            _upgrade_note('failed to grant the publishers each account could credit before 1.9.81;'
+                . ' the step will retry.');
+            return false;
+        }
+
+        return true;
+    }
+}
+
 if (!function_exists('_upgrade_campaign_currency_notice')) {
     /**
      * Mark, for the 1.9.80 rung, every campaign paid in another currency
@@ -5729,6 +5783,9 @@ class UPGRADE
             // Shopify\SettlementSchema), reconciled on the way up.
             // A revenue upload's undo log (undone_at, undone_rows).
             //
+            // The publishers each account's links may credit, granted as
+            // they could be credited before (_upgrade_publisher_grants()).
+            //
             // The re-click backfill's stopped_at, when a stop began, which
             // Settings and the cron output show (Prosper202\Click\ReClickBackfill).
             //
@@ -5739,11 +5796,13 @@ class UPGRADE
             // The Shopify webhook secret moves into the sealed integration
             // secrets store (0H6C), which this makes, and its plaintext column goes.
             $secrets_ok = _upgrade_shopify_secret_into_store();
-            $moved_ok = $pixel_type_ok && $secrets_ok;
+            $grants_ok = _upgrade_publisher_grants();
+            $moved_ok = $pixel_type_ok && $secrets_ok && $grants_ok;
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
                 \Prosper202\Database\Tables\ConversionTables::conversionUploads(),
+                \Prosper202\Database\Tables\UserTables::publisherGrants(),
                 // 202_ppc_network_variables.ppc_network_id unsigned, as wide
                 // as the source id it names (_upgrade_ppc_variable_network_width()).
                 \Prosper202\Database\Tables\TrackingTables::ppcNetworkVariables(),
@@ -5782,8 +5841,8 @@ class UPGRADE
                 }
             } else {
                 _upgrade_note('a table of the 1.9.81 step could not be reconciled (the list above), the ChatGPT Ads'
-                    . ' Pixel type seeded or the Shopify webhook secret moved into the secrets store;'
-                    . ' leaving version at 1.9.80 so the next run retries.');
+                    . ' Pixel type seeded, the Shopify webhook secret moved into the secrets store, or the publishers'
+                    . ' each account could credit not granted; leaving version at 1.9.80 so the next run retries.');
             }
         }
 
