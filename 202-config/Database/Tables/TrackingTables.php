@@ -304,7 +304,7 @@ final class TrackingTables
             TableRegistry::PPC_NETWORK_VARIABLES,
             "CREATE TABLE IF NOT EXISTS `" . TableRegistry::PPC_NETWORK_VARIABLES . "` (
                 `ppc_variable_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
-                `ppc_network_id` mediumint(8) NOT NULL,
+                `ppc_network_id` mediumint(8) unsigned NOT NULL,
                 `name` varchar(255) NOT NULL DEFAULT '',
                 `parameter` varchar(255) NOT NULL DEFAULT '',
                 `placeholder` varchar(255) NOT NULL DEFAULT '',

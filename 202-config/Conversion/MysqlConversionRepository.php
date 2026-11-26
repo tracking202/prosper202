@@ -18,6 +18,7 @@ use Prosper202\Conversion\Ledger\ReversalException;
 use Prosper202\Conversion\Ledger\RowCurrency;
 use Prosper202\Conversion\Ledger\SourceRef;
 use Prosper202\Conversion\Ledger\SupersededReason;
+use Prosper202\Conversion\Ledger\TransactionSale;
 use Prosper202\Database\Connection;
 use Prosper202\DataEngine\ClickRollupSql;
 use Prosper202\Ltv\MysqlCustomerRepository;
@@ -424,14 +425,17 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // id. It is its own row with its own key (never tx:<id>, which the
         // original holds), so a replay of the same reversal is a
         // duplicate and a second, different reversal of one sale is
-        // refused rather than netting the sale twice.
+        // refused rather than netting the sale twice. A payment platform's
+        // reversal takes back its own sale under the id, never another
+        // platform's (TransactionSale).
         $reverses = null;
         $reversesCarried = false;
         if ($transactionId !== null && ($wantsReversal || ($explicitPayout !== null && $explicitPayout < 0))) {
             $targetStmt = $this->conn->prepareWrite(
                 'SELECT conv_id, click_payout, deleted, source FROM 202_conversion_logs
-                 WHERE click_id = ? AND transaction_id = ? AND reverses_conv_id IS NULL
-                 ORDER BY conv_id LIMIT 1'
+                 WHERE click_id = ? AND transaction_id = ? AND reverses_conv_id IS NULL'
+                . TransactionSale::restriction('source', $source)
+                . ' ORDER BY ' . TransactionSale::order('', $source) . ' LIMIT 1'
             );
             $this->conn->bind($targetStmt, 'is', [$clickId, $transactionId]);
             $target = $this->conn->fetchOne($targetStmt);
@@ -462,7 +466,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         } elseif (isset($data['dedupe_key']) && $data['dedupe_key'] !== '') {
             $dedupeKey = (string) $data['dedupe_key'];
         } elseif ($transactionId !== null) {
-            $dedupeKey = DedupeKey::transaction($transactionId);
+            // tx:<id>, unless another payment platform's sale holds it here.
+            $dedupeKey = TransactionSale::key($this->conn, $clickId, $transactionId, $source);
         } elseif ($terms['mode'] === PayoutMode::ACCUMULATE && $payable) {
             // With no id of its own an accumulating row would double the
             // money on every retry, so it is the campaign's one plain
@@ -516,7 +521,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $otherStmt = $this->conn->prepareWrite(
                 'SELECT conv_id, dedupe_key FROM 202_conversion_logs
                  WHERE click_id = ? AND reverses_conv_id = ? AND deleted = 0'
-                . ($reversesCarried ? ' AND transaction_id = ?' : '') . ' ORDER BY conv_id LIMIT 1'
+                . ($reversesCarried ? ' AND transaction_id = ?' . TransactionSale::restriction('source', $source) : '')
+                . ' ORDER BY conv_id LIMIT 1'
             );
             $this->conn->bind(
                 $otherStmt,

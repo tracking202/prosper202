@@ -116,13 +116,6 @@ final class TrafficSourceOwners
         . ' recorded earlier under the same variables. Their reports list those clicks under the copy after'
         . ' the cron job\'s next run.';
 
-    /**
-     * 202_ppc_network_variables.ppc_network_id is a signed mediumint, while a
-     * source's id is unsigned: a copy above this id has nowhere to keep its
-     * variables, and a non-strict server would clip the id onto another source.
-     */
-    private const VARIABLES_MAX_SOURCE_ID = 8388607;
-
     public function __construct(private readonly Connection $conn)
     {
     }
@@ -425,7 +418,7 @@ final class TrafficSourceOwners
                     $at,
                 ]);
                 $copyId = $this->conn->executeInsert($insert);
-                if ($copyId < 1 || ($variables !== [] && $copyId > self::VARIABLES_MAX_SOURCE_ID)) {
+                if ($copyId < 1) {
                     throw new \LogicException('The copy of traffic source ' . $sourceId . ' for user ' . $user
                         . ' was given id ' . $copyId . ', where its custom variables cannot be kept');
                 }
@@ -445,6 +438,20 @@ final class TrafficSourceOwners
                         (int) $variable['ppc_variable_id'],
                     ]);
                     $this->conn->executeInsert($copied);
+                }
+                if ($variables !== []) {
+                    // Read back, not assumed: before the 1.9.81 upgrade has
+                    // widened it, the variables' source id is a signed
+                    // mediumint, and a server without strict mode stores a
+                    // copy's id past 8388607 as 8388607, another source.
+                    $kept = $this->conn->prepareWrite('SELECT COUNT(*) AS kept FROM 202_ppc_network_variables'
+                        . ' WHERE ppc_network_id = ? AND deleted = 0');
+                    $this->conn->bind($kept, 'i', [$copyId]);
+                    $keptRow = $this->conn->fetchOne($kept);
+                    if ((int) ($keptRow['kept'] ?? -1) !== count($variables)) {
+                        throw new \LogicException('The copy of traffic source ' . $sourceId . ' for user ' . $user
+                            . ' was given id ' . $copyId . ', where its custom variables cannot be kept');
+                    }
                 }
 
                 $move = $this->conn->prepareWrite('UPDATE 202_ppc_accounts SET ppc_network_id = ?'
