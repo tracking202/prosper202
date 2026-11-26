@@ -187,11 +187,27 @@ once.
   refusal either. A campaign whose identity capture is off is not a refusal:
   its conversions are sent, without the visitor's address.
 
-  What it does not cover: your traffic sources' pixels and postbacks and
-  the Meta Purchase pixel follow their own rules and are not changed by it,
-  and the conversion webhooks (Event Bridge `conversion.recorded`, the LTV
-  webhooks) that go to endpoints you set still carry a refused visitor's
-  conversion, with its click id and the request's IP address.
+  Your traffic sources follow the same rule (since 1.9.81): a refused
+  visitor's conversion fires none of the traffic source's pixels (image,
+  iframe, script, raw markup, the Meta Purchase pixel) and sends none of its
+  server-to-server postbacks, from a conversion's own pixel or postback, a
+  goal reached by an event, or a [PurLink](purlinks.md). The postbacks are
+  still listed, as *withheld* with the reason, where the outbox shows them
+  (`GET /apps/notifications`, the app's Notifications panel); one
+  queued before a refusal arrived on a later visit of the click is withheld
+  when its turn comes, while one already sent stays sent and a retraction of
+  it still goes. A goal's notice says `consent_withheld`, and Conversion
+  Logs and their CSV (`held_back_for_consent`) mark the conversion. A
+  simple landing page's Bot202 Facebook Pixel Assistant events are not sent
+  for a click whose refusal is kept, either: one made on the Google Ads
+  tracking template's hit the page takes its click from, or on an earlier
+  visit, holds them back though the page's own request names no
+  `p202_consent`.
+
+  What it does not cover: the conversion webhooks (Event Bridge
+  `conversion.recorded`, the LTV webhooks) that go to endpoints you set still
+  carry a refused visitor's conversion, with its click id and the request's
+  IP address, since they reach you, not an ad platform.
 - **Consent signals** (`ad_user_data`, `ad_personalization`) are what you
   state, per destination, from your consent banner: Prosper202 does not
   record a visitor's consent. Hashed data (and `user_id`) go only when

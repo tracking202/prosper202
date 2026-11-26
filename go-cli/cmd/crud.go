@@ -1579,6 +1579,10 @@ func init() {
 			Use:   "create-with-url",
 			Short: "Create a tracker and return its tracking URL",
 			RunE: func(cmd *cobra.Command, args []string) error {
+				if cmd.Flags().Changed("items") {
+					raw, _ := cmd.Flags().GetString("items")
+					return runTrackerItemsCreate(cmd, trackerEntity, raw)
+				}
 				body := map[string]string{}
 				for _, f := range trackerEntity.Fields {
 					if v, _ := cmd.Flags().GetString(f.Name); v != "" {
@@ -1598,47 +1602,27 @@ func init() {
 				}
 
 				idemKey, _ := cmd.Flags().GetString("idempotency-key")
-				createdData, err := c.PostIdempotent("trackers", body, idemKey)
+				link, err := createTrackerLink(c, body, tokens, idemKey)
 				if err != nil {
 					return err
 				}
-				if changeID, staged := stagedChangeID(createdData); staged {
+				if link.staged != "" {
 					// The tracker is a proposal, so it has no tracking URL
 					// yet. Report the change instead of failing on a
 					// tracker_id that was never going to be there.
-					if err := render(createdData); err != nil {
+					if err := render(link.answer); err != nil {
 						return err
 					}
 					output.Success(
 						"Staged the tracker create as %s. Apply it with `p202 change apply %s`, "+
 							"then `p202 tracker get-url <id>` for the tracking URL.",
-						changeID, changeID)
+						link.staged, link.staged)
 					return nil
-				}
-				createdObj, err := parseDataObject(createdData)
-				if err != nil {
-					return fmt.Errorf("failed to parse tracker create response: %w", err)
-				}
-				trackerID, ok := extractIntField(createdObj, "tracker_id", "id")
-				if !ok {
-					return validationError("tracker create response did not include tracker_id").
-						WithHint("Run `p202 tracker create` and `p202 tracker get-url <id>` separately to see which step fails.")
-				}
-
-				urlData, err := c.Get(fmt.Sprintf("trackers/%d/url", trackerID), tokens)
-				if err != nil {
-					// The tracker exists now: running create-with-url again
-					// would make a second one.
-					return withHint(err, "The tracker was created (tracker_id %d); do not re-run create-with-url. Run `p202 tracker get-url %d` for its link.", trackerID, trackerID)
-				}
-				urlObj, err := parseDataObject(urlData)
-				if err != nil {
-					return fmt.Errorf("failed to parse tracker url response: %w", err)
 				}
 
 				out := map[string]interface{}{
-					"tracker":      createdObj,
-					"tracking_url": urlObj,
+					"tracker":      link.tracker,
+					"tracking_url": link.url,
 				}
 				encoded, err := json.Marshal(out)
 				if err != nil {
@@ -1654,6 +1638,9 @@ func init() {
 			}
 		}
 		registerIdempotencyKeyFlag(createWithURLCmd)
+		createWithURLCmd.Flags().String("items", "", itemsFlagUsage)
+		createWithURLCmd.Example = "  p202 tracker create-with-url --aff-campaign-id 3 --ppc-account-id 7\n" +
+			"  p202 tracker create-with-url --items '[{\"aff_campaign_id\": \"3\", \"ppc_account_id\": \"7\"}, {\"aff_campaign_id\": \"4\", \"ppc_account_id\": \"7\"}]'"
 		registerLinkTokenFlags(createWithURLCmd)
 		registerLinkTokenFlags(getURLCmd)
 
@@ -1845,5 +1832,6 @@ func init() {
 		registerLinkTokenFlags(bulkURLsCmd)
 
 		trackerCmd.AddCommand(getURLCmd, createWithURLCmd, bulkURLsCmd)
+		addTrackerItemsToUpdate(trackerCmd, trackerEntity)
 	}
 }

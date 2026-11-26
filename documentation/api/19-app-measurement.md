@@ -134,7 +134,7 @@ and Postbacks sent tabs are offered once the account has an Android app.
   reached later counts in its install's window.
 - **Postbacks sent** (Android) — the traffic-source postbacks the installs'
   goals queued, one row per pixel URL, with a count per status (pending,
-  sent, failed, cancelled, suppressed), the attempts and the last error. When the range holds postbacks
+  sent, failed, cancelled, suppressed, withheld: the visitor refused consent), the attempts and the last error. When the range holds postbacks
   that are not trusted, a line says so and gives the count for each trust
   class, because installs, losses and revenue count trusted
   postbacks only unless the signature filter says otherwise — the same

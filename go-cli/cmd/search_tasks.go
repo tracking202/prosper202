@@ -83,7 +83,7 @@ var searchTasks = []searchTask{
 	{Run: "p202 landing-page check",
 		Phrases: []string{"check my page", "is the tracking code installed", "verify the code is on the page"}},
 	{Run: "p202 tracker create-with-url", Pages: []string{"Setup › Get Links"},
-		Phrases: []string{"tracking link", "generate a tracking link", "campaign link"}},
+		Phrases: []string{"tracking link", "generate a tracking link", "campaign link", "several tracking links at once"}},
 	{Run: "p202 conversion postback-url", Pages: []string{"Setup › Postback/Pixel"},
 		Phrases: []string{"postback url", "s2s postback", "server to server postback"}},
 	{Run: "p202 conversion pixel",

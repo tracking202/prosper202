@@ -1294,8 +1294,9 @@ p202 ltv integrations list | create --provider P [--name S] [--config JSON | --c
   by default): `status`, `attempts`, `next_attempt_at` (pending only),
   `last_status_code` and `last_response_body` (the last response or error,
   e.g. `curl: …`, `blocked: …`, or `expired: …` for a delivery still unsent
-  7 days after it was queued, which is never sent); never the secret, never
-  the payload. The minutely cron job sends what is due, so a `pending`
+  7 days after it was queued, which is never sent; a credential in a
+  receiver's answer reads `[removed]`); never the secret, never the
+  payload. The minutely cron job sends what is due, so a `pending`
   delivery whose `next_attempt_at` is past waits for the next cron run. An
   unknown webhook id is a 404 whose hint names `p202 ltv webhooks list`.
 - `ltv webhooks revive` makes a dead webhook (one delivery failed 6 times)

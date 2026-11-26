@@ -22,6 +22,7 @@ final class FacebookPixelAssistantScriptTest extends TestCase
     private const PIXEL = 'FROM 202_ppc_account_pixels AS p';
     private const EPV = 'FROM 202_dataengine';
     private const CURRENCY = 'FROM 202_users_pref';
+    private const REFUSAL = 'FROM 202_click_consent_refusals';
 
     private function db(array $page, array $pixels = [['pixel_id' => 9, 'pixel_code' => '123456789012345']]): FakeMysqliConnection
     {
@@ -33,6 +34,7 @@ final class FacebookPixelAssistantScriptTest extends TestCase
         $db->whenQueryContainsReturnRows(self::PIXEL, $pixels);
         $db->whenQueryContainsReturnRows(self::EPV, [['income' => '30.00000', 'click_out' => '8']]);
         $db->whenQueryContainsReturnRows(self::CURRENCY, [['user_account_currency' => 'GBP']]);
+        $db->whenQueryContainsReturnRows(self::REFUSAL, [['refused' => 0]]);
 
         return $db;
     }
@@ -149,6 +151,38 @@ final class FacebookPixelAssistantScriptTest extends TestCase
         $logged = (string) file_get_contents($log);
         unlink($log);
         self::assertStringContainsString('pixel 9 of ppc account 3 holds no Meta Pixel ID; skipped', $logged);
+    }
+
+    /**
+     * A request of the click that refused consent where it is kept (the
+     * tracking template's hit a parallel-tracking page takes its click from,
+     * an earlier visit) holds the page's events back too, though this
+     * request names no p202_consent; an answer that is not a 0 is a refusal.
+     *
+     * @return iterable<string, array{0: list<array<string, mixed>>}>
+     */
+    public static function storedRefusals(): iterable
+    {
+        yield 'a refusal is kept' => [[['refused' => 1]]];
+        yield 'no answer' => [[]];
+        yield 'an answer that is not a number' => [[['refused' => 'yes']]];
+    }
+
+    /** @dataProvider storedRefusals */
+    public function testARefusalKeptOnTheClickSendsNothing(array $answer): void
+    {
+        $db = $this->db(['b202_fbpa_status' => '1']);
+        $db->whenQueryContainsReturnRows(self::REFUSAL, $answer);
+
+        self::assertSame('', FacebookPixelAssistantScript::forClick(new Connection($db), 7, 41, 3, 9001, true));
+        self::assertCount(1, $db->statementsContaining(self::REFUSAL), 'the click\'s refusals were read');
+    }
+
+    public function testTheRefusalIsReadOnlyForAPageThatWouldSendEvents(): void
+    {
+        $db = $this->db([]);
+        self::assertSame('', FacebookPixelAssistantScript::forClick(new Connection($db), 7, 41, 3, 1, true));
+        self::assertSame([], $db->statementsContaining(self::REFUSAL), 'a page without the assistant costs the click path no read');
     }
 
     /** The click is already recorded: a failed read is logged and the page's script still runs. */
