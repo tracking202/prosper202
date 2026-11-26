@@ -305,14 +305,11 @@ if (isset($_GET['delete_landing_page_id'])) {
 	}
 
 	if ($userObj->hasPermission("remove_landing_page")) {
-		// Removed only when it is the account's and still there; anything else
-		// says so rather than redirecting to "Removed".
-		try {
-			$delete_success = \Prosper202\Setup\SetupRemoval::mark(new \Prosper202\Database\Connection($db),
-				'landing_page', $_GET['delete_landing_page_id'], (int) $_SESSION['user_id'], time());
-		} catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
-			record_mysql_error($db, 'UPDATE 202_landing_pages (remove a landing page)', $e->getMessage());
-		}
+		// Removed only when it is the account's, still there and named by no
+		// text ad or tracker; anything else says so rather than redirecting
+		// to "Removed".
+		$deleteRefusal = \Prosper202\Setup\LandingPageDelete::fromSetupPage($db, (int) $_SESSION['user_id'], $_GET['delete_landing_page_id']);
+		$delete_success = $deleteRefusal === null;
 
 		if ($delete_success === true) {
 			// Landing Page Optimizer (segments-v2 G10): deletes change the
@@ -328,7 +325,7 @@ if (isset($_GET['delete_landing_page_id'])) {
 				}
 			}
 		} else {
-			$error['delete_landing_page'] = 'That landing page was not found on this account. Nothing was removed.';
+			$error['delete_landing_page'] = $deleteRefusal;
 		}
 	} else {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/landing_pages.php');

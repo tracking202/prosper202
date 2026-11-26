@@ -182,6 +182,20 @@ case "$ask" in
                 "$(printf '%s' "$err" | jq -r '.error.message' 2>/dev/null | cut -c1-160)"
         fi
         ;;
+    *"landing page EVAL Hub Page"*)
+        # An advanced page its ad and tracker still use is not deleted: the
+        # refusal names them, and moving them is the user's call.
+        page=$(p202 landing-page list --all --json | jq -r '[.data[] | select(.landing_page_nickname=="EVAL Hub Page")][0].landing_page_id')
+        if err=$(p202 landing-page delete "$page" --force --json 2>&1 >/dev/null); then
+            printf 'Deleted EVAL Hub Page (landing page %s).\n' "$page"
+        else
+            said=$(printf '%s' "$err" | jq -r '.error.message' 2>/dev/null)
+            ads=$(printf '%s' "$said" | sed -n 's/.*(text_ad_id \([0-9, ]*\)).*/\1/p')
+            trackers=$(printf '%s' "$said" | sed -n 's/.*(tracker_id \([0-9, ]*\)).*/\1/p')
+            printf 'I have not deleted EVAL Hub Page (landing page %s): the text ad EVAL Hub Ad (text ad %s) and tracker %s still use it, and deleting it would leave their links pointing at a page that is gone. Should I move them to another page or delete them first?\n' \
+                "$page" "$ads" "$trackers"
+        fi
+        ;;
     # Tracking links, the key's identity and rotator URL rules
     # (setup-links.json). First: the asks name campaigns and "add".
     *"Google Ads fills in the keyword"*)

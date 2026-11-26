@@ -202,6 +202,13 @@ func DeletedConversionID(err error) int64 {
 	return int64(id)
 }
 
+// detailsHave reports whether the answer's details carry key.
+func detailsHave(apiErr *APIError, key string) bool {
+	details, _ := apiErr.Raw["details"].(map[string]interface{})
+	_, ok := details[key]
+	return ok
+}
+
 // upstreamOf names the outside service an answer's details say could not be
 // asked (details.upstream), or "" when the answer names none.
 func upstreamOf(apiErr *APIError) string {
@@ -323,6 +330,12 @@ func HintFor(err error) string {
 		// since it was read, so a whole-record write would undo that.
 		case apiErr.Status == 409 && strings.Contains(apiErr.Message, "Version mismatch"):
 			return "The record changed since it was read. Read it again (`... get <id>`) and make the change on that, or send only the fields to change, without version or etag."
+		// DELETE /landing-pages/{id} refuses an advanced page while text ads
+		// or trackers name it; the details list both.
+		case apiErr.Status == 409 && detailsHave(apiErr, "tracker_ids"):
+			return "Nothing was deleted. Point each text ad named above at another advanced page (`p202 text-ad update <id> --landing-page-id <page_id>`) " +
+				"or make it a campaign's (`--text-ad-type 0 --aff-campaign-id <id>`), and move each tracker named above (`p202 tracker update <id> --landing-page-id <page_id>`) " +
+				"or delete it (`p202 tracker delete <id>`, which stops its link); then delete the page again. `p202 tracker list --landing-page-id <id>` lists the page's trackers."
 		case apiErr.Status == 409:
 			return "A matching record already exists. Run the matching `... list` to find it, then `... update` it instead of creating."
 		case (apiErr.Status == 400 || apiErr.Status == 422) && strings.Contains(strings.ToLower(apiErr.Message), "staged is not supported"):
