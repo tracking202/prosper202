@@ -141,7 +141,7 @@ final class SlackNoticeQueue
                 $attempts = (int) $row['attempts'];
 
                 if ((int) $row['created_at'] < $now - self::MAX_AGE) {
-                    if ($this->deleteSettled($id, $attempts)) {
+                    if ($this->deleteSettled($id, $accountId, $attempts)) {
                         $this->log($notice, $accountId, 'it waited more than a day to be sent, and was dropped');
                         $out['failed']++;
                     }
@@ -152,7 +152,7 @@ final class SlackNoticeQueue
                 }
                 $url = $webhooks[$accountId];
                 if ($url === null) {
-                    if ($this->deleteSettled($id, $attempts)) {
+                    if ($this->deleteSettled($id, $accountId, $attempts)) {
                         $this->log($notice, $accountId, 'the account has no Slack webhook now');
                         $out['failed']++;
                     }
@@ -166,10 +166,10 @@ final class SlackNoticeQueue
                 // Claim: only the worker that moves the attempt count sends.
                 $claim = $this->conn->prepareWrite(
                     'UPDATE 202_slack_notices SET attempts = ?, next_attempt_at = ?
-                     WHERE notice_id = ? AND attempts = ?'
+                     WHERE notice_id = ? AND user_id = ? AND attempts = ?'
                 );
                 $due = $now + NotificationOutbox::backoff($attempts + 1);
-                $this->conn->bind($claim, 'iiii', [$attempts + 1, $due, $id, $attempts]);
+                $this->conn->bind($claim, 'iiiii', [$attempts + 1, $due, $id, $accountId, $attempts]);
                 if ($this->conn->executeUpdate($claim) !== 1) {
                     continue;
                 }
@@ -179,7 +179,7 @@ final class SlackNoticeQueue
                 $timeout = max(1, min(self::SEND_TIMEOUT, (int) ceil($stopAt - microtime(true))));
                 $result = $this->webhook->deliver($url, (string) $row['body'], $timeout);
                 if ($result->isDelivered()) {
-                    $this->deleteSettled($id, $attempts);
+                    $this->deleteSettled($id, $accountId, $attempts);
                     $out['sent']++;
                     continue;
                 }
@@ -189,17 +189,17 @@ final class SlackNoticeQueue
                     $unanswered[$origin] = true;
                 }
                 if ($result->isRefused() || $attempts >= self::MAX_ATTEMPTS) {
-                    $this->deleteSettled($id, $attempts);
+                    $this->deleteSettled($id, $accountId, $attempts);
                     $this->log($notice, $accountId, $result->reason . ($result->isRefused()
                         ? '' : ' (after ' . $attempts . ' tries, so it was dropped)'));
                     $out['failed']++;
                     continue;
                 }
                 $mark = $this->conn->prepareWrite(
-                    'UPDATE 202_slack_notices SET last_error = ? WHERE notice_id = ? AND attempts = ?'
+                    'UPDATE 202_slack_notices SET last_error = ? WHERE notice_id = ? AND user_id = ? AND attempts = ?'
                 );
                 $error = mb_strimwidth($result->reason, 0, self::ERROR_CHARS, '…', 'UTF-8');
-                $this->conn->bind($mark, 'sii', [$error, $id, $attempts]);
+                $this->conn->bind($mark, 'siii', [$error, $id, $accountId, $attempts]);
                 $this->conn->executeUpdate($mark);
                 $out['retrying']++;
             }
@@ -268,10 +268,12 @@ final class SlackNoticeQueue
     }
 
     /** Delete a settled row, if no other worker has claimed it since: whether it was this one's. */
-    private function deleteSettled(int $id, int $attempts): bool
+    private function deleteSettled(int $id, int $accountId, int $attempts): bool
     {
-        $stmt = $this->conn->prepareWrite('DELETE FROM 202_slack_notices WHERE notice_id = ? AND attempts = ?');
-        $this->conn->bind($stmt, 'ii', [$id, $attempts]);
+        $stmt = $this->conn->prepareWrite(
+            'DELETE FROM 202_slack_notices WHERE notice_id = ? AND user_id = ? AND attempts = ?'
+        );
+        $this->conn->bind($stmt, 'iii', [$id, $accountId, $attempts]);
 
         return $this->conn->executeUpdate($stmt) === 1;
     }
