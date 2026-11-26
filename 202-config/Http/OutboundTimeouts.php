@@ -13,10 +13,20 @@ final class OutboundTimeouts
     public const CONNECT = 5;
     public const TOTAL = 15;
 
+    /** @throws CurlOptionRefused */
     public static function apply(\CurlHandle $ch, int $total = self::TOTAL, int $connect = self::CONNECT): void
     {
+        CurlOptions::set($ch, self::options($total, $connect));
+    }
+
+    /** @return array<int, int> both limits, for an option list FixedHostRoute::exec() sets */
+    public static function options(int $total = self::TOTAL, int $connect = self::CONNECT): array
+    {
         $total = max(1, $total);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, max(1, min($connect, $total)));
-        curl_setopt($ch, CURLOPT_TIMEOUT, $total);
+
+        return [
+            CURLOPT_CONNECTTIMEOUT => max(1, min($connect, $total)),
+            CURLOPT_TIMEOUT => $total,
+        ];
     }
 }

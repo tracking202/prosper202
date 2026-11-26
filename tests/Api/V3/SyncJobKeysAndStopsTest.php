@@ -25,6 +25,9 @@ use Tests\TestCase;
  */
 final class SyncJobKeysAndStopsTest extends TestCase
 {
+    private string $log = '';
+    private string|false $previousLog = false;
+
     private const SOURCE_KEY = 'source-key-5f1e2d3c4b5a69788796a5b4c3d2e1f0';
     private const TARGET_KEY = 'target-key-0f1e2d3c4b5a69788796a5b4c3d2e1f9';
 
@@ -36,10 +39,15 @@ final class SyncJobKeysAndStopsTest extends TestCase
         parent::setUp();
         $this->dir = sys_get_temp_dir() . '/p202-sync-keys-' . bin2hex(random_bytes(4));
         $this->store = new ServerStateStore($this->dir);
+        // The sync logs its own failures; kept out of the test's output.
+        $this->log = (string) tempnam(sys_get_temp_dir(), 'p202-sync-log-');
+        $this->previousLog = ini_set('error_log', $this->log);
     }
 
     protected function tearDown(): void
     {
+        ini_set('error_log', (string) $this->previousLog);
+        @unlink($this->log);
         exec('rm -rf ' . escapeshellarg($this->dir));
         parent::tearDown();
     }

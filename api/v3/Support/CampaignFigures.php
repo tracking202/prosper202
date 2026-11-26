@@ -24,6 +24,9 @@ final class CampaignFigures
         'total_clicks', 'total_click_throughs', 'total_leads', 'total_income', 'total_cost', 'total_net',
     ];
 
+    /** GET /reports/payout's money: the campaign's default payout. */
+    public const array PAYOUT = ['aff_campaign_payout'];
+
     /**
      * The summary's own counts and money beside the report's: its people,
      * its conversions and refunds. refund_rate, a ratio, stays. Its

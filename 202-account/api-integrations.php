@@ -233,6 +233,52 @@ $user_row = p202FetchRow($user_result, $user_sql) ?? [];
 
 $cb_verified = $user_row['cb_verified'];
 
+// The stored values each settings form here shows (ShownSettings): its field
+// carries their version, and its save reads them again under the account's
+// settings lock and goes on only when they are what the page showed.
+$apiintShownColumns = [
+    'cb_key' => ['cb_key'],
+    'user_slack_incoming_webhook' => ['user_slack_incoming_webhook'],
+    'zaxaa_api_signature' => ['zaxaa_api_signature'],
+    'ipqs_api_key' => ['ipqs_api_key'],
+    'jvzoo_key' => [JVZooKey::COLUMN],
+    'jvzoo_roleless_role' => [JVZooRole::ROLELESS_COLUMN],
+    'paykickstart' => [PayKickstartKeys::COLUMN],
+    'lpo_ctx_kw' => ['lpo_ctx_kw'],
+];
+$apiintShown = static function (string $form, array $row) use ($apiintShownColumns): array {
+    $values = [];
+    foreach ($apiintShownColumns[$form] as $column) {
+        $values[$column] = $row[$column] ?? null;
+    }
+    return $values;
+};
+$apiintRowSql = $user_sql;
+$apiintRequireShown = static function (string $form, string $anchor) use ($db, $apiintRowSql, $apiintShown): array {
+    $readShown = static function () use ($db, $apiintRowSql, $apiintShown, $form): array {
+        $result = _mysqli_query($db, $apiintRowSql);
+        if ($result === false) {
+            throw new RuntimeException('the account row could not be read: ' . $db->error);
+        }
+        $row = $result->fetch_assoc();
+        if (!is_array($row)) {
+            throw new RuntimeException('the account row was not found');
+        }
+        return $apiintShown($form, $row);
+    };
+    $reloadTo = '202-account/api-integrations.php#' . $anchor;
+
+    return p202_account_require_shown($db, (int) $_SESSION['user_id'], $form, $readShown, $reloadTo);
+};
+// The Shopify webhook secret's version, from the sealed store, read without opening it.
+$apiintShownShopify = static fn (): array => ['version' => (new \Prosper202\Security\IntegrationSecretStore(
+    new \Prosper202\Database\Connection($db)
+))->version((int) $_SESSION['user_id'], ShopifyWebhookSecret::NAME)];
+// The postback authentication mode, from its own store.
+$apiintShownPostbackMode = static fn (): array => ['mode' => (new \Prosper202\Conversion\PostbackAuth\PostbackAuthStore(
+    new \Prosper202\Database\Connection($db)
+))->mode((int) $_SESSION['user_id'])->value];
+
 // The retired GET address for removing a DNI network: never a write.
 if (isset($_GET['delete_dni_network']) && !empty($_GET['delete_dni_network'])) {
 	p202_account_flash('warn', 'Removing a network now asks first. Use remove beside the network below.');
@@ -276,6 +322,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			p202_account_flash('bad', 'Choose how long the old one keeps working: not at all, a day, a week or 30 days.');
 			p202_account_redirect('202-account/api-integrations.php#postback-auth');
 		}
+        if ($pbAction === 'mode') {
+            p202_account_require_shown(
+                $db,
+                $pbUser,
+                'postback_auth_mode',
+                $apiintShownPostbackMode,
+                '202-account/api-integrations.php#postback-auth'
+            );
+        }
 		try {
 			$pbSaved = null;
 			if ($pbAction === 'rotate' && $pbCredential !== null && is_string($pbGrace)) {
@@ -325,7 +380,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 		$config = ['post_key' => $keyField, 'field_name' => $keyField, 'error_key' => $keyError,
 			'error_message' => $keyEmpty, 'slack_event' => $keyField . '_updated'];
-		$keyOutcome = processApiKeyUpdate($config, $error, $keyChanged, $user_row, $slack, $username, $db);
+        // The saved key as read under the settings lock, which the save compares with and keeps.
+        $keyRow = array_merge($user_row, $apiintRequireShown($keyField, $keyAnchor));
+        $keyOutcome = processApiKeyUpdate($config, $error, $keyChanged, $keyRow, $slack, $username, $db);
 		if ($keyOutcome !== null && $keyOutcome !== 'kept') {
 			Analytics::event('integration_configured', ['via' => 'ui', 'integration' => $keyAnchor], 'analytics');
 		}
@@ -340,7 +397,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	// (JVZooKey), so a key saved here is one a notification verifies with.
 	if (isset($_POST['change_jvzoo_secret_key']) && $_POST['change_jvzoo_secret_key'] == '1') {
 		$jvzooPosted = is_string($_POST['jvzoo_ipn_secret_key'] ?? null) ? $_POST['jvzoo_ipn_secret_key'] : '';
-		$jvzooOld = (string) ($user_row[JVZooKey::COLUMN] ?? '');
+        $jvzooOld = (string) ($apiintRequireShown('jvzoo_key', 'jvzoo')[JVZooKey::COLUMN] ?? '');
 		$jvzooKey = null;
 		$jvzooKept = false;
 		try {
@@ -411,6 +468,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			p202_account_flash('bad', 'Choose affiliate or vendor for the 1.9.56 JVZIPN URL.');
 			p202_account_redirect('202-account/api-integrations.php#jvzoo');
 		}
+        $apiintRequireShown('jvzoo_roleless_role', 'jvzoo');
 		try {
 			updateUserPreference(JVZooRole::ROLELESS_COLUMN, $jvzooRolelessRole->value, $_SESSION['user_id'], $db);
 		} catch (RuntimeException $e) {
@@ -424,26 +482,59 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 
 	// Shopify's webhook secret, held to the rule its endpoint reads it by
-	// (ShopifyWebhookSecret), so a secret saved here is one a webhook verifies with.
+	// (ShopifyWebhookSecret), so a secret saved here is one a webhook verifies
+	// with, and kept sealed in the integration secrets store. Replacing it can
+	// keep the old one verifying for a week, while the store moves over.
 	if (isset($_POST['change_shopify_webhook_secret']) && $_POST['change_shopify_webhook_secret'] == '1') {
-		$shopifyPosted = $_POST[ShopifyWebhookSecret::COLUMN] ?? '';
-		$shopifyOld = (string) ($user_row[ShopifyWebhookSecret::COLUMN] ?? '');
+		p202_account_require_shown(
+			$db,
+			(int) $_SESSION['user_id'],
+			'shopify',
+			$apiintShownShopify,
+			'202-account/api-integrations.php#shopify'
+		);
+		$shopifyPosted = $_POST[ShopifyWebhookSecret::NAME] ?? '';
+		$shopifyKeepOld = $_POST['shopify_keep_old'] ?? null;
+		$shopifyOld = '';
+		$shopifyOldUnopened = false;
 		$shopifySecret = null;
 		$shopifyKept = false;
+		$shopifyRotated = false;
 		try {
 			if (!is_string($shopifyPosted)) {
 				throw new InvalidArgumentException('The secret arrived as a list; paste it as one value.');
+			}
+			if ($shopifyKeepOld !== null && $shopifyKeepOld !== '1') {
+				throw new InvalidArgumentException('"Keep the old secret verifying" arrived as something other than on or off; save again.');
+			}
+			$shopifyStore = new \Prosper202\Security\IntegrationSecretStore(new \Prosper202\Database\Connection($db));
+			try {
+				$shopifyOld = $shopifyStore->open((int) $_SESSION['user_id'], ShopifyWebhookSecret::NAME, time())?->current ?? '';
+			} catch (\Prosper202\Security\UnreadableSecret $shopifyUnopened) {
+				// Replaced like one that cannot be used; the reason goes to the log.
+				error_log('api-integrations.php: ' . $shopifyUnopened->getMessage());
+				$shopifyOldUnopened = true;
 			}
 			$shopifySecret = ShopifyWebhookSecret::parse($shopifyPosted);
 			if ($shopifySecret === '' && ShopifyWebhookSecret::stored($shopifyOld) !== null) {
 				// The saved secret is never shown, so an empty field keeps it.
 				$shopifyKept = true;
 			} elseif ($shopifySecret === '') {
-				$shopifyUnusable = ShopifyWebhookSecret::unreadable($shopifyOld) ? 'The saved secret cannot be used. ' : '';
+				$shopifyUnusable = $shopifyOldUnopened || ShopifyWebhookSecret::unreadable($shopifyOld) ? 'The saved secret cannot be used. ' : '';
 				throw new InvalidArgumentException($shopifyUnusable . 'Paste the secret your Shopify webhooks are signed'
 					. ' with: Shopify shows it under Settings › Notifications › Webhooks.');
-			} elseif ($shopifySecret !== $shopifyOld) {
-				updateUserPreference(ShopifyWebhookSecret::COLUMN, $shopifySecret, $_SESSION['user_id'], $db);
+			} elseif ($shopifyOldUnopened || $shopifySecret !== $shopifyOld) {
+				$shopifyStore->put(
+					(int) $_SESSION['user_id'],
+					ShopifyWebhookSecret::NAME,
+					$shopifySecret,
+					$shopifyKeepOld === '1' && ShopifyWebhookSecret::stored($shopifyOld) !== null ? ShopifyWebhookSecret::OVERLAP_SECONDS : 0,
+					(int) $_SESSION['user_id'],
+					'page',
+					time()
+				);
+				// Told from what is stored now, never from the value.
+				$shopifyRotated = ($shopifyStore->marker((int) $_SESSION['user_id'], ShopifyWebhookSecret::NAME, time())['previous_expires_at'] ?? null) !== null;
 			}
 		} catch (InvalidArgumentException $shopifyRefused) {
 			$error['shopify_webhook_secret_error'] = $shopifyRefused->getMessage();
@@ -460,7 +551,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 		if ($shopifySecret !== null) {
 			sendSlackNotification($slack, 'shopify_webhook_secret_updated', $username, $shopifyOld, $shopifySecret);
-			p202_account_flash('ok', 'Your Shopify webhook secret was saved.');
+			p202_account_flash('ok', $shopifyRotated
+				? 'Your Shopify webhook secret was saved. The old one keeps verifying webhooks for '
+					. (ShopifyWebhookSecret::OVERLAP_SECONDS / 86400) . ' days, while your store moves to the new one.'
+				: 'Your Shopify webhook secret was saved.');
 			p202_account_redirect('202-account/api-integrations.php#shopify');
 		}
 	}
@@ -469,7 +563,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	// and removed one at a time, and never shown back (PayKickstartKeys).
 	$pkAction = $_POST['paykickstart_key_action'] ?? null;
 	if ($pkAction === 'add' || $pkAction === 'remove') {
-		$pkColumn = $user_row[PayKickstartKeys::COLUMN] ?? null;
+        // The list read under the settings lock: a key added by another save since this request began is kept.
+        $pkColumn = $apiintRequireShown('paykickstart', 'paykickstart')[PayKickstartKeys::COLUMN] ?? null;
 		$pkOld = PayKickstartKeys::stored(is_string($pkColumn) ? $pkColumn : null)['keys'];
 		$pkErrorKey = $pkAction === 'add' ? 'paykickstart' : 'paykickstart_remove';
 		$pkPosted = static fn (string $name): string => is_string($_POST[$name] ?? null) ? $_POST[$name] : '';
@@ -545,8 +640,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				}
 
 				// The webhook secret is generated where it is used and
-				// transported to the SaaS exactly once, in pair/complete.
-				$lpo_created = $lpo_webhooks->create($lpo_user_id, $lpo_hook_url, ['*']);
+				// transported to the SaaS exactly once, in pair/complete. It
+				// keeps the hex form the SaaS has always been handed (not a
+				// whsec_ secret), and is not rotated in LTV Settings.
+				$lpo_created = $lpo_webhooks->create($lpo_user_id, $lpo_hook_url, ['*'], false);
 				try {
 					$lpo_client->pairComplete($lpo_api_key, $lpo_install_hash, $lpo_created['webhookId'], $lpo_created['secret']);
 				} catch (Throwable $lpo_complete_error) {
@@ -635,7 +732,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	// p202-edge-sync §8). Storage only; rtr.php honors it at mint time.
 	if (isset($_POST['lpo_ctx_kw_save']) && $_POST['lpo_ctx_kw_save'] == '1' && array_key_exists('lpo_ctx_kw', $user_row)) {
 		$lpo_ctx_kw_new = !empty($_POST['lpo_ctx_kw']) ? '1' : '0';
-		if ($lpo_ctx_kw_new !== (string) ($user_row['lpo_ctx_kw'] ?? '1')) {
+        $lpo_ctx_kw_old = (string) ($apiintRequireShown('lpo_ctx_kw', 'lpo')['lpo_ctx_kw'] ?? '1');
+        if ($lpo_ctx_kw_new !== $lpo_ctx_kw_old) {
 			try {
 				updateUserPreference('lpo_ctx_kw', $lpo_ctx_kw_new, $_SESSION['user_id'], $db);
 			} catch (RuntimeException $e) {
@@ -680,6 +778,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$dniApiKey = (string)($_POST['dni_network_api_key'] ?? '');
 		$dniRequired = array_merge(['dni_network', 'dni_network_type', 'dni_network_name', 'dni_network_affiliate_id'], $dniEditing ? [] : ['dni_network_api_key']);
 		$dniMissing = array_filter($dniRequired, static fn (string $field): bool => trim((string)($_POST[$field] ?? '')) === '');
+        if ($dniEditing && $dniEditId !== null) {
+            // A network that is not the account's is answered "not found" below: no page of it was shown.
+            try {
+                $dniOwned = \Prosper202\Setup\DniNetworks::oneFor($db, (int) $_SESSION['user_id'], $dniEditId) !== null;
+            } catch (Throwable) {
+                $dniOwned = true;
+            }
+            if ($dniOwned) {
+                p202_account_require_shown($db, (int) $_SESSION['user_id'], 'dni_network', static fn (): array => [
+                    'network' => \Prosper202\Setup\DniNetworks::oneFor($db, (int) $_SESSION['user_id'], $dniEditId),
+                ], '202-account/api-integrations.php?edit_dni_network=' . $dniEditId . '#dni');
+            }
+        }
 		if ($dniMissing) {
 			$error['dni_network'] = 'Make sure all fields are selected and filled out!';
 		} elseif ($dniEditing && $dniEditId === null) {
@@ -1009,6 +1120,7 @@ template_top('API Integrations');
 						data-p202-confirm="<?php echo $e('Change what your postbacks and pixels must carry? Under Token or signature and Signed postbacks only, anything your networks call that does not carry what the mode asks will be refused from now on, and nothing recorded; Not required refuses nothing.'
 							. ($pbOff && $pbWithout > 0 ? ' In the last 7 days ' . number_format($pbWithout) . ' came without your token.' : '')); ?>">
 						<?php echo p202_account_token_field(); ?>
+                        <?php echo p202_account_shown_field('postback_auth_mode', $apiintShownPostbackMode()); ?>
 						<input type="hidden" name="postback_auth_action" value="mode">
 						<fieldset>
 							<legend class="form-label">Postbacks and pixels must carry</legend>
@@ -1121,6 +1233,7 @@ template_top('API Integrations');
 						<input type="hidden" name="dni_network_type" id="dni_network_type" value="<?php echo $e($dniType); ?>">
 						<input type="hidden" name="dni_network_name" id="dni_network_name" value="<?php echo $e($_POST['dni_network_name'] ?? ($edit_dni_row['name'] ?? '')); ?>">
 						<?php if ($editing_dni_network) { ?>
+                            <?php echo p202_account_shown_field('dni_network', ['network' => $edit_dni_row]); ?>
 							<input type="hidden" name="editing_dni_network" value="1">
 							<input type="hidden" name="editing_dni_network_id" value="<?php echo $e($edit_dni_row['id'] ?? ''); ?>">
 						<?php } ?>
@@ -1239,6 +1352,12 @@ template_top('API Integrations');
 								<form method="post" action="<?php echo $e($self . '#lpo'); ?>">
 									<?php echo p202_account_token_field(); ?>
 									<input type="hidden" name="lpo_ctx_kw_save" value="1">
+                                    <?php
+                                    echo p202_account_shown_field(
+                                        'lpo_ctx_kw',
+                                        $apiintShown('lpo_ctx_kw', $user_row)
+                                    );
+                                    ?>
 									<div class="form-check mb-2">
 										<input class="form-check-input" type="checkbox" name="lpo_ctx_kw" value="1" id="lpo_ctx_kw"<?php if ((string) ($user_row['lpo_ctx_kw'] ?? '1') !== '0') echo ' checked'; ?>>
 										<label class="form-check-label" for="lpo_ctx_kw">Include keyword text in optimizer context tokens</label>
@@ -1324,6 +1443,12 @@ template_top('API Integrations');
 								<form method="post" action="<?php echo $e($self . '#' . $anchor); ?>">
 									<input type="hidden" name="<?php echo $e($integration['flag']); ?>" value="1">
 									<?php echo p202_account_token_field(); ?>
+                                    <?php
+                                    echo p202_account_shown_field(
+                                        $integration['field'],
+                                        $apiintShown($integration['field'], $user_row)
+                                    );
+                                    ?>
 									<label class="form-label" for="<?php echo $e($integration['field']); ?>"><?php echo $e(($saved ? 'New ' : '') . $integration['label']); ?></label>
 									<div class="input-group">
 										<?php // Never filled in, so no secret reaches the page. ?>
@@ -1374,7 +1499,11 @@ template_top('API Integrations');
 					?? JVZooRole::AFFILIATE;
 				$jvzooTraffic = $paymentCards['jvzoo'];
 				echo p202_jvzoo_roleless_notice($jvzooTraffic, $jvzooRoleless, $self . '#jvzoo',
-					p202_account_token_field()); ?>
+                    p202_account_token_field()
+                    . p202_account_shown_field(
+                        'jvzoo_roleless_role',
+                        $apiintShown('jvzoo_roleless_role', $user_row)
+                    )); ?>
 				<p class="mb-1"><strong>Promoting a JVZoo product as an affiliate</strong></p>
 				<ol class="ps-3">
 					<li>Make the campaign’s offer URL your JVZoo affiliate link with
@@ -1408,6 +1537,7 @@ template_top('API Integrations');
 						<form method="post" action="<?php echo $e($self . '#jvzoo'); ?>">
 							<input type="hidden" name="change_jvzoo_secret_key" value="1">
 							<?php echo p202_account_token_field(); ?>
+                            <?php echo p202_account_shown_field('jvzoo_key', $apiintShown('jvzoo_key', $user_row)); ?>
 							<label class="form-label" for="jvzoo_ipn_secret_key"><?php
 								echo $jvzooConnected ? 'New JVZIPN secret key' : 'JVZIPN secret key'; ?></label>
 							<div class="input-group">
@@ -1433,6 +1563,12 @@ template_top('API Integrations');
 				<form method="post" action="<?php echo $e($self . '#jvzoo'); ?>" data-jvzoo-roleless>
 					<input type="hidden" name="change_jvzoo_roleless_role" value="1">
 					<?php echo p202_account_token_field(); ?>
+                    <?php
+                    echo p202_account_shown_field(
+                        'jvzoo_roleless_role',
+                        $apiintShown('jvzoo_roleless_role', $user_row)
+                    );
+                    ?>
 					<fieldset>
 						<legend class="form-label fs-6 fw-semibold">How should the 1.9.56 JVZIPN URL (no
 							<code>?role=</code>) read your notifications?</legend>
@@ -1510,6 +1646,12 @@ template_top('API Integrations');
 									action="<?php echo $e($self . '#paykickstart'); ?>" class="d-inline"
 									data-p202-confirm="Remove this key? PayKickstart IPNs signed with it are refused until it is stored again.">
 									<?php echo p202_account_token_field(); ?>
+                                    <?php
+                                    echo p202_account_shown_field(
+                                        'paykickstart',
+                                        $apiintShown('paykickstart', $user_row)
+                                    );
+                                    ?>
 									<input type="hidden" name="paykickstart_key_action" value="remove">
 									<input type="hidden" name="paykickstart_key_place" value="<?php echo (int) $pkPlace + 1; ?>">
 									<input type="hidden" name="paykickstart_key_token"
@@ -1527,6 +1669,12 @@ template_top('API Integrations');
 						<form method="post" action="<?php echo $e($self . '#paykickstart'); ?>">
 							<input type="hidden" name="paykickstart_key_action" value="add">
 							<?php echo p202_account_token_field(); ?>
+                            <?php
+                            echo p202_account_shown_field(
+                                'paykickstart',
+                                $apiintShown('paykickstart', $user_row)
+                            );
+                            ?>
 							<label class="form-label" for="paykickstart_ipn_secret_key">IPN secret key</label>
 							<div class="input-group">
 								<input type="text"
@@ -1548,11 +1696,22 @@ template_top('API Integrations');
 	</div>
 
 	<?php
-	$shopifyColumn = $user_row[ShopifyWebhookSecret::COLUMN] ?? null;
-	$shopifyColumn = is_string($shopifyColumn) ? $shopifyColumn : null;
+	// The secret from the sealed store, opened here only for the hint below; one that cannot be opened is said so.
+	$shopifyColumn = null;
+	$shopifyOverlapEnds = null;
+	$shopifyUnopenable = false;
+	try {
+		$shopifyStore = new \Prosper202\Security\IntegrationSecretStore(new \Prosper202\Database\Connection($db));
+		$shopifyColumn = $shopifyStore->open((int) $_SESSION['user_id'], ShopifyWebhookSecret::NAME, time())?->current;
+		$shopifyOverlapEnds = $shopifyStore->marker((int) $_SESSION['user_id'], ShopifyWebhookSecret::NAME, time())['previous_expires_at'] ?? null;
+	} catch (\Throwable $shopifyUnopened) {
+		// A secret stored and not opened, or the store not read: never shown as none.
+		error_log(p202UncaughtLogLine('API integrations: the Shopify webhook secret could not be read', $shopifyUnopened));
+		$shopifyUnopenable = true;
+	}
 	$shopifyConnected = SavedSecret::isSaved($shopifyColumn) && !ShopifyWebhookSecret::unreadable($shopifyColumn);
 	$shopifyErrors = isset($error['shopify_webhook_secret_error'])
-		? [ShopifyWebhookSecret::COLUMN => (string) $error['shopify_webhook_secret_error']] : [];
+		? [ShopifyWebhookSecret::NAME => (string) $error['shopify_webhook_secret_error']] : [];
 	// Whether webhooks are arriving, and the refunds left to settle; unread, the card says so.
 	$shopifyStatus = null;
 	$shopifyRefunds = null;
@@ -1580,7 +1739,7 @@ template_top('API Integrations');
 					<span class="p202-pill p202-pill--warn">No webhook yet</span>
 				<?php } elseif ($shopifyConnected) { ?>
 					<span class="p202-pill p202-pill--good">Secret saved</span>
-				<?php } elseif (ShopifyWebhookSecret::unreadable($shopifyColumn)) { ?>
+				<?php } elseif ($shopifyUnopenable || ShopifyWebhookSecret::unreadable($shopifyColumn)) { ?>
 					<span class="p202-pill p202-pill--warn">Secret unreadable</span>
 				<?php } else { ?>
 					<span class="p202-pill">Not connected</span>
@@ -1652,7 +1811,11 @@ template_top('API Integrations');
 				<p>A webhook already sent to your postback URL (<code>tracking202/static/gpb.php</code>) is handled
 					the same way. Each order counts once, under its order id, whichever webhook arrives first.</p>
 				<p class="mb-3"><span class="text-secondary">Webhook secret:</span>
-					<span data-saved-secret><?php echo $e(SavedSecret::hint($shopifyColumn)); ?></span></p>
+					<span data-saved-secret><?php echo $e($shopifyUnopenable
+						? 'Could not be read (the server\'s error log says why); saving it again replaces it'
+						: SavedSecret::hint($shopifyColumn)); ?></span><?php if ($shopifyOverlapEnds !== null) { ?>
+					<br><span class="text-secondary">The secret it replaced keeps verifying until
+						<?php echo $e(gmdate('Y-m-d H:i', $shopifyOverlapEnds)); ?> UTC.</span><?php } ?></p>
 				<details class="p202-disclosure"<?php echo $shopifyErrors ? ' open' : ''; ?>>
 					<summary><?php echo $shopifyConnected ? 'Update' : 'Connect'; ?>
 						<span class="p202-disclosure__hint">your webhook secret</span></summary>
@@ -1660,19 +1823,27 @@ template_top('API Integrations');
 						<form method="post" action="<?php echo $e($self . '#shopify'); ?>">
 							<input type="hidden" name="change_shopify_webhook_secret" value="1">
 							<?php echo p202_account_token_field(); ?>
+                            <?php echo p202_account_shown_field('shopify', $apiintShownShopify()); ?>
 							<label class="form-label" for="shopify_webhook_secret"><?php
 								echo $shopifyConnected ? 'New webhook secret' : 'Webhook secret'; ?></label>
 							<div class="input-group">
 								<?php // Never filled in, so no secret reaches the page. ?>
 								<input type="text"
 									class="form-control<?php
-										echo p202_account_invalid($shopifyErrors, ShopifyWebhookSecret::COLUMN); ?>"
+										echo p202_account_invalid($shopifyErrors, ShopifyWebhookSecret::NAME); ?>"
 									id="shopify_webhook_secret" name="shopify_webhook_secret"<?php echo $shopifyConnected
 										? ' placeholder="Leave empty to keep the saved one"' : ' required'; ?>
 									autocomplete="off" spellcheck="false" value="">
 								<button class="btn btn-secondary" type="submit">Save</button>
 							</div>
-							<?php echo p202_account_field_error($shopifyErrors, ShopifyWebhookSecret::COLUMN); ?>
+							<?php echo p202_account_field_error($shopifyErrors, ShopifyWebhookSecret::NAME); ?>
+							<?php if ($shopifyConnected) { ?>
+								<div class="form-check mt-2">
+									<input class="form-check-input" type="checkbox" name="shopify_keep_old" value="1" id="shopify_keep_old">
+									<label class="form-check-label" for="shopify_keep_old">Keep the old secret verifying for
+										<?php echo ShopifyWebhookSecret::OVERLAP_SECONDS / 86400; ?> days</label>
+								</div>
+							<?php } ?>
 						</form>
 					</div>
 				</details>

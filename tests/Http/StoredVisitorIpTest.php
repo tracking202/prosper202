@@ -37,9 +37,15 @@ final class StoredVisitorIpTest extends TestCase
     public function testPrivacyMasksTheVisitorsAddress(): void
     {
         $server = ['HTTP_X_FORWARDED_FOR' => '198.51.100.7', 'REMOTE_ADDR' => '10.0.0.1'];
-        self::assertSame('198.51.100.7', StoredVisitorIp::fromServer($server, false));
-        self::assertSame('198.51.100.0', StoredVisitorIp::fromServer($server, true));
-        self::assertSame('', StoredVisitorIp::fromServer([], true));
+        putenv('P202_TRUSTED_PROXIES=10.0.0.1');
+        try {
+            self::assertSame('198.51.100.7', StoredVisitorIp::fromServer($server, false));
+            self::assertSame('198.51.100.0', StoredVisitorIp::fromServer($server, true));
+            self::assertSame('', StoredVisitorIp::fromServer([], true));
+        } finally {
+            putenv('P202_TRUSTED_PROXIES');
+        }
+        self::assertSame('10.0.0.1', StoredVisitorIp::fromServer($server, false), 'no proxy listed: the peer');
     }
 
     public function testTheAddressGlobalsMaskIsTheSameMask(): void

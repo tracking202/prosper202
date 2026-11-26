@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Prosper202\Attribution;
 
+use Prosper202\Http\EgressProxy;
+use Prosper202\Webhooks\StandardWebhook;
+
 /**
  * Sends one export to its webhook, safely (plan §6.3 "Exports", §7.1), one
  * LTV webhook delivery (Ltv\DeliverySender) and one Slack notice
@@ -12,21 +15,27 @@ namespace Prosper202\Attribution;
  * The URL is checked again here, at send time, by WebhookGuard — which
  * resolves the host and checks every address — and the connection is then
  * made to the address the guard approved, with the host pinned through
- * CURLOPT_RESOLVE, so a DNS answer that changes after the check cannot
- * move the request. TLS is verified against the host name, as a browser
- * would. Nothing else is left to the environment either: no proxy (an
- * inherited https_proxy would resolve the name itself and undo the pin),
+ * CURLOPT_RESOLVE, or tunnelled to it through the operator's egress proxy
+ * (Http\EgressProxy::routeOptions()), so a DNS answer that changes after
+ * the check cannot move the request. TLS is verified against the host
+ * name, as a browser would. Nothing else is left to the environment either:
+ * no proxy but that one (an inherited https_proxy would resolve the name
+ * itself and undo the pin),
  * https only, redirects never followed, a connect and a total timeout, a
  * cap on the body sent and on the response read.
  *
  * After the transfer, the address curl actually connected to is compared
- * with the pinned one; a difference is reported as a failure, because it
- * would mean the pin did not hold.
+ * with the pinned one (the proxy's, through a proxy written as an address);
+ * a difference is reported as a failure, because it would mean the pin did
+ * not hold.
  *
- * The body is the export's CSV, signed: `X-P202-Signature: sha256=<hex>`,
- * the HMAC-SHA256 of "<X-P202-Timestamp>.<body>" under the export's secret.
- * A receiver recomputes it and refuses a timestamp more than a few minutes
- * old, which stops a captured request being replayed.
+ * The body is the export's CSV, signed the Standard Webhooks way
+ * (StandardWebhook::headers(): webhook-id, webhook-timestamp,
+ * webhook-signature), which a receiver checks with a library and which
+ * refuses a timestamp more than a few minutes old, so a captured request
+ * cannot be replayed; and, through StandardWebhook::LEGACY_SIGNATURE_LAST_RELEASE,
+ * as before 1.9.81: `X-P202-Signature: sha256=<hex>`, the HMAC-SHA256 of
+ * "<X-P202-Timestamp>.<body>" under the export's secret.
  *
  * @phpstan-type Posted array{
  *     refused: string|null, retryable: bool, strayed: string|null, pinned: string, status: int,
@@ -71,6 +80,17 @@ final class WebhookSender
     }
 
     /**
+     * An export's webhook-id: the same on every attempt at one job, and
+     * another job's (on this install or another) never, since it is derived
+     * under the job's own secret.
+     */
+    public static function exportMessageId(string $secret, int $exportId): string
+    {
+        return 'msg_export_' . $exportId . '_'
+            . substr(hash_hmac('sha256', 'p202-export-message:' . $exportId, $secret), 0, 24);
+    }
+
+    /**
      * Deliver the body. Never throws for a delivery failure: the result says
      * what happened, and whether trying again could change it.
      */
@@ -82,6 +102,15 @@ final class WebhookSender
         }
 
         $timestamp ??= time();
+        try {
+            $standard = StandardWebhook::headers([$secret], self::exportMessageId($secret, $exportId), $timestamp, $body);
+        } catch (\InvalidArgumentException $e) {
+            // A secret no receiver's library could check against (a whsec_
+            // secret that is not base64) is not sent with a signature that
+            // cannot match; trying again cannot change it.
+            return WebhookResult::failed(null, 'Not sent: the export\'s webhook secret cannot sign: '
+                . $e->getMessage() . '.', false);
+        }
         $headers = [
             'Content-Type: text/csv; charset=utf-8',
             'User-Agent: Prosper202-Webhook/1',
@@ -90,13 +119,17 @@ final class WebhookSender
             'X-P202-Delivery-Attempt: ' . $attempt,
             'X-P202-Timestamp: ' . $timestamp,
             'X-P202-Signature: ' . self::signature($secret, $timestamp, $body),
+            ...$standard,
             // No "Expect: 100-continue" round trip.
             'Expect:',
         ];
 
         $response = $this->post($url, $body, $headers);
         if ($response['refused'] !== null) {
-            return WebhookResult::failed(null, 'Not sent: ' . $response['refused'], false);
+            // A host that did not resolve this time, or an allowlist or egress
+            // proxy that does not parse, may be fine on a later run; a refused
+            // address is not.
+            return WebhookResult::failed(null, 'Not sent: ' . $response['refused'], $response['retryable']);
         }
         $status = $response['status'];
 
@@ -134,7 +167,7 @@ final class WebhookSender
      * export through send(), an LTV delivery through Ltv\DeliverySender, a
      * Slack notice through Notifications\SlackWebhook):
      * WebhookGuard::check() at the moment of sending, the request made with
-     * curlOptions() (pinned, no proxy, https only, no redirects, TLS
+     * curlOptions() (pinned, through no proxy but the egress proxy, https only, no redirects, TLS
      * verified, timed out), at most MAX_BODY_BYTES sent and
      * MAX_RESPONSE_BYTES read, and the address curl connected to compared
      * with the pin. What the receiver's answer means is the caller's.
@@ -144,7 +177,8 @@ final class WebhookSender
      *
      * @param list<string> $headers
      * @param list<int> $ports the ports the URL may name (WebhookGuard::check()), any when empty
-     * @param int $timeout seconds the transfer may take, at most TIMEOUT (a Slack notice's is shorter)
+     * @param int $timeout seconds the request may take, the host's lookup included, at most TIMEOUT
+     *        (a Slack notice's is shorter)
      * @return Posted
      */
     public function post(
@@ -188,17 +222,29 @@ final class WebhookSender
             return ['refused' => 'the body is ' . strlen($body) . ' bytes, more than the ' . self::MAX_BODY_BYTES
                 . ' a webhook carries'] + $none;
         }
+        $timeout = max(1, min(self::TIMEOUT, $timeout));
+        $deadline = microtime(true) + $timeout;
         try {
             $this->guard ??= new WebhookGuard();
-            $target = $this->guard->check($url, $ports);
+            $target = $this->guard->check($url, $ports, $deadline);
+            $proxy = EgressProxy::configured();
         } catch (WebhookRefused | \UnexpectedValueException $e) {
-            // A host that does not resolve now, or the operator's unparseable allowlist, may be fine on a later try.
+            // A host that does not resolve now, or the operator's unparseable allowlist or proxy, may be fine on a later try.
             $retryable = $e instanceof WebhookUnresolved || $e instanceof \UnexpectedValueException;
 
             return ['refused' => $e->getMessage(), 'retryable' => $retryable] + $none;
         }
 
-        $options = self::curlOptions($target, $body ?? '', $headers, $timeout);
+        $remaining = $deadline - microtime(true);
+        if ($remaining < 0.001) {
+            return ['refused' => 'looking up ' . $target->host . ' took all of the ' . $timeout
+                . ' seconds the request may take', 'retryable' => true] + $none;
+        }
+        $left = (int) ceil($remaining);
+        $options = self::curlOptions($target, $body ?? '', $headers, $left, $proxy);
+        // The lookup came out of $timeout. curl keeps whichever of
+        // CURLOPT_TIMEOUT and CURLOPT_TIMEOUT_MS is set last: this one, to the millisecond.
+        $options[CURLOPT_TIMEOUT_MS] = max(1, (int) floor($remaining * 1000));
         if ($body === null) {
             unset($options[CURLOPT_POST], $options[CURLOPT_POSTFIELDS]);
             $options[CURLOPT_HTTPGET] = true;
@@ -207,14 +253,15 @@ final class WebhookSender
             ? self::curlTransport($options, $keep, $keep)
             : ($this->transport)($options);
         $connected = $answer['primary_ip'];
+        $peer = EgressProxy::expectedPeer($target, $proxy);
 
         return [
             'refused' => null,
             'retryable' => false,
-            'strayed' => $connected !== null && $connected !== '' && !self::sameAddress($connected, $target->pinned())
+            'strayed' => $peer !== null && $connected !== null && $connected !== '' && !self::sameAddress($connected, $peer)
                 ? $connected
                 : null,
-            'pinned' => $target->pinned(),
+            'pinned' => $peer ?? $target->pinned(),
             'status' => $answer['status'],
             'error' => $answer['error'],
             'location' => $answer['location'],
@@ -229,13 +276,15 @@ final class WebhookSender
      *
      * @param list<string> $headers
      * @param int $timeout seconds the transfer may take; it can only shorten TIMEOUT and CONNECT_TIMEOUT
+     * @param EgressProxy|null $proxy the operator's egress proxy (EgressProxy::configured()), null to go direct
      * @return array<int, mixed>
      */
     public static function curlOptions(
         WebhookTarget $target,
         string $body,
         array $headers,
-        int $timeout = self::TIMEOUT
+        int $timeout = self::TIMEOUT,
+        ?EgressProxy $proxy = null
     ): array {
         $options = [
             CURLOPT_URL => $target->url,
@@ -246,20 +295,14 @@ final class WebhookSender
             CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_MAXREDIRS => 0,
-            CURLOPT_PROXY => '',
-            CURLOPT_NOPROXY => '*',
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_CONNECTTIMEOUT => max(1, min(self::CONNECT_TIMEOUT, $timeout)),
             CURLOPT_TIMEOUT => max(1, min(self::TIMEOUT, $timeout)),
             CURLOPT_NOSIGNAL => true,
         ];
-        $resolve = $target->resolveEntry();
-        if ($resolve !== null) {
-            $options[CURLOPT_RESOLVE] = [$resolve];
-        }
 
-        return $options;
+        return array_replace($options, EgressProxy::routeOptions($target, $proxy));
     }
 
     /**
@@ -304,11 +347,12 @@ final class WebhookSender
 
             return strlen($line);
         };
-        if (!curl_setopt_array($ch, $options)) {
-            $error = curl_error($ch);
+        try {
+            \Prosper202\Http\CurlOptions::set($ch, $options);
+        } catch (\Prosper202\Http\CurlOptionRefused $e) {
             curl_close($ch);
 
-            return ['status' => 0, 'error' => 'curl refused an option: ' . $error, 'primary_ip' => null, 'location' => null, 'body' => ''];
+            return ['status' => 0, 'error' => $e->getMessage(), 'primary_ip' => null, 'location' => null, 'body' => ''];
         }
         $ok = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);

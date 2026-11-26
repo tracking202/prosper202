@@ -38,7 +38,7 @@ final class WebhookEventNamesTest extends TestCase
         $write = new FakeMysqliConnection();
         $created = $this->repo($write)->create(7, 'https://8.8.8.8/hooks/p202', ['*']);
 
-        self::assertSame(48, strlen($created['secret']), 'secret is 24 random bytes hex-encoded');
+        self::assertMatchesRegularExpression('/^whsec_[A-Za-z0-9+\/]{43}=$/D', $created['secret'], 'a Standard Webhooks secret: whsec_ and 32 random bytes');
         $inserts = $write->statementsContaining('INSERT INTO 202_ltv_webhooks');
         self::assertCount(1, $inserts);
         self::assertSame('isssii', $inserts[0]->boundTypes);

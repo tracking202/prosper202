@@ -15,11 +15,12 @@ use Api\V3\Exception\ValidationException;
  * The filters are the Analyze pages' (tracking202/analyze, through
  * ReportFilterInput and DataEngine's UserPrefFilters), with their meaning:
  *
- *  - the id filters narrow to one row of their table; '' or 0 is "not
- *    filtering", as the pages' menus send it. ppc_network_id also takes
- *    `none`, the clicks with no traffic source (no account, or an account
- *    without one), and the pages' own spelling of it, 16777215 (the
- *    column's maximum, since 0 already meant "all"). As an id that matched
+ *  - the id filters narrow to rows of their table: one id, or several
+ *    separated by commas (`aff_campaign_id=1,4`), matching a click holding
+ *    any of them; '' or 0 is "not filtering", as the pages' menus send it.
+ *    ppc_network_id also takes `none`, the clicks with no traffic source
+ *    (no account, or an account without one), and the pages' own spelling
+ *    of it, 16777215 (the column's maximum, since 0 already meant "all"). As an id that matched
  *    no row, so the API answered nothing where the page showed the clicks;
  *  - device_type is a 202_device_types id, applied as the pages apply their
  *    device menu: to every device model of that type;
@@ -35,7 +36,18 @@ use Api\V3\Exception\ValidationException;
  *  - publisher_id is the user id of a publisher (the id of a
  *    `breakdown=publisher` row): the clicks its publisher links were
  *    credited (202_clicks_publisher), or `none` for the clicks credited to
- *    no publisher.
+ *    no publisher;
+ *  - click_id is one click, or several: every row of each (a re-clicked
+ *    click has a row per visit, and the report counts them as it always
+ *    does).
+ *
+ * Every filter but keyword and referer takes a comma list, up to
+ * MAX_VALUES, and matches a click that any value matches: the union of the
+ * single-value answers. `none` is a value like any other (`ppc_network_id=
+ * none,3`); 0 and `all` mean "no filter" and stand alone. keyword and
+ * referer stay one text each, commas and all, since a keyword may hold one.
+ * An empty value (`1,,4`, `1,`) is refused: a stray comma is a value the
+ * caller lost.
  *
  * The pages' keyword, referer and IP filters are now these very terms
  * (Prosper202\DataEngine\TextFilterSql builds them through this class).
@@ -87,7 +99,7 @@ final class ReportFilter
         'keyword_id'                => ['keyword'],
         'ip_id'                     => ['ip'],
         'click_referer_site_url_id' => ['referer'],
-        'click_id'                  => ['publisher_id'],
+        'click_id'                  => ['publisher_id', 'click_id'],
     ];
 
     /** The window: TimeBound's forms, and its named periods. */
@@ -132,6 +144,9 @@ final class ReportFilter
     /** Longest keyword / referer text accepted. */
     public const MAX_TEXT = 255;
 
+    /** Values one filter takes as a comma list; a longer list is refused, not cut. */
+    public const MAX_VALUES = 100;
+
     private function __construct()
     {
     }
@@ -145,7 +160,7 @@ final class ReportFilter
     {
         return [
             ...array_keys(self::ID_FILTERS),
-            'device_type', 'method_of_promotion', 'show', 'keyword', 'ip', 'referer', 'publisher_id',
+            'device_type', 'method_of_promotion', 'show', 'keyword', 'ip', 'referer', 'publisher_id', 'click_id',
         ];
     }
 
@@ -190,8 +205,9 @@ final class ReportFilter
     }
 
     /**
-     * Refuse a parameter outside $known, naming every one; and refuse a list
-     * (`name[]=x`) for any parameter, since none takes more than one value.
+     * Refuse a parameter outside $known, naming every one; and refuse an
+     * array (`name[]=x`) for any parameter: several values are one value
+     * with commas (`aff_campaign_id=1,4`).
      *
      * @param array<array-key, mixed> $params
      * @param list<string> $known
@@ -207,7 +223,9 @@ final class ReportFilter
         }
         foreach ($params as $name => $value) {
             if (!is_string($value) && !is_int($value)) {
-                throw new ValidationException('Invalid ' . $name, [(string) $name => 'Takes one value, not a list']);
+                throw new ValidationException('Invalid ' . $name, [
+                    (string) $name => 'Takes one value; several are one value with commas (1,4), not name[]',
+                ]);
             }
         }
     }
@@ -310,36 +328,41 @@ final class ReportFilter
         }
 
         foreach (self::ID_FILTERS as $param => $column) {
-            if ($param === 'ppc_network_id' && self::isNoTrafficSource($params[$param] ?? null)) {
-                $where[] = \Prosper202\DataEngine\NoTrafficSource::condition($col($column));
+            $ids = self::ids($params, $param);
+            if ($ids === null) {
                 continue;
             }
-            $id = self::id($params, $param);
-            if ($id !== null) {
-                $where[] = $col($column) . ' = ?';
-                $binds[] = $id;
-                $types .= 'i';
+            $terms = $ids['none'] ? [\Prosper202\DataEngine\NoTrafficSource::condition($col($column))] : [];
+            if ($ids['ids'] !== []) {
+                $terms[] = $col($column) . ' ' . self::oneOf(count($ids['ids']));
+                self::bindAll($binds, $types, $ids['ids'], 'i');
             }
+            $where[] = self::any($terms);
         }
 
-        $deviceType = self::id($params, 'device_type');
-        if ($deviceType !== null) {
-            $where[] = $col('device_id')
-                . ' IN (SELECT dm.device_id FROM 202_device_models dm WHERE dm.device_type = ?)';
-            $binds[] = $deviceType;
-            $types .= 'i';
+        $deviceTypes = self::ids($params, 'device_type');
+        if ($deviceTypes !== null) {
+            $where[] = $col('device_id') . ' IN (SELECT dm.device_id FROM 202_device_models dm WHERE dm.device_type '
+                . self::oneOf(count($deviceTypes['ids'])) . ')';
+            self::bindAll($binds, $types, $deviceTypes['ids'], 'i');
         }
 
-        $method = self::choice($params, 'method_of_promotion', self::METHODS_OF_PROMOTION);
-        if ($method !== null) {
-            [$column, $condition] = self::METHODS_OF_PROMOTION[$method];
-            $where[] = $col($column) . ' ' . $condition;
+        $methods = self::choices($params, 'method_of_promotion', self::METHODS_OF_PROMOTION);
+        if ($methods !== []) {
+            $where[] = self::any(array_map(
+                static fn (string $m): string => $col(self::METHODS_OF_PROMOTION[$m][0])
+                    . ' ' . self::METHODS_OF_PROMOTION[$m][1],
+                $methods
+            ));
         }
 
-        $show = self::choice($params, 'show', self::SHOW);
-        if ($show !== null && self::SHOW[$show] !== null) {
-            [$column, $condition] = self::SHOW[$show];
-            $where[] = $col($column) . ' ' . $condition;
+        $shows = self::choices($params, 'show', self::SHOW);
+        $shows = array_values(array_filter($shows, static fn (string $s): bool => self::SHOW[$s] !== null));
+        if ($shows !== []) {
+            $where[] = self::any(array_map(
+                static fn (string $s): string => $col(self::SHOW[$s][0]) . ' ' . self::SHOW[$s][1],
+                $shows
+            ));
         }
 
         $keyword = self::text($params, 'keyword');
@@ -350,23 +373,27 @@ final class ReportFilter
             $types .= 's';
         }
 
-        $ip = self::ip($params);
-        if ($ip !== null) {
-            if ($ip['v6']) {
+        $ips = self::ips($params);
+        if ($ips !== null) {
+            $terms = [];
+            if ($ips['v4'] !== []) {
+                $terms[] = $col('ip_id') . ' IN (SELECT i.ip_id FROM 202_ips i WHERE i.ip_address '
+                    . self::oneOf(count($ips['v4'])) . ')';
+                self::bindAll($binds, $types, $ips['v4'], 's');
+            }
+            if ($ips['v6'] !== []) {
                 // An IPv6 address is a 202_ips row whose ip_address holds the
                 // id of its 202_ips_v6 row (MysqlLocationRepository::findOrCreateIp).
                 // Only an all-digit ip_address is such a reference: compared
                 // with a number, the text '2.0.1.1' reads as 2 (SELECT
                 // 2 = '2.0.1.1' is 1 on MariaDB 10.11), so it is never left
                 // to the server to decide.
-                $where[] = $col('ip_id') . ' IN (SELECT i.ip_id FROM 202_ips i INNER JOIN 202_ips_v6 i6'
+                $terms[] = $col('ip_id') . ' IN (SELECT i.ip_id FROM 202_ips i INNER JOIN 202_ips_v6 i6'
                     . " ON (i.ip_address REGEXP '^[0-9]+$' AND i6.ip_id = CAST(i.ip_address AS UNSIGNED))"
-                    . ' WHERE i6.ip_address = ?)';
-            } else {
-                $where[] = $col('ip_id') . ' IN (SELECT i.ip_id FROM 202_ips i WHERE i.ip_address = ?)';
+                    . ' WHERE i6.ip_address ' . self::oneOf(count($ips['v6'])) . ')';
+                self::bindAll($binds, $types, $ips['v6'], 's');
             }
-            $binds[] = $ip['value'];
-            $types .= 's';
+            $where[] = self::any($terms);
         }
 
         $referer = self::text($params, 'referer');
@@ -377,67 +404,186 @@ final class ReportFilter
             $types .= 's';
         }
 
-        $credited = \Prosper202\Click\PublisherCredit::CREDITED_CLICKS_SQL;
-        if (($params['publisher_id'] ?? null) === 'none') {
-            $where[] = $col('click_id') . " NOT IN ($credited)";
-        } else {
-            $publisher = self::id($params, 'publisher_id');
-            if ($publisher !== null) {
-                $where[] = $col('click_id') . " IN ($credited WHERE pc.publisher_user_id = ?)";
-                $binds[] = $publisher;
-                $types .= 'i';
+        $publishers = self::ids($params, 'publisher_id');
+        if ($publishers !== null) {
+            $credited = \Prosper202\Click\PublisherCredit::CREDITED_CLICKS_SQL;
+            $terms = $publishers['none'] ? [$col('click_id') . " NOT IN ($credited)"] : [];
+            if ($publishers['ids'] !== []) {
+                $terms[] = $col('click_id') . " IN ($credited WHERE pc.publisher_user_id "
+                    . self::oneOf(count($publishers['ids'])) . ')';
+                self::bindAll($binds, $types, $publishers['ids'], 'i');
             }
+            $where[] = self::any($terms);
+        }
+
+        $clicks = self::clickIds($params);
+        if ($clicks !== null) {
+            $where[] = $col('click_id') . ' ' . self::oneOf(count($clicks));
+            self::bindAll($binds, $types, $clicks, 'i');
         }
     }
 
-    /** `none`, or the pages' 16777215: the clicks with no traffic source. */
-    private static function isNoTrafficSource(mixed $value): bool
+    /** `= ?` for one value, `IN (?, ?)` for several. */
+    private static function oneOf(int $count): string
     {
-        return $value === 'none' || $value === self::NO_TRAFFIC_SOURCE || $value === (int) self::NO_TRAFFIC_SOURCE;
+        return $count === 1 ? '= ?' : 'IN (' . implode(', ', array_fill(0, $count, '?')) . ')';
     }
 
     /**
-     * An id filter's value: null when absent, '' or 0 (not filtering).
+     * Terms that any one of satisfies, as one term.
+     *
+     * @param non-empty-list<string> $terms
+     */
+    private static function any(array $terms): string
+    {
+        return count($terms) === 1 ? $terms[0] : '(' . implode(' OR ', $terms) . ')';
+    }
+
+    /**
+     * @param list<int|string> $binds
+     * @param list<int|string> $values
+     */
+    private static function bindAll(array &$binds, string &$types, array $values, string $type): void
+    {
+        foreach ($values as $value) {
+            $binds[] = $value;
+            $types .= $type;
+        }
+    }
+
+    /**
+     * A filter's values, split at commas; null when absent or ''. An empty
+     * value and a list past MAX_VALUES are refused by name.
      *
      * @param array<string, mixed> $params
+     * @return non-empty-list<string>|null
      */
-    private static function id(array $params, string $name): ?int
-    {
-        $value = $params[$name] ?? null;
-        if ($value === null || $value === '' || $value === 0 || $value === '0') {
-            return null;
-        }
-        if ((!is_string($value) && !is_int($value)) || preg_match('/^[1-9][0-9]{0,17}$/D', (string) $value) !== 1) {
-            $none = match ($name) {
-                'ppc_network_id' => ', or none for the clicks with no traffic source',
-                'publisher_id' => ', or none for the clicks credited to no publisher',
-                default => '',
-            };
-            throw new ValidationException('Invalid ' . $name, [
-                $name => 'A positive whole number (an id), or 0 for no filter' . $none . '; got ' . self::shown($value),
-            ]);
-        }
-
-        return (int) $value;
-    }
-
-    /**
-     * @param array<string, mixed> $params
-     * @param array<string, mixed> $choices
-     */
-    private static function choice(array $params, string $name, array $choices): ?string
+    private static function values(array $params, string $name, string $form): ?array
     {
         $value = $params[$name] ?? null;
         if ($value === null || $value === '') {
             return null;
         }
-        if (!is_string($value) || !array_key_exists($value, $choices)) {
+        if (is_int($value)) {
+            return [(string) $value];
+        }
+        if (!is_string($value)) {
+            throw new ValidationException('Invalid ' . $name, [$name => $form . '; got ' . self::shown($value)]);
+        }
+        $values = explode(',', $value);
+        if (in_array('', $values, true)) {
             throw new ValidationException('Invalid ' . $name, [
-                $name => 'One of: ' . implode(', ', array_keys($choices)) . '; got ' . self::shown($value),
+                $name => 'Values separated by single commas, none of them empty; got ' . self::shown($value),
+            ]);
+        }
+        if (count($values) > self::MAX_VALUES) {
+            throw new ValidationException('Invalid ' . $name, [
+                $name => 'At most ' . self::MAX_VALUES . ' values; got ' . count($values),
             ]);
         }
 
-        return $value;
+        return $values;
+    }
+
+    /**
+     * An id filter's ids, and whether it names "none" (ppc_network_id's
+     * `none` or the pages' 16777215, publisher_id's `none`); null when
+     * absent, '' or 0 (not filtering). 0 in a list is refused: it means no
+     * filter, which cannot be one of several.
+     *
+     * @param array<string, mixed> $params
+     * @return array{ids: list<int>, none: bool}|null
+     */
+    private static function ids(array $params, string $name): ?array
+    {
+        $value = $params[$name] ?? null;
+        if ($value === 0 || $value === '0') {
+            return null;
+        }
+        $noneWord = match ($name) {
+            'ppc_network_id' => ', or none for the clicks with no traffic source',
+            'publisher_id' => ', or none for the clicks credited to no publisher',
+            default => '',
+        };
+        $form = 'A positive whole number (an id), several separated by commas (1,4), or 0 for no filter' . $noneWord;
+        $values = self::values($params, $name, $form);
+        if ($values === null) {
+            return null;
+        }
+        $ids = [];
+        $none = false;
+        foreach ($values as $item) {
+            $sentinel = $name === 'ppc_network_id' && $item === self::NO_TRAFFIC_SOURCE;
+            if ($noneWord !== '' && ($item === 'none' || $sentinel)) {
+                $none = true;
+                continue;
+            }
+            if (preg_match('/^[1-9][0-9]{0,17}$/D', $item) !== 1) {
+                throw new ValidationException('Invalid ' . $name, [
+                    $name => ($item === '0' ? '0 means no filter and cannot be one of several. ' : '')
+                        . $form . '; got ' . self::shown(count($values) > 1 ? $item : $value),
+                ]);
+            }
+            $ids[(int) $item] = (int) $item;
+        }
+
+        return ['ids' => array_values($ids), 'none' => $none];
+    }
+
+    /**
+     * click_id's clicks (Prosper202\Click\ClickId's form); null when absent.
+     *
+     * @param array<string, mixed> $params
+     * @return non-empty-list<int>|null
+     */
+    private static function clickIds(array $params): ?array
+    {
+        $form = 'A click id (a positive whole number), or several separated by commas (1,4)';
+        $values = self::values($params, 'click_id', $form);
+        if ($values === null) {
+            return null;
+        }
+        $ids = [];
+        foreach ($values as $item) {
+            $id = \Prosper202\Click\ClickId::parse($item);
+            if ($id === null) {
+                throw new ValidationException('Invalid click_id', [
+                    'click_id' => $form . '; got ' . self::shown(count($values) > 1 ? $item : $params['click_id']),
+                ]);
+            }
+            $ids[$id] = $id;
+        }
+
+        return array_values($ids);
+    }
+
+    /**
+     * A choice filter's choices, in the order given, each once; [] when
+     * absent or ''. A choice that means "every click" (show's `all`) stands
+     * alone, since beside another it would only read as narrowing.
+     *
+     * @param array<string, mixed> $params
+     * @param array<string, mixed> $choices
+     * @return list<string>
+     */
+    private static function choices(array $params, string $name, array $choices): array
+    {
+        $form = 'One of: ' . implode(', ', array_keys($choices)) . ', or several separated by commas';
+        $values = self::values($params, $name, $form) ?? [];
+        foreach ($values as $item) {
+            if (!array_key_exists($item, $choices)) {
+                throw new ValidationException('Invalid ' . $name, [
+                    $name => $form . '; got ' . self::shown(count($values) > 1 ? $item : $params[$name]),
+                ]);
+            }
+            if ($choices[$item] === null && count($values) > 1) {
+                throw new ValidationException('Invalid ' . $name, [
+                    $name => "$item means every click and stands alone; got " . self::shown($params[$name]),
+                ]);
+            }
+        }
+
+        return array_values(array_unique($values));
     }
 
     /**
@@ -466,35 +612,37 @@ final class ReportFilter
     }
 
     /**
-     * The ip filter: the address as stored — dotted text for IPv4, the
+     * The ip filter's addresses as stored — dotted text for IPv4, the
      * packed 16 bytes for IPv6 — or null when absent or blank.
      *
      * @param array<string, mixed> $params
-     * @return array{v6: bool, value: string}|null
+     * @return array{v4: list<string>, v6: list<string>}|null
      */
-    private static function ip(array $params): ?array
+    private static function ips(array $params): ?array
     {
         $value = $params['ip'] ?? null;
-        if ($value === null || $value === '') {
+        $form = 'An IPv4 or IPv6 address, e.g. 203.0.113.7 or 2001:db8::1, or several separated by commas';
+        $values = self::values($params, 'ip', $form);
+        if ($values === null) {
             return null;
         }
-        $text = is_string($value) ? trim($value) : '';
-        if (filter_var($text, FILTER_VALIDATE_IP) === false) {
-            throw new ValidationException('Invalid ip', [
-                'ip' => 'One IPv4 or IPv6 address, e.g. 203.0.113.7 or 2001:db8::1; got ' . self::shown($value),
-            ]);
-        }
-        $packed = inet_pton($text);
-        if ($packed === false) {
-            throw new ValidationException('Invalid ip', [
-                'ip' => 'One IPv4 or IPv6 address, e.g. 203.0.113.7 or 2001:db8::1; got ' . self::shown($value),
-            ]);
-        }
-        if (filter_var($text, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {
-            return ['v6' => false, 'value' => (string) inet_ntop($packed)];
+        $out = ['v4' => [], 'v6' => []];
+        foreach ($values as $item) {
+            $text = trim($item);
+            $packed = filter_var($text, FILTER_VALIDATE_IP) === false ? false : inet_pton($text);
+            if ($packed === false) {
+                throw new ValidationException('Invalid ip', [
+                    'ip' => $form . '; got ' . self::shown(count($values) > 1 ? $item : $value),
+                ]);
+            }
+            if (filter_var($text, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {
+                $out['v4'][] = (string) inet_ntop($packed);
+            } else {
+                $out['v6'][] = $packed;
+            }
         }
 
-        return ['v6' => true, 'value' => $packed];
+        return ['v4' => array_values(array_unique($out['v4'])), 'v6' => array_values(array_unique($out['v6']))];
     }
 
     /** A LIKE pattern that matches $text literally, anywhere. */

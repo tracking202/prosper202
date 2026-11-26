@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Exception;
 
+use Api\V3\ErrorCode;
 use Api\V3\HttpException;
 
 /**
@@ -25,11 +26,19 @@ use Api\V3\HttpException;
  */
 final class SyncException extends HttpException
 {
-    public const URL_REFUSED = 'sync_url_refused';
-    public const URL_UNRESOLVED = 'sync_url_unresolved';
-    public const LIMIT = 'sync_limit';
-    public const KEY_UNREADABLE = 'sync_key_unreadable';
-    public const REMOTE_FAILED = 'sync_remote_failed';
+    public const URL_REFUSED = ErrorCode::SYNC_URL_REFUSED;
+    public const URL_UNRESOLVED = ErrorCode::SYNC_URL_UNRESOLVED;
+    public const LIMIT = ErrorCode::SYNC_LIMIT;
+    public const KEY_UNREADABLE = ErrorCode::SYNC_KEY_UNREADABLE;
+    public const REMOTE_FAILED = ErrorCode::SYNC_REMOTE_FAILED;
+    /** A record this sync cannot write as it is: nothing to match it by, a reference the other side lacks. */
+    public const RECORD_UNUSABLE = ErrorCode::SYNC_RECORD_UNUSABLE;
+    /** Another run between the same two instances holds their lock; the job is tried again. */
+    public const PAIR_BUSY = ErrorCode::SYNC_PAIR_BUSY;
+    /** The run's process ended without finishing (killed, out of memory, out of time). */
+    public const WORKER_LOST = ErrorCode::SYNC_WORKER_LOST;
+    /** An error inside this server, not either remote's answer; logged with the job's id. */
+    public const INTERNAL = ErrorCode::SYNC_INTERNAL;
 
     private function __construct(
         string $message,
@@ -71,6 +80,29 @@ final class SyncException extends HttpException
         return new self($message, self::REMOTE_FAILED, false, true, 502);
     }
 
+    /**
+     * One record the sync cannot write as the source holds it. It fails that
+     * record alone (skip_errors goes on), and the job does not try it again:
+     * the next run reads the same record.
+     */
+    public static function recordUnusable(string $message): self
+    {
+        return new self($message, self::RECORD_UNUSABLE, false, false, 422);
+    }
+
+    /** The pair's lock is held by another run; the job waits its turn. */
+    public static function pairBusy(): self
+    {
+        return new self(
+            'Another sync between the same source and target is running on this server, so this job waits for it '
+                . 'and is tried again.',
+            self::PAIR_BUSY,
+            true,
+            true,
+            409
+        );
+    }
+
     /** The same failure, saying that the sync stopped before it wrote anything. */
     public function beforeAnyWrite(): self
     {
@@ -82,6 +114,11 @@ final class SyncException extends HttpException
             $this->getHttpStatus(),
             $this
         );
+    }
+
+    protected function defaultErrorCode(): string
+    {
+        return $this->errorCode;
     }
 
     /** The SyncException a failure is or was caused by, nearest first. */

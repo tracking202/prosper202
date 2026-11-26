@@ -175,6 +175,12 @@ body {
     flex-shrink: 0;
 }
 
+/* Sign Out is a button in a form (it POSTs the session's token): the form
+   lays out as nothing, so the button sits in the row as the links do. */
+.p202c-signout {
+    display: contents;
+}
+
 .p202c-nav__link,
 .p202c-menu__toggle {
     display: inline-flex;

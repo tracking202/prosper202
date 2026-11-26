@@ -14,14 +14,28 @@ info:
     ```
     API keys are managed via the `/users/{id}/api-keys` endpoints.
 
+    A page on the same origin may instead send the session cookie the
+    sign-in set, with no Authorization header. The session is read as the
+    pages read it, so switching the user off or changing their password ends
+    it on the next call. Every method but GET and HEAD sends the session's
+    token in an `X-P202-CSRF` header (`GET /me` answers it as
+    `auth.csrf_token`); a write without it is `403` and changes nothing. A
+    request with an Authorization header is always a key's, whatever cookie
+    it carries.
+
     ## Pagination
     List endpoints return paginated results:
     ```json
     {
       "data": [...],
+      "truncated": true,
       "pagination": { "total": 100, "limit": 50, "offset": 0 }
     }
     ```
+    Every endpoint that takes `offset` answers `truncated`: true when rows
+    remain after the page, false on the last one. Read on with `offset`
+    plus `limit` until it is false; `total` is a separate count and can
+    differ from the rows a later page holds.
 
     ## API Key Scopes
     A key may carry a scope that attenuates it independently of the owning
@@ -126,12 +140,60 @@ info:
     Error responses use a consistent format:
     ```json
     {
-      "error": "Error message",
+      "error": true,
+      "message": "Validation failed",
       "status": 422,
+      "code": "validation_failed",
       "field_errors": { "field_name": "Reason" }
     }
     ```
     `field_errors` is only present on validation errors (422).
+
+    Every 4xx and 5xx answer carries `code`, one of the values below. Decide
+    on `code`, never on `message`, whose wording may change. A code is never
+    renamed or removed; new ones may be added, so treat an unknown code as
+    the generic code of its status.
+
+    | code | status | meaning |
+    |------|--------|---------|
+    | `bad_request` | 400 | The request could not be read as sent |
+    | `invalid_json` | 400 | The body is not a JSON object |
+    | `unsupported_api_version` | 400 | `X-P202-API-Version` names a version this server does not serve |
+    | `invalid_request` | 400 | `POST /ai-connect/token`: a parameter is missing or malformed |
+    | `invalid_grant` | 400 | `POST /ai-connect/token`: the approval is used, expired or does not match |
+    | `unauthorized` | 401 | No usable key or session |
+    | `licence` | 402 | The Go CLI needs an active ClickServer licence on this install |
+    | `forbidden` | 403 | The user's role does not allow this |
+    | `insufficient_scope` | 403 | The key's scope does not allow this (see ScopeRefusal) |
+    | `not_found` | 404 | No such route, or no such record on this account |
+    | `method_not_allowed` | 405 | The route does not take this method |
+    | `conflict` | 409 | The record's state refuses the request (`details` says how) |
+    | `version_conflict` | 409 | The body's `version`/`etag` or `If-Match` is from an older read; GET it again |
+    | `name_taken` | 409 | Another record of this account already has this name |
+    | `already_exists` | 409 | The record this would create already exists |
+    | `idempotency_in_flight` | 409 | A request with this Idempotency-Key is still running; retry once it finishes |
+    | `idempotency_indeterminate` | 409 | A request with this Idempotency-Key did not finish; check for the record, then use a new key |
+    | `sync_pair_busy` | 409 | Sync: another run between the same two installs is running; the job waits and is tried again |
+    | `payload_too_large` | 413 | The body is larger than this route takes (`max_bytes`) |
+    | `validation_failed` | 422 | A field is missing or malformed (`field_errors`) |
+    | `nothing_to_update` | 422 | The update names no field that would change |
+    | `idempotency_key_reused` | 422 | The Idempotency-Key was used for a different request |
+    | `dry_run_unsupported` | 422 | `dry_run` or `staged` was sent to a route that cannot preview |
+    | `sync_url_refused` | 422 | Sync: the remote URL is one this server will not call |
+    | `sync_url_unresolved` | 422 | Sync: the remote host did not resolve |
+    | `sync_limit` | 422 | Sync: an answer, a list or the sync's time reached its cap |
+    | `sync_key_unreadable` | 422 | Sync: the job's stored key cannot be opened; send the request again |
+    | `sync_record_unusable` | 422 | Sync: one record cannot be written as the source holds it; the next run reads it the same |
+    | `rate_limited` | 429 | A limit refused the request; wait `retry_after_seconds` |
+    | `client_error` | 4xx | Any other 4xx |
+    | `server_error` | 500 | The server failed; nothing in the request is known to be wrong |
+    | `write_committed` | 500 | The write landed and a step after it failed; look the record up rather than retrying |
+    | `sync_worker_lost` | 500 | Sync: the job's process ended before it finished (a job's `error_code`) |
+    | `sync_internal` | 500 | Sync: an error inside this server, logged with the job's id (a job's `error_code`) |
+    | `upstream_unavailable` | 502, 503 | A service this install had to ask (an ad platform) failed |
+    | `sync_remote_failed` | 502 | Sync: the remote install did not answer usably |
+    | `service_unavailable` | 503 | The API cannot serve requests right now |
+    | `upgrade_pending` | 503 | The database is behind the code: run the upgrade |
   contact:
     name: Prosper202
   license:
@@ -143,6 +205,7 @@ servers:
 
 security:
   - BearerAuth: []
+  - SessionCookie: []
 
 tags:
   - name: System
@@ -192,7 +255,11 @@ tags:
   - name: Forecast Events
     description: Calendar events (holidays, promotions) that event-aware forecasting shifts predictions around
   - name: LTV
-    description: Customer lifetime value — customers, companies, revenue, subscriptions, products, custom fields, webhooks and integrations (scopes `ltv:read` / `ltv:write`)
+    description: >-
+      Customer lifetime value — customers, companies, revenue, subscriptions, products, custom fields, webhooks and
+      integrations (scopes `ltv:read` / `ltv:write`). Every LTV read refuses a query parameter it does not take with
+      a 422 naming it and the ones it takes ("Unknown parameter(s): …"), rather than answer as though it were not
+      sent.
   - name: Sync
     description: Server-side sync between Prosper202 instances — plans, jobs, the change feed and the audit trail (admin, scopes `sync:read` / `sync:write`)
   - name: Destinations
@@ -984,10 +1051,11 @@ paths:
         affiliate's Affiliate IPN, and `jvzoo_vendor`, `?role=vendor`, for a
         product's JVZIPN v1 URL), Zaxaa (ZPN), PayKickstart (the
         product IPN, set under each product's IPN Integration tab) and
-        Shopify (the order and refund webhooks), on this
-        install's tracking base (user 1's tracking
-        domain or this server's name, and the install's path — the base
-        tracker links use), and whether the caller has stored the secret
+        Shopify (the order and refund webhooks), on the
+        caller's tracking base (the caller's own tracking domain, as the
+        page uses the signed-in user's, or the host this request arrived at
+        when none is set, and the install's path — the base tracker links
+        use), and whether the caller has stored the secret
         each is checked with (`secret_stored`; for PayKickstart,
         `keys_stored` counts its keys, one for each PayKickstart campaign).
         The secrets are never served.
@@ -1033,6 +1101,21 @@ paths:
                             verified:
                               type: boolean
                               description: ClickBank only
+                            secret_set_at:
+                              type: integer
+                              nullable: true
+                              description: >-
+                                Shopify only. When the stored webhook secret was set
+                                (Unix seconds), or null when none is stored. The
+                                secret is kept sealed and never served.
+                            previous_secret_expires_at:
+                              type: integer
+                              nullable: true
+                              description: >-
+                                Shopify only. Until when the secret the current one
+                                replaced keeps verifying webhooks (a rotation on
+                                Account › API integrations keeps it 7 days), or null
+                                when none is.
                             keys_stored:
                               type: integer
                               description: PayKickstart only, how many IPN secret keys are stored
@@ -1651,6 +1734,15 @@ paths:
                               table the install lacks, or another error not tied
                               to the click's own data) in 10 runs over an hour
                               from the first of them and is stepped over.
+                          stopped_at:
+                            type: integer
+                            nullable: true
+                            description: >-
+                              Unix time of the first run that stopped at
+                              stalled_at_click_id, for an error of any kind;
+                              null while nothing fails, and for a stop that
+                              began before the upgrade to 1.9.81. Settings and
+                              the cron job's output show it with the note.
                           failed_runs:
                             type: integer
                             description: >-
@@ -1690,10 +1782,19 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
-        - name: filter[aff_network_id]
+        - $ref: "#/components/parameters/listFilter"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
           in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
           schema:
-            type: integer
+            type: string
+            enum: [aff_campaign_id, aff_campaign_name, aff_campaign_payout, aff_network_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/libraryWith"
       responses:
         "200":
           description: Paginated campaign list
@@ -1769,9 +1870,35 @@ paths:
       operationId: deleteCampaign
       responses:
         "200":
-          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+          description: >-
+            Dry-run preview (`dry_run=1`) — the delete was not performed. Its
+            `in_use_by` names what still points at the record, as
+            `GET /campaigns/{id}/uses` does.
         "204":
           description: Campaign deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /campaigns/{id}/uses:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Campaigns]
+      summary: Where a campaign is used
+      description: >-
+        The account's live records that point at this campaign, by kind: how
+        many, and the first 25 of each (lowest id first). A soft delete takes
+        the campaign out of the Library and leaves these pointing at it, so a
+        delete's dry run names the same uses as `in_use_by`. Role permission
+        `access_to_setup_section`, as the record's own GET.
+      operationId: getCampaignUses
+      responses:
+        "200":
+          description: The campaign's uses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryUsesResponse"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1785,6 +1912,19 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [aff_network_id, aff_network_name]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
+        - $ref: "#/components/parameters/libraryWith"
       responses:
         "200":
           description: Paginated affiliate network list
@@ -1859,9 +1999,35 @@ paths:
       operationId: deleteAffNetwork
       responses:
         "200":
-          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+          description: >-
+            Dry-run preview (`dry_run=1`) — the delete was not performed. Its
+            `in_use_by` names what still points at the record, as
+            `GET /aff-networks/{id}/uses` does.
         "204":
           description: Network deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /aff-networks/{id}/uses:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Affiliate Networks]
+      summary: Where a affiliate network is used
+      description: >-
+        The account's live records that point at this affiliate network, by kind: how
+        many, and the first 25 of each (lowest id first). A soft delete takes
+        the affiliate network out of the Library and leaves these pointing at it, so a
+        delete's dry run names the same uses as `in_use_by`. Role permission
+        `access_to_setup_section`, as the record's own GET.
+      operationId: getAffNetworkUses
+      responses:
+        "200":
+          description: The affiliate network's uses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryUsesResponse"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1875,6 +2041,19 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [ppc_network_id, ppc_network_name]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
+        - $ref: "#/components/parameters/libraryWith"
       responses:
         "200":
           description: Paginated PPC network list
@@ -1949,9 +2128,35 @@ paths:
       operationId: deletePpcNetwork
       responses:
         "200":
-          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+          description: >-
+            Dry-run preview (`dry_run=1`) — the delete was not performed. Its
+            `in_use_by` names what still points at the record, as
+            `GET /ppc-networks/{id}/uses` does.
         "204":
           description: Network deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /ppc-networks/{id}/uses:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [PPC Networks]
+      summary: Where a traffic source is used
+      description: >-
+        The account's live records that point at this traffic source, by kind: how
+        many, and the first 25 of each (lowest id first). A soft delete takes
+        the traffic source out of the Library and leaves these pointing at it, so a
+        delete's dry run names the same uses as `in_use_by`. Role permission
+        `access_to_setup_section`, as the record's own GET.
+      operationId: getPpcNetworkUses
+      responses:
+        "200":
+          description: The traffic source's uses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryUsesResponse"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1965,6 +2170,19 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [ppc_account_id, ppc_account_name, ppc_network_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
+        - $ref: "#/components/parameters/libraryWith"
       responses:
         "200":
           description: Paginated PPC account list
@@ -2039,9 +2257,35 @@ paths:
       operationId: deletePpcAccount
       responses:
         "200":
-          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+          description: >-
+            Dry-run preview (`dry_run=1`) — the delete was not performed. Its
+            `in_use_by` names what still points at the record, as
+            `GET /ppc-accounts/{id}/uses` does.
         "204":
           description: Account deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /ppc-accounts/{id}/uses:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [PPC Accounts]
+      summary: Where a traffic source account is used
+      description: >-
+        The account's live records that point at this traffic source account, by kind: how
+        many, and the first 25 of each (lowest id first). A soft delete takes
+        the traffic source account out of the Library and leaves these pointing at it, so a
+        delete's dry run names the same uses as `in_use_by`. Role permission
+        `access_to_setup_section`, as the record's own GET.
+      operationId: getPpcAccountUses
+      responses:
+        "200":
+          description: The traffic source account's uses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryUsesResponse"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2055,6 +2299,25 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - name: q
+          in: query
+          description: >-
+            Only trackers whose campaign's name contains this text, in any
+            case. % and _ are matched as themselves. At most 255 characters.
+          schema:
+            type: string
+            maxLength: 255
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [tracker_id, aff_campaign_id, ppc_account_id, landing_page_id, text_ad_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated tracker list
@@ -2285,6 +2548,19 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [landing_page_id, landing_page_nickname, landing_page_url, aff_campaign_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
+        - $ref: "#/components/parameters/landingPageWith"
       responses:
         "200":
           description: Paginated landing page list
@@ -2331,6 +2607,12 @@ paths:
     put:
       tags: [Landing Pages]
       summary: Update a landing page
+      description: >-
+        An advanced page (landing_page_type 1) is not made simple while text
+        ads of text_ad_type 1 name it, since Get Links offers those only on an
+        advanced page: the 422 names each ad's text_ad_id under
+        landing_page_type. Point each at another advanced page, or make it a
+        campaign ad, first.
       operationId: updateLandingPage
       requestBody:
         required: true
@@ -2354,13 +2636,55 @@ paths:
         - $ref: "#/components/parameters/dryRun"
       tags: [Landing Pages]
       summary: Delete a landing page
-      description: Soft delete.
+      description: >-
+        Soft delete. An advanced page (`landing_page_type` 1) is not deleted
+        while text ads of `text_ad_type` 1 or trackers name it, since each
+        would be left pointing at a page that is gone: the answer is 409,
+        naming them. Point each text ad at another advanced page or make it
+        a campaign ad, and move or delete each tracker, then delete the page.
+        A dry run answers the same refusal. A simple page is deleted as
+        before.
       operationId: deleteLandingPage
       responses:
         "200":
-          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+          description: >-
+            Dry-run preview (`dry_run=1`) — the delete was not performed. Its
+            `in_use_by` names what still points at the record, as
+            `GET /landing-pages/{id}/uses` does.
         "204":
           description: Landing page deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            The page is advanced and text ads of `text_ad_type` 1 or trackers
+            name it; nothing was deleted. `details.text_ad_ids` and
+            `details.tracker_ids` list them.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /landing-pages/{id}/uses:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Landing Pages]
+      summary: Where a landing page is used
+      description: >-
+        The account's live records that point at this landing page, by kind: how
+        many, and the first 25 of each (lowest id first). A soft delete takes
+        the landing page out of the Library and leaves these pointing at it, so a
+        delete's dry run names the same uses as `in_use_by`. Role permission
+        `access_to_setup_section`, as the record's own GET.
+      operationId: getLandingPageUses
+      responses:
+        "200":
+          description: The landing page's uses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryUsesResponse"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2374,6 +2698,19 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [text_ad_id, text_ad_name, aff_campaign_id, landing_page_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
+        - $ref: "#/components/parameters/libraryWith"
       responses:
         "200":
           description: Paginated text ad list
@@ -2447,9 +2784,35 @@ paths:
       operationId: deleteTextAd
       responses:
         "200":
-          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+          description: >-
+            Dry-run preview (`dry_run=1`) — the delete was not performed. Its
+            `in_use_by` names what still points at the record, as
+            `GET /text-ads/{id}/uses` does.
         "204":
           description: Text ad deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /text-ads/{id}/uses:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Text Ads]
+      summary: Where a text ad is used
+      description: >-
+        The account's live records that point at this text ad, by kind: how
+        many, and the first 25 of each (lowest id first). A soft delete takes
+        the text ad out of the Library and leaves these pointing at it, so a
+        delete's dry run names the same uses as `in_use_by`. Role permission
+        `access_to_setup_section`, as the record's own GET.
+      operationId: getTextAdUses
+      responses:
+        "200":
+          description: The text ad's uses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryUsesResponse"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2494,6 +2857,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
         - name: click_lead
           in: query
           description: "0 = clicks only, 1 = conversions only"
@@ -2806,8 +3170,8 @@ paths:
         The account's live conversions grouped by campaign and by
         `match_method`, how each one's click was found: `click_id` (the
         request named it: a subid, ClickBank's tracking code, the API or an
-        upload line, an app install's token), `ad_click_id` (a global
-        postback with no SubID sent back an ad platform's click id that a
+        upload line, an app install's token), `ad_click_id` (a postback or
+        pixel with no SubID sent back an ad platform's click id that a
         click carries), `cookie` (a tracking cookie named it), `visitor_id` (the landing-page script's visitor id),
         `same_ip` (nothing named a click: the latest click from the
         visitor's address) or `unknown` (recorded before 1.9.79).
@@ -4084,6 +4448,77 @@ paths:
           description: The body is over 8 MB.
         "422":
           $ref: "#/components/responses/ValidationError"
+    get:
+      tags: [Update]
+      summary: List the account's revenue uploads, newest first
+      description: >-
+        Each upload batch with its file name, when it was uploaded, its line
+        counts, and when it was last undone (`undone_at`, `undone_rows`,
+        null until then). The batch id is what the undo takes. Page with
+        `before`, the previous page's `next_before`. Needs
+        `access_to_update_section` and `conversions:read`.
+      operationId: listRevenueUploads
+      parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 500, default: 50}
+        - name: before
+          in: query
+          description: List the batches whose id is below this one.
+          schema: {type: integer, minimum: 1}
+      responses:
+        "200":
+          description: The batches, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevenueUploadList"
+        "403":
+          description: The role lacks `access_to_update_section`, or the key lacks `conversions:read`.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /conversions/uploads/{id}/undo:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    post:
+      tags: [Update]
+      summary: Undo a revenue upload by its batch id
+      description: |
+        Deletes every live conversion the batch recorded, on the account's
+        own clicks, and recomputes each of those clicks from what is left,
+        so a click goes back to the earlier upload or the postback that the
+        batch replaced. A reversal of a removed row stays and stops netting;
+        a postback queued for a removed row is cancelled, and one already
+        delivered is retracted. Another account's batch is a `404`, as one
+        that never existed is. The body must be empty.
+
+        `dry_run=1` lists the rows it would delete (`rows`, with the
+        report's line numbers) and each click's value before and after
+        (`click_values`), the first 1,000 of each; the counts and `amount`
+        are exact. Each click is undone in its own transaction: if one
+        fails, the clicks before it stay undone, the answer is a `500` that
+        says how many, and undoing the batch again deletes what is left. A
+        batch already undone answers `removed` 0.
+
+        Needs `access_to_update_section` and `conversions:write`. Not
+        stageable.
+      operationId: undoRevenueUpload
+      parameters:
+        - $ref: "#/components/parameters/writeDryRun"
+      responses:
+        "200":
+          description: What was (or would be) removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevenueUploadUndoResponse"
+        "403":
+          description: The role lacks `access_to_update_section`, or the key lacks `conversions:write`.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   # ─── Reports ─────────────────────────────────────────────────────────
 
@@ -4094,8 +4529,9 @@ paths:
       description: >-
         Aggregate metrics for the selected time period and filters. Every
         report endpoint takes the Analyze pages' filters, which combine; a
-        parameter the endpoint does not take, a list where one value goes, or
-        a value outside a filter's form is a 422 whose `field_errors` names
+        parameter the endpoint does not take, an array (`name[]`; several
+        values are one value with commas), or a value outside a filter's
+        form is a 422 whose `field_errors` names
         the parameter (they used to be ignored, and the answer covered
         everything). The ratios are MySQL's DECIMAL division of the sums,
         truncated where it stops (9 decimals, 18 for roi) and rounded half
@@ -4123,6 +4559,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
       responses:
         "200":
           description: Summary metrics
@@ -4283,6 +4720,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
       responses:
         "200":
           description: The groups as a tree (`data`, each with `children` but the innermost), `totals`, and `by`
@@ -4305,6 +4743,62 @@ paths:
                       type: string
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /reports/payout:
+    get:
+      tags: [Reports]
+      summary: A campaign's payout
+      description: >-
+        The default payout of one of the account's campaigns, the figure
+        `p202 report losers`, `report winners`, `report breakeven` and
+        `campaign optimize` price a click with. GET /campaigns/{id} answers
+        it too but is Setup's (access_to_setup_section); this route asks
+        what the reports ask, so a Campaign optimizer reads it. For a role
+        without access_to_campaign_data the payout is null and the answer
+        says `masked: true`, as the reports' money. A campaign that is not
+        the account's, or is deleted, is a 404. Servers that serve it say
+        `features.report_payout` in /capabilities (1.9.81 and later).
+      operationId: reportPayout
+      parameters:
+        - name: aff_campaign_id
+          in: query
+          required: true
+          description: The campaign's internal id (a campaign breakdown row's `id`, or GET /campaigns for a role with Setup)
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: The campaign's payout
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [aff_campaign_id, aff_campaign_name, aff_campaign_payout, aff_campaign_currency]
+                    properties:
+                      aff_campaign_id:
+                        type: integer
+                      aff_campaign_name:
+                        type: string
+                      aff_campaign_payout:
+                        type: number
+                        nullable: true
+                        description: Null only in a masked answer
+                      aff_campaign_currency:
+                        type: string
+                        description: The currency the campaign pays in
+                  masked:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -4424,6 +4918,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
       responses:
         "200":
           description: Breakdown results
@@ -4511,6 +5006,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
       responses:
         "200":
           description: Timeseries data
@@ -4622,6 +5118,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
       responses:
         "200":
           description: Day-parting rows
@@ -4674,6 +5171,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/listQ"
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [id, name, public_id]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: Paginated rotator list
@@ -4791,6 +5300,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
       responses:
         "200":
           description: The rotator's figures
@@ -4921,8 +5431,21 @@ paths:
         criterion that matches no visitor). Every key is
         checked, at every level; a problem is a `422` naming its place
         (`rules.1.redirects.0.redirect_campaign`), with every problem in the
-        set reported at once and nothing written. A set has at least one
-        rule, and at most 200; a rule at most 100 criteria and 100 redirects.
+        set reported at once and nothing written. A set has at most 200
+        rules; a rule at most 100 criteria and 100 redirects. An empty set
+        (`{"rules": []}`) removes every rule, so every visitor goes to the
+        default (since 1.9.81; before, it was a `422`).
+
+        The body may also carry the redirector's own fields, as
+        `PUT /rotators/{id}` takes them (`name`, `default_url`,
+        `default_campaign`, `default_lp`, and the read-only `id`, `public_id`,
+        `user_id` and `auto_monetizer` with the values the redirector holds),
+        so `GET /rotators/{id}`'s `data`, edited, can be sent back whole. They
+        are written in the same transaction as the set: the redirector and
+        its rules change together or not at all, and the fields' problems are
+        refused in the same `422` as the rules'. The answer then carries the
+        redirector as written, without its rules, as `rotator`. Since 1.9.81;
+        advertised as `features.rotator_with_rules`.
 
         `?dry_run=1` writes nothing and answers the set as it would be
         stored (a new rule, criterion or redirect with `id: null`), in the
@@ -4941,9 +5464,33 @@ paths:
               additionalProperties: false
               required: [rules]
               properties:
+                id:
+                  type: integer
+                  description: Read-only; this redirector's id, as GET answers it.
+                public_id:
+                  type: integer
+                  description: Read-only; the redirector's own, as GET answers it.
+                user_id:
+                  type: integer
+                  description: Read-only; as GET answers it.
+                auto_monetizer:
+                  type: string
+                  nullable: true
+                  description: Read-only; as GET answers it.
+                name:
+                  type: string
+                default_url:
+                  type: string
+                  nullable: true
+                  description: "As on PUT /rotators/{id}: naming any part of the default replaces it whole."
+                default_campaign:
+                  type: integer
+                  nullable: true
+                default_lp:
+                  type: integer
+                  nullable: true
                 rules:
                   type: array
-                  minItems: 1
                   maxItems: 200
                   items:
                     allOf:
@@ -4972,6 +5519,13 @@ paths:
                     properties:
                       dry_run: {type: boolean}
                       rotator_id: {type: integer}
+                      rotator:
+                        allOf:
+                          - $ref: "#/components/schemas/Rotator"
+                        description: >-
+                          Only when the body sent the redirector's fields:
+                          the redirector as written (or, with dry_run=1, as
+                          it would be), without its rules.
                       rules:
                         type: array
                         items:
@@ -5458,9 +6012,14 @@ paths:
         Queues a breakdown to be written as CSV by the export runner (the
         minutely cron), now or at run_at, with every group (no row limit; more
         than 50,000 groups fails the job with the reason). With webhook_url,
-        the runner also POSTs the file there, signed: X-P202-Signature is
-        sha256=<hex HMAC-SHA256 of "<X-P202-Timestamp>.<body>"> under the
-        export's secret, which this response carries once. Webhook URLs must
+        the runner also POSTs the file there, signed the Standard Webhooks
+        way (webhook-id, the same on every attempt; webhook-timestamp;
+        webhook-signature, v1 and the base64 HMAC-SHA256 of
+        "<webhook-id>.<webhook-timestamp>.<body>"), so a Standard Webhooks
+        library verifies it, under the export's secret, which this response
+        carries once. Through 1.9.82 it also carries the older
+        X-P202-Signature, sha256=<hex HMAC-SHA256 of
+        "<X-P202-Timestamp>.<body>">; 1.9.83 stops sending it. Webhook URLs must
         be https and every address the host resolves to must be public
         (private, loopback, link-local, metadata, documentation, multicast and
         reserved ranges are refused, IPv4 carried in IPv6 included); the
@@ -7064,6 +7623,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
@@ -7372,6 +7933,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data: {type: array, items: {$ref: "#/components/schemas/GoalOutcome"}}
                   pagination: {$ref: "#/components/schemas/Pagination"}
         "404":
@@ -7610,6 +8173,27 @@ paths:
       summary: List users
       description: Admin only.
       operationId: listUsers
+      parameters:
+        - name: q
+          in: query
+          description: >-
+            Only users whose user name, first name, last name or email
+            contains this text, in any case. % and _ are matched as
+            themselves. At most 255 characters.
+          schema:
+            type: string
+            maxLength: 255
+        - name: sort
+          in: query
+          description: >-
+            A field to order the list by, ascending unless sort_dir says
+            otherwise; ties are ordered by the key. Any other value is a 422.
+            Without it the list keeps its own order.
+          schema:
+            type: string
+            enum: [user_id, user_name, user_fname, user_lname, user_email, user_time_register]
+        - $ref: "#/components/parameters/listSortDir"
+        - $ref: "#/components/parameters/listFilter"
       responses:
         "200":
           description: User list
@@ -7768,6 +8352,8 @@ paths:
           description: Role assigned
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/roles/{roleId}:
     parameters:
@@ -7793,6 +8379,8 @@ paths:
           description: Role removed
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/api-keys:
     parameters:
@@ -7864,6 +8452,8 @@ paths:
                             that does not end.
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     post:
       tags: [Users]
       summary: Create an API key
@@ -7930,6 +8520,8 @@ paths:
                         type: integer
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/api-keys/replace:
     parameters:
@@ -8028,6 +8620,8 @@ paths:
           description: API key deleted
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/identity-key:
     parameters:
@@ -8112,6 +8706,8 @@ paths:
                     $ref: "#/components/schemas/UserPreferences"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     put:
       tags: [Users]
       summary: Update user preferences
@@ -8157,6 +8753,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/click-filter:
     parameters:
@@ -8183,6 +8781,8 @@ paths:
                     $ref: "#/components/schemas/ClickFilter"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     put:
       tags: [Users]
       summary: Change the click filter's checks
@@ -8212,6 +8812,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/click-filter/entries:
     parameters:
@@ -8252,6 +8854,8 @@ paths:
           description: The same addresses are on the list already, as `entry_id`.
         "422":
           $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/click-filter/entries/{entryId}:
     parameters:
@@ -8342,6 +8946,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
 # ═══════════════════════════════════════════════════════════════════════
 # Components
@@ -8968,15 +9574,17 @@ paths:
         failed attempt), `sent`, `failed` (attempts ran out, or the sender
         refused the URL, or a redirect it answered with, as an address it
         never calls: a refusal is final, sent no further, and `last_error`
-        says why in either case), `cancelled` (replaced before it went out) or
+        says why in either case), `cancelled` (replaced before it went out),
         `suppressed` (a correction or retraction for a pixel with no
-        correction URL). `meta.summary` counts every status under the same
+        correction URL) or `withheld` (the visitor refused consent, so
+        nothing is sent about the install; `last_error` says where).
+        `meta.summary` counts every status under the same
         filters except `status`. Web clicks' postbacks go through the same
         outbox and are not listed here.
       operationId: listAppNotifications
       parameters:
         - {name: registration_id, in: query, schema: {type: integer}}
-        - {name: status, in: query, schema: {type: string, enum: [pending, sent, failed, cancelled, suppressed]}}
+        - {name: status, in: query, schema: {type: string, enum: [pending, sent, failed, cancelled, suppressed, withheld]}}
         - {name: kind, in: query, schema: {type: string, enum: [reached, correction, retraction]}}
         - $ref: "#/components/parameters/timeFrom"
         - $ref: "#/components/parameters/timeTo"
@@ -8990,6 +9598,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
@@ -9007,6 +9617,7 @@ paths:
                           failed: {type: integer}
                           cancelled: {type: integer}
                           suppressed: {type: integer}
+                          withheld: {type: integer}
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -10017,6 +10628,22 @@ paths:
                             items:
                               type: string
                             description: '"*" is full access; read, write, stage and <area>:<action> narrow it.'
+                          ltv:
+                            type: object
+                            description: >-
+                              Which parts of Customer LTV this key's scope and its user's role let it
+                              use, as the /ltv routes would answer. See documentation/api/17-capabilities.md.
+                            properties:
+                              read:
+                                type: boolean
+                              settings_read:
+                                type: boolean
+                              crm_write:
+                                type: boolean
+                              incoming:
+                                type: boolean
+                              settings_write:
+                                type: boolean
                       server:
                         type: object
                         additionalProperties: true
@@ -10030,6 +10657,162 @@ paths:
                               database server knows about zones; the only value this server sends. Older
                               servers probed MySQL's zone tables and could send fallback-only (daypart and
                               weekpart then counted UTC hours) or unknown.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /me:
+    get:
+      tags:
+      - System
+      summary: Who is signed in and what they may see and do
+      description: >-
+        One read for a client deciding which screens, buttons and money figures to show: the user,
+        the account's time zone and currency, the roles, every role permission and the flags derived
+        from them, the licence and sponsored-ads switches, the install version and the feature list.
+        Readable by any valid key, whatever its scope or role, so a role that may not read GET
+        /system/version still learns the version here. See documentation/api/30-me.md.
+      operationId: getMe
+      responses:
+        '200':
+          description: The caller's own facts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [user, account, roles, permissions, flags, scopes, switches, install, features, auth]
+                    properties:
+                      user:
+                        type: object
+                        properties:
+                          user_id:
+                            type: integer
+                          user_name:
+                            type: string
+                          user_email:
+                            type: string
+                          user_fname:
+                            type: string
+                          user_lname:
+                            type: string
+                      account:
+                        type: object
+                        properties:
+                          timezone:
+                            type: string
+                            description: The named zone every report reads hours and days in; UTC when unset or unknown.
+                          currency:
+                            type: string
+                            description: The code the account's money is in (USD when unset), as every page prints it.
+                      roles:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            role_id:
+                              type: integer
+                            role_name:
+                              type: string
+                      permissions:
+                        type: array
+                        description: Every role permission the user holds (202_permissions), sorted.
+                        items:
+                          type: string
+                      flags:
+                        type: object
+                        description: >-
+                          The gates the pages and routes apply, each true only when the routes behind it
+                          answer this caller: a flag whose route asks the key for a scope asks it too, so a
+                          read-only key's can_edit_campaigns is false whatever its role allows.
+                          can_see_money false means reports and records come back masked.
+                        additionalProperties:
+                          type: boolean
+                        properties:
+                          is_admin:
+                            type: boolean
+                          can_manage_admins:
+                            type: boolean
+                          can_see_money:
+                            type: boolean
+                          can_view_setup:
+                            type: boolean
+                          can_edit_campaigns:
+                            type: boolean
+                          can_delete_campaigns:
+                            type: boolean
+                          can_use_update_section:
+                            type: boolean
+                          can_delete_subids:
+                            type: boolean
+                          can_view_attribution:
+                            type: boolean
+                          can_manage_attribution:
+                            type: boolean
+                          can_edit_personal_settings:
+                            type: boolean
+                          can_manage_users:
+                            type: boolean
+                          can_view_settings:
+                            type: boolean
+                          can_use_api_integrations:
+                            type: boolean
+                          can_see_vip_perks:
+                            type: boolean
+                      scopes:
+                        type: array
+                        items:
+                          type: string
+                        description: The calling key's scopes; ["*"] for full access.
+                      switches:
+                        type: object
+                        properties:
+                          licence:
+                            type: string
+                            enum: [licensed, not_licensed, unconfirmed]
+                            description: >-
+                              What the licence-gated surfaces (the Go CLI, connecting an AI assistant)
+                              answer now, as GET /capabilities' cli does. unconfirmed is a refusal because
+                              Tracking202 gave no answer within the grace period. When the install cannot
+                              read whose key counts, the gates let the CLI through, and this is licensed.
+                          sponsored_ads:
+                            type: string
+                            enum: [show_all, hide_login, hide_all]
+                            description: Personal Settings' ad setting.
+                      install:
+                        type: object
+                        properties:
+                          version:
+                            type: string
+                            description: The version of the code this install runs.
+                          schema_version:
+                            type: string
+                            description: The version the database was last upgraded to (unknown without a version row).
+                          api_version:
+                            type: string
+                            enum: [v3]
+                      features:
+                        type: array
+                        description: The names of the features GET /capabilities advertises as on.
+                        items:
+                          type: string
+                      auth:
+                        type: object
+                        properties:
+                          method:
+                            type: string
+                            enum: [api_key, session]
+                            description: >-
+                              How this request was signed in: a key in the Authorization header, or the
+                              pages' session cookie.
+                          csrf_token:
+                            type: string
+                            nullable: true
+                            description: >-
+                              For a session, the token every request but GET and HEAD sends in the
+                              X-P202-CSRF header. Null for a key.
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -10112,6 +10895,7 @@ paths:
       - $ref: '#/components/parameters/filterIp'
       - $ref: '#/components/parameters/filterReferer'
       - $ref: '#/components/parameters/filterPublisherId'
+      - $ref: '#/components/parameters/filterClickId'
       responses:
         '200':
           description: One row per weekday (`day_of_week` 0 = Monday … 6 = Sunday, `day_name`) with the same metrics
@@ -10503,6 +11287,18 @@ paths:
         schema:
           type: string
         description: Events carrying this tag in their comma-separated list
+      - $ref: "#/components/parameters/listQ"
+      - name: sort
+        in: query
+        description: >-
+          A field to order the list by, ascending unless sort_dir says
+          otherwise; ties are ordered by the key. Any other value is a 422.
+          Without it the list keeps its own order.
+        schema:
+          type: string
+          enum: [event_id, event_date, event_name]
+      - $ref: "#/components/parameters/listSortDir"
+      - $ref: "#/components/parameters/listFilter"
       responses:
         '200':
           description: Events ordered by `event_date`
@@ -10511,6 +11307,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
@@ -10968,6 +11766,22 @@ paths:
           - subscribers
           - at_risk
         description: Only this segment; any other value is a 422 naming `segment`
+      - name: updated_since
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+        description: >-
+          Only the customers whose record was written at or after this unix time; every change to what the list shows
+          for a customer (its CRM fields, its totals, its subscriptions) writes the record. A value that is not a whole
+          number of 0 or more is a 422 naming `updated_since`.
+      - name: deleted_since
+        in: query
+        schema:
+          type: integer
+        description: >-
+          Not taken: the list answers live customers only, so a customer erased or merged into another since a time
+          cannot be listed. Sending it is a 422 naming `deleted_since`.
       responses:
         '200':
           description: Customers
@@ -10976,6 +11790,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
@@ -11494,12 +12310,20 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
                       $ref: '#/components/schemas/LtvAbmAccount'
                   window_days:
                     type: integer
+                  limit:
+                    type: integer
+                    description: The page size this answer was read with (the request's, or 50).
+                  offset:
+                    type: integer
+                    description: The rows skipped before this page.
         '403':
           $ref: '#/components/responses/Forbidden'
 
@@ -11578,6 +12402,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
@@ -11587,6 +12413,12 @@ paths:
                   breakdown:
                     type: string
                     description: The grouping; product rows are LtvProductBreakdownRow, the others LtvAcquisitionBreakdownRow
+                  limit:
+                    type: integer
+                    description: The page size this answer was read with (the request's, or 50).
+                  offset:
+                    type: integer
+                    description: The rows skipped before this page.
         '403':
           $ref: '#/components/responses/Forbidden'
         '422':
@@ -11710,10 +12542,18 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
                       $ref: '#/components/schemas/LtvProduct'
+                  limit:
+                    type: integer
+                    description: The page size this answer was read with (the request's, or 50).
+                  offset:
+                    type: integer
+                    description: The rows skipped before this page.
         '403':
           $ref: '#/components/responses/Forbidden'
     post:
@@ -11860,6 +12700,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
@@ -11918,7 +12760,8 @@ paths:
       - LTV
       summary: Update a company
       description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
-        an `idempotency_key` field instead) and have no `dry_run` preview. Supply `name`, `domain` or both.
+        an `idempotency_key` field instead) and have no `dry_run` preview. Supply `name`, `domain` or both. A new `name`
+        queues a `customer.updated` webhook for each attached customer whose `company` it changes.
       operationId: ltvPatchCompany
       requestBody:
         required: true
@@ -11982,7 +12825,8 @@ paths:
       - LTV
       summary: Merge another company into this one
       description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
-        an `idempotency_key` field instead) and have no `dry_run` preview.
+        an `idempotency_key` field instead) and have no `dry_run` preview. Queues a `customer.updated` webhook for each
+        customer the merge moves.
       operationId: ltvMergeCompany
       parameters:
       - name: id
@@ -12054,6 +12898,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
@@ -12539,8 +13385,17 @@ paths:
       tags:
       - LTV
       summary: Create an outbound webhook
-      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
-        an `idempotency_key` field instead) and have no `dry_run` preview.
+      description: |
+        Needs the `ltv:write` scope. The answer carries the webhook's secret, once: a `whsec_` secret, which a
+        Standard Webhooks library takes as it is. Every delivery is signed the Standard Webhooks way:
+        `webhook-id` (the event's message id, the same on every retry and for every webhook it went to),
+        `webhook-timestamp` (the attempt's time, Unix seconds) and `webhook-signature` (`v1,` and the base64
+        HMAC-SHA256 of `<webhook-id>.<webhook-timestamp>.<body>`; two, space-separated, while a rotation's overlap
+        runs). The body is `{"type": "<event>.v1", "timestamp": "<ISO 8601>", "data": {…}, "id": "<webhook-id>"}`,
+        with the older `event` and `occurred_at`. Through 1.9.82 deliveries also carry `X-P202-Signature`
+        (`sha256=` and the hex HMAC-SHA256 of the body alone), which 1.9.83 stops sending. LTV writes do not honor
+        `Idempotency-Key` (`POST /ltv/revenue` takes an `idempotency_key` field instead) and have no `dry_run`
+        preview.
       operationId: ltvCreateWebhook
       requestBody:
         required: true
@@ -12709,6 +13564,70 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /ltv/webhooks/{id}/rotate-secret:
+    post:
+      tags:
+      - LTV
+      summary: Rotate an outbound webhook's secret
+      description: |
+        Needs the `ltv:write` scope. Gives the webhook a new `whsec_` secret, carried once in the answer. For
+        `overlap_hours` (default 24) every delivery is signed by the old secret too, a second `v1` signature in
+        `webhook-signature`, so the receiver can change to the new secret without a delivery failing; `0` stops the
+        old one at once. `X-P202-Signature`, one signature only, uses the new secret from the start. A secret
+        replaced within an earlier rotation's overlap stops at once. The Landing Page Optimizer's webhook is a `422`
+        naming `webhook_id`: the optimizer holds its secret, and connecting it again gives a new one. Another
+        account's webhook is a `404`. Not honoring `Idempotency-Key`, since the answer holds a secret; no `dry_run`
+        preview.
+      operationId: ltvRotateWebhookSecret
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Webhook id
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                overlap_hours:
+                  type: integer
+                  minimum: 0
+                  maximum: 168
+                  default: 24
+                  description: Hours the old secret still signs deliveries; a JSON number
+              additionalProperties: false
+      responses:
+        '200':
+          description: The new secret, shown this once
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      webhook_id:
+                        type: integer
+                      secret:
+                        type: string
+                      overlap_hours:
+                        type: integer
+                      previous_secret_expires_at:
+                        type: integer
+                        nullable: true
+                        description: When the old secret stops signing (Unix seconds); null with overlap_hours 0
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
   /ltv/webhooks/{id}/deliveries:
     get:
       tags:
@@ -12717,8 +13636,10 @@ paths:
       description: |
         Needs the `ltv:read` scope. Newest first, as the LTV Settings tab's Log shows it, with the last
         attempt's response body or error (`last_response_body`, e.g. "curl: …" or "blocked: …", stored cut to 1,000
-        bytes). `next_attempt_at` is set while a delivery is pending. The minutely cron job sends what is due; a
-        delivery is retried with backoff and fails after `meta.max_attempts`, which marks the webhook dead. One
+        bytes, with the webhook's secret and any credential-shaped value, such as an Authorization or Cookie header,
+        shown as "[removed]"). `next_attempt_at` is set while a delivery is pending. The minutely cron job sends
+        what is due; a delivery is retried with backoff and fails after `meta.max_attempts`, which marks the
+        webhook dead. One
         still unsent 7 days after it was queued is not sent: it is `failed` with 0 attempts and a
         `last_response_body` of "expired: …". One due while its webhook is dead is held, never tried: `failed`, its
         attempts as they were, "held: …"; `PUT /ltv/webhooks/{id}` sends it again. Never the webhook's secret, and
@@ -13134,8 +14055,16 @@ paths:
         of 500 records of one list, or 900 seconds in all, reached),
         `sync_key_unreadable` (the job's stored key does not open: queue the
         sync again) and `sync_remote_failed` (no answer, or one no Prosper202
-        API gives). The first four stop the whole sync, with skip_errors too;
-        only `sync_url_unresolved` and `sync_remote_failed` are retried.
+        API gives), `sync_pair_busy` (another sync of the same pair is
+        running: the job waits and is retried), `sync_record_unusable` (a
+        record that cannot be matched or written as the source has it; it
+        stops the run only without skip_errors), `sync_worker_lost` (the
+        process running the job ended; a killed run is failed once it began
+        1200 seconds ago and nothing holds the job, with `written` counted
+        from its events) and `sync_internal` (an error inside this server;
+        `error` names the log entry). The first four stop the whole sync,
+        with skip_errors too; `sync_url_unresolved`, `sync_remote_failed`,
+        `sync_pair_busy` and `sync_internal` are retried.
         `written` is what the target had confirmed writing when a run
         stopped, by entity (`created`, `updated`, `pruned`), and `error` ends
         saying the same.
@@ -13193,6 +14122,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
@@ -13569,8 +14500,8 @@ paths:
         class the page builds its code with (`Prosper202\Setup\LandingPageCode`),
         byte for byte: the loader script for the page itself, and the ways out
         to the offer. The snippets start from `base_url`, the tracker link's base
-        (user 1's tracking domain, or the host this request arrived at when none
-        is set, plus the install directory) written scheme-relative (`//host/...`)
+        (the caller's own tracking domain, or the host this request arrived at
+        when none is set, plus the install directory) written scheme-relative (`//host/...`)
         as the page writes it, so they work on an http or an https landing page.
 
         A simple page (`landing_page_type` 0) links out to its own campaign:
@@ -14336,6 +15267,13 @@ components:
       type: http
       scheme: bearer
       description: API key from /users/{id}/api-keys
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: PHPSESSID
+      description: >-
+        The session cookie the sign-in sets, for a page on the same origin. Every method but GET and HEAD
+        also sends the session's token in the X-P202-CSRF header (GET /me answers it as auth.csrf_token).
 
   # ─── Shared parameters ──────────────────────────────────────────────
 
@@ -14355,7 +15293,9 @@ components:
       description: |
         Preview the delete without performing it. With `dry_run=1` the
         response is `200` with `{data: {dry_run, action, resource, mode,
-        record, cascade}}` instead of `204`. Fail-closed: an endpoint
+        record, cascade}}` instead of `204`; a Library record's (campaigns,
+        networks, traffic sources and their accounts, landing pages, text
+        ads) also carries `in_use_by`, the records still pointing at it. Fail-closed: an endpoint
         without preview support rejects the parameter with `422`, and an
         unrecognized value is a `422` — never a delete. Supported
         when the capabilities report `features.delete_dry_run`.
@@ -14408,6 +15348,68 @@ components:
         type: integer
         default: 50
         maximum: 500
+    libraryWith:
+      name: with
+      in: query
+      required: false
+      description: >-
+        `usage` adds to each row a `usage` object: for each kind of record
+        that can point at this one, how many of the account's live records
+        do, and `total`. Any other value is a `422` naming `with`. Opt-in, so
+        a row read for a PUT body carries no key the record does not have.
+      schema:
+        type: string
+        enum: [usage]
+    landingPageWith:
+      name: with
+      in: query
+      required: false
+      description: >-
+        A comma list of `usage` (as on the other Library lists: trackers,
+        text ads and rotators pointing at each page, and `total`), `health`
+        (each page's stored code check for its present URL, or
+        `status: unchecked`) and `last_seen` (adds `last_seen_at`, when the
+        page last had a click in unix seconds, stored as clicks arrive and up
+        to 60 seconds behind the latest; null for a page with no click since
+        the install's 1.9.81 upgrade). Any other value, an empty item or a
+        repeat is a `422` naming `with`.
+      schema:
+        type: string
+        example: usage,health,last_seen
+    listQ:
+      name: q
+      in: query
+      description: >-
+        Only records whose name contains this text, in any case. % and _ are
+        matched as themselves. At most 255 characters. A list with no name
+        to search answers a 422.
+      schema:
+        type: string
+        maxLength: 255
+    listSortDir:
+      name: sort_dir
+      in: query
+      description: >-
+        asc (the default once sort is given) or desc, in either case. It
+        needs sort; given alone it is a 422.
+      schema:
+        type: string
+        enum: [asc, desc, ASC, DESC]
+    listFilter:
+      name: filter
+      in: query
+      style: deepObject
+      explode: true
+      description: >-
+        filter[<field>]=<value> keeps the records whose field holds the
+        value; a field the list does not hold, or a value its type cannot,
+        is a 422. A whole-number field takes up to 100 values separated by
+        commas (filter[aff_network_id]=1,4) and keeps a record holding any
+        of them; any other field's value is one value, commas included.
+      schema:
+        type: object
+        additionalProperties:
+          type: string
     offset:
       name: offset
       in: query
@@ -14457,90 +15459,160 @@ components:
     filterCampaign:
       name: aff_campaign_id
       in: query
+      description: >-
+        Clicks of this campaign. Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterAffNetwork:
       name: aff_network_id
       in: query
+      description: >-
+        Clicks of a campaign of this affiliate network. Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterPpcAccount:
       name: ppc_account_id
       in: query
+      description: >-
+        Clicks of this traffic source account. Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterPpcNetwork:
       name: ppc_network_id
       in: query
       description: >-
         A traffic source's id, or `none` for the clicks with no traffic
         source (the Analyze pages' "No traffic source", which they send as
-        16777215; that is accepted too).
+        16777215; that is accepted too). Several separated by commas
+        (`3,none`) select the clicks any of them selects, at most 100; 0 or
+        absent is no filter and stands alone, and an empty item is a 422.
       schema:
-        oneOf:
-          - type: integer
-          - type: string
-            enum: [none]
+        type: string
+        pattern: '^(0|([1-9][0-9]*|none)(,([1-9][0-9]*|none))*)$'
+        example: "3,none"
     filterLandingPage:
       name: landing_page_id
       in: query
+      description: >-
+        Clicks through this landing page. Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterCountry:
       name: country_id
       in: query
+      description: >-
+        Clicks from this country (the id of a `breakdown=country` row). Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterTextAd:
       name: text_ad_id
       in: query
-      description: Filter by text ad. 0 or empty is no filter; anything but a whole number is a 422.
+      description: >-
+        Clicks of this text ad. Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterRegion:
       name: region_id
       in: query
-      description: Filter by region (the id of a `breakdown=region` row)
+      description: >-
+        Clicks from this region (the id of a `breakdown=region` row). Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterIsp:
       name: isp_id
       in: query
-      description: Filter by ISP/carrier (the id of a `breakdown=isp` row)
+      description: >-
+        Clicks from this ISP or carrier (the id of a `breakdown=isp` row). Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterBrowser:
       name: browser_id
       in: query
-      description: Filter by browser (the id of a `breakdown=browser` row)
+      description: >-
+        Clicks from this browser (the id of a `breakdown=browser` row). Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterPlatform:
       name: platform_id
       in: query
-      description: Filter by platform/OS (the id of a `breakdown=platform` row)
+      description: >-
+        Clicks from this platform or OS (the id of a `breakdown=platform` row). Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterDeviceType:
       name: device_type
       in: query
-      description: "Filter by device type: 1 Desktop, 2 Mobile, 3 Tablet, 4 Bot (the ids of `breakdown=device_type` rows); every device model of that type."
+      description: >-
+        Device type: 1 Desktop, 2 Mobile, 3 Tablet, 4 Bot (the ids of
+        `breakdown=device_type` rows); every device model of that type.
+        Several separated by commas (`2,3`) select any of them; 0 or absent
+        is no filter.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "2,3"
     filterMethodOfPromotion:
       name: method_of_promotion
       in: query
-      description: Only direct-link clicks (no landing page) or only landing-page clicks
+      description: >-
+        Only direct-link clicks (no landing page) or only landing-page
+        clicks; both, separated by a comma, is every click.
       schema:
         type: string
-        enum: [directlink, landingpage]
+        pattern: '^(directlink|landingpage)(,(directlink|landingpage))*$'
+        example: directlink
     filterShow:
       name: show
       in: query
-      description: "Which clicks count, as the Analyze pages' show menu: all (default), real (not filtered), filtered, filtered_bot (filtered as bots), leads (converted)."
+      description: >-
+        Which clicks count, as the Analyze pages' show menu: all (default),
+        real (not filtered), filtered, filtered_bot (filtered as bots), leads
+        (converted). Several separated by commas (`filtered,leads`) count the
+        clicks any of them counts; `all` stands alone.
       schema:
         type: string
-        enum: [all, real, filtered, filtered_bot, leads]
+        pattern: '^(all|(real|filtered|filtered_bot|leads)(,(real|filtered|filtered_bot|leads))*)$'
+        example: filtered,leads
     filterKeyword:
       name: keyword
       in: query
@@ -14551,7 +15623,11 @@ components:
     filterIp:
       name: ip
       in: query
-      description: Clicks from this one address, IPv4 or IPv6 (any spelling of an IPv6 address). Not an address is a 422.
+      description: >-
+        Clicks from this address, IPv4 or IPv6 (any spelling of an IPv6
+        address). Several separated by commas (`203.0.113.7,2001:db8::1`)
+        select the clicks from any of them, at most 100. Anything that is not
+        an address, or an empty item, is a 422.
       schema:
         type: string
         example: 2001:db8::1
@@ -14566,11 +15642,26 @@ components:
       name: publisher_id
       in: query
       description: >-
-        Clicks a publisher link credited to this publisher (a user id, the `id` of a
-        `breakdown=publisher` row), or `none` for the clicks credited to no publisher. 0 is no filter.
+        Clicks a publisher link credited to this publisher (a user id, the
+        `id` of a `breakdown=publisher` row), or `none` for the clicks
+        credited to no publisher. Several separated by commas (`7,none`)
+        select the clicks any of them selects, at most 100; 0 or absent is
+        no filter and stands alone.
       schema:
         type: string
-        pattern: '^([0-9]+|none)$'
+        pattern: '^(0|([1-9][0-9]*|none)(,([1-9][0-9]*|none))*)$'
+    filterClickId:
+      name: click_id
+      in: query
+      description: >-
+        Only these clicks: one click id, or several separated by commas, at
+        most 100. A click a redirector link re-clicked has a row for each
+        visit, and its id selects every one. Another account's click selects
+        nothing.
+      schema:
+        type: string
+        pattern: '^[1-9][0-9]*(,[1-9][0-9]*)*$'
+        example: "81360001"
 
     # App postback filters (list + report)
     postbackRegistrationId:
@@ -15317,11 +16408,56 @@ components:
 
     Error:
       type: object
+      required: [code]
       properties:
         error:
+          type: boolean
+        message:
           type: string
         status:
           type: integer
+        code:
+          type: string
+          description: Stable error code; the Errors section of this document says what each means
+          enum:
+            - bad_request
+            - unauthorized
+            - licence
+            - forbidden
+            - not_found
+            - method_not_allowed
+            - conflict
+            - payload_too_large
+            - validation_failed
+            - rate_limited
+            - client_error
+            - server_error
+            - upstream_unavailable
+            - service_unavailable
+            - invalid_json
+            - unsupported_api_version
+            - dry_run_unsupported
+            - nothing_to_update
+            - version_conflict
+            - already_exists
+            - name_taken
+            - idempotency_key_reused
+            - idempotency_in_flight
+            - idempotency_indeterminate
+            - write_committed
+            - upgrade_pending
+            - insufficient_scope
+            - invalid_request
+            - invalid_grant
+            - sync_url_refused
+            - sync_url_unresolved
+            - sync_limit
+            - sync_key_unreadable
+            - sync_remote_failed
+            - sync_record_unusable
+            - sync_pair_busy
+            - sync_worker_lost
+            - sync_internal
 
     ScopeRefusal:
       description: >-
@@ -15329,8 +16465,8 @@ components:
         `remedy`, and the fields below say the same for a program; a key keeps
         the scope it was made with, so an AI connection approved before a
         release added to what connections may do is refused there until it is
-        approved again. A refusal for the user's role has `error`, `message`
-        and `status` only.
+        approved again. A refusal for the user's role has `error`, `message`,
+        `status` and `code` (`forbidden`) only.
       type: object
       properties:
         error:
@@ -15349,7 +16485,7 @@ components:
           example: 403
         code:
           type: string
-          enum: [insufficient_scope]
+          enum: [insufficient_scope, forbidden]
         required_scope:
           type: string
           description: The scope token the request needed, e.g. `text-ads:write`; `write` for a staged change whose area cannot be told
@@ -15535,6 +16671,15 @@ components:
         offset:
           type: integer
 
+    PageTruncated:
+      type: boolean
+      description: >-
+        True when rows remain after this page: read on with `offset` plus
+        `limit` until it is false, and check it before summing or ranking the
+        rows of one page. False on the last page, including a page of exactly
+        the rows that remain. Every answer to a request that takes `offset`
+        carries it; absent from servers that predate it.
+
     # ── Campaigns ──────────────────────────────────────────────────────
 
     Campaign:
@@ -15642,7 +16787,7 @@ components:
 
     CampaignCreate:
       type: object
-      required: [aff_campaign_name, aff_campaign_url]
+      required: [aff_campaign_name, aff_campaign_url, aff_campaign_payout, aff_network_id]
       properties:
         aff_campaign_name:
           type: string
@@ -15765,9 +16910,78 @@ components:
         data:
           $ref: "#/components/schemas/Campaign"
 
+    LibraryUsage:
+      type: object
+      description: >-
+        Per kind (trackers, landing_pages, text_ads, rotators, campaigns,
+        ppc_accounts, ad_connections, as the resource has them), how many of
+        the account's live records point at this one; a rotator counts once
+        however many of its redirects name it.
+      properties:
+        total:
+          type: integer
+      additionalProperties:
+        type: integer
+    LandingPageHealth:
+      type: object
+      description: The page's stored code check for its present URL (Setup › Landing Pages' pill).
+      properties:
+        status:
+          type: string
+          enum: [present, legacy, mixed, other_tracker, wrong_id, commented, absent, error, unchecked]
+        level:
+          type: string
+          enum: [good, warn, bad, unchecked]
+        label:
+          type: string
+          description: The words the Library shows for the status.
+        message:
+          type: string
+          nullable: true
+        checked_at:
+          type: integer
+          nullable: true
+    LibraryUsesResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            resource:
+              type: string
+            id:
+              type: integer
+            total:
+              type: integer
+            uses:
+              type: object
+              description: Each kind of use, in a fixed order per resource.
+              additionalProperties:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  records:
+                    type: array
+                    maxItems: 25
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        name:
+                          type: string
+                          nullable: true
+                          description: Null for a tracker, which has no name.
+                        path:
+                          type: string
+                          description: Where the API serves the record, as `/trackers/12`.
+
     CampaignListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -15823,6 +17037,8 @@ components:
     AffNetworkListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -15908,6 +17124,8 @@ components:
     PpcNetworkListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -15969,6 +17187,8 @@ components:
     PpcAccountListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -16084,6 +17304,8 @@ components:
     TrackerListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -16106,7 +17328,7 @@ components:
           type: integer
         landing_page_nickname:
           type: string
-          maxLength: 255
+          maxLength: 50
         leave_behind_page_url:
           type: string
           maxLength: 255
@@ -16150,7 +17372,7 @@ components:
 
     LandingPageCreate:
       type: object
-      required: [landing_page_url, aff_campaign_id]
+      required: [landing_page_url, aff_campaign_id, landing_page_nickname]
       properties:
         landing_page_url:
           type: string
@@ -16165,7 +17387,7 @@ components:
           type: integer
         landing_page_nickname:
           type: string
-          maxLength: 255
+          maxLength: 50
         leave_behind_page_url:
           type: string
           maxLength: 255
@@ -16182,7 +17404,7 @@ components:
           type: integer
         landing_page_nickname:
           type: string
-          maxLength: 255
+          maxLength: 50
         leave_behind_page_url:
           type: string
           maxLength: 255
@@ -16213,6 +17435,8 @@ components:
     LandingPageListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -16230,16 +17454,16 @@ components:
           readOnly: true
         text_ad_name:
           type: string
-          maxLength: 255
+          maxLength: 100
         text_ad_headline:
           type: string
-          maxLength: 500
+          maxLength: 100
         text_ad_description:
           type: string
-          maxLength: 2000
+          maxLength: 100
         text_ad_display_url:
           type: string
-          maxLength: 2048
+          maxLength: 100
         aff_campaign_id:
           type: integer
         landing_page_id:
@@ -16260,20 +17484,20 @@ components:
 
     TextAdCreate:
       type: object
-      required: [text_ad_name]
+      required: [text_ad_name, text_ad_headline, text_ad_description, text_ad_display_url]
       properties:
         text_ad_name:
           type: string
-          maxLength: 255
+          maxLength: 100
         text_ad_headline:
           type: string
-          maxLength: 500
+          maxLength: 100
         text_ad_description:
           type: string
-          maxLength: 2000
+          maxLength: 100
         text_ad_display_url:
           type: string
-          maxLength: 2048
+          maxLength: 100
         aff_campaign_id:
           type: integer
         landing_page_id:
@@ -16291,16 +17515,16 @@ components:
       properties:
         text_ad_name:
           type: string
-          maxLength: 255
+          maxLength: 100
         text_ad_headline:
           type: string
-          maxLength: 500
+          maxLength: 100
         text_ad_description:
           type: string
-          maxLength: 2000
+          maxLength: 100
         text_ad_display_url:
           type: string
-          maxLength: 2048
+          maxLength: 100
         aff_campaign_id:
           type: integer
         landing_page_id:
@@ -16322,6 +17546,8 @@ components:
     TextAdListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -16653,6 +17879,8 @@ components:
     ClickListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -16772,7 +18000,7 @@ components:
         it (a subid or sid, ClickBank's tracking code, the API's or an upload
         line's click id, an app install's token); ad_click_id an ad platform's
         click id (gclid, gbraid, wbraid, ttclid, msclkid, fbclid, oppref) that a
-        global postback with no SubID sent back and a click carries (one
+        postback or pixel with no SubID sent back and a click carries (one
         visitor's latest click on one campaign); cookie a tracking cookie
         naming it; visitor_id the landing-page script's visitor id, on the
         click it was last seen on; same_ip the latest click from the
@@ -17256,6 +18484,85 @@ components:
                   status: {type: string, enum: [skipped, header]}
                   reason: {type: string, description: "Why a line was skipped (or read as the header)."}
             lines_unlisted: {type: integer, description: "Lines not recorded beyond those in lines."}
+
+    RevenueUploadBatch:
+      type: object
+      properties:
+        batch_id: {type: integer}
+        file_name: {type: string}
+        uploaded_at: {type: integer, description: "Unix time"}
+        line_count: {type: integer}
+        recorded_count: {type: integer}
+        skipped_count: {type: integer}
+        undone_at: {type: integer, nullable: true, description: "Unix time of the last undo; a record, not a gate."}
+        undone_rows: {type: integer, nullable: true, description: "Rows the undo that removed any deleted."}
+
+    RevenueUploadList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/RevenueUploadBatch"
+        next_before: {type: integer, nullable: true}
+
+    RevenueUploadClickValue:
+      type: object
+      properties:
+        lead: {type: boolean}
+        value: {type: string, nullable: true, description: "The click's value as reports count it, decimal string; null when it is no lead"}
+
+    RevenueUploadUndoResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            dry_run: {type: boolean}
+            batch:
+              $ref: "#/components/schemas/RevenueUploadBatch"
+            would_remove: {type: integer, description: "Dry run only."}
+            removed: {type: integer, description: "The write only."}
+            clicks: {type: integer}
+            amounts:
+              type: array
+              description: Dry run only. The payouts of the rows it would delete, summed per currency (a row's amount is in the currency it recorded).
+              items:
+                type: object
+                properties:
+                  currency: {type: string, nullable: true, description: "Null where the rows' currency was not recorded"}
+                  amount: {type: string}
+            reversals_stop_netting: {type: integer, description: "Dry run only."}
+            postbacks_cancelled: {type: integer, description: "Dry run only."}
+            postbacks_retracted: {type: integer, description: "Dry run only."}
+            rows:
+              type: array
+              description: Dry run only. The first 1,000 rows it would delete.
+              items:
+                type: object
+                properties:
+                  conv_id: {type: integer}
+                  click_id: {type: integer}
+                  line: {type: integer, nullable: true}
+                  payout: {type: string}
+                  currency: {type: string, nullable: true}
+            rows_unlisted: {type: integer}
+            click_values:
+              type: array
+              description: Dry run only. The first 1,000 clicks, with their value now and after the undo.
+              items:
+                type: object
+                properties:
+                  click_id: {type: integer}
+                  before:
+                    allOf: [{$ref: "#/components/schemas/RevenueUploadClickValue"}]
+                    nullable: true
+                    description: Null when the click itself is no longer stored (click retention keeps conversions).
+                  after:
+                    allOf: [{$ref: "#/components/schemas/RevenueUploadClickValue"}]
+                    nullable: true
+            click_values_unlisted: {type: integer}
+            message: {type: string, description: "The write only."}
 
     LtvCustomerCrm:
       type: object
@@ -17883,6 +19190,8 @@ components:
     ConversionListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -18164,6 +19473,19 @@ components:
       type: object
       required: [name]
       properties:
+        rules:
+          type: array
+          maxItems: 200
+          description: >-
+            The redirector's rules, as PUT /rotators/{id}/rules takes a set,
+            each without an id. The redirector and its rules are written in
+            one transaction: a rule refused creates no redirector. Since
+            1.9.81; advertised as features.rotator_with_rules.
+          items:
+            allOf:
+              - $ref: "#/components/schemas/RotatorRuleCreate"
+              - type: object
+                required: [rule_name, criteria, redirects]
         name:
           type: string
         default_url:
@@ -18354,6 +19676,8 @@ components:
     RotatorListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -18533,6 +19857,8 @@ components:
     AttributionBreakdownResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -18619,7 +19945,12 @@ components:
           type: string
           minLength: 16
           maxLength: 255
-          description: Printable ASCII, no spaces. Generated (64 hex characters) when a webhook is given without one.
+          description: >-
+            Printable ASCII, no spaces. Generated (a whsec_ secret, as a
+            Standard Webhooks library mints one) when a webhook is given
+            without one. One starting whsec_ must be whsec_ followed by
+            base64. A secret without that prefix is used as its own bytes, so
+            a library takes it as whsec_ followed by its base64.
 
     AttributionExport:
       type: object
@@ -18661,7 +19992,7 @@ components:
           nullable: true
         attempts:
           type: integer
-          description: Runs so far; a retryable webhook failure (no connection, timeout, 5xx, 408, 429) is retried after 1 and then 2 minutes, 3 runs in all.
+          description: Runs so far; a retryable webhook failure (no connection, timeout, 5xx, 408, 429, a host that does not resolve) is retried after 1 and then 2 minutes, 3 runs in all.
         last_error:
           type: string
           nullable: true
@@ -19183,7 +20514,7 @@ components:
           description: >-
             The postback parameters the account's networks send an ad click id
             back in, comma-separated (aff_sub3), at most 5; "" for none. Read
-            by the global postback when its SubID is empty or unfilled, and
+            by gpb.php, pb.php, gpx.php and upx.php when the SubID is empty or unfilled, and
             looked up among this account's clicks as every kind of ad click
             id (match_method ad_click_id). gclid, gbraid, wbraid, msclkid,
             fbclid, ttclid and oppref are read under their own names without being
@@ -19252,8 +20583,10 @@ components:
               description: >-
                 The secret Shopify signs the store's webhooks with, which
                 tracking202/static/shopify.php verifies X-Shopify-Hmac-Sha256
-                with, stored trimmed; "" removes it. 16 to 250 letters, digits
-                and punctuation; anything else is a 422.
+                with, stored trimmed and sealed in the integration secrets
+                store; "" removes it. It replaces the stored one at once, with
+                no overlap. 16 to 250 letters, digits and punctuation; anything
+                else is a 422.
             - $ref: "#/components/schemas/StoredSecret"
         user_ltv_customer_cparam: {type: integer, enum: [0, 1, 2, 3, 4], description: "c1-c4 carries a customer id; 0 off."}
         user_ltv_personalization_fields: {type: string, maxLength: 500, description: "Comma list of first_name, last_name, company, city, country, cf:<field_key>, rec:next_offer."}
@@ -19463,6 +20796,7 @@ components:
             case-insensitively; a value contradicting the link is `422`.
         app_key:
           type: string
+          maxLength: 255
           description: The App Store id (digits, no leading zero) or the package name
         app_name:
           type: string
@@ -19600,6 +20934,8 @@ components:
     AppRegistrationListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -19723,6 +21059,8 @@ components:
     AppSkanEncodingListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -19807,6 +21145,8 @@ components:
     GoalListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data: {type: array, items: {$ref: "#/components/schemas/Goal"}}
         pagination: {$ref: "#/components/schemas/Pagination"}
 
@@ -19971,7 +21311,7 @@ components:
                   conversion_id: {type: integer, nullable: true}
                   payable: {type: boolean}
                   amount: {type: string, nullable: true}
-                  notify: {type: string, enum: [reached, suppressed, "off", none], description: "reached: announced to the traffic source (its server postbacks queued in the notification outbox); suppressed: a replacement of an outcome already announced, never announced twice; off: the campaign does not notify for this goal; none: not payable"}
+                  notify: {type: string, enum: [reached, suppressed, "off", none], description: "reached: announced to the traffic source (its server postbacks queued in the notification outbox); suppressed: not announced, either a replacement of an outcome already announced (never announced twice) or an outcome whose visitor refused consent (reason consent_withheld in notifications); off: the campaign does not notify for this goal; none: not payable"}
             notifications:
               type: array
               items:
@@ -19982,7 +21322,7 @@ components:
                   outcome_id: {type: integer}
                   kind: {type: string}
                   status: {type: string, enum: [queued, rendered, failed, not_sent, no_pixels, browser_only], description: "queued: the server-to-server postbacks are in the notification outbox, which the worker sends with retries; rendered: browser pixels were returned to the browser that asked"}
-                  reason: {type: string, nullable: true}
+                  reason: {type: string, nullable: true, description: "Why a notice was not_sent: replacement, no_click, no_traffic_source, or consent_withheld (the visitor refused consent, so no pixel or postback goes)"}
                   queued: {type: integer, description: "Server-to-server postbacks waiting in the notification outbox"}
                   browser_pixels: {type: integer}
                   browser_skipped: {type: integer}
@@ -20320,6 +21660,8 @@ components:
     AppInstallListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -20507,6 +21849,8 @@ components:
     AppPostbackListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -21124,7 +22468,7 @@ components:
           enum: [reached, correction, retraction]
         status:
           type: string
-          enum: [pending, sent, failed, cancelled, suppressed]
+          enum: [pending, sent, failed, cancelled, suppressed, withheld]
         url:
           type: string
           description: The URL as filled when queued (empty for a suppressed correction)

@@ -1,0 +1,2 @@
+-- Fixed: Renaming or merging an LTV company rewrote the company of every attached customer without queuing customer.updated, and so did the maintenance job's attach, blank-name clear and name repair, so a webhook subscriber kept the old company. Each now queues customer.updated for the customers it changed, in the same transaction as the write; the job announces only customers last written in the last 7 days, as its subscription events do.
+app: Fixed: Renaming or merging a company now sends customer.updated webhooks for the customers it changes.

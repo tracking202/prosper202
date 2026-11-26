@@ -65,6 +65,37 @@ final class AssembledStrings
     }
 
     /**
+     * The value of a class constant named as `Class::NAME` (`self::TABLE`,
+     * `TableRegistry::CLICKS`) where it is written at token $at of
+     * \PhpToken::tokenize($source), through the file's namespace and
+     * imports; null when it is not one or cannot be resolved.
+     */
+    public static function constantAt(string $source, string $expression, int $at): mixed
+    {
+        if (preg_match('/^(\\\\?[A-Za-z_][\w\\\\]*)::([A-Za-z_]\w*)$/', $expression, $m) !== 1 || strtolower($m[2]) === 'class') {
+            return null;
+        }
+        $key = md5($source);
+        if (!isset(self::$scopes[$key])) {
+            $tokens = [];
+            $index = [];
+            foreach (token_get_all($source) as $i => $t) {
+                $index[$i] = count($tokens);
+                if (!is_array($t) || !in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                    $tokens[] = $t;
+                }
+            }
+            self::$scopes = [$key => ['scope' => self::scope($tokens), 'index' => $index]];
+        }
+        $held = self::$scopes[$key];
+
+        return self::constantValue($m[1], $m[2], $held['scope'], $held['index'][$at] ?? PHP_INT_MAX);
+    }
+
+    /** @var array<string, array{scope: array{ns: string, uses: array<string, string>, classes: array<int, string>}, index: array<int, int>}> */
+    private static array $scopes = [];
+
+    /**
      * Every chain of string operands in [$from, $to).
      *
      * @param list<mixed> $tokens

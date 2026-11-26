@@ -275,7 +275,9 @@ func runMultiProfileSummary(params map[string]string, profiles []string) error {
 			return err
 		}
 	}
-	render(payload)
+	if err := render(payload); err != nil {
+		return err
+	}
 	if !jsonOutput {
 		if note := spendLedgerProfilesNote(ledgers, len(profileData)); note != "" {
 			fmt.Fprintln(os.Stderr, note)

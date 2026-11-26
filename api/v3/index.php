@@ -15,6 +15,7 @@ require_once dirname(__DIR__, 2) . '/202-config.php';
 use Api\V3\Auth;
 use Api\V3\AuthException;
 use Api\V3\Bootstrap;
+use Api\V3\ErrorCode;
 use Api\V3\HttpException;
 use Api\V3\InsufficientScopeException;
 use Api\V3\RequestContext;
@@ -100,7 +101,7 @@ if ($path === '/apps/installs' || preg_match('#^/apps/installs/([^/]+)/events$#D
             // An install stores the device's address as every row stores a
             // visitor's — VisitorIp's, masked under privacy inside the intake
             // (StoredVisitorIp::forAccount()) — as the Apple receiver does.
-            // The rate limit above keyed on REMOTE_ADDR and never reads it.
+            // The rate limit above keyed on the same address (VisitorIp).
             $androidResult = $androidEvents
                 ? (new \Api\V3\Apps\Android\InstallEventsIntake($db))->receive($androidToken, $androidEventsMatch[1], $androidBody)
                 : (new \Api\V3\Apps\Android\InstallIntake($db))->receive($androidToken, $androidBody, \AUTH::client_ip());
@@ -115,7 +116,8 @@ if ($path === '/apps/installs' || preg_match('#^/apps/installs/([^/]+)/events$#D
         }
         Bootstrap::errorResponse(
             $pending ?? 'The install could not be recorded; retry later',
-            $pending !== null ? 503 : 500
+            $pending !== null ? 503 : 500,
+            $pending !== null ? ['code' => ErrorCode::UPGRADE_PENDING] : []
         );
         exit;
     }
@@ -154,7 +156,7 @@ if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
     if ($raw !== '' && $raw !== false) {
         $payload = json_decode($raw, true);
         if ($payload === null && json_last_error() !== JSON_ERROR_NONE) {
-            Bootstrap::errorResponse('Invalid JSON body', 400);
+            Bootstrap::errorResponse('Invalid JSON body', 400, ['code' => ErrorCode::INVALID_JSON]);
             exit;
         }
         // A body of literal `null` decodes without a JSON error, so it slips
@@ -163,7 +165,7 @@ if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
         // it were the reviewed body. Error pattern #4: a malformed body is
         // rejected, never silently emptied.
         if (!is_array($payload)) {
-            Bootstrap::errorResponse('Invalid JSON body', 400);
+            Bootstrap::errorResponse('Invalid JSON body', 400, ['code' => ErrorCode::INVALID_JSON]);
             exit;
         }
     }
@@ -174,7 +176,11 @@ if ($requestedVersion !== '' && !in_array($requestedVersion, ['v3', '3'], true))
     Bootstrap::errorResponse(
         'Unsupported API version',
         400,
-        ['supported_versions' => ['v3'], 'requested_version' => $requestedVersion]
+        [
+            'code' => ErrorCode::UNSUPPORTED_API_VERSION,
+            'supported_versions' => ['v3'],
+            'requested_version' => $requestedVersion,
+        ]
     );
     exit;
 }
@@ -245,7 +251,11 @@ try {
     if ($path === '/connect/token' || $path === '/connect/revoke') {
         $withheld = \Api\V3\Support\AiConnect::withheldFlag($queryParams);
         if ($withheld !== null) {
-            Bootstrap::errorResponse($withheld . ' is not supported on ' . $path . '; it writes or does nothing', 422);
+            Bootstrap::errorResponse(
+                $withheld . ' is not supported on ' . $path . '; it writes or does nothing',
+                422,
+                ['code' => ErrorCode::DRY_RUN_UNSUPPORTED]
+            );
             exit;
         }
     }
@@ -312,8 +322,14 @@ try {
         exit;
     }
 
-    // Authenticate
-    $auth = Auth::fromRequest($headers, $db);
+    // Authenticate: the key in the Authorization header, or, for a request
+    // that bears none, the pages' signed-in session (SessionSignIn: the
+    // user's standing and session generation read now, and every write
+    // carries the session's token in X-P202-CSRF).
+    $signedInBySession = \Api\V3\SessionSignIn::applies($headers, $_COOKIE);
+    $auth = $signedInBySession
+        ? \Api\V3\SessionSignIn::authenticate($method, $headers, $db)
+        : Auth::fromRequest($headers, $db);
     $userId = $auth->userId();
     RequestContext::setActorUserId($userId);
     RequestContext::setApiKeyRef($auth->apiKeyRef());
@@ -321,6 +337,11 @@ try {
     // The key that authenticated removes itself, and only itself, whatever
     // its scope: so before the limits, the CLI licence gate and the scopes.
     if ($path === '/connect/revoke' && $method === 'POST') {
+        if ($signedInBySession) {
+            // It removes the key a request bears; a session bears none.
+            Bootstrap::errorResponse('This request is signed in by its session and bears no key to revoke. Send the key in the Authorization header.', 400);
+            exit;
+        }
         // Its watchers end first, best effort, as on every key delete. The MCP
         // server's own give-back finds none, at the cost of one short call.
         if (!(new \Api\V3\Support\AiWatchers())->stopBeforeDelete($db, $userId, Auth::bearerKey($headers))) {
@@ -385,7 +406,7 @@ try {
                 \Api\V3\Controllers\CapabilitiesController::notLicensedMessage('The Prosper202 CLI is free')
             ),
             402,
-            ['category' => 'licence']
+            ['category' => 'licence', 'code' => ErrorCode::LICENCE]
         );
         exit;
     }
@@ -415,7 +436,7 @@ try {
     // the int cast leaves unchanged, or a 404. Read as (int) $ctx['id'],
     // DELETE /campaigns/2e0 deleted campaign 2 (PathIdsAreReadStrictlyTest).
     $buildRouters = function (array $payload, array $queryParams, int $actorUserId)
-        use ($db, $auth, $stateStore, $crudMap): array {
+        use ($db, $auth, $stateStore, $crudMap, $signedInBySession): array {
         // Controller factories — instantiated lazily by the router handlers.
         $crud = fn(string $class) => new $class($db, $actorUserId);
 
@@ -469,7 +490,9 @@ try {
         // Reads too: the Setup pages are the only place these records are
         // shown, and every one of them asks for access_to_setup_section first
         // (SetupController). The reports name a campaign or a source to any
-        // role; the record itself -- its URL, payout, cost -- only Setup does.
+        // role; the record itself -- its URL, payout, cost -- only Setup does
+        // (the payout alone is also GET /reports/payout's, masked as the
+        // reports' money, for the rankings a Campaign optimizer runs).
         // A Campaign viewer's key listed every campaign the page hid from it.
         foreach ($crudMap as $resource => $class) {
             $router->group("/$resource", function (Router $r) use ($class, $crud, $queryParams) {
@@ -485,6 +508,34 @@ try {
                 $r->delete('/{id}', fn($ctx) => tap($crud($class), fn($c) => $c->delete(PathId::of($ctx))));
             }, isset($setupRemove[$resource]) ? [$setupRemove[$resource], $setupSection] : []);
         }
+
+        // Where a Library record is used (LibraryUsage): reads, held to Setup as the records are.
+        $router->group('', function (Router $r) use ($crud) {
+            $r->get(
+                '/campaigns/{id}/uses',
+                fn($ctx) => $crud(\Api\V3\Controllers\CampaignsController::class)->uses(PathId::of($ctx))
+            );
+            $r->get(
+                '/aff-networks/{id}/uses',
+                fn($ctx) => $crud(\Api\V3\Controllers\AffNetworksController::class)->uses(PathId::of($ctx))
+            );
+            $r->get(
+                '/ppc-networks/{id}/uses',
+                fn($ctx) => $crud(\Api\V3\Controllers\PpcNetworksController::class)->uses(PathId::of($ctx))
+            );
+            $r->get(
+                '/ppc-accounts/{id}/uses',
+                fn($ctx) => $crud(\Api\V3\Controllers\PpcAccountsController::class)->uses(PathId::of($ctx))
+            );
+            $r->get(
+                '/landing-pages/{id}/uses',
+                fn($ctx) => $crud(\Api\V3\Controllers\LandingPagesController::class)->uses(PathId::of($ctx))
+            );
+            $r->get(
+                '/text-ads/{id}/uses',
+                fn($ctx) => $crud(\Api\V3\Controllers\TextAdsController::class)->uses(PathId::of($ctx))
+            );
+        }, [$setupSection]);
 
         // Tracker sub-resource: Setup › Get Links' link.
         $router->group('/trackers', function (Router $r) use ($crud, $queryParams) {
@@ -506,7 +557,7 @@ try {
         // /conversions routes, whose GET /conversions/{id} would otherwise
         // answer GET /conversions/postback-code. SetupRoutesPermissionTest
         // holds all of this.
-        $router->group('', function (Router $r) use ($crud, $queryParams, $payload, $auth, $stateStore) {
+        $router->group('', function (Router $r) use ($crud, $queryParams, $payload, $auth, $stateStore, $signedInBySession) {
             $code = \Api\V3\Controllers\SetupCodeController::class;
             $r->get('/landing-pages/{id}/code', fn($ctx) => $crud($code)->landingPageCode(PathId::of($ctx), $queryParams));
             // "Check my page": fetches the page and keeps the answer. Not stageable (it changes no setup), and no preview.
@@ -515,7 +566,8 @@ try {
                 PathId::of($ctx),
                 $queryParams,
                 $payload,
-                new \Api\V3\Support\LandingPageCheckLimit($stateStore, $auth->apiKeyRef())
+                // A session is counted by its user: a key's ref is a hex digest, so the two never share a count.
+                new \Api\V3\Support\LandingPageCheckLimit($stateStore, $signedInBySession ? 'session:' . $auth->userId() : $auth->apiKeyRef())
             ));
             // The postback token rides in the URLs only for a key that may write conversions.
             $r->get('/conversions/postback-code', fn() => $crud($code)->postbackCode($queryParams, null, $auth->hasScope('conversions:write')));
@@ -670,6 +722,12 @@ try {
             $r->post('/shopify-refunds/{id}/close', fn($ctx) => (new $cls($db, $actorUserId))
                 ->close(PathId::of($ctx), $payload));
         }, [$shopifyRefundsSettled]);
+        // The revenue uploads, a page of the Update section like the upload
+        // itself (below); before /{id}, which would read the segment as an id.
+        $router->group('/conversions', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\UpdateController::class;
+            $r->get('/uploads', fn() => $crud($cls)->listUploads($queryParams));
+        }, [$updateSection]);
         $router->group('/conversions', function (Router $r) use ($crud, $queryParams, $campaignFigures, $recordMoney, $matchFigures) {
             $cls = \Api\V3\Controllers\ConversionsController::class;
             $r->get('',        fn() => $campaignFigures($crud($cls)->list($queryParams), $recordMoney));
@@ -730,17 +788,21 @@ try {
             });
             $r->post('/subids/reset',  fn() => $crud($cls)->resetSubids($payload, writeDryRunRequested($queryParams)));
             $r->post('/uploads',       fn() => $crud($cls)->uploadRevenue($payload, writeDryRunRequested($queryParams)));
+            // The upload's inverse, asked as the upload is.
+            $r->post('/uploads/{id}/undo', fn($ctx) => $crud($cls)->undoUpload(PathId::of($ctx), $payload, writeDryRunRequested($queryParams)));
         }, [$updateSection]);
 
         // ── Reports ──────────────────────────────────────────────────────
         // Overview and Analyze ask for no permission; a role without
         // access_to_campaign_data gets them masked ($campaignFigures).
+        $payoutFigures = \Api\V3\Support\CampaignFigures::PAYOUT;
         $router->group('/reports', function (Router $r) use (
             $crud,
             $queryParams,
             $campaignFigures,
             $reportFigures,
-            $summaryFigures
+            $summaryFigures,
+            $payoutFigures
         ) {
             $cls = \Api\V3\Controllers\ReportsController::class;
             $r->get('/summary',    fn() => $campaignFigures($crud($cls)->summary($queryParams), $summaryFigures));
@@ -749,6 +811,9 @@ try {
             $r->get('/daypart',    fn() => $campaignFigures($crud($cls)->daypart($queryParams), $reportFigures));
             $r->get('/weekpart',   fn() => $campaignFigures($crud($cls)->weekpart($queryParams), $reportFigures));
             $r->get('/groups',     fn() => $campaignFigures($crud($cls)->groups($queryParams), $reportFigures));
+            // A campaign's payout, which the rankings price clicks with: the
+            // reports' to read, since GET /campaigns/{id} is Setup's.
+            $r->get('/payout',     fn() => $campaignFigures($crud($cls)->payout($queryParams), $payoutFigures));
         });
 
         // ── LTV: reads (ltv:read) ───────────────────────────────────────
@@ -756,19 +821,19 @@ try {
             $cls = \Api\V3\Controllers\LtvController::class;
             $r->get('/summary',        fn() => $crud($cls)->summary($queryParams));
             $r->get('/customers',      fn() => $crud($cls)->customers($queryParams));
-            $r->get('/customers/{id}', fn($ctx) => $crud($cls)->customerDetail(PathId::of($ctx)));
+            $r->get('/customers/{id}', fn($ctx) => $crud($cls)->customerDetail(PathId::of($ctx), $queryParams));
             $r->get('/customers/{id}/engagement', fn($ctx) => $crud($cls)->customerEngagement(PathId::of($ctx), $queryParams));
-            $r->get('/customers/{id}/next-offer', fn($ctx) => $crud($cls)->customerNextOffer(PathId::of($ctx)));
+            $r->get('/customers/{id}/next-offer', fn($ctx) => $crud($cls)->customerNextOffer(PathId::of($ctx), $queryParams));
             $r->get('/abm',            fn() => $crud($cls)->abm($queryParams));
             $r->get('/abm/company',    fn() => $crud($cls)->abmCompany($queryParams));
             $r->get('/breakdown',      fn() => $crud($cls)->breakdown($queryParams));
             $r->get('/cohorts',        fn() => $crud($cls)->cohorts($queryParams));
-            $r->get('/mrr',            fn() => $crud($cls)->mrr());
+            $r->get('/mrr',            fn() => $crud($cls)->mrr($queryParams));
             $r->get('/predict',        fn() => $crud($cls)->predict($queryParams));
             $r->get('/products',       fn() => $crud($cls)->products($queryParams));
             $r->get('/companies',      fn() => $crud($cls)->listCompanies($queryParams));
             $r->get('/subscriptions',  fn() => $crud($cls)->listSubscriptions($queryParams));
-            $r->get('/fields',         fn() => $crud($cls)->fieldsList());
+            $r->get('/fields',         fn() => $crud($cls)->fieldsList($queryParams));
         }, [
             static function () use ($auth): void {
                 $auth->requireScope('ltv:read');
@@ -783,9 +848,9 @@ try {
         // as they are to change.
         $router->group('/ltv', function (Router $r) use ($crud, $queryParams) {
             $cls = \Api\V3\Controllers\LtvController::class;
-            $r->get('/webhooks',       fn() => $crud($cls)->listWebhooks());
+            $r->get('/webhooks',       fn() => $crud($cls)->listWebhooks($queryParams));
             $r->get('/webhooks/{id}/deliveries', fn($ctx) => $crud($cls)->webhookDeliveries(PathId::of($ctx), $queryParams));
-            $r->get('/integrations',   fn() => $crud($cls)->listIntegrations());
+            $r->get('/integrations',   fn() => $crud($cls)->listIntegrations($queryParams));
         }, [
             static function () use ($auth): void {
                 $auth->requireScope('ltv:read');
@@ -854,6 +919,7 @@ try {
             $r->delete('/fields/{id}',            fn($ctx) => tap($crud($cls), fn($c) => $c->deleteField(PathId::of($ctx))));
             $r->post('/webhooks',                 fn() => ['_status' => 201] + $crud($cls)->createWebhook($payload));
             $r->put('/webhooks/{id}', fn($ctx) => $crud($cls)->updateWebhook(PathId::of($ctx), $payload));
+            $r->post('/webhooks/{id}/rotate-secret', fn($ctx) => $crud($cls)->rotateWebhookSecret(PathId::of($ctx), $payload));
             $r->delete('/webhooks/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteWebhook(PathId::of($ctx))));
             $r->post('/integrations',             fn() => ['_status' => 201] + $crud($cls)->createIntegration($payload));
             $r->delete('/integrations/{id}',      fn($ctx) => tap($crud($cls), fn($c) => $c->deleteIntegration(PathId::of($ctx))));
@@ -959,10 +1025,26 @@ try {
                 'user_id' => $auth->userId(),
                 'roles' => $auth->roles(),
                 'scopes' => $auth->scopes(),
+                // Customer LTV, part by part: whether this key's scope and its
+                // user's role let it use each (LtvAccess::PARTS), so a client
+                // does not offer what the role would be refused.
+                'ltv' => \Api\V3\Support\LtvAccess::of($auth, $db),
             ];
 
             return $answer;
         });
+
+        // ── Who is signed in ────────────────────────────────────────────
+        // The user, the account's zone and currency, the roles, the
+        // permissions and the flags the pages and routes gate on, the
+        // licence and ad switches, the install version (which GET
+        // /system/version answers to admins only) and the feature list:
+        // what a dashboard decides its screens by. The caller's own facts,
+        // so no scope and no role (Auth::isScopeExemptPath()).
+        $router->get('/me', fn() => (new \Api\V3\Controllers\MeController($db, $auth))->me(
+            $signedInBySession ? 'session' : 'api_key',
+            $signedInBySession ? \Api\V3\SessionSignIn::csrfToken() : null
+        ));
 
         // ── Server-side sync planning (admin + read scope) ─────────────
         $router->group('/sync', function (Router $r) use ($crud, $queryParams, $payload) {
@@ -1350,12 +1432,17 @@ try {
         // ── Users (admin-gated writes, self-or-admin for reads) ──────────
         $router->group('/users', function (Router $r) use ($db, $auth, $idempotent, $payload, $queryParams) {
             $make = fn() => new \Api\V3\Controllers\UsersController($db);
+            // A user who is not there, removed or never created, is a 404 on
+            // every route under /users/{id}, as GET /users/{id} is. Asked
+            // after the route's authorization, so a caller refused there
+            // learns nothing of which users exist.
+            $liveUser = static fn(int $id) => $make()->requireUser($id);
 
             $r->get('/roles', fn() => $make()->listRoles());
 
-            $r->get('', function () use ($auth, $make) {
+            $r->get('', function () use ($auth, $make, $queryParams) {
                 $auth->requireAdmin();
-                return $make()->list();
+                return $make()->list($queryParams);
             });
             $r->post('', function () use ($auth, $make, $idempotent, $payload) {
                 $auth->requireAdmin();
@@ -1387,93 +1474,119 @@ try {
             });
 
             // Roles sub-resource
-            $r->post('/{id}/roles', function ($ctx) use ($auth, $make, $payload, $db) {
+            $r->post('/{id}/roles', function ($ctx) use ($auth, $make, $payload, $db, $liveUser) {
                 $auth->requireMayChangeRoles($db, PathId::of($ctx), \Api\V3\Controllers\UsersController::roleIdFrom($payload));
+                $liveUser(PathId::of($ctx));
                 return $make()->assignRole(PathId::of($ctx), $payload);
             });
-            $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make, $db) {
+            $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make, $db, $liveUser) {
                 $auth->requireMayChangeRoles($db, PathId::of($ctx), null);
+                $liveUser(PathId::of($ctx));
                 $make()->removeRole(PathId::of($ctx), PathId::of($ctx, 'roleId'));
                 return null;
             });
 
             // API keys (Personal settings: yours with the page's permission,
             // or a user you may manage)
-            $r->get('/{id}/api-keys', function ($ctx) use ($auth, $make, $db) {
+            $r->get('/{id}/api-keys', function ($ctx) use ($auth, $make, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return $make()->listApiKeys(PathId::of($ctx));
             });
-            $r->post('/{id}/api-keys', function ($ctx) use ($auth, $make, $payload, $db) {
+            $r->post('/{id}/api-keys', function ($ctx) use ($auth, $make, $payload, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return ['_status' => 201] + $make()->createApiKey(PathId::of($ctx), $payload, $auth);
             });
-            $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make, $db) {
+            $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 $make()->deleteApiKey(PathId::of($ctx), (string)$ctx['keyId']);
                 return null;
             });
             // The key to replace is in the body: it works for a day more,
             // and a path is logged.
-            $r->post('/{id}/api-keys/replace', function ($ctx) use ($auth, $make, $payload, $db) {
+            $r->post('/{id}/api-keys/replace', function ($ctx) use ($auth, $make, $payload, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return ['_status' => 201] + $make()->replaceApiKey(PathId::of($ctx), $payload, $auth);
             });
 
             // Identity linking key (self-or-admin): what the operator's
             // server signs customer ids with (cust_sig).
-            $r->get('/{id}/identity-key', function ($ctx) use ($auth, $make, $db) {
+            $r->get('/{id}/identity-key', function ($ctx) use ($auth, $make, $db, $liveUser) {
                 $auth->requireSelfOrMayManageUser($db, PathId::of($ctx));
                 // A read that hands out a signing secret: whoever holds the
                 // key can link any click to any customer id, which is a write
                 // to the account's identity graph. So a read-only or
                 // propose-only key (a reporting agent's) cannot fetch it.
                 $auth->requireScope('users:write');
+                $liveUser(PathId::of($ctx));
                 return $make()->identityKey(PathId::of($ctx));
             });
-            $r->post('/{id}/identity-key/rotate', function ($ctx) use ($auth, $make, $db) {
+            $r->post('/{id}/identity-key/rotate', function ($ctx) use ($auth, $make, $db, $liveUser) {
                 $auth->requireSelfOrMayManageUser($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return $make()->rotateIdentityKey(PathId::of($ctx));
             });
 
             // Preferences (Personal settings: yours with the page's
             // permission, or a user you may manage; they hold the account's
             // integration secrets, which GET answers only as stored or not)
-            $r->get('/{id}/preferences', function ($ctx) use ($auth, $make, $db) {
+            $r->get('/{id}/preferences', function ($ctx) use ($auth, $make, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return $make()->getPreferences(PathId::of($ctx));
             });
-            $r->put('/{id}/preferences', function ($ctx) use ($auth, $make, $payload, $db) {
+            $r->put('/{id}/preferences', function ($ctx) use ($auth, $make, $payload, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
-                return $make()->updatePreferences(PathId::of($ctx), $payload);
+                $liveUser(PathId::of($ctx));
+                return $make()->updatePreferences(
+                    PathId::of($ctx),
+                    $payload,
+                    null,
+                    // The LTV › Settings values ask what the LTV Settings writes ask.
+                    static fn () => \Api\V3\Support\LtvAccess::require($auth, $db, 'settings_write'),
+                    $auth->userId()
+                );
             });
 
             // Click filtering (Personal settings' card, asked the same way):
             // the switches, the address list, and a test of one address
             // (?ip=), a read.
             $filter = fn() => new \Api\V3\Controllers\ClickFilterController($db);
-            $r->get('/{id}/click-filter', function ($ctx) use ($auth, $filter, $db) {
+            $r->get('/{id}/click-filter', function ($ctx) use ($auth, $filter, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return $filter()->get(PathId::of($ctx));
             });
-            $r->put('/{id}/click-filter', function ($ctx) use ($auth, $filter, $payload, $db) {
+            $r->put('/{id}/click-filter', function ($ctx) use ($auth, $filter, $payload, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return $filter()->update(PathId::of($ctx), $payload);
             });
-            $r->post('/{id}/click-filter/entries', function ($ctx) use ($auth, $filter, $payload, $db) {
+            $r->post('/{id}/click-filter/entries', function ($ctx) use ($auth, $filter, $payload, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return $filter()->addEntry(PathId::of($ctx), $payload);
             });
-            $r->put('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $filter, $payload, $db) {
+            $r->put(
+                '/{id}/click-filter/entries/{entryId}',
+                function ($ctx) use ($auth, $filter, $payload, $db, $liveUser) {
+                    $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                    $liveUser(PathId::of($ctx));
+                    return $filter()->updateEntry(PathId::of($ctx), PathId::of($ctx, 'entryId'), $payload);
+                }
+            );
+            $r->delete('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $filter, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
-                return $filter()->updateEntry(PathId::of($ctx), PathId::of($ctx, 'entryId'), $payload);
-            });
-            $r->delete('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $filter, $db) {
-                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 $filter()->deleteEntry(PathId::of($ctx), PathId::of($ctx, 'entryId'));
                 return null;
             });
-            $r->get('/{id}/click-filter/test', function ($ctx) use ($auth, $filter, $queryParams, $db) {
+            $r->get('/{id}/click-filter/test', function ($ctx) use ($auth, $filter, $queryParams, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return $filter()->test(PathId::of($ctx), $queryParams);
             });
         });
@@ -1557,9 +1670,9 @@ try {
                 'clicks'        => '/clicks',
                 'conversions'   => '/conversions',
                 'update'        => '/clicks/cpc, /conversions/{subids|subids/delete|subids/reset|uploads}',
-                'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart|groups}',
+                'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart|groups|payout}',
                 'spend_ledger'  => '/spend-ledger[/conversions|/sync[/{id}[/run]]]',
-                'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}[/{id}][/deliveries]',
+                'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}[/{id}][/deliveries|/rotate-secret]',
                 'rotators'      => '/rotators[/{id}/rules|/{id}/stats]',
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
                 'apps'          => '/apps/{id|skan-encodings|postbacks|report|notifications|verify|schema|installs}[/installs|/install-token|/store-link|/integrity|/integrity-credential]',
@@ -1655,20 +1768,28 @@ try {
         });
         $previewRouter->group('/users', function (Router $r) use ($db, $auth) {
             $make = fn() => new \Api\V3\Controllers\UsersController($db);
+            // A user who is not there, removed or never created, is a 404 on
+            // every route under /users/{id}, as GET /users/{id} is. Asked
+            // after the route's authorization, so a caller refused there
+            // learns nothing of which users exist.
+            $liveUser = static fn(int $id) => $make()->requireUser($id);
             $r->delete('/{id}', function ($ctx) use ($auth, $make, $db) {
                 $auth->requireMayDeleteUser($db, PathId::of($ctx));
                 return $make()->deletePreview(PathId::of($ctx));
             });
-            $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make, $db) {
+            $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return $make()->deleteApiKeyPreview(PathId::of($ctx), (string)$ctx['keyId']);
             });
-            $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make, $db) {
+            $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make, $db, $liveUser) {
                 $auth->requireMayChangeRoles($db, PathId::of($ctx), null);
+                $liveUser(PathId::of($ctx));
                 return $make()->removeRolePreview(PathId::of($ctx), PathId::of($ctx, 'roleId'));
             });
-            $r->delete('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $db) {
+            $r->delete('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return (new \Api\V3\Controllers\ClickFilterController($db))->deleteEntryPreview(
                     PathId::of($ctx),
                     PathId::of($ctx, 'entryId')
@@ -1702,6 +1823,7 @@ try {
         $r->post('/subids/delete', $writePreview);
         $r->post('/subids/reset', $writePreview);
         $r->post('/uploads', $writePreview);
+        $r->post('/uploads/{id}/undo', $writePreview);
     });
     $writePreviewRouter->post('/system/retention/delete-before', $writePreview);
     $writePreviewRouter->put('/rotators/{id}/rules', $writePreview);
@@ -2058,7 +2180,7 @@ try {
         $db,
         $userId,
         static fn (): string => ApiUsage::clientKind(
-            ScopeRefusal::keySource($db, Auth::bearerKey($headers), $userId) === ScopeRefusal::AI_CONNECTION,
+            !$signedInBySession && ScopeRefusal::keySource($db, Auth::bearerKey($headers), $userId) === ScopeRefusal::AI_CONNECTION,
             (string) ($_SERVER['HTTP_USER_AGENT'] ?? '')
         ),
         $method,
@@ -2106,24 +2228,36 @@ try {
         error_log(p202UncaughtLogLine('API v3 answered ' . $code, $e));
         $pending = Bootstrap::pendingUpgrade($db);
         if ($pending !== null) {
-            [$message, $code] = [$pending, 503];
+            [$message, $code, $extra] = [$pending, 503, ['code' => ErrorCode::UPGRADE_PENDING]];
         }
     }
     Bootstrap::errorResponse($message, $code, $extra);
 } catch (ValidationException $e) {
-    Bootstrap::errorResponse($e->getMessage(), 422, $e->getFieldErrors() ? ['field_errors' => $e->getFieldErrors()] : []);
+    Bootstrap::errorResponse(
+        $e->getMessage(),
+        422,
+        ['code' => $e->errorCode()] + ($e->getFieldErrors() ? ['field_errors' => $e->getFieldErrors()] : [])
+    );
 } catch (ConflictException $e) {
-    Bootstrap::errorResponse($e->getMessage(), 409, $e->getDetails() ? ['details' => $e->getDetails()] : []);
+    Bootstrap::errorResponse(
+        $e->getMessage(),
+        409,
+        ['code' => $e->errorCode()] + ($e->getDetails() ? ['details' => $e->getDetails()] : [])
+    );
 } catch (WriteCommittedException $e) {
     error_log(p202UncaughtLogLine('API v3 write committed, then failed', $e));
-    Bootstrap::errorResponse($e->getMessage(), $e->getHttpStatus());
+    Bootstrap::errorResponse($e->getMessage(), $e->getHttpStatus(), ['code' => $e->errorCode()]);
 } catch (TooManyRequestsException $e) {
     header('Retry-After: ' . $e->retryAfter);
-    Bootstrap::errorResponse($e->getMessage(), 429, ['retry_after_seconds' => $e->retryAfter] + $e->getDetails());
+    Bootstrap::errorResponse(
+        $e->getMessage(),
+        429,
+        ['code' => $e->errorCode(), 'retry_after_seconds' => $e->retryAfter] + $e->getDetails()
+    );
 } catch (UpstreamUnavailableException $e) {
     // Another service's failure, in its own words: nothing here is broken, so the upgrade is not named for it.
     error_log(p202UncaughtLogLine('API v3 answered ' . $e->getHttpStatus() . ' for an ad platform', $e));
-    $extra = ['details' => $e->getDetails()];
+    $extra = ['code' => $e->errorCode(), 'details' => $e->getDetails()];
     if ($e->retryAfter !== null) {
         header('Retry-After: ' . $e->retryAfter);
         $extra = ['retry_after_seconds' => $e->retryAfter] + $extra;
@@ -2132,17 +2266,24 @@ try {
 } catch (HttpException $e) {
     $code = $e->getHttpStatus();
     $message = $e->getMessage();
+    $errorCode = $e->errorCode();
     if ($code >= 500) {
         // The answer names no cause but a pending upgrade; the log keeps it.
         error_log(p202UncaughtLogLine('API v3 answered ' . $code, $e));
         $pending = Bootstrap::pendingUpgrade($db);
-        [$message, $code] = $pending !== null ? [$pending, 503] : ['Internal server error', $code];
+        [$message, $code, $errorCode] = $pending !== null
+            ? [$pending, 503, ErrorCode::UPGRADE_PENDING]
+            : ['Internal server error', $code, $errorCode];
     }
-    Bootstrap::errorResponse($message, $code);
+    Bootstrap::errorResponse($message, $code, ['code' => $errorCode]);
 } catch (\Throwable $e) {
     error_log(p202UncaughtLogLine('API v3 answered 500', $e));
     $pending = Bootstrap::pendingUpgrade($db);
-    Bootstrap::errorResponse($pending ?? 'Internal server error', $pending !== null ? 503 : 500);
+    Bootstrap::errorResponse(
+        $pending ?? 'Internal server error',
+        $pending !== null ? 503 : 500,
+        ['code' => $pending !== null ? ErrorCode::UPGRADE_PENDING : ErrorCode::SERVER_ERROR]
+    );
 }
 
 // ─── Helper ──────────────────────────────────────────────────────────

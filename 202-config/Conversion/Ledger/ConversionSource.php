@@ -42,6 +42,20 @@ enum ConversionSource: string
         };
     }
 
+    /**
+     * A payment platform whose notifications name its own sales
+     * (ProviderAdapter::source()). Two platforms' transaction ids are
+     * separate namespaces, so one platform's sale is never another's
+     * duplicate (TransactionSale).
+     */
+    public function isPaymentProvider(): bool
+    {
+        return match ($this) {
+            self::CLICKBANK, self::PAYKICKSTART, self::JVZOO, self::SHOPIFY, self::ZAXAA => true,
+            default => false,
+        };
+    }
+
     /** A short human label for the breakdown and the reports. */
     public function label(): string
     {

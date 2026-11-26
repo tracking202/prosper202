@@ -166,6 +166,9 @@ final class InMemoryExecuteSyncEngine extends SyncEngine
 
 final class SyncFeaturesTest extends TestCase
 {
+    private string $log = '';
+    private string|false $previousLog = false;
+
     private string $tmpDir;
 
     /** The key a job's profile keys are sealed with, in place of the database's. */
@@ -179,10 +182,15 @@ final class SyncFeaturesTest extends TestCase
         parent::setUp();
         $this->tmpDir = sys_get_temp_dir() . '/p202-sync-test-' . bin2hex(random_bytes(4));
         mkdir($this->tmpDir, 0700, true);
+        // The sync logs its own failures; kept out of the test's output.
+        $this->log = (string) tempnam(sys_get_temp_dir(), 'p202-sync-log-');
+        $this->previousLog = ini_set('error_log', $this->log);
     }
 
     protected function tearDown(): void
     {
+        ini_set('error_log', (string) $this->previousLog);
+        @unlink($this->log);
         $this->removeDir($this->tmpDir);
         parent::tearDown();
     }

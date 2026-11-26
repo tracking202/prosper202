@@ -111,7 +111,7 @@ func RenderWith(data []byte, opts Opts) {
 		if items, ok := v["data"].([]interface{}); ok {
 			renderTable(items, opts)
 			if pg, ok := v["pagination"].(map[string]interface{}); ok {
-				renderPagination(pg)
+				renderPagination(pg, v["truncated"], len(items))
 			}
 		} else if inner, ok := v["data"].(map[string]interface{}); ok {
 			renderObject(inner)
@@ -539,7 +539,10 @@ func renderObject(obj map[string]interface{}) {
 
 // renderPagination writes the page summary and the truncation warning to
 // stderr, keeping stdout strictly data.
-func renderPagination(pg map[string]interface{}) {
+// renderPagination prints a list page's pagination and, when rows remain after the page, a warning naming how to
+// read them. truncated is the answer's own `truncated` (every v3 answer to a request taking offset carries it), which
+// decides when it is a boolean; from a server before it, the total and the limit do. rows is the page's row count.
+func renderPagination(pg map[string]interface{}, truncated interface{}, rows int) {
 	parts := []string{}
 	if total, ok := pg["total"]; ok {
 		parts = append(parts, fmt.Sprintf("Total: %v", total))
@@ -557,6 +560,13 @@ func renderPagination(pg map[string]interface{}) {
 	total, hasTotal := numericValue(pg["total"])
 	limit, hasLimit := numericValue(pg["limit"])
 	offset, hasOffset := numericValue(pg["offset"])
+	if more, ok := truncated.(bool); ok {
+		if more {
+			fmt.Fprintf(os.Stderr, "Warning: more rows remain after rows %.0f-%.0f. Use --offset %.0f for the next page, or --all to fetch all.\n",
+				offset+1, offset+float64(rows), offset+float64(rows))
+		}
+		return
+	}
 	if !hasTotal || !hasLimit {
 		return
 	}

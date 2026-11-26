@@ -44,21 +44,33 @@ final class MysqlUserRepository implements UserRepositoryInterface
         return $this->conn->fetchOne($stmt);
     }
 
+    /**
+     * Every NOT NULL column of 202_users without a DEFAULT is named, so the
+     * row is valid under a strict sql_mode (NewUserInsertsNameEveryRequiredColumnTest),
+     * with the values POST /users gives them: the dash email is the account
+     * email, install_hash the install's (user 1's, as Settings › Users copies
+     * it), user_hash empty, and a publisher id for t202pubid links.
+     */
     public function create(array $data): int
     {
         $hashedPass = hash_user_pass($data['password']);
         $now = time();
+        $publisherId = bin2hex(random_bytes(5));
 
-        return $this->conn->transaction(function () use ($data, $hashedPass, $now): int {
+        return $this->conn->transaction(function () use ($data, $hashedPass, $now, $publisherId): int {
+            $stmt = $this->conn->prepareWrite('SELECT install_hash FROM 202_users WHERE user_id = 1 LIMIT 1');
+            $installHash = (string) (($this->conn->fetchOne($stmt) ?? [])['install_hash'] ?? '');
+
             $stmt = $this->conn->prepareWrite(
                 'INSERT INTO 202_users
-                    (user_fname, user_lname, user_name, user_pass, user_email, user_timezone, user_time_register, user_active, user_deleted)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)'
+                    (user_fname, user_lname, user_name, user_pass, user_email, user_dash_email, user_timezone,
+                     user_time_register, user_active, install_hash, user_hash, user_public_publisher_id, user_deleted)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)'
             );
-            $this->conn->bind($stmt, 'ssssssii', [
+            $this->conn->bind($stmt, 'sssssssiisss', [
                 $data['fname'], $data['lname'], $data['name'],
-                $hashedPass, $data['email'], $data['timezone'] ?? 'UTC',
-                $now, $data['active'] ?? 1,
+                $hashedPass, $data['email'], $data['email'], $data['timezone'] ?? 'UTC',
+                $now, $data['active'] ?? 1, $installHash, '', $publisherId,
             ]);
             $userId = $this->conn->executeInsert($stmt);
 

@@ -6,12 +6,16 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
+use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\PayloadKeys;
+use Api\V3\Support\QueryInt;
 use Prosper202\Conversion\BatchInterrupted;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Conversion\RevenueUploadImporter;
+use Prosper202\Conversion\UploadBatchNotFound;
+use Prosper202\Conversion\UploadBatchUndo;
 use Prosper202\Database\Connection;
 use Prosper202\Report\AccountZone;
 use Prosper202\Update\CpcUpdate;
@@ -21,7 +25,8 @@ use Prosper202\Update\SubidLinesRefused;
 /**
  * The Update section of the UI (tracking202/update/) as REST: update the CPC
  * of past clicks, mark subids converted, delete subids, reset a campaign's or
- * category's subids, and upload a network's revenue report.
+ * category's subids, upload a network's revenue report, list the uploads and
+ * undo one.
  *
  * Every write here is the page's own, through the same domain code
  * (Prosper202\Update\CpcUpdate and SubidBatch, RevenueUploadImporter), so a
@@ -416,6 +421,93 @@ final class UpdateController
             'skipped' => $import['skipped'],
             'columns' => $columns,
         ] + self::uploadAnswer($import)];
+    }
+
+    // ─── GET /conversions/uploads ───────────────────────────────────────
+
+    /**
+     * The account's revenue uploads, newest first: the batch ids an undo
+     * names, with what each recorded and whether it was undone.
+     *
+     * @param array<string, mixed> $params
+     * @return array<string, mixed>
+     */
+    public function listUploads(array $params): array
+    {
+        $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'uploads to list');
+        $before = array_key_exists('before', $params)
+            ? QueryInt::required($params, 'before', 1, 4294967295, 'a batch id from next_before')
+            : null;
+        $rows = $this->guard(fn (): array => $this->uploadUndo()->batches($this->userId, $limit, $before));
+
+        return [
+            'data' => $rows,
+            'next_before' => count($rows) === $limit ? $rows[count($rows) - 1]['batch_id'] : null,
+        ];
+    }
+
+    // ─── POST /conversions/uploads/{id}/undo ────────────────────────────
+
+    /**
+     * Undo one revenue upload: every conversion its batch recorded is deleted
+     * through the ledger and each click is recomputed, so what the upload
+     * replaced counts again. A dry run lists the rows it would delete and each
+     * click's value before and after, and writes nothing.
+     *
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    public function undoUpload(int $batchId, array $payload, bool $dryRun): array
+    {
+        PayloadKeys::refuseUnknown($payload, [], 'an upload undo', self::QUERY_NOT_BODY);
+        $undo = $this->uploadUndo();
+
+        if ($dryRun) {
+            $preview = $this->guard(function () use ($undo, $batchId): array {
+                try {
+                    return $undo->preview($this->userId, $batchId);
+                } catch (UploadBatchNotFound $e) {
+                    throw new NotFoundException(self::uploadNotFound($batchId), $e);
+                }
+            });
+            return ['data' => ['dry_run' => true] + $preview];
+        }
+
+        set_time_limit(0);
+        try {
+            $result = $undo->undo($this->userId, $batchId);
+        } catch (UploadBatchNotFound $e) {
+            throw new NotFoundException(self::uploadNotFound($batchId), $e);
+        } catch (BatchInterrupted $e) {
+            throw self::interrupted($e, static fn (BatchInterrupted $e): string => 'The undo of batch ' . $batchId . ' stopped at '
+                . $e->at . ': its conversions on ' . $e->committed . ' ' . self::plural($e->committed, 'click were', 'clicks were')
+                . ' deleted before it and stay deleted. Undoing the batch again is safe: it deletes what is left of it.');
+        } catch (\Throwable $e) {
+            // Before the first click's transaction committed: nothing was written.
+            throw new DatabaseException('Undoing upload batch ' . $batchId . ' failed', $e);
+        }
+
+        return ['data' => [
+            'dry_run' => false,
+            'removed' => $result['removed'],
+            'clicks' => $result['clicks'],
+            'batch' => $result['batch'],
+            'message' => $result['removed'] === 0
+                ? 'Batch ' . $batchId . ' had no conversions left to delete.'
+                : 'Deleted ' . $result['removed'] . ' ' . self::plural($result['removed'], 'conversion', 'conversions')
+                    . ' of batch ' . $batchId . ' on ' . $result['clicks'] . ' ' . self::plural($result['clicks'], 'click', 'clicks')
+                    . '; each click\'s value is what it was before the upload.',
+        ]];
+    }
+
+    private function uploadUndo(): UploadBatchUndo
+    {
+        return new UploadBatchUndo($this->conn, new MysqlConversionRepository($this->conn));
+    }
+
+    private static function uploadNotFound(int $batchId): string
+    {
+        return 'Upload batch ' . $batchId . ' not found: GET /conversions/uploads lists this account\'s batch ids';
     }
 
     /** The most per-click totals an upload's answer lists. */

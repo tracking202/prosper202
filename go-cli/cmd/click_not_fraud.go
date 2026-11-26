@@ -43,8 +43,7 @@ var clickNotFraudCmd = &cobra.Command{
 			return err
 		}
 		if jsonOutput || ndjsonOutput || csvOutput || quietOutput {
-			render(data)
-			return nil
+			return render(data)
 		}
 		var answer struct {
 			Data struct {

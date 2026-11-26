@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\ErrorCode;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\AccountTimezone;
+use Api\V3\Support\PageRows;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\TimeBound;
 use Prosper202\Attribution\AttributionReports;
@@ -23,6 +25,7 @@ use Prosper202\Attribution\QueueRetry;
 use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookRefused;
 use Prosper202\Database\Connection;
+use Prosper202\Webhooks\StandardWebhook;
 
 /**
  * Multi-touch attribution over v3 (plan §6.3): models, and the reports over
@@ -97,10 +100,10 @@ class AttributionController
         $id = $this->conn->transaction(function () use ($name, $slug, $type, $config, $lookback, $status, $isDefault): int {
             $taken = $this->models->slugTaken($this->userId, $slug);
             if ($taken !== null) {
-                throw new ConflictException(
+                throw (new ConflictException(
                     'A model named like "' . $name . '" already exists (model ' . $taken . '); update it, or choose another name.',
                     ['model_id' => $taken]
-                );
+                ))->coded(ErrorCode::NAME_TAKEN);
             }
             $id = $this->models->insert($this->userId, $name, $slug, $type, $config, $lookback, $status, $isDefault);
             $this->audit($id, 'model_created', ['model_type' => $type->value, 'is_default' => $isDefault]);
@@ -172,10 +175,10 @@ class AttributionController
             $slug = ModelRepository::slugFor($name);
             $taken = $this->models->slugTaken($this->userId, $slug, $id);
             if ($taken !== null) {
-                throw new ConflictException(
+                throw (new ConflictException(
                     'A model named like "' . $name . '" already exists (model ' . $taken . ').',
                     ['model_id' => $taken]
-                );
+                ))->coded(ErrorCode::NAME_TAKEN);
             }
 
             $computes = $status === Model::STATUS_ACTIVE;
@@ -312,15 +315,17 @@ class AttributionController
             $groupBy,
             $from,
             $to,
-            $limit,
+            PageRows::fetchLimit($limit),
             $offset,
             $cohort,
             $keys,
             $timezone
         );
+        [$rows, $truncated] = PageRows::cut($result['rows'], $limit);
 
         return [
-            'data' => $result['rows'],
+            'data' => $rows,
+            'truncated' => $truncated,
             'totals' => $result['totals'],
             'meta' => [
                 'group_by' => $groupBy,
@@ -671,10 +676,15 @@ class AttributionController
         }
 
         if ($secret === null || $secret === '') {
-            return [$url, bin2hex(random_bytes(32))];
+            return [$url, StandardWebhook::newSecret()];
         }
         if (!is_string($secret) || preg_match('/^[\x21-\x7E]{16,255}$/D', $secret) !== 1) {
             throw new ValidationException('Invalid webhook_secret', ['webhook_secret' => '16 to 255 printable ASCII characters, no spaces; or leave it out and one is generated']);
+        }
+        if (!StandardWebhook::isUsableSecret($secret)) {
+            // Signed as text, it would make a signature no library given the
+            // secret can match.
+            throw new ValidationException('Invalid webhook_secret', ['webhook_secret' => 'A secret starting whsec_ is whsec_ followed by base64 (as a Standard Webhooks library mints one); send one like that, another secret, or leave it out and one is generated']);
         }
 
         return [$url, $secret];

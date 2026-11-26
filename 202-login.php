@@ -58,11 +58,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$username_raw = (string)($_POST['user_name'] ?? '');
 	$password = (string)($_POST['user_pass'] ?? '');
 	$username = trim($username_raw);
-	// Validated, trust-aware client IP (HTTP_X_FORWARDED_FOR normalized by
-	// connect.php, falling back to REMOTE_ADDR). Keying the throttle on the raw
-	// REMOTE_ADDR would be the shared proxy address behind a CDN and lock out
-	// every user behind it; AUTH::client_ip() also rejects spoofed/overlong
-	// forwarded values so they can't break the varchar(255) audit-log insert.
+	// Validated client IP (VisitorIp): REMOTE_ADDR, or behind a proxy listed
+	// in P202_TRUSTED_PROXIES the client it names, so the throttle is per
+	// visitor behind a CDN and no forged header picks the bucket.
 	$login_ip = AUTH::client_ip();
 	$rate_limited = false;
 	prosper_log('login', 'Processing login attempt for username ' . $username);
@@ -123,8 +121,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	}
 
 	if ($error && $user_row && !empty($user_row['user_slack_incoming_webhook'])) {
-		$slack = new Slack($user_row['user_slack_incoming_webhook']);
-		$slack->push('failed_login', ['username' => $username, 'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown']);
+		$slack = Slack::forAccount($db, (int) $user_row['user_id']);
+		$slack?->push('failed_login', ['username' => $username, 'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown']);
 	}
 
 	// Before the attempt is logged, so a sign-in that stops here logs as not

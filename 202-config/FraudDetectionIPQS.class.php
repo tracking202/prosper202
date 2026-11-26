@@ -65,12 +65,13 @@ class FraudDetectionIPQS implements FraudDetectionInterface
     function get_IPQ_URL($url) 
     {
         $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
-        curl_setopt($ch, CURLOPT_REFERER, "http://my.tracking202.com");
-        curl_setopt($ch, CURLOPT_TIMEOUT, 3);
-        $data = curl_exec($ch);
+        $data = \Prosper202\Http\FixedHostRoute::exec($ch, [
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 3,
+            CURLOPT_REFERER => "http://my.tracking202.com",
+            CURLOPT_TIMEOUT => 3,
+        ]);
         curl_close($ch);
         return $data;
     }

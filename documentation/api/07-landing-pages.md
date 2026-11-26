@@ -36,6 +36,22 @@ advanced one (several offers); `GET /landing-pages/{id}/code` makes the code
 for either (an advanced page's with `?offers=campaign:<id>,rotator:<id>`),
 described in the [Setup API](27-setup.md).
 
+## Deleting a page
+
+`DELETE /landing-pages/{id}` removes the page (it is marked deleted). An
+advanced page is not removed while text ads of `text_ad_type` 1 or trackers
+name it, since each would be left pointing at a page that is gone: the answer
+is `409`, its message names them, and `details` lists their ids:
+
+```json
+{"error": true, "message": "Landing page 12 is advanced and 1 text ad of text_ad_type 1 (text_ad_id 4) and 2 trackers (tracker_id 7, 9) name it: ...", "status": 409, "details": {"text_ad_ids": [4], "tracker_ids": [7, 9]}}
+```
+
+Point each text ad at another advanced page or make it a campaign ad, and move
+or delete each tracker, then delete the page. `dry_run=1` answers the same
+refusal. A simple page is removed as before. Setup › Landing Pages refuses the
+same delete.
+
 ## Example
 
 ```bash

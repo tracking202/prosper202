@@ -31,9 +31,10 @@ fi
 # done. write-config.php is a no-op when 202-config.php already exists, so this
 # is safe to run on every container start. A real failure (missing sample,
 # unwritable target) would otherwise boot the container with broken DB config,
-# so let `set -e` surface it loudly instead of swallowing it.
+# so let `set -e` surface it loudly instead of swallowing it. The image keeps
+# the script outside the docroot, where no request can run it.
 if [ -n "${MYSQL_ROOT_PASSWORD:-}" ]; then
-    php build/scripts/write-config.php
+    php /usr/local/lib/prosper202/write-config.php "$(pwd)"
 fi
 
 # Execute the main command (Apache)

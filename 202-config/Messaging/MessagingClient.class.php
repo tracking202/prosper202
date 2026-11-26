@@ -202,7 +202,7 @@ class MessagingClient
 
         // The transport options on the left: in `+` the left side wins, so
         // nothing listed here can replace them (CLAUDE.md #24).
-        curl_setopt_array($ch, $this->transport + [
+        $response = \Prosper202\Http\FixedHostRoute::exec($ch, $this->transport + [
             CURLOPT_URL            => $url,
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => $body,
@@ -218,8 +218,6 @@ class MessagingClient
                 'Content-Type: application/json',
             ],
         ]);
-
-        $response = curl_exec($ch);
         $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error    = curl_error($ch);
         curl_close($ch);

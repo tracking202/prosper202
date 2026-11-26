@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"p202/internal/api"
 	"p202/internal/output"
 )
 
@@ -31,26 +32,24 @@ func renderOpts() output.Opts {
 	return opts
 }
 
-// render writes an API payload using the global output flags.
-//
-// An empty payload reaching here means the caller could not build one — several
-// callers assemble theirs with json.Marshal and would otherwise pass nil on
-// failure. Rendering nil prints nothing and exits 0, which reads as "no results"
-// rather than "we failed to encode the results", so report it explicitly.
-func render(data []byte) {
+// render writes an API payload using the global output flags, and refuses an
+// empty one: printing nothing and exiting 0 reads as "no results" to a
+// script. The refusal names the request whose answer it was, when the command
+// sent one.
+func render(data []byte) error {
 	if len(bytes.TrimSpace(data)) == 0 {
-		fmt.Fprintln(os.Stderr, "Error: no output produced — the response payload could not be encoded.")
-		return
+		return emptyAnswerError()
 	}
 	output.RenderWith(data, renderOpts())
 	if jsonOutput || ndjsonOutput || quietOutput {
-		return
+		return nil
 	}
 	for _, note := range []string{otherCurrenciesNote(data), unmatchedConversionsNote(data)} {
 		if note != "" {
 			fmt.Fprintln(os.Stderr, "Note: "+note)
 		}
 	}
+	return nil
 }
 
 // unmatchedConversionsNote is what a table says under a summary whose window
@@ -82,6 +81,34 @@ func unmatchedConversionsNote(data []byte) string {
 	}
 	return fmt.Sprintf("%s %s received in this period named no click here, so no report counts them (they have no campaign, so this is the account's count whatever the filters). `p202 conversion inbound-log --outcome refused` lists them with what to do about each.",
 		count, noun)
+}
+
+// emptyAnswerError is render's refusal of an empty payload. An empty body is
+// the server's failure (no success of the API sends one where a command
+// prints its answer); a body that held nothing the command prints is too,
+// read against what the command expects.
+func emptyAnswerError() *CLIError {
+	last, sent := api.LastAnswer()
+	if !sent {
+		return (&CLIError{
+			Category: "server",
+			Message:  "no output produced: the command had nothing to print and sent no request",
+			ExitCode: ExitServer,
+		}).WithHint("This is a fault in the CLI, not in your input: report the command line you ran.")
+	}
+	request := fmt.Sprintf("%s %s", last.Method, last.Path)
+	if last.Bytes == 0 {
+		return (&CLIError{
+			Category: "server",
+			Message:  fmt.Sprintf("no output produced: the server answered %s with HTTP %d and an empty body", request, last.Status),
+			ExitCode: ExitServer,
+		}).WithHint("The API sends a JSON body with every answer a command prints, so the request failed on the server: read its PHP error log for %s, and run `p202 system health`.", request)
+	}
+	return (&CLIError{
+		Category: "server",
+		Message:  fmt.Sprintf("no output produced: the server answered %s with HTTP %d and %d bytes, none of which this command prints", request, last.Status, last.Bytes),
+		ExitCode: ExitServer,
+	}).WithHint("The answer is not the shape this CLI expects: compare the server's version (`p202 system version`) with this CLI's (`p202 --version`), and run `p202 system health`.")
 }
 
 // otherCurrenciesNote is what a table says under an answer whose money is

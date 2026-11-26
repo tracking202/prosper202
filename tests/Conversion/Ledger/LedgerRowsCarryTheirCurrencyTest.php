@@ -50,6 +50,7 @@ final class LedgerRowsCarryTheirCurrencyTest extends TestCase
         '202-config/Destinations/DestinationQueue.php' => [self::ROW, 'an ad platform is sent the row\'s currency, and nothing for a row with none'],
         '202-config/Click/PurLinkPixels.php' => [self::ROW, 'the pixel\'s tokens carry the row\'s currency'],
         '202-config/migrations/run_ltv_backfill.php' => [self::ROW, 'the revenue event it makes is in the row\'s currency'],
+        '202-config/Conversion/UploadBatchUndo.php' => [self::ROW, 'the undo preview lists each row in its currency and sums per currency; a click\'s value before and after nets its own rows'],
         'api/v3/Controllers/ConversionsController.php' => [self::ROW, 'each conversion is answered with its currency; the match-method totals list other currencies beside them'],
         '202-config/functions-upgrade.php' => [self::ROW, 'the upgrade: it gives the rows their currency'],
         '202-config/PaymentNotification/Processor.php' => [self::NETS, 'compares a refund with the sale it reverses, on one click, and reads the account\'s currency to say when a provider states another'],

@@ -22,6 +22,11 @@ use Prosper202\Database\Tables\UserTables;
  * child process (fixtures/remember-me-key-runner.php), with the one
  * statement each case is about made to fail.
  *
+ * The cookie check clears a cookie the database refused, so a key deleted
+ * elsewhere (a switch-off, a new password) is read once per browser rather
+ * than on every signed-out request until the cookie expires; and keeps one
+ * whose read failed, so an outage signs nobody out.
+ *
  * @group integration
  */
 final class RememberMeKeyReadIntegrationTest extends TestCase
@@ -57,6 +62,7 @@ final class RememberMeKeyReadIntegrationTest extends TestCase
     public static function tearDownAfterClass(): void
     {
         self::$db?->query('DELETE FROM 202_users WHERE user_id = ' . self::USER);
+        self::$db?->query('DELETE FROM 202_auth_keys WHERE user_id = ' . self::USER);
         self::$db?->close();
         self::$db = null;
     }
@@ -214,6 +220,131 @@ final class RememberMeKeyReadIntegrationTest extends TestCase
         self::account(self::STORED);
 
         self::assertSame("ANSWERED false\n", self::runScenario('cookie_check'));
+        self::assertSame(self::STORED, self::storedKey());
+    }
+
+    private const AUTH_KEY = 'authkeyauthkeyauthkeyauthkeyauthkeyauthkeyauthk';
+
+    /** A stored remember-me key for the user, expiring $expiresIn seconds from now; none for null. */
+    private static function storedAuthKey(?int $expiresIn): void
+    {
+        $db = self::$db;
+        self::assertNotNull($db);
+        self::assertNotFalse($db->query('DELETE FROM 202_auth_keys WHERE user_id = ' . self::USER), $db->error);
+        if ($expiresIn !== null) {
+            self::assertNotFalse($db->query(sprintf(
+                "INSERT INTO 202_auth_keys SET user_id = %d, auth_key = '%s', expires = UNIX_TIMESTAMP() + %d",
+                self::USER,
+                self::AUTH_KEY,
+                $expiresIn
+            )), $db->error);
+        }
+    }
+
+    /** The cookie remember_me_on_auth() sets for AUTH_KEY, signed with $secret. */
+    private static function signedCookie(string $secret = self::STORED, string $authKey = self::AUTH_KEY): string
+    {
+        $named = self::USER . '-' . $authKey;
+
+        return $named . '-' . hash_hmac('sha256', $named, $secret);
+    }
+
+    /** @return array{string, string} stdout, and stderr */
+    private static function runCookie(string $cookie, string $fail = 'none'): array
+    {
+        putenv('P202_RMK_COOKIE=' . $cookie);
+        putenv('P202_RMK_FAIL=' . $fail);
+        try {
+            return self::runScenarioWithLog('cookie');
+        } finally {
+            putenv('P202_RMK_COOKIE');
+            putenv('P202_RMK_FAIL');
+        }
+    }
+
+    public function testACookieTheDatabaseAcceptsSignsInAndIsKept(): void
+    {
+        self::account(self::STORED);
+        self::storedAuthKey(3600);
+
+        [$out, $logged] = self::runCookie(self::signedCookie());
+
+        self::assertSame("ANSWERED true\nCOOKIE kept\n", $out, $logged);
+    }
+
+    /**
+     * @return iterable<string, array{0: ?string, 1: ?int, 2: string|callable(): string, 3?: bool}>
+     *   the account's secret key (null: no key), the stored key's expiry
+     *   (null: none stored), the cookie, and whether the user is switched off
+     */
+    public static function refusedCookies(): iterable
+    {
+        yield 'malformed' => [self::STORED, 3600, 'not-a-cookie-at-all'];
+        yield 'a part empty' => [self::STORED, 3600, self::USER . '--x'];
+        yield 'no account' => [null, null, 'noaccount'];
+        yield 'no key on the account' => [null, 3600, 'signed'];
+        yield 'a signature that does not verify' => [self::STORED, 3600, 'forged'];
+        yield 'the key expired' => [self::STORED, -60, 'signed'];
+        yield 'the key deleted' => [self::STORED, null, 'signed'];
+        yield 'its user switched off' => [self::STORED, 3600, 'signed', true];
+    }
+
+    /**
+     * @dataProvider refusedCookies
+     */
+    public function testACookieTheDatabaseRefusedIsCleared(
+        ?string $secret,
+        ?int $expiresIn,
+        string $cookie,
+        bool $switchedOff = false
+    ): void {
+        $db = self::$db;
+        self::assertNotNull($db);
+        if ($cookie === 'noaccount') {
+            self::assertNotFalse($db->query('DELETE FROM 202_users WHERE user_id = ' . self::USER), $db->error);
+            $cookie = self::signedCookie();
+        } else {
+            self::account($secret);
+            $cookie = match ($cookie) {
+                'signed' => self::signedCookie(),
+                'forged' => self::signedCookie('notthestoredkeynotthestoredkeynotthestoredkey12'),
+                default => $cookie,
+            };
+        }
+        self::storedAuthKey($expiresIn);
+        if ($switchedOff) {
+            $switched = $db->query('UPDATE 202_users SET user_active = 0 WHERE user_id = ' . self::USER);
+            self::assertNotFalse($switched, $db->error);
+        }
+
+        [$out, $logged] = self::runCookie($cookie);
+
+        self::assertSame("ANSWERED false\nCOOKIE cleared\n", $out, $logged);
+        // Anyone can send one: a line per request would be theirs to write.
+        self::assertSame('', $logged);
+        self::assertSame($secret, self::storedKey(), 'refusing a cookie changed the stored secret key');
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function failedReads(): iterable
+    {
+        yield 'the secret key read fails' => ['secret_read'];
+        yield 'the remember-me key read fails' => ['key_read'];
+        yield 'the remember-me key row cannot be fetched' => ['key_fetch'];
+    }
+
+    /**
+     * @dataProvider failedReads
+     */
+    public function testACookieWhoseReadFailedIsKept(string $fail): void
+    {
+        self::account(self::STORED);
+        self::storedAuthKey(3600);
+
+        [$out, $logged] = self::runCookie(self::signedCookie(), $fail);
+
+        self::assertSame("ANSWERED false\nCOOKIE kept\n", $out, $logged);
+        self::assertNotSame('', $logged, 'a failed read was not logged');
         self::assertSame(self::STORED, self::storedKey());
     }
 }

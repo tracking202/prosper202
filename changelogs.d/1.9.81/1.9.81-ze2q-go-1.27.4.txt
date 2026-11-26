@@ -1,0 +1,1 @@
+-- Changed: Building the Go CLI from source needs Go 1.27.4 (go-cli/go.mod, and every workflow builds with it, the release binaries included), which fixes GO-2026-6859 in net/http: govulncheck found the CLI reaching it under 1.27.3

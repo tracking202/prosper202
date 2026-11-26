@@ -23,7 +23,7 @@ The binary is always named `p202` on every platform.
 
 ### Build from source
 
-Requires Go 1.27.3+ (the release with the latest security fixes).
+Requires Go 1.27.4+ (the release with the latest security fixes).
 
 ```bash
 cd go-cli
@@ -1133,6 +1133,8 @@ p202 conversion delete-subids wrong.txt               # Delete Subids: previews,
 p202 conversion reset-subids --aff-network-id 3 --aff-campaign-id 12   # Reset Campaign Subids
 p202 conversion upload-revenue march.csv --dry-run    # Upload Revenue Reports
 p202 conversion upload-revenue march.csv --subid-column 'Sub ID 2' --amount-column Commission --force
+p202 conversion uploads                               # the upload batches, newest first
+p202 conversion undo-upload 7 --dry-run               # what undoing batch 7 would delete
 ```
 
 The rest of the UI's Update section, over the same code the pages run.
@@ -1146,7 +1148,9 @@ batch: a click's lines are summed and the newest report replaces earlier
 uploads' values (unlike `conversion import`, which records each sale with its
 transaction id); its table lists the lines not recorded, with the reason (the
 first 1,000; the summary counts every skipped line by reason).
-`delete-subids`, `reset-subids` and `upload-revenue` ask before writing
+`undo-upload <batch-id>` takes an upload back: it deletes the batch's
+conversions and recomputes each click, so it reads as before the upload.
+`delete-subids`, `reset-subids`, `upload-revenue` and `undo-upload` ask before writing
 (`--force` skips). All need the `access_to_update_section` role permission
 (`delete-subids` also `delete_individual_subids`), refuse `--staged`, and are
 safe to run again.
@@ -1569,7 +1573,13 @@ at least one criterion (`ALL` matches everyone) and at least one destination,
 and a rule with more than one destination a `weight` on each, at least one
 above 0: the redirects split its visitors by weight whatever its `splittest`
 says (`splittest` 1 shows the rule as a split test on Setup › Redirectors). A
-kept rule sent without `splittest` or `status` keeps its own.
+kept rule sent without `splittest` or `status` keeps its own. An empty set
+(`--rules '[]'`) removes every rule, so every visitor goes to the default. An
+object may carry the redirector's own fields beside `"rules"` (`name`,
+`default_url`, `default_campaign`, `default_lp`, as `rotator get --json` shows
+them under `data`): they are written with the set, in the same transaction.
+Both need a server from 1.9.81 (`features.rotator_with_rules`); an older one
+refuses an empty set, and the hint says how to remove the rules there.
 
 | Flag        | Description |
 |-------------|-------------|
@@ -1730,8 +1740,9 @@ p202 attribution export delete 7
 ```
 
 An export writes every group of a breakdown to a CSV (the minutely cron runs
-it), downloadable, and optionally POSTs it to an https webhook signed with
-HMAC-SHA256 (`X-P202-Signature: sha256=<hex>` over `<X-P202-Timestamp>.<body>`).
+it), downloadable, and optionally POSTs it to an https webhook signed the
+Standard Webhooks way (`webhook-id`, `webhook-timestamp`, `webhook-signature`;
+through 1.9.82 also `X-P202-Signature: sha256=<hex>` over `<X-P202-Timestamp>.<body>`).
 The create response carries `webhook_secret` once. Webhooks go only to public
 addresses (every resolved address is checked, the connection is pinned to it,
 redirects are not followed); a refused URL is a validation error naming the
@@ -1826,12 +1837,14 @@ p202 ltv fields update 3 --label "Plan tier" --required
 p202 ltv fields delete 3 --dry-run                     # and how many customers' values go with it
 p202 ltv webhooks create --url https://hooks.example.com/p202 --events revenue.recorded,subscription.changed
 p202 ltv webhooks deliveries 4 --status failed   # status, attempts, next retry, last response or error
+p202 ltv webhooks rotate-secret 4 --overlap-hours 48   # a new secret, shown once; the old one signs for 48 more hours
 p202 ltv webhooks delete 4 --force
 p202 ltv integrations create --provider klaviyo --config '{"list_id":"XyZ"}'
 p202 ltv integrations delete 2 --force
 ```
 
-`webhooks create` prints the signing secret once; it cannot be read back.
+`webhooks create` and `webhooks rotate-secret` print the signing secret once;
+it cannot be read back.
 Every LTV write refuses the global `--staged` flag before sending anything
 (the server stages none of them); every LTV delete takes `--dry-run`,
 `--force` and `--ids`.
@@ -1995,9 +2008,10 @@ p202 re-sync --from prod --to staging --force-update --json
 Sync state is stored in `~/.p202/sync/<source>-<target>.json`.
 When server capabilities expose `async_jobs`, the CLI routes sync execution through server endpoints (`/sync/jobs`, `/sync/re-sync`, `/sync/status`, `/sync/history`) and falls back to local client-side sync when unavailable.
 Server-side jobs are queue-driven; run the worker endpoint or cron worker (`202-cronjobs/sync-worker.php`) in environments where asynchronous processing is enabled.
+`p202 sync` starts the worker itself while it waits for the job. When every request to start it fails and the job is still queued, the command fails with that request's error and exit code and names the job, which stays queued until the worker next runs; when the server is already running the job, it is a warning and the command prints the job as it stands.
 A server-side sync is run by the `--from` profile's install, which calls both profiles' URLs: only public `https://` addresses, with no redirect followed. A profile URL it refuses (`localhost`, a private or loopback address, plain `http://` to the internet, a link-local or metadata address) is a validation error (exit 1) whose hint names the profile to repoint with `p202 --profile <name> config set-url https://…`; the CLI does not then run the sync itself. Two installs on one machine or one private network sync once that install's `202-config.php` admits the other's address with `P202_WEBHOOK_ALLOW_NETWORKS` (write it as `http://127.0.0.1:8001`, not `localhost`), which also allows `http://` there. A job stopped by a refusal, a host that does not resolve, or one of the sync's caps (8 MiB of one answer, 200 pages of 500 records of one list, 900 seconds in all) carries `error_code` (see [the Sync API](../documentation/api/16-sync.md)) and exits 5 with that reason's next step.
 Server-side rotator rule re-sync after updates can be controlled with the server environment variable `SYNC_ROTATOR_RULE_RESYNC_ENABLED=0|1` (enabled by default).
-A server-side sync writes a redirector's rules on the target as one set (`PUT /rotators/{id}/rules`), which the target takes whole or refuses with nothing written; the refusal names the source rule. A target from before 1.9.79, which has no such route, has its rules replaced one at a time.
+A server-side sync writes a redirector's rules on the target as one set (`PUT /rotators/{id}/rules`), which the target takes whole or refuses with nothing written; the refusal names the source rule. The set carries the target's own ids for what it keeps (a rule by its name, else by the same criteria and destinations, so a renamed rule keeps its id; a destination by its URL, campaign or landing page; a criterion by its type and statement), so the target's clicks keep their rule and destination; a source rule paired with no target rule is added, and a target rule left unpaired is removed. A target that advertises `features.rotator_with_rules` (1.9.81 and later) takes the redirector's own fields and its rules in one write, `PUT /rotators/{id}/rules` with both, and a new redirector with its rules in one `POST /rotators`: a refused rule leaves the target's redirector as it was, or creates none, and a source redirector with no rules clears the target's with an empty set. An older target is written in two steps, the redirector and then its rules, and a failure in the second is reported as `update (applied; its rules then failed)`. A target from before 1.9.79, which has no such route, has its rules replaced one at a time.
 
 ### Server-side sync capabilities not yet exposed in CLI
 

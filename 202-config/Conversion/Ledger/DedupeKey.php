@@ -40,6 +40,20 @@ final class DedupeKey
         return 'tx:' . self::text($transactionId, 'transaction id');
     }
 
+    /**
+     * A payment platform's transaction id on a click whose tx:<id> another
+     * platform's sale already holds (TransactionSale::key()). The source is
+     * a fixed word with no colon, so the id after it is read whole.
+     */
+    public static function providerTransaction(ConversionSource $source, string $transactionId): string
+    {
+        if (!$source->isPaymentProvider()) {
+            throw new InvalidArgumentException('source "' . $source->value . '" is not a payment platform');
+        }
+
+        return 'ptx:' . $source->value . ':' . self::text($transactionId, 'transaction id');
+    }
+
     /** A goal outcome: the n-th time the goal was reached, by that event. */
     public static function goal(int $goalId, int $goalVersion, int $n, string $eventId): string
     {

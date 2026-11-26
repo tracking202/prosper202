@@ -50,6 +50,14 @@ class Formatter
                     min($p['offset'] + $p['limit'], $p['total'] ?? $p['offset'] + count($rows)),
                     $p['total'] ?? '?'
                 ));
+                // `truncated` (every answer to a request taking offset) says
+                // whether rows remain; the total is a separate count.
+                if (($data['truncated'] ?? null) === true) {
+                    $output->writeln(sprintf(
+                        '<comment>More rows remain: --offset %d reads the next page.</comment>',
+                        (int) $p['offset'] + count($rows)
+                    ));
+                }
             }
             return;
         }

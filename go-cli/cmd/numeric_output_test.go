@@ -4,7 +4,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"strings"
 	"testing"
 )
 
@@ -73,19 +72,5 @@ func TestRoundPreservesNonFiniteAndLargeValues(t *testing.T) {
 	const big = 1e18
 	if got := round(big, 4); got != big {
 		t.Errorf("round(%v, 4) = %v, want %v", big, got, big)
-	}
-}
-
-// Many commands build their payload with json.Marshal and ignore the error.
-// render() must not turn a nil payload into a silent, successful no-op.
-func TestRenderReportsAnEmptyPayloadInsteadOfPrintingNothing(t *testing.T) {
-	for _, data := range [][]byte{nil, {}, []byte("   \n")} {
-		stdout, stderr := captureBoth(func() { render(data) })
-		if strings.TrimSpace(stdout) != "" {
-			t.Errorf("render(%q) wrote to stdout: %q", data, stdout)
-		}
-		if !strings.Contains(stderr, "could not be encoded") {
-			t.Errorf("render(%q) did not report the failure on stderr: %q", data, stderr)
-		}
 	}
 }
