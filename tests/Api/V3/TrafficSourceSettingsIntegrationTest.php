@@ -217,6 +217,18 @@ final class TrafficSourceSettingsIntegrationTest extends TestCase
         self::assertSame([$changed], $this->pixels()->list($account)['data']);
     }
 
+    public function testAChatGptAdsPixelIsStoredAsItsPixelId(): void
+    {
+        $account = $this->ids['account_mine'];
+        $pixel = $this->pixels()->create($account, ['pixel_type_id' => 7, 'pixel_code' => "<script>oaiq('init', {pixelId: 'px_4821'});</script>"])['data'];
+        self::assertSame([7, 'ChatGPT Ads Pixel', 'px_4821'], [$pixel['pixel_type_id'], $pixel['pixel_type'], $pixel['pixel_code']]);
+        $changed = $this->pixels()->update($account, $pixel['pixel_id'], ['pixel_code' => '<img src="https://bzr.openai.com/v1/sdk/events?pid=px_9&event=order_created">'])['data'];
+        self::assertSame('px_9', $changed['pixel_code'], 'the image tag pasted whole keeps its id');
+        self::assertArrayHasKey('pixel_code', $this->refusal(fn () => $this->pixels()->create($account, ['pixel_type_id' => 7, 'pixel_code' => 'https://example.com/pixel.gif'])));
+        self::assertArrayHasKey('pixel_code', $this->refusal(fn () => $this->pixels()->update($account, $pixel['pixel_id'], ['pixel_code' => 'no id here!'])));
+        self::assertSame([$changed], $this->pixels()->list($account)['data'], 'nothing refused was written');
+    }
+
     public function testRemovingAPostbackRemovesItsCorrectionUrl(): void
     {
         $account = $this->ids['account_mine'];
@@ -231,7 +243,7 @@ final class TrafficSourceSettingsIntegrationTest extends TestCase
         $account = $this->ids['account_mine'];
         $create = fn (array $payload): array => $this->refusal(fn () => $this->pixels()->create($account, $payload));
         self::assertSame(['pixel_type_id', 'pixel_code'], array_keys($create([])));
-        foreach ([0, 7, '1.0', '01', ' 1', 1.0, true, null] as $type) {
+        foreach ([0, 99, '1.0', '01', ' 1', 1.0, true, null] as $type) {
             self::assertArrayHasKey('pixel_type_id', $create(['pixel_type_id' => $type, 'pixel_code' => 'https://x.example/']), json_encode($type) . ' is not a pixel type');
         }
         self::assertArrayHasKey('pixel_code', $create(['pixel_type_id' => 1, 'pixel_code' => "  \n "]));

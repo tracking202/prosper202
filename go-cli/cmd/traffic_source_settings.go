@@ -166,9 +166,11 @@ func newPpcAccountPixelCmd() *cobra.Command {
 		Short:   "Manage the pixels a traffic source account fires on a conversion",
 		Long: "An account's pixels report its conversions back to the traffic source. Types\n" +
 			"(--type-id): 1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server),\n" +
-			"5 Raw (markup as given), 6 Bot202 Facebook Pixel Assistant. For every type except\n" +
-			"Raw the code is the URL (several separated by spaces), with tokens such as\n" +
-			"[[subid]], [[payout]] or [[transactionid]] filled in when it fires.\n\n" +
+			"5 Raw (markup as given), 6 Bot202 Facebook Pixel Assistant, 7 ChatGPT Ads Pixel.\n" +
+			"For 1 to 4 the code is the URL (several separated by spaces), with tokens such as\n" +
+			"[[subid]], [[payout]] or [[transactionid]] filled in when it fires. A ChatGPT Ads\n" +
+			"Pixel's code is the OpenAI pixel id (px_4821), and the landing page loads it when\n" +
+			"the page's ChatGPT Ads pixel switch is on.\n\n" +
 			"A Postback pixel can also take a correction URL (--correction-url), where corrections\n" +
 			"go when a conversion it announced is replaced; one per code URL, in the same order.\n\n" +
 			"Setup > Traffic Sources > an account's Advanced edits the same pixels. Needs a role\n" +
@@ -204,7 +206,7 @@ func newPpcAccountPixelCmd() *cobra.Command {
 			for _, name := range []string{"pixel_type_id", "pixel_code"} {
 				if _, ok := body[name]; !ok {
 					return validationError("--type-id and --code are required").
-						WithHint("--type-id: 1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server), 5 Raw, 6 Bot202 Facebook Pixel Assistant; --code: the pixel's URL (or markup, for Raw).")
+						WithHint("--type-id: 1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server), 5 Raw, 6 Bot202 Facebook Pixel Assistant, 7 ChatGPT Ads Pixel; --code: the pixel's URL (markup for Raw, the pixel id for 6 and 7).")
 				}
 			}
 			idemKey, _ := cmd.Flags().GetString("idempotency-key")
@@ -240,10 +242,10 @@ func newPpcAccountPixelCmd() *cobra.Command {
 	}
 
 	for _, cmd := range []*cobra.Command{create, update} {
-		cmd.Flags().String("type-id", "", "Pixel type: 1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server), 5 Raw, 6 Bot202 Facebook Pixel Assistant")
-		enumFlag(cmd, "type-id", newEnum([]string{"1", "2", "3", "4", "5", "6"},
-			enumHint("1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server), 5 Raw (markup as given), 6 Bot202 Facebook Pixel Assistant.")))
-		cmd.Flags().String("code", "", "The pixel's URL (several separated by spaces), or the markup for Raw")
+		cmd.Flags().String("type-id", "", "Pixel type: 1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server), 5 Raw, 6 Bot202 Facebook Pixel Assistant, 7 ChatGPT Ads Pixel")
+		enumFlag(cmd, "type-id", newEnum([]string{"1", "2", "3", "4", "5", "6", "7"},
+			enumHint("1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server), 5 Raw (markup as given), 6 Bot202 Facebook Pixel Assistant, 7 ChatGPT Ads Pixel.")))
+		cmd.Flags().String("code", "", "The pixel's URL (several separated by spaces), the markup for Raw, or the pixel id for 6 and 7")
 		cmd.Flags().String("correction-url", "", "Postback pixels only: where corrections go, one URL per code URL in the same order")
 	}
 	allowEmpty(update, "correction-url")

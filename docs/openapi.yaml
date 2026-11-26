@@ -15166,8 +15166,11 @@ paths:
         As the account form saves one: a type and a code are required (the
         code is trimmed). The type must be one of `202_pixel_types` (1 Image,
         2 Iframe, 3 Javascript, 4 Postback — server to server, 5 Raw,
-        6 Bot202 Facebook Pixel Assistant). For every type except Raw the code
-        is the URL from the pixel's src, several separated by spaces; a
+        6 Bot202 Facebook Pixel Assistant, 7 ChatGPT Ads Pixel). A ChatGPT
+        Ads Pixel's code is the OpenAI pixel id, or OpenAI's base code or
+        image tag holding one, and only the id is stored. For every other
+        type except Raw the code is the URL from the pixel's src, several
+        separated by spaces; a
         Postback's must be http(s), the only URLs the postback sender calls.
         `correction_url` goes on a Postback pixel only, one URL per code URL in
         the same order (the form's check). A Postback's URLs and its
@@ -16378,7 +16381,7 @@ components:
           type: integer
         pixel_type_id:
           type: integer
-          enum: [1, 2, 3, 4, 5, 6]
+          enum: [1, 2, 3, 4, 5, 6, 7]
         pixel_type:
           type: string
           nullable: true
@@ -16395,7 +16398,7 @@ components:
       description: pixel_type_id and pixel_code on create; any field on update.
       properties:
         pixel_type_id:
-          description: 1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server), 5 Raw, 6 Bot202 Facebook Pixel Assistant
+          description: 1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server), 5 Raw, 6 Bot202 Facebook Pixel Assistant, 7 ChatGPT Ads Pixel
           oneOf:
             - type: integer
             - type: string

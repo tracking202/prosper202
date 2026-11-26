@@ -114,7 +114,7 @@ var mcpDeferredToolSpecs = []mcpToolSpec{
 	{Name: "ppc_account_pixel_create", Command: []string{"ppc-account", "pixel", "create"}, Title: "Add a pixel to a traffic source account", Kind: mcpCreate,
 		Args: []mcpArg{pixelAccountArg()}, Required: []string{"type-id", "code"},
 		Note:  "From then on it fires when one of the account's clicks converts.",
-		Words: []string{"add pixel", "add the facebook pixel", "add a postback to a traffic source account", "pixels"}},
+		Words: []string{"add pixel", "add the facebook pixel", "add the chatgpt ads pixel", "add a postback to a traffic source account", "pixels"}},
 	{Name: "ppc_account_pixel_update", Command: []string{"ppc-account", "pixel", "update"}, Title: "Change a traffic source account's pixel", Kind: mcpUpdate,
 		Args:  []mcpArg{pixelAccountArg(), idArg("pixel_id", "Pixel id (from ppc_account_pixel_list).", true)},
 		Words: []string{"change pixel", "edit pixel url", "pixel correction url", "pixels"}},

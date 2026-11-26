@@ -279,7 +279,12 @@ final class UserDeletionPurgeTest extends TestCase
             $purged[] = $m[1];
         }
 
-        return array_values(array_unique(array_merge($purged, array_keys(AppDataPurge::TABLE_ACTIONS), array_keys(AppDataPurge::LINK_ACTIONS))));
+        return array_values(array_unique(array_merge(
+            $purged,
+            \Prosper202\Click\MysqlClickRepository::ACCOUNT_PURGED_TABLES,
+            array_keys(AppDataPurge::TABLE_ACTIONS),
+            array_keys(AppDataPurge::LINK_ACTIONS)
+        )));
     }
 
     public function testEveryTableThatHoldsAUsersRowsIsPurgedOrKeptByName(): void

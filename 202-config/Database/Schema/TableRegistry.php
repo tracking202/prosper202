@@ -63,6 +63,7 @@ final class TableRegistry
     public const string CLICKS_TOTAL = '202_clicks_total';
     public const string CLICK_LATEST_VISITS = '202_click_latest_visits';
     public const string CLICK_CONSENT_REFUSALS = '202_click_consent_refusals';
+    public const string CLICK_OPENAI_REFS = '202_click_openai_refs';
     public const string PURLINK_EXIT_ORDER = '202_purlink_exit_order';
     public const string PURLINK_PIXEL_FIRES = '202_purlink_pixel_fires';
     public const string RECLICK_BACKFILL = '202_reclick_backfill';
@@ -263,6 +264,9 @@ final class TableRegistry
     public const string BOT202_FACEBOOK_PIXEL_ASSISTANT = '202_bot202_facebook_pixel_assistant';
     public const string BOT202_FACEBOOK_PIXEL_CONTENT_TYPE = '202_bot202_facebook_pixel_content_type';
     public const string BOT202_FACEBOOK_PIXEL_CLICK_EVENTS = '202_bot202_facebook_pixel_click_events';
+
+    // ChatGPT Ads pixel on a landing page
+    public const string LANDING_PAGE_OPENAI_PIXEL = '202_landing_page_openai_pixel';
 
     /**
      * Get all table names as an array.

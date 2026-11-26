@@ -26,6 +26,9 @@ final class ConversionFacts
      *        and path only (no query, fragment, user:password@ or ;path parameters), at most 2048 characters
      * @param int $ppcAccountId the click's traffic source account, 0 when none of the account's
      * @param bool $restates the conversion replaced one and is sent under that one's event id
+     * @param string|null $obref the ChatGPT Ads pixel's browser reference the click's landing page posted
+     *        (OpenAiBrowserRef): read only for a ChatGPT Ads destination that sends user data, under a campaign
+     *        that captures identity; null otherwise or when the click has none
      */
     public function __construct(
         public readonly ?int $convId,
@@ -46,6 +49,7 @@ final class ConversionFacts
         public readonly ?string $pageUrl = null,
         public readonly int $ppcAccountId = 0,
         public readonly bool $restates = false,
+        public readonly ?string $obref = null,
     ) {
     }
 

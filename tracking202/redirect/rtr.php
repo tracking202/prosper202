@@ -635,6 +635,15 @@ try {
 	$data = $de->setDirtyHour($mysql['click_id']);
 
 	$urlvars = getPrePopVars($_GET, $rtrToOwnLandingPage);
+	// The ChatGPT Ads click id, to the user's own page whose pixel reads it.
+	if ($rtrToOwnLandingPage) {
+		$urlvars .= \Prosper202\Click\OpenAiPixelScript::opprefForLandingPage(
+			new \Prosper202\Database\Connection($db),
+			(int) $user_id,
+			(int) ($rule['landing_page_id'] ?: ($rule['default_lp'] ?? 0)),
+			$_GET
+		);
+	}
 
 	// Landing Page Optimizer: on rotator→LP destinations only, append the
 	// signed per-click context token (t202ctx, p202-edge-sync §3.2/§3.3) so

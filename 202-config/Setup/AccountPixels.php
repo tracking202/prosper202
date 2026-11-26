@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Setup;
 
 use Prosper202\Conversion\FacebookPixelId;
+use Prosper202\Conversion\OpenAiPixelId;
 use Prosper202\Database\Connection;
 use Prosper202\Notifications\CorrectionUrls;
 use Prosper202\Notifications\PostbackSender;
@@ -73,6 +74,15 @@ final class AccountPixels
                 $pixelId = FacebookPixelId::fromCode($code);
                 if ($pixelId === null) {
                     $errors['pixel_code'] = 'A Bot202 Facebook Pixel Assistant pixel needs your Meta Pixel ID: its digits, or Meta\'s Pixel code pasted whole.';
+                    continue;
+                }
+                $code = $pixelId;
+            }
+            if ((int) $type === OpenAiPixelId::PIXEL_TYPE) {
+                // Stored as the bare pixel id, which the landing page and the conversion image read.
+                $pixelId = OpenAiPixelId::fromCode($code);
+                if ($pixelId === null) {
+                    $errors['pixel_code'] = 'A ChatGPT Ads Pixel needs your pixel id from Ads Manager › Conversions, or OpenAI\'s pixel code pasted whole.';
                     continue;
                 }
                 $code = $pixelId;

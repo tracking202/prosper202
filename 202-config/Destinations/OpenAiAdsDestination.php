@@ -283,6 +283,22 @@ final class OpenAiAdsDestination implements DestinationType
     }
 
     /**
+     * The event type a conversion of $campaignId goes as: the campaign's own,
+     * else the destination's, else order_created. The ChatGPT Ads pixel's
+     * conversion image asks it too (TrafficSourcePixels::chatGptAdsEvent()),
+     * so the browser's event and the server's carry one name and OpenAI
+     * counts them once.
+     *
+     * @param array<string, mixed> $settings
+     */
+    public static function eventType(array $settings, int $campaignId): string
+    {
+        $types = is_array($settings['event_types'] ?? null) ? $settings['event_types'] : [];
+
+        return (string) ($types[$campaignId] ?? $settings['event_type'] ?? 'order_created');
+    }
+
+    /**
      * The request body: one event. $testTime replaces the conversion's time
      * on a test fire, which also asks OpenAI to validate without saving.
      *
@@ -292,7 +308,7 @@ final class OpenAiAdsDestination implements DestinationType
      */
     public static function body(array $settings, ConversionFacts $facts, ?int $testTime = null): array
     {
-        $type = (string) ($settings['event_types'][$facts->campaignId] ?? $settings['event_type'] ?? 'order_created');
+        $type = self::eventType($settings, $facts->campaignId);
         if (!isset(self::EVENT_TYPES[$type])) {
             throw new DestinationInputException('settings.event_type', 'not sent: the event type "' . $type . '" is not one OpenAI takes; save the destination again');
         }
@@ -321,6 +337,8 @@ final class OpenAiAdsDestination implements DestinationType
             'external_ids_sha256' => $facts->customerId !== null && $facts->customerId > 0 ? [hash('sha256', 'p202c.' . $facts->customerId)] : [],
             'ip_address' => $facts->ipAddress ?? '',
             'user_agent' => $facts->userAgent ?? '',
+            // The pixel's browser reference, unchanged and unhashed, as OpenAI asks.
+            'obref' => $facts->obref ?? '',
         ], static fn ($v): bool => $v !== [] && $v !== '');
         if ($user !== []) {
             $event['user'] = $user;
