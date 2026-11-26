@@ -148,7 +148,8 @@ final readonly class PublisherCredit
      * role assignment): giving someone the Publisher role grants them to the
      * account that gave it, when it may grant them, as paid 1.9.56 credited
      * the account that made the publisher. Run in the write's transaction,
-     * after the role row.
+     * after the role row, and only when the write gave the role: a save of a
+     * user who already held it would undo a grant revoke() took away.
      */
     public function grantWithRole(int $actorUserId, int $userId, int $roleId, int $now): void
     {

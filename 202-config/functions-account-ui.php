@@ -433,8 +433,8 @@ function p202_account_save_currency(\Prosper202\Database\Connection $conn, int $
  * @param array<string, string|int|null> $userSet  202_users column => value; the
  *   column names are the caller's own literals, never the request's
  * @param (callable(int): mixed)|null $onCreate  run with the new user's id, for a create only
- * @param int|null $actorUserId  the signed-in account saving it, granted the user when the
- *   role is Publisher (PublisherCredit::grantWithRole())
+ * @param int|null $actorUserId  the signed-in account saving it, granted the user when this
+ *   save gives the Publisher role (PublisherCredit::grantWithRole())
  * @return int the user's id
  * @throws DomainException when the edited user is not there any more
  * @throws Throwable when nothing was saved
@@ -458,6 +458,7 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
         && !\Prosper202\User\UserStanding::isActive($userSet['user_active']));
 
     return $conn->transaction(static function () use ($conn, $editUserId, $assignments, $types, $values, $roleId, $onCreate, $revokes, $actorUserId): int {
+        $heldRole = false;
         if ($editUserId !== null) {
             $stmt = $conn->prepareWrite('SELECT `user_id` FROM `202_users` WHERE `user_id` = ? AND `user_deleted` != 1 FOR UPDATE');
             $conn->bind($stmt, 'i', [$editUserId]);
@@ -472,6 +473,12 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
                 \Prosper202\User\RememberMeKeys::revokeAll($conn, $userId);
                 \Prosper202\User\SessionGeneration::bump($conn, $userId);
             }
+            // Whether the user held the role before this save: saving a
+            // Publisher again (a new name, a new password) grants nothing, so a
+            // publisher Get Links stopped crediting stays stopped.
+            $stmt = $conn->prepareWrite('SELECT `role_id` FROM `202_user_role` WHERE `user_id` = ? FOR UPDATE');
+            $conn->bind($stmt, 'i', [$userId]);
+            $heldRole = in_array($roleId, array_map('intval', array_column($conn->fetchAll($stmt), 'role_id')), true);
             $stmt = $conn->prepareWrite('DELETE FROM `202_user_role` WHERE `user_id` = ?');
             $conn->bind($stmt, 'i', [$userId]);
             $conn->executeUpdate($stmt);
@@ -496,7 +503,7 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
         $stmt = $conn->prepareWrite('INSERT INTO `202_user_role` (`user_id`, `role_id`) VALUES (?, ?)');
         $conn->bind($stmt, 'ii', [$userId, $roleId]);
         $conn->executeInsert($stmt);
-        if ($actorUserId !== null) {
+        if ($actorUserId !== null && !$heldRole) {
             (new \Prosper202\Click\PublisherCredit($conn))->grantWithRole($actorUserId, $userId, $roleId, time());
         }
         if ($editUserId === null && $onCreate !== null) {

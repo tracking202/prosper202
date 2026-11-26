@@ -601,8 +601,11 @@ class UsersController
             $stmt = $this->prepare('INSERT IGNORE INTO 202_user_role (user_id, role_id) VALUES (?, ?)');
             $this->bind($stmt, 'ii', $userId, $roleId);
             $this->execute($stmt, 'Failed to assign role');
+            // 0 for a role the user already holds: assigning it again grants
+            // nothing, so a publisher Get Links stopped crediting stays stopped.
+            $newlyGiven = $stmt->affected_rows === 1;
             $stmt->close();
-            if ($actorUserId !== null) {
+            if ($actorUserId !== null && $newlyGiven) {
                 (new \Prosper202\Click\PublisherCredit(new Connection($this->db)))
                     ->grantWithRole($actorUserId, $userId, $roleId, time());
             }

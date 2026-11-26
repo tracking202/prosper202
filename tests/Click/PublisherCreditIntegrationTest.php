@@ -285,7 +285,9 @@ final class PublisherCreditIntegrationTest extends TestCase
             self::assertSame([self::UNGRANTED], $grants(self::OTHER_OWNER));
             self::assertNotNull(self::credit()->forClick(self::OTHER_OWNER, 'd0d0d0d0d0'));
 
+            // User management gives the role: the user held only Campaign manager before this save.
             self::q('DELETE FROM 202_publisher_grants WHERE user_id = ' . self::OTHER_OWNER);
+            self::q('DELETE FROM 202_user_role WHERE user_id = ' . self::UNGRANTED . " AND role_id = $publisherRole");
             $conn = new Connection(self::requireScratch());
             $role = $publisherRole;
             p202_account_save_user($conn, self::UNGRANTED, ['user_fname' => 'Pub'], $role, null, self::OTHER_OWNER);
@@ -295,6 +297,34 @@ final class PublisherCreditIntegrationTest extends TestCase
             self::q('DELETE FROM 202_user_role WHERE user_id = ' . self::UNGRANTED);
             self::q('INSERT INTO 202_user_role SET user_id = ' . self::UNGRANTED . ', role_id = 3');
         }
+    }
+
+    /**
+     * A grant Get Links took away stays away when the publisher, who already
+     * holds the role, is saved again in User management or given the role
+     * again through POST /users/{id}/roles.
+     */
+    public function testSavingAPublisherAgainDoesNotUndoAStop(): void
+    {
+        require_once dirname(__DIR__, 2) . '/202-config/functions-account-ui.php';
+        $grants = static fn (): array => array_column(self::credit()->granted(self::OWNER), 'user_id');
+        $publisherRole = PublisherCredit::PUBLISHER_ROLE_ID;
+        self::assertContains(self::PUBLISHER, $grants(), 'the fixture landed');
+        self::assertTrue(self::credit()->revoke(self::OWNER, self::PUBLISHER));
+
+        $conn = new Connection(self::requireScratch());
+        p202_account_save_user($conn, self::PUBLISHER, ['user_fname' => 'Pub'], $publisherRole, null, self::OWNER);
+        self::assertNotContains(self::PUBLISHER, $grants(), 'a save of a user who held the role grants nothing');
+        self::assertNull(self::credit()->forClick(self::OWNER, 'c0c0c0c0c0'));
+
+        (new \Api\V3\Controllers\UsersController(self::requireScratch()))
+            ->assignRole(self::PUBLISHER, ['role_id' => $publisherRole], self::OWNER);
+        self::assertNotContains(self::PUBLISHER, $grants(), 'a role already held, assigned again, grants nothing');
+        self::assertNull(self::credit()->forClick(self::OWNER, 'c0c0c0c0c0'));
+
+        $found = self::$db->query('SELECT role_id FROM 202_user_role WHERE user_id = ' . self::PUBLISHER);
+        self::assertInstanceOf(\mysqli_result::class, $found);
+        self::assertSame([(string) $publisherRole], array_map('strval', array_column($found->fetch_all(), 0)), 'the role stays');
     }
 
     public function testGetLinksListsTheGrantsAndWhichOfThemCreditNow(): void

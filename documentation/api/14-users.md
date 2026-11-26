@@ -162,8 +162,10 @@ it that user's publisher link; its clicks are credited to the user when they
 hold the Publisher role, the link's account may manage users, and that account
 gave them the role (`POST /users/{id}/roles`, User management) or made a
 publisher link for them in Get Links (since 1.9.81; the upgrade counts every
-pair that was credited before). Any other `t202pubid` credits no
-one, and the click is still recorded. Reports
+pair that was credited before). Assigning the role to a user who already
+holds it, or saving such a user in User management, grants nothing, so a
+publisher Get Links stopped crediting stays stopped. Any other `t202pubid`
+credits no one, and the click is still recorded. Reports
 break down and filter by publisher ([Reports](11-reports.md)).
 
 ## Preference Fields
