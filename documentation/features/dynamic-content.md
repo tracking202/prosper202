@@ -44,6 +44,7 @@ Welcome, reader from <span name="t202Country" t202Default="your country">your co
 | `t202Pci`, `t202Id` | The page URL's `pci` and `t202id` |
 | `t202Referrer` | The page's referrer |
 | `t202Random` | A random seven-digit number, one per pageview |
+| `t202Variant` | The visitor's [split test](split-tests.md) variant, empty when the page runs none |
 | `t202Subid` | The click's SubID, once the click is recorded; only when your privacy setting lets the click's cookies be set and the visitor has not refused tracking |
 
 ## From a script: `dcs`

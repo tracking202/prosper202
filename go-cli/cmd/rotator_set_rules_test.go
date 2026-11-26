@@ -154,6 +154,7 @@ func TestRotatorSetRulesErrorsSayWhatToDoNext(t *testing.T) {
 		{404, `{"error":true,"message":"Rotator not found","status":404}`, ExitValidation, "`p202 rotator list`"},
 		{404, `{"error":true,"message":"Not found","status":404}`, ExitValidation, "upgrade it to 1.9.79"},
 		{422, `{"error":true,"message":"Invalid rules.0.criteria","status":422,"field_errors":{"rules.0.criteria":"A rule needs at least one criterion"}}`, ExitValidation, "Nothing was written"},
+		{422, `{"error":true,"message":"A rule set needs its rules","status":422,"field_errors":{"rules":"Send every rule the redirector is to have. A set has at least one rule, as on Setup"}}`, ExitValidation, "needs Prosper202 1.9.81"},
 		{403, `{"error":true,"message":"This account's role does not have the 'remove_rotator_rule' permission.","status":403}`, ExitAuth, "permission"},
 	} {
 		goalServer(t, tc.status, tc.body)
@@ -266,5 +267,21 @@ func TestRotatorRulesSchemaIsTheControllers(t *testing.T) {
 	types := rotatorControllerList(t, src, "CRITERIA_TYPES")
 	if strings.Join(criterion.Properties["type"].Enum, ",") != strings.Join(types, ",") {
 		t.Errorf("criterion types %v, the controller's %v", criterion.Properties["type"].Enum, types)
+	}
+}
+
+// An empty set is sent as {"rules": []}: the server removes every rule.
+func TestRotatorSetRulesSendsAnEmptySet(t *testing.T) {
+	for _, in := range []string{`[]`, `{"rules":[]}`} {
+		_, seen := goalServer(t, 200, `{"data":{"dry_run":false,"rules":[]}}`)
+		if _, _, err := executeCommand("rotator", "set-rules", "7", "--rules", in); err != nil {
+			t.Fatalf("set-rules %s: %v", in, err)
+		}
+		if len(*seen) != 1 {
+			t.Fatalf("requests = %+v, want one", *seen)
+		}
+		if sent, _ := json.Marshal((*seen)[0].Body); string(sent) != `{"rules":[]}` {
+			t.Errorf("%s: body = %s, want {\"rules\":[]}", in, sent)
+		}
 	}
 }

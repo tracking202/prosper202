@@ -5597,11 +5597,18 @@ class UPGRADE
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
+                // A rotated LTV webhook secret signs alongside the new one
+                // until it expires (previous_secret, previous_secret_expires_at).
+                \Prosper202\Database\Tables\LtvTables::ltvWebhooks(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
                 // The egress proxy set on Account › Settings (Prosper202\Http\EgressProxyStore).
                 \Prosper202\Database\Tables\SecretTables::egressProxy(),
                 // Slack notices waiting to be sent (Prosper202\Notifications\SlackNoticeQueue).
                 \Prosper202\Database\Tables\MiscTables::slackNotices(),
+                // Each landing page's split test, whose variant the page's
+                // script writes into the click's C4 (Prosper202\Setup\
+                // LandingPageSplitTest).
+                \Prosper202\Database\Tables\CampaignTables::landingPageSplitTests(),
             ]);
             if ($step_ok) {
                 // Redirector criterion values the API stored untrimmed before

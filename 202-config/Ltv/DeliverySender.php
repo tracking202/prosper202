@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Ltv;
 
 use Prosper202\Attribution\WebhookSender;
+use Prosper202\Webhooks\StandardWebhook;
 
 /**
  * One LTV webhook delivery's POST, made by the export webhooks' sender
@@ -25,7 +26,10 @@ use Prosper202\Attribution\WebhookSender;
  */
 final class DeliverySender
 {
-    public function __construct(private ?WebhookSender $sender = null)
+    /**
+     * @param (\Closure(): int)|null $clock the attempt's time (webhook-timestamp); time() when null
+     */
+    public function __construct(private ?WebhookSender $sender = null, private ?\Closure $clock = null)
     {
     }
 
@@ -40,7 +44,7 @@ final class DeliverySender
             $sent = $this->sender->post(
                 MysqlWebhookRepository::sendableUrl((string) $delivery['webhook_url']),
                 (string) $delivery['payload'],
-                self::headers($delivery),
+                self::headers($delivery, $this->clock !== null ? ($this->clock)() : time()),
                 MysqlWebhookRepository::PORTS
             );
         } catch (\Throwable $e) {
@@ -63,23 +67,41 @@ final class DeliverySender
     }
 
     /**
-     * The request headers of a delivery: its signature over the exact body
-     * with the webhook's secret, its event and its id.
+     * The request headers of a delivery at $now (time() when null): the
+     * Standard Webhooks three (StandardWebhook::headers()), the id the
+     * event was queued with, the attempt's time, and a signature by the
+     * webhook's secret and by the one a rotation replaced until it expires;
+     * then the headers sent before 1.9.81, X-P202-Signature over the body
+     * alone by the current secret, X-P202-Event and X-P202-Delivery, which
+     * stay through StandardWebhook::LEGACY_SIGNATURE_LAST_RELEASE.
      *
-     * @param array<string, mixed> $delivery
+     * A secret StandardWebhook::keyFor() refuses throws, and post() logs the
+     * delivery failed with why: a signature its receiver cannot match is
+     * not sent.
+     *
+     * @param array<string, mixed> $delivery a MysqlWebhookRepository::duePending() row
      * @return list<string>
      */
-    public static function headers(array $delivery): array
+    public static function headers(array $delivery, ?int $now = null): array
     {
+        $now ??= time();
+        $body = (string) $delivery['payload'];
+
         return [
             'Content-Type: application/json',
             'X-P202-Signature: ' . MysqlWebhookRepository::signature(
-                (string) $delivery['payload'],
+                $body,
                 (string) $delivery['webhook_secret']
             ),
             'X-P202-Event: ' . (string) $delivery['event_name'],
             'X-P202-Delivery: ' . (int) $delivery['delivery_id'],
             'User-Agent: Prosper202-LTV-Webhook/1.0',
+            ...StandardWebhook::headers(
+                MysqlWebhookRepository::signingSecrets($delivery, $now),
+                MysqlWebhookRepository::messageId($delivery),
+                $now,
+                $body
+            ),
         ];
     }
 }

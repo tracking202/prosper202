@@ -150,18 +150,15 @@ if (isset($_GET['delete_aff_network_id'])) {
 	}
 
 	if ($userObj->hasPermission("remove_campaign_category")) {
-		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-		$mysql['aff_network_id'] = $db->real_escape_string((string)$_GET['delete_aff_network_id']);
-		$mysql['aff_network_time'] = time();
-
-		$delete_sql = " UPDATE  `202_aff_networks`
-						SET     `aff_network_deleted`='1',
-								`aff_network_time`='" . $mysql['aff_network_time'] . "'
-						WHERE   `user_id`='" . $mysql['user_id'] . "'
-						AND     `aff_network_id`='" . $mysql['aff_network_id'] . "'";
-        if ($db->query($delete_sql)) {
-            $delete_success = true;
-
+		// Removed only when it is the account's and still there; anything else
+		// says so rather than redirecting to "Removed".
+		try {
+			$delete_success = \Prosper202\Setup\SetupRemoval::mark(new \Prosper202\Database\Connection($db),
+				'campaign_category', $_GET['delete_aff_network_id'], (int) $_SESSION['user_id'], time());
+		} catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+			record_mysql_error($db, 'UPDATE 202_aff_networks (remove a campaign category)', $e->getMessage());
+		}
+        if ($delete_success === true) {
             // Landing Page Optimizer (segments-v2 G10): mirror the save-path
             // hook above — every dictionary mutation on this page flags the
             // snapshot dirty for the hourly cron. DB-only — no HTTP here.
@@ -170,7 +167,7 @@ if (isset($_GET['delete_aff_network_id'])) {
             if ($slack)
                 $slack->push('campaign_category_deleted', ['name' => $_GET['delete_aff_network_name'], 'user' => $user_row['username']]);
         } else {
-            record_mysql_error($db, $delete_sql);
+            $error['delete_aff_network'] = 'That campaign category was not found on this account. Nothing was removed.';
         }
 	} else {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/aff_networks.php');

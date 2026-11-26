@@ -301,6 +301,25 @@ PHP;
         self::assertStringContainsString('limit=500&offset=500', $calls[1][CURLOPT_URL]);
     }
 
+    /** A remote that says whether records follow (`truncated`) is read by that, not by its total or the page's length. */
+    public function testTruncatedSaysWhetherAnotherPageIsRead(): void
+    {
+        $rows = array_fill(0, RemoteApiClient::PAGE_ROWS, ['id' => 1]);
+        $last = (string) json_encode(['data' => $rows, 'truncated' => false, 'pagination' => ['total' => 5000]]);
+        $more = (string) json_encode(['data' => $rows, 'truncated' => true, 'pagination' => ['total' => 500]]);
+
+        $calls = [];
+        $client = self::client(self::SYNC, [self::answer(200, $last)], $calls);
+        self::assertCount(RemoteApiClient::PAGE_ROWS, $client->fetchAllRows('campaigns'));
+        self::assertCount(1, $calls, 'a full last page ends the list though its total names more');
+
+        $calls = [];
+        $client = self::client(self::SYNC, [self::answer(200, $more), self::answer(200, $last)], $calls);
+        self::assertCount(2 * RemoteApiClient::PAGE_ROWS, $client->fetchAllRows('campaigns'));
+        self::assertCount(2, $calls, 'a page with records after it is read past though its total says it is the last');
+        self::assertStringContainsString('limit=500&offset=500', $calls[1][CURLOPT_URL]);
+    }
+
     public function testASyncOutOfTimeSendsNothingMore(): void
     {
         $calls = [];
@@ -404,6 +423,8 @@ PHP;
         yield 'more than asked' => [$tooMany, 'to a request for at most'];
         yield 'a total that is not a number' => ['{"data":[],"pagination":{"total":"lots"}}', 'not a whole number'];
         yield 'not JSON' => ['<html>maintenance</html>', 'not a JSON object'];
+        yield 'a truncated that is not a flag' => ['{"data":[],"truncated":"no"}', 'truncated that is not true or false'];
+        yield 'more to follow a short page' => ['{"data":[{"id":1}],"truncated":true}', 'with more to follow'];
     }
 
     /** @dataProvider notAPage */

@@ -9,6 +9,7 @@ use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookSender;
 use Prosper202\Ltv\DeliverySender;
 use Prosper202\Ltv\MysqlWebhookRepository;
+use Prosper202\Webhooks\StandardWebhook;
 
 /**
  * An LTV webhook delivery is sent the way an export webhook is (J0F7): the
@@ -25,6 +26,9 @@ use Prosper202\Ltv\MysqlWebhookRepository;
 final class DeliverySenderTest extends TestCase
 {
     private const PUBLIC = '93.184.216.34';
+
+    /** The sender's clock: webhook-timestamp, and when a rotation's overlap is judged. */
+    private const NOW = 1790000000;
 
     /** @var list<array<int, mixed>> */
     private array $sent = [];
@@ -60,7 +64,7 @@ final class DeliverySenderTest extends TestCase
         return new DeliverySender(new WebhookSender(
             new WebhookGuard(static fn (string $host): array => $dns[$host] ?? [], $allow),
             $transport
-        ));
+        ), static fn (): int => self::NOW);
     }
 
     /** @dataProvider \Tests\Attribution\WebhookGuardTest::nonPublicAnswers */
@@ -121,13 +125,13 @@ final class DeliverySenderTest extends TestCase
         self::assertSame(WebhookSender::TIMEOUT, $o[CURLOPT_TIMEOUT]);
         self::assertTrue($o[CURLOPT_POST]);
         self::assertSame($delivery['payload'], $o[CURLOPT_POSTFIELDS]);
-        self::assertSame(DeliverySender::headers($delivery), $o[CURLOPT_HTTPHEADER]);
+        self::assertSame(DeliverySender::headers($delivery, self::NOW), $o[CURLOPT_HTTPHEADER]);
         self::assertLessThanOrEqual(WebhookSender::TIMEOUT * 1000, $o[CURLOPT_TIMEOUT_MS], 'the lookup included');
         unset($o[CURLOPT_TIMEOUT_MS]);
         self::assertSame(WebhookSender::curlOptions(
             (new WebhookGuard(static fn (): array => [self::PUBLIC], ''))->check('https://hooks.example.com/p202'),
             (string) $delivery['payload'],
-            DeliverySender::headers($delivery)
+            DeliverySender::headers($delivery, self::NOW)
         ), $o, 'every option is the export webhooks\' set');
     }
 
@@ -152,13 +156,128 @@ final class DeliverySenderTest extends TestCase
     public function testTheHeadersSignTheExactBody(): void
     {
         $delivery = self::delivery('https://hooks.example.com/p202');
+        $body = (string) $delivery['payload'];
         self::assertSame([
             'Content-Type: application/json',
-            'X-P202-Signature: sha256=' . hash_hmac('sha256', (string) $delivery['payload'], 'the-secret'),
+            'X-P202-Signature: sha256=' . hash_hmac('sha256', $body, 'the-secret'),
             'X-P202-Event: revenue.recorded',
             'X-P202-Delivery: 42',
             'User-Agent: Prosper202-LTV-Webhook/1.0',
-        ], DeliverySender::headers($delivery));
+            // Queued before 1.9.81 (no id in its body): named by its delivery id.
+            'webhook-id: msg_ltv_42',
+            'webhook-timestamp: ' . self::NOW,
+            'webhook-signature: v1,' . base64_encode(hash_hmac('sha256', 'msg_ltv_42.' . self::NOW . '.' . $body, 'the-secret', true)),
+        ], DeliverySender::headers($delivery, self::NOW));
+    }
+
+    /**
+     * What a receiver's Standard Webhooks library checks: the id the event
+     * was queued with (the same on every attempt), this attempt's time, and
+     * a signature it verifies under the secret it was given. A secret from
+     * before 1.9.81 verifies in a library's form of it (whsec_ and its
+     * base64), which is what the documentation tells a receiver to pass.
+     */
+    public function testAReceiverVerifiesTheStandardHeadersWithTheSecretItHolds(): void
+    {
+        $messageId = StandardWebhook::newMessageId();
+        $body = (string) json_encode(MysqlWebhookRepository::envelope('revenue.recorded', ['amount' => 49], self::NOW - 60, $messageId));
+        foreach (['the-secret', StandardWebhook::newSecret()] as $secret) {
+            $delivery = ['payload' => $body, 'webhook_secret' => $secret] + self::delivery('https://hooks.example.com/p202');
+            foreach ([self::NOW, self::NOW + 900] as $attemptAt) {
+                $h = self::named(DeliverySender::headers($delivery, $attemptAt));
+                self::assertSame($messageId, $h['webhook-id'], 'every attempt carries the id the event was queued with');
+                self::assertSame((string) $attemptAt, $h['webhook-timestamp']);
+                self::assertTrue(StandardWebhook::verify(
+                    StandardWebhook::libraryForm($secret),
+                    $h['webhook-id'],
+                    $h['webhook-timestamp'],
+                    $h['webhook-signature'],
+                    $body,
+                    $attemptAt + 30
+                ));
+                self::assertFalse(StandardWebhook::verify(
+                    StandardWebhook::libraryForm($secret),
+                    $h['webhook-id'],
+                    $h['webhook-timestamp'],
+                    $h['webhook-signature'],
+                    $body . ' ',
+                    $attemptAt + 30
+                ), 'another body does not verify');
+            }
+        }
+    }
+
+    public function testARotationSignsWithBothSecretsUntilTheOldOneExpires(): void
+    {
+        $new = StandardWebhook::newSecret();
+        $delivery = [
+            'webhook_secret' => $new,
+            'previous_secret' => 'the-secret',
+            'previous_secret_expires_at' => self::NOW + 3600,
+        ] + self::delivery('https://hooks.example.com/p202');
+        $body = (string) $delivery['payload'];
+
+        $during = self::named(DeliverySender::headers($delivery, self::NOW));
+        $signatures = explode(' ', $during['webhook-signature']);
+        self::assertCount(2, $signatures, 'the new secret first, then the one it replaced');
+        foreach ([$new, 'the-secret'] as $i => $secret) {
+            self::assertSame(StandardWebhook::sign($secret, 'msg_ltv_42', self::NOW, $body), $signatures[$i]);
+            self::assertTrue(StandardWebhook::verify(
+                StandardWebhook::libraryForm($secret),
+                'msg_ltv_42',
+                (string) self::NOW,
+                $during['webhook-signature'],
+                $body,
+                self::NOW
+            ));
+        }
+        self::assertSame(
+            MysqlWebhookRepository::signature($body, $new),
+            $during['X-P202-Signature'],
+            'the older header is the new secret\'s from the start'
+        );
+
+        $after = self::named(DeliverySender::headers($delivery, self::NOW + 3600));
+        self::assertSame(StandardWebhook::sign($new, 'msg_ltv_42', self::NOW + 3600, $body), $after['webhook-signature']);
+        self::assertFalse(StandardWebhook::verify(
+            StandardWebhook::libraryForm('the-secret'),
+            'msg_ltv_42',
+            (string) (self::NOW + 3600),
+            $after['webhook-signature'],
+            $body,
+            self::NOW + 3600
+        ), 'the old secret no longer verifies once its overlap ends');
+    }
+
+    public function testASecretThatCannotSignIsLoggedAndNotSent(): void
+    {
+        $delivery = ['webhook_secret' => 'whsec_not base64!'] + self::delivery('https://hooks.example.com/p202');
+        [$ok, $status, $logged] = $this->sender(['hooks.example.com' => [self::PUBLIC]], ['primary_ip' => self::PUBLIC])
+            ->post($delivery);
+
+        self::assertFalse($ok);
+        self::assertNull($status);
+        self::assertSame(
+            'error: InvalidArgumentException: A whsec_ secret is whsec_ followed by base64; this one is not',
+            $logged
+        );
+        self::assertSame([], $this->sent, 'no request was made');
+    }
+
+    /**
+     * @param list<string> $lines
+     * @return array<string, string>
+     */
+    private static function named(array $lines): array
+    {
+        $named = [];
+        foreach ($lines as $line) {
+            [$name, $value] = explode(': ', $line, 2);
+            self::assertArrayNotHasKey($name, $named, $name . ' is sent once');
+            $named[$name] = $value;
+        }
+
+        return $named;
     }
 
     /** @return iterable<string, array{0: array<string, mixed>, 1: array{0: bool, 1: ?int, 2: string}}> */

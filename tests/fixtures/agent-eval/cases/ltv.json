@@ -171,6 +171,33 @@
         ]
       },
       "notes": "The pair of ltv-005: the same request under the same key is a replay, answered with the first event and nothing written; only a different request under it is refused. An agent that re-records the charge under a new key, or with no key, doubles the customer's revenue."
+    },
+    {
+      "id": "ltv-007-a-count-reads-every-page",
+      "priority": "medium",
+      "state": "seeded fixture; setup upserts 55 LTV products whose SKUs start EVAL-PAGE- (more than one 50-row page of `ltv products`)",
+      "setup": [
+        "for i in $(seq -w 1 55); do p202 ltv product upsert --sku EVAL-PAGE-$i --name \"Eval page product $i\" --json >/dev/null; done"
+      ],
+      "ask": "How many products in our LTV product catalog have a SKU starting with EVAL-PAGE-?",
+      "expected": {
+        "runs_one_of": [
+          "ltv products"
+        ],
+        "checks": [
+          {
+            "run": "p202 ltv products --limit 500 --json | jq '[.data[] | select((.sku // \"\") | startswith(\"EVAL-PAGE-\"))] | length'",
+            "includes": [
+              "55"
+            ]
+          }
+        ],
+        "rubric": "PASS if the reply says 55. FAIL if it gives the count of one page (50 or fewer) or says the catalog holds only the rows of the first page: the answer says truncated: true when rows remain after a page, and they are read with --offset (or a larger --limit).",
+        "reply_includes": [
+          "55"
+        ]
+      },
+      "notes": "GET /ltv/products pages with limit and offset; before truncated an answer of 50 rows read the same whether or not more followed, so a count of the first page was 50 with nothing to say it was short."
     }
   ]
 }

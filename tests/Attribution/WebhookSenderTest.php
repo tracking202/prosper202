@@ -7,6 +7,7 @@ namespace Tests\Attribution;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookSender;
+use Prosper202\Webhooks\StandardWebhook;
 
 /**
  * Delivery: the check runs again at send time and the connection goes to
@@ -66,6 +67,56 @@ final class WebhookSenderTest extends TestCase
         self::assertContains('X-P202-Timestamp: 1790000000', $headers);
         self::assertContains('X-P202-Signature: sha256=' . hash_hmac('sha256', "1790000000.a,b\n1,2\n", 'k3y-k3y-k3y-k3y-k3y'), $headers);
         self::assertContains('Content-Type: text/csv; charset=utf-8', $headers);
+    }
+
+    /**
+     * The export carries the Standard Webhooks headers too: a receiver's
+     * library verifies them with the export's secret, and every attempt at
+     * one job carries the same webhook-id, which no other job's shares.
+     */
+    public function testAReceiverVerifiesTheStandardHeadersAndEveryAttemptHasTheJobsId(): void
+    {
+        $body = "a,b\n1,2\n";
+        $named = [];
+        foreach (['k3y-k3y-k3y-k3y-k3y', StandardWebhook::newSecret()] as $secret) {
+            foreach ([1 => 1790000000, 2 => 1790000120] as $attempt => $at) {
+                $this->sent = [];
+                $this->sender(static fn (): array => ['93.184.216.34'], ['status' => 204, 'primary_ip' => '93.184.216.34'])
+                    ->send('https://hooks.example.com/p202', $secret, $body, 7, $attempt, $at);
+                $h = [];
+                foreach ($this->sent[0][CURLOPT_HTTPHEADER] as $line) {
+                    if (str_starts_with($line, 'webhook-')) {
+                        [$name, $value] = explode(': ', $line, 2);
+                        $h[$name] = $value;
+                    }
+                }
+                self::assertSame((string) $at, $h['webhook-timestamp']);
+                self::assertTrue(StandardWebhook::verify(
+                    StandardWebhook::libraryForm($secret),
+                    $h['webhook-id'],
+                    $h['webhook-timestamp'],
+                    $h['webhook-signature'],
+                    $body,
+                    $at + 10
+                ));
+                $named[$secret][$attempt] = $h['webhook-id'];
+            }
+            self::assertSame($named[$secret][1], $named[$secret][2], 'a retry is the same message');
+            self::assertSame(WebhookSender::exportMessageId($secret, 7), $named[$secret][1]);
+            self::assertNotSame($named[$secret][1], WebhookSender::exportMessageId($secret, 8), 'another job is another message');
+        }
+        self::assertNotSame(...array_column(array_values($named), 1));
+    }
+
+    public function testASecretThatCannotSignIsNotSent(): void
+    {
+        $result = $this->sender(static fn (): array => ['93.184.216.34'], ['status' => 204, 'primary_ip' => '93.184.216.34'])
+            ->send('https://hooks.example.com/p202', 'whsec_not base64!', 'x', 7, 1, 1790000000);
+
+        self::assertFalse($result->delivered);
+        self::assertFalse($result->retryable);
+        self::assertStringContainsString('webhook secret cannot sign', (string) $result->error);
+        self::assertSame([], $this->sent, 'no request was made');
     }
 
     public function testAnIPv6AnswerIsPinnedInBrackets(): void
