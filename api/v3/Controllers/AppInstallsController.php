@@ -14,6 +14,7 @@ use Api\V3\HttpException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\MysqliStatements;
+use Api\V3\Support\PageRows;
 use Api\V3\Support\ResponseSanitizer;
 use Prosper202\Click\LatestVisit;
 
@@ -144,7 +145,7 @@ final class AppInstallsController
 
         $stmt = $this->prepare('SELECT ' . self::COLUMNS . ' FROM 202_app_installs WHERE ' . $clause
             . ' ORDER BY received_at DESC, install_row_id DESC LIMIT ? OFFSET ?');
-        $this->bind($stmt, $types . 'ii', ...[...$binds, $limit, $offset]);
+        $this->bind($stmt, $types . 'ii', ...[...$binds, PageRows::fetchLimit($limit), $offset]);
         $this->execute($stmt, 'Install list failed');
         $result = $this->result($stmt);
         $rows = [];
@@ -152,8 +153,9 @@ final class AppInstallsController
             $rows[] = self::present($row);
         }
         $stmt->close();
+        [$rows, $truncated] = PageRows::cut($rows, $limit);
 
-        return ['data' => $rows, 'pagination' => ['total' => (int) $count['total'], 'limit' => $limit, 'offset' => $offset]];
+        return ['data' => $rows, 'truncated' => $truncated, 'pagination' => ['total' => (int) $count['total'], 'limit' => $limit, 'offset' => $offset]];
     }
 
     public function get(int $registrationId, string $installUuid): array

@@ -28,9 +28,14 @@ info:
     ```json
     {
       "data": [...],
+      "truncated": true,
       "pagination": { "total": 100, "limit": 50, "offset": 0 }
     }
     ```
+    Every endpoint that takes `offset` answers `truncated`: true when rows
+    remain after the page, false on the last one. Read on with `offset`
+    plus `limit` until it is false; `total` is a separate count and can
+    differ from the rows a later page holds.
 
     ## API Key Scopes
     A key may carry a scope that attenuates it independently of the owning
@@ -7234,6 +7239,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
@@ -7542,6 +7549,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data: {type: array, items: {$ref: "#/components/schemas/GoalOutcome"}}
                   pagination: {$ref: "#/components/schemas/Pagination"}
         "404":
@@ -9205,6 +9214,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
@@ -10912,6 +10923,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
@@ -11393,6 +11406,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
@@ -11911,12 +11926,20 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
                       $ref: '#/components/schemas/LtvAbmAccount'
                   window_days:
                     type: integer
+                  limit:
+                    type: integer
+                    description: The page size this answer was read with (the request's, or 50).
+                  offset:
+                    type: integer
+                    description: The rows skipped before this page.
         '403':
           $ref: '#/components/responses/Forbidden'
 
@@ -11995,6 +12018,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
@@ -12004,6 +12029,12 @@ paths:
                   breakdown:
                     type: string
                     description: The grouping; product rows are LtvProductBreakdownRow, the others LtvAcquisitionBreakdownRow
+                  limit:
+                    type: integer
+                    description: The page size this answer was read with (the request's, or 50).
+                  offset:
+                    type: integer
+                    description: The rows skipped before this page.
         '403':
           $ref: '#/components/responses/Forbidden'
         '422':
@@ -12127,10 +12158,18 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
                       $ref: '#/components/schemas/LtvProduct'
+                  limit:
+                    type: integer
+                    description: The page size this answer was read with (the request's, or 50).
+                  offset:
+                    type: integer
+                    description: The rows skipped before this page.
         '403':
           $ref: '#/components/responses/Forbidden'
     post:
@@ -12277,6 +12316,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
@@ -12473,6 +12514,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
@@ -13695,6 +13738,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  truncated:
+                    $ref: "#/components/schemas/PageTruncated"
                   data:
                     type: array
                     items:
@@ -16167,6 +16212,15 @@ components:
         offset:
           type: integer
 
+    PageTruncated:
+      type: boolean
+      description: >-
+        True when rows remain after this page: read on with `offset` plus
+        `limit` until it is false, and check it before summing or ranking the
+        rows of one page. False on the last page, including a page of exactly
+        the rows that remain. Every answer to a request that takes `offset`
+        carries it; absent from servers that predate it.
+
     # ── Campaigns ──────────────────────────────────────────────────────
 
     Campaign:
@@ -16400,6 +16454,8 @@ components:
     CampaignListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -16455,6 +16511,8 @@ components:
     AffNetworkListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -16540,6 +16598,8 @@ components:
     PpcNetworkListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -16601,6 +16661,8 @@ components:
     PpcAccountListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -16716,6 +16778,8 @@ components:
     TrackerListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -16845,6 +16909,8 @@ components:
     LandingPageListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -16954,6 +17020,8 @@ components:
     TextAdListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -17285,6 +17353,8 @@ components:
     ClickListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -18515,6 +18585,8 @@ components:
     ConversionListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -18999,6 +19071,8 @@ components:
     RotatorListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -19178,6 +19252,8 @@ components:
     AttributionBreakdownResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -20251,6 +20327,8 @@ components:
     AppRegistrationListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -20374,6 +20452,8 @@ components:
     AppSkanEncodingListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -20458,6 +20538,8 @@ components:
     GoalListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data: {type: array, items: {$ref: "#/components/schemas/Goal"}}
         pagination: {$ref: "#/components/schemas/Pagination"}
 
@@ -20971,6 +21053,8 @@ components:
     AppInstallListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
@@ -21158,6 +21242,8 @@ components:
     AppPostbackListResponse:
       type: object
       properties:
+        truncated:
+          $ref: "#/components/schemas/PageTruncated"
         data:
           type: array
           items:
