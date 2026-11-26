@@ -694,7 +694,8 @@ class UsersController
         ];
     }
 
-    private function requireUser(int $userId): void
+    /** A user who is there: not removed (GET /users/{id}'s 404 for the rest). */
+    public function requireUser(int $userId): void
     {
         $stmt = $this->prepare('SELECT user_id FROM 202_users WHERE user_id = ? AND user_deleted = 0 LIMIT 1');
         $this->bind($stmt, 'i', $userId);

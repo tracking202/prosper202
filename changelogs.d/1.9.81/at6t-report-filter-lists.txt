@@ -1,0 +1,3 @@
+-- New: Every report filter but keyword and referer takes several values separated by commas (`aff_campaign_id=1,4`, `ppc_network_id=3,none`, `show=filtered,leads`, `ip=203.0.113.7,2001:db8::1`), on /reports/summary, breakdown, groups, timeseries, daypart, weekpart, a rotator's stats and /clicks, and answers the clicks any of them selects, each click counted once; at most 100 values, and an empty item, a 0 among others or `all` among others is a 422 naming the parameter.
+app: New: Reports through the API filter by several campaigns, sources or other values at once.
+-- New: The reports and /clicks take `click_id`, one click id or several separated by commas: a click a redirector link re-clicked is selected at every visit, and another account's click selects nothing.

@@ -82,7 +82,7 @@ case "$ask" in
         # One event, named from the list the server sends; the secret is in
         # this response and nowhere else.
         out=$(p202 ltv webhooks create --url https://hooks.example.com/eval-ltv-revenue --events revenue.recorded --json)
-        printf 'Created webhook %s for https://hooks.example.com/eval-ltv-revenue, sending revenue.recorded and no other event. Deliveries are signed with X-P202-Signature (sha256 HMAC of the body); the secret is shown only now, so store it: %s\n' \
+        printf 'Created webhook %s for https://hooks.example.com/eval-ltv-revenue, sending revenue.recorded and no other event. Deliveries are signed the Standard Webhooks way (webhook-signature; give the secret to a Standard Webhooks library to verify them); the secret is shown only now, so store it: %s\n' \
             "$(printf '%s' "$out" | jq -r '.data.webhook_id')" "$(printf '%s' "$out" | jq -r '.data.secret')"
         ;;
     *"eval ltv items"*)
@@ -1058,6 +1058,28 @@ EOF
         else
             printf 'At $%s a sale these traffic sources lose money, per `p202 report losers --breakdown ppc_account --payout %s`: %s.\n' "$payout" "$payout" "$rows"
         fi
+        ;;
+    # Several values on one report filter (report-filter-lists.json): look
+    # each campaign up by name, refuse one that is not there, and read the
+    # two together with one comma list.
+    *"EVAL Campaign A and EVAL Campaign"*"between them"*)
+        list=$(p202 campaign list --all --json)
+        a=$(printf '%s' "$list" | jq -r '[.data[] | select(.aff_campaign_name=="EVAL Campaign A")][0].aff_campaign_id // empty')
+        case "$ask" in
+            *"EVAL Campaign Zed"*)
+                if [ -n "$(printf '%s' "$list" | jq -r '[.data[] | select(.aff_campaign_name=="EVAL Campaign Zed")][0].aff_campaign_id // empty')" ]; then
+                    printf 'EVAL Campaign Zed exists after all; ask again and I will add it in.\n'
+                else
+                    clicks=$(p202 report summary --aff-campaign-id "$a" --period alltime --json | jq -r '.data.total_clicks')
+                    printf 'There is no campaign named EVAL Campaign Zed in `p202 campaign list --all`, so I cannot give a total for the two. EVAL Campaign A (campaign %s) alone has %s clicks all time.\n' "$a" "$clicks"
+                fi
+                ;;
+            *)
+                b=$(printf '%s' "$list" | jq -r '[.data[] | select(.aff_campaign_name=="EVAL Campaign B")][0].aff_campaign_id // empty')
+                clicks=$(p202 report summary --aff-campaign-id "$a,$b" --period alltime --json | jq -r '.data.total_clicks')
+                printf 'EVAL Campaign A (campaign %s) and EVAL Campaign B (campaign %s) got %s clicks between them all time, per `p202 report summary --aff-campaign-id %s,%s --period alltime`.\n' "$a" "$b" "$clicks" "$a" "$b"
+                ;;
+        esac
         ;;
     *"traffic sources"*"losing money"*)
         # No value per sale given: report on the revenue ClickServer recorded,

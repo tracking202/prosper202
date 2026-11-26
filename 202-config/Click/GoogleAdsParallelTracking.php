@@ -70,12 +70,19 @@ final class GoogleAdsParallelTracking
         if ($onPage) {
             parse_str((string) parse_url($lpurl, PHP_URL_QUERY), $lpQuery);
         }
-        $add = $onPage ? '' : $passOn;
+        $ids = '';
+        $added = [];
         foreach ($adClickIds as $name => $value) {
             if ($value !== '' && !isset($lpQuery[$name])) {
-                $add .= $name . '=' . rawurlencode($value) . '&';
+                $ids .= $name . '=' . rawurlencode($value) . '&';
+                $added[$name] = true;
             }
         }
+        // The pass-on holds the link's gbraid, wbraid and ttclid too: an id
+        // added here goes once (PassOnClickIds). The saved page's URL is not
+        // asked, since its tokens are not filled.
+        $kept = $onPage ? '' : PassOnClickIds::without($passOn, $added);
+        $add = ($kept === '' || str_ends_with($kept, '&') ? $kept : $kept . '&') . $ids;
 
         return self::withQuery($onPage ? $lpurl : $landingPageUrl, $add);
     }

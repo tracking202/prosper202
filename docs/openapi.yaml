@@ -2611,6 +2611,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
         - name: click_lead
           in: query
           description: "0 = clicks only, 1 = conversions only"
@@ -4282,8 +4283,9 @@ paths:
       description: >-
         Aggregate metrics for the selected time period and filters. Every
         report endpoint takes the Analyze pages' filters, which combine; a
-        parameter the endpoint does not take, a list where one value goes, or
-        a value outside a filter's form is a 422 whose `field_errors` names
+        parameter the endpoint does not take, an array (`name[]`; several
+        values are one value with commas), or a value outside a filter's
+        form is a 422 whose `field_errors` names
         the parameter (they used to be ignored, and the answer covered
         everything). The ratios are MySQL's DECIMAL division of the sums,
         truncated where it stops (9 decimals, 18 for roi) and rounded half
@@ -4311,6 +4313,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
       responses:
         "200":
           description: Summary metrics
@@ -4399,6 +4402,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
       responses:
         "200":
           description: The groups as a tree (`data`, each with `children` but the innermost), `totals`, and `by`
@@ -4596,6 +4600,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
       responses:
         "200":
           description: Breakdown results
@@ -4683,6 +4688,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
       responses:
         "200":
           description: Timeseries data
@@ -4794,6 +4800,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
       responses:
         "200":
           description: Day-parting rows
@@ -4975,6 +4982,7 @@ paths:
         - $ref: "#/components/parameters/filterIp"
         - $ref: "#/components/parameters/filterReferer"
         - $ref: "#/components/parameters/filterPublisherId"
+        - $ref: "#/components/parameters/filterClickId"
       responses:
         "200":
           description: The rotator's figures
@@ -5642,9 +5650,14 @@ paths:
         Queues a breakdown to be written as CSV by the export runner (the
         minutely cron), now or at run_at, with every group (no row limit; more
         than 50,000 groups fails the job with the reason). With webhook_url,
-        the runner also POSTs the file there, signed: X-P202-Signature is
-        sha256=<hex HMAC-SHA256 of "<X-P202-Timestamp>.<body>"> under the
-        export's secret, which this response carries once. Webhook URLs must
+        the runner also POSTs the file there, signed the Standard Webhooks
+        way (webhook-id, the same on every attempt; webhook-timestamp;
+        webhook-signature, v1 and the base64 HMAC-SHA256 of
+        "<webhook-id>.<webhook-timestamp>.<body>"), so a Standard Webhooks
+        library verifies it, under the export's secret, which this response
+        carries once. Through 1.9.82 it also carries the older
+        X-P202-Signature, sha256=<hex HMAC-SHA256 of
+        "<X-P202-Timestamp>.<body>">; 1.9.83 stops sending it. Webhook URLs must
         be https and every address the host resolves to must be public
         (private, loopback, link-local, metadata, documentation, multicast and
         reserved ranges are refused, IPv4 carried in IPv6 included); the
@@ -7973,6 +7986,8 @@ paths:
           description: Role assigned
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/roles/{roleId}:
     parameters:
@@ -7998,6 +8013,8 @@ paths:
           description: Role removed
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/api-keys:
     parameters:
@@ -8069,6 +8086,8 @@ paths:
                             that does not end.
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     post:
       tags: [Users]
       summary: Create an API key
@@ -8135,6 +8154,8 @@ paths:
                         type: integer
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/api-keys/replace:
     parameters:
@@ -8233,6 +8254,8 @@ paths:
           description: API key deleted
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/identity-key:
     parameters:
@@ -8317,6 +8340,8 @@ paths:
                     $ref: "#/components/schemas/UserPreferences"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     put:
       tags: [Users]
       summary: Update user preferences
@@ -8362,6 +8387,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/click-filter:
     parameters:
@@ -8388,6 +8415,8 @@ paths:
                     $ref: "#/components/schemas/ClickFilter"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     put:
       tags: [Users]
       summary: Change the click filter's checks
@@ -8417,6 +8446,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/click-filter/entries:
     parameters:
@@ -8457,6 +8488,8 @@ paths:
           description: The same addresses are on the list already, as `entry_id`.
         "422":
           $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/click-filter/entries/{entryId}:
     parameters:
@@ -8547,6 +8580,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
 # ═══════════════════════════════════════════════════════════════════════
 # Components
@@ -10492,6 +10527,7 @@ paths:
       - $ref: '#/components/parameters/filterIp'
       - $ref: '#/components/parameters/filterReferer'
       - $ref: '#/components/parameters/filterPublisherId'
+      - $ref: '#/components/parameters/filterClickId'
       responses:
         '200':
           description: One row per weekday (`day_of_week` 0 = Monday … 6 = Sunday, `day_name`) with the same metrics
@@ -12949,8 +12985,17 @@ paths:
       tags:
       - LTV
       summary: Create an outbound webhook
-      description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
-        an `idempotency_key` field instead) and have no `dry_run` preview.
+      description: |
+        Needs the `ltv:write` scope. The answer carries the webhook's secret, once: a `whsec_` secret, which a
+        Standard Webhooks library takes as it is. Every delivery is signed the Standard Webhooks way:
+        `webhook-id` (the event's message id, the same on every retry and for every webhook it went to),
+        `webhook-timestamp` (the attempt's time, Unix seconds) and `webhook-signature` (`v1,` and the base64
+        HMAC-SHA256 of `<webhook-id>.<webhook-timestamp>.<body>`; two, space-separated, while a rotation's overlap
+        runs). The body is `{"type": "<event>.v1", "timestamp": "<ISO 8601>", "data": {…}, "id": "<webhook-id>"}`,
+        with the older `event` and `occurred_at`. Through 1.9.82 deliveries also carry `X-P202-Signature`
+        (`sha256=` and the hex HMAC-SHA256 of the body alone), which 1.9.83 stops sending. LTV writes do not honor
+        `Idempotency-Key` (`POST /ltv/revenue` takes an `idempotency_key` field instead) and have no `dry_run`
+        preview.
       operationId: ltvCreateWebhook
       requestBody:
         required: true
@@ -13118,6 +13163,70 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+
+  /ltv/webhooks/{id}/rotate-secret:
+    post:
+      tags:
+      - LTV
+      summary: Rotate an outbound webhook's secret
+      description: |
+        Needs the `ltv:write` scope. Gives the webhook a new `whsec_` secret, carried once in the answer. For
+        `overlap_hours` (default 24) every delivery is signed by the old secret too, a second `v1` signature in
+        `webhook-signature`, so the receiver can change to the new secret without a delivery failing; `0` stops the
+        old one at once. `X-P202-Signature`, one signature only, uses the new secret from the start. A secret
+        replaced within an earlier rotation's overlap stops at once. The Landing Page Optimizer's webhook is a `422`
+        naming `webhook_id`: the optimizer holds its secret, and connecting it again gives a new one. Another
+        account's webhook is a `404`. Not honoring `Idempotency-Key`, since the answer holds a secret; no `dry_run`
+        preview.
+      operationId: ltvRotateWebhookSecret
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Webhook id
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                overlap_hours:
+                  type: integer
+                  minimum: 0
+                  maximum: 168
+                  default: 24
+                  description: Hours the old secret still signs deliveries; a JSON number
+              additionalProperties: false
+      responses:
+        '200':
+          description: The new secret, shown this once
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      webhook_id:
+                        type: integer
+                      secret:
+                        type: string
+                      overlap_hours:
+                        type: integer
+                      previous_secret_expires_at:
+                        type: integer
+                        nullable: true
+                        description: When the old secret stops signing (Unix seconds); null with overlap_hours 0
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
 
   /ltv/webhooks/{id}/deliveries:
     get:
@@ -13546,8 +13655,16 @@ paths:
         of 500 records of one list, or 900 seconds in all, reached),
         `sync_key_unreadable` (the job's stored key does not open: queue the
         sync again) and `sync_remote_failed` (no answer, or one no Prosper202
-        API gives). The first four stop the whole sync, with skip_errors too;
-        only `sync_url_unresolved` and `sync_remote_failed` are retried.
+        API gives), `sync_pair_busy` (another sync of the same pair is
+        running: the job waits and is retried), `sync_record_unusable` (a
+        record that cannot be matched or written as the source has it; it
+        stops the run only without skip_errors), `sync_worker_lost` (the
+        process running the job ended; a killed run is failed once it began
+        1200 seconds ago and nothing holds the job, with `written` counted
+        from its events) and `sync_internal` (an error inside this server;
+        `error` names the log entry). The first four stop the whole sync,
+        with skip_errors too; `sync_url_unresolved`, `sync_remote_failed`,
+        `sync_pair_busy` and `sync_internal` are retried.
         `written` is what the target had confirmed writing when a run
         stopped, by entity (`created`, `updated`, `pruned`), and `error` ends
         saying the same.
@@ -14910,90 +15027,160 @@ components:
     filterCampaign:
       name: aff_campaign_id
       in: query
+      description: >-
+        Clicks of this campaign. Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterAffNetwork:
       name: aff_network_id
       in: query
+      description: >-
+        Clicks of a campaign of this affiliate network. Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterPpcAccount:
       name: ppc_account_id
       in: query
+      description: >-
+        Clicks of this traffic source account. Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterPpcNetwork:
       name: ppc_network_id
       in: query
       description: >-
         A traffic source's id, or `none` for the clicks with no traffic
         source (the Analyze pages' "No traffic source", which they send as
-        16777215; that is accepted too).
+        16777215; that is accepted too). Several separated by commas
+        (`3,none`) select the clicks any of them selects, at most 100; 0 or
+        absent is no filter and stands alone, and an empty item is a 422.
       schema:
-        oneOf:
-          - type: integer
-          - type: string
-            enum: [none]
+        type: string
+        pattern: '^(0|([1-9][0-9]*|none)(,([1-9][0-9]*|none))*)$'
+        example: "3,none"
     filterLandingPage:
       name: landing_page_id
       in: query
+      description: >-
+        Clicks through this landing page. Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterCountry:
       name: country_id
       in: query
+      description: >-
+        Clicks from this country (the id of a `breakdown=country` row). Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterTextAd:
       name: text_ad_id
       in: query
-      description: Filter by text ad. 0 or empty is no filter; anything but a whole number is a 422.
+      description: >-
+        Clicks of this text ad. Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterRegion:
       name: region_id
       in: query
-      description: Filter by region (the id of a `breakdown=region` row)
+      description: >-
+        Clicks from this region (the id of a `breakdown=region` row). Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterIsp:
       name: isp_id
       in: query
-      description: Filter by ISP/carrier (the id of a `breakdown=isp` row)
+      description: >-
+        Clicks from this ISP or carrier (the id of a `breakdown=isp` row). Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterBrowser:
       name: browser_id
       in: query
-      description: Filter by browser (the id of a `breakdown=browser` row)
+      description: >-
+        Clicks from this browser (the id of a `breakdown=browser` row). Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterPlatform:
       name: platform_id
       in: query
-      description: Filter by platform/OS (the id of a `breakdown=platform` row)
+      description: >-
+        Clicks from this platform or OS (the id of a `breakdown=platform` row). Several ids separated by commas (`1,4`) select the clicks any of them
+        selects, at most 100; 0 or absent is no filter and stands alone, and an
+        empty item (`1,,4`, `1,`) is a 422.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "4"
     filterDeviceType:
       name: device_type
       in: query
-      description: "Filter by device type: 1 Desktop, 2 Mobile, 3 Tablet, 4 Bot (the ids of `breakdown=device_type` rows); every device model of that type."
+      description: >-
+        Device type: 1 Desktop, 2 Mobile, 3 Tablet, 4 Bot (the ids of
+        `breakdown=device_type` rows); every device model of that type.
+        Several separated by commas (`2,3`) select any of them; 0 or absent
+        is no filter.
       schema:
-        type: integer
+        type: string
+        pattern: '^(0|[1-9][0-9]*(,[1-9][0-9]*)*)$'
+        example: "2,3"
     filterMethodOfPromotion:
       name: method_of_promotion
       in: query
-      description: Only direct-link clicks (no landing page) or only landing-page clicks
+      description: >-
+        Only direct-link clicks (no landing page) or only landing-page
+        clicks; both, separated by a comma, is every click.
       schema:
         type: string
-        enum: [directlink, landingpage]
+        pattern: '^(directlink|landingpage)(,(directlink|landingpage))*$'
+        example: directlink
     filterShow:
       name: show
       in: query
-      description: "Which clicks count, as the Analyze pages' show menu: all (default), real (not filtered), filtered, filtered_bot (filtered as bots), leads (converted)."
+      description: >-
+        Which clicks count, as the Analyze pages' show menu: all (default),
+        real (not filtered), filtered, filtered_bot (filtered as bots), leads
+        (converted). Several separated by commas (`filtered,leads`) count the
+        clicks any of them counts; `all` stands alone.
       schema:
         type: string
-        enum: [all, real, filtered, filtered_bot, leads]
+        pattern: '^(all|(real|filtered|filtered_bot|leads)(,(real|filtered|filtered_bot|leads))*)$'
+        example: filtered,leads
     filterKeyword:
       name: keyword
       in: query
@@ -15004,7 +15191,11 @@ components:
     filterIp:
       name: ip
       in: query
-      description: Clicks from this one address, IPv4 or IPv6 (any spelling of an IPv6 address). Not an address is a 422.
+      description: >-
+        Clicks from this address, IPv4 or IPv6 (any spelling of an IPv6
+        address). Several separated by commas (`203.0.113.7,2001:db8::1`)
+        select the clicks from any of them, at most 100. Anything that is not
+        an address, or an empty item, is a 422.
       schema:
         type: string
         example: 2001:db8::1
@@ -15019,11 +15210,26 @@ components:
       name: publisher_id
       in: query
       description: >-
-        Clicks a publisher link credited to this publisher (a user id, the `id` of a
-        `breakdown=publisher` row), or `none` for the clicks credited to no publisher. 0 is no filter.
+        Clicks a publisher link credited to this publisher (a user id, the
+        `id` of a `breakdown=publisher` row), or `none` for the clicks
+        credited to no publisher. Several separated by commas (`7,none`)
+        select the clicks any of them selects, at most 100; 0 or absent is
+        no filter and stands alone.
       schema:
         type: string
-        pattern: '^([0-9]+|none)$'
+        pattern: '^(0|([1-9][0-9]*|none)(,([1-9][0-9]*|none))*)$'
+    filterClickId:
+      name: click_id
+      in: query
+      description: >-
+        Only these clicks: one click id, or several separated by commas, at
+        most 100. A click a redirector link re-clicked has a row for each
+        visit, and its id selects every one. Another account's click selects
+        nothing.
+      schema:
+        type: string
+        pattern: '^[1-9][0-9]*(,[1-9][0-9]*)*$'
+        example: "81360001"
 
     # App postback filters (list + report)
     postbackRegistrationId:
@@ -19151,7 +19357,12 @@ components:
           type: string
           minLength: 16
           maxLength: 255
-          description: Printable ASCII, no spaces. Generated (64 hex characters) when a webhook is given without one.
+          description: >-
+            Printable ASCII, no spaces. Generated (a whsec_ secret, as a
+            Standard Webhooks library mints one) when a webhook is given
+            without one. One starting whsec_ must be whsec_ followed by
+            base64. A secret without that prefix is used as its own bytes, so
+            a library takes it as whsec_ followed by its base64.
 
     AttributionExport:
       type: object

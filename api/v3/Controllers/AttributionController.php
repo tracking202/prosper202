@@ -23,6 +23,7 @@ use Prosper202\Attribution\QueueRetry;
 use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookRefused;
 use Prosper202\Database\Connection;
+use Prosper202\Webhooks\StandardWebhook;
 
 /**
  * Multi-touch attribution over v3 (plan §6.3): models, and the reports over
@@ -671,10 +672,15 @@ class AttributionController
         }
 
         if ($secret === null || $secret === '') {
-            return [$url, bin2hex(random_bytes(32))];
+            return [$url, StandardWebhook::newSecret()];
         }
         if (!is_string($secret) || preg_match('/^[\x21-\x7E]{16,255}$/D', $secret) !== 1) {
             throw new ValidationException('Invalid webhook_secret', ['webhook_secret' => '16 to 255 printable ASCII characters, no spaces; or leave it out and one is generated']);
+        }
+        if (!StandardWebhook::isUsableSecret($secret)) {
+            // Signed as text, it would make a signature no library given the
+            // secret can match.
+            throw new ValidationException('Invalid webhook_secret', ['webhook_secret' => 'A secret starting whsec_ is whsec_ followed by base64 (as a Standard Webhooks library mints one); send one like that, another secret, or leave it out and one is generated']);
         }
 
         return [$url, $secret];
