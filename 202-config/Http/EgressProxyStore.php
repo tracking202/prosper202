@@ -98,14 +98,20 @@ final class EgressProxyStore
         $this->conn->executeUpdate($stmt);
     }
 
-    /** No proxy: the URL and the credentials are removed. */
+    /**
+     * No proxy: the URL and the credentials are removed. Written as save()
+     * writes the install's one row, so it holds whether or not the row exists.
+     */
     public function forget(int $by, int $at): void
     {
         $stmt = $this->conn->prepareWrite(
-            'UPDATE ' . TableRegistry::EGRESS_PROXY . " SET proxy_url = '', proxy_username = '', proxy_password = '',"
-            . ' updated_at = ?, updated_by = ? WHERE proxy_id = ?'
+            'INSERT INTO ' . TableRegistry::EGRESS_PROXY
+            . " (proxy_id, proxy_url, proxy_username, proxy_password, updated_at, updated_by)
+             VALUES (?, '', '', '', ?, ?)
+             ON DUPLICATE KEY UPDATE proxy_url = '', proxy_username = '', proxy_password = '', updated_at = ?,
+                 updated_by = ?"
         );
-        $this->conn->bind($stmt, 'iii', [$at, $by, self::ROW]);
+        $this->conn->bind($stmt, 'iiiii', [self::ROW, $at, $by, $at, $by]);
         $this->conn->executeUpdate($stmt);
     }
 

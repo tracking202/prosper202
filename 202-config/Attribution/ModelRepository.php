@@ -107,19 +107,19 @@ final class ModelRepository
             try {
                 $models[] = self::fromRow($row);
             } catch (InvalidModelConfig $e) {
-                $this->markInvalid((int) $row['model_id'], $e->getMessage());
+                $this->markInvalid($userId, (int) $row['model_id'], $e->getMessage());
             }
         }
 
         return $models;
     }
 
-    public function markInvalid(int $modelId, string $reason): void
+    public function markInvalid(int $userId, int $modelId, string $reason): void
     {
         $stmt = $this->conn->prepareWrite(
-            "UPDATE 202_attribution_models SET status = 'invalid', status_reason = ?, updated_at = ? WHERE model_id = ?"
+            "UPDATE 202_attribution_models SET status = 'invalid', status_reason = ?, updated_at = ? WHERE model_id = ? AND user_id = ?"
         );
-        $this->conn->bind($stmt, 'sii', [mb_substr($reason, 0, 255), time(), $modelId]);
+        $this->conn->bind($stmt, 'siii', [mb_substr($reason, 0, 255), time(), $modelId, $userId]);
         $this->conn->executeUpdate($stmt);
     }
 
@@ -185,13 +185,13 @@ final class ModelRepository
         $this->conn->executeUpdate($stmt);
 
         if ($status !== Model::STATUS_ACTIVE) {
-            $this->deleteCredits($modelId);
+            $this->deleteCredits($userId, $modelId);
         }
     }
 
     public function delete(int $userId, int $modelId): void
     {
-        $this->deleteCredits($modelId);
+        $this->deleteCredits($userId, $modelId);
         // Exports that read this model, as the model or as the comparison,
         // go with it (their files are removed by the caller after commit).
         $stmt = $this->conn->prepareWrite('DELETE FROM 202_attribution_exports WHERE (model_id = ? OR compare_model_id = ?) AND user_id = ?');
@@ -252,16 +252,20 @@ final class ModelRepository
      * exact without them rather than dirty. Recomputing the model later
      * rewrites its credits through the worker, which marks each hour.
      */
-    private function deleteCredits(int $modelId): void
+    private function deleteCredits(int $userId, int $modelId): void
     {
-        $stmt = $this->conn->prepareWrite('DELETE FROM 202_attribution_credits WHERE model_id = ?');
-        $this->conn->bind($stmt, 'i', [$modelId]);
+        // Credits carry no account: they are the account's through their model.
+        $stmt = $this->conn->prepareWrite(
+            'DELETE c FROM 202_attribution_credits c JOIN 202_attribution_models m ON m.model_id = c.model_id
+             WHERE c.model_id = ? AND m.user_id = ?'
+        );
+        $this->conn->bind($stmt, 'ii', [$modelId, $userId]);
         $this->conn->executeUpdate($stmt);
         $stmt = $this->conn->prepareWrite(
             'DELETE r FROM 202_attribution_rollup r JOIN 202_attribution_models m ON m.model_id = r.model_id AND m.user_id = r.user_id
-             WHERE r.model_id = ? AND r.part IN (?, ?)'
+             WHERE r.model_id = ? AND r.user_id = ? AND r.part IN (?, ?)'
         );
-        $this->conn->bind($stmt, 'iii', [$modelId, AttributionRollup::PART_CREDITS, AttributionRollup::PART_TOTALS]);
+        $this->conn->bind($stmt, 'iiii', [$modelId, $userId, AttributionRollup::PART_CREDITS, AttributionRollup::PART_TOTALS]);
         $this->conn->executeUpdate($stmt);
     }
 }

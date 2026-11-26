@@ -118,6 +118,15 @@ final class EgressProxyStoreIntegrationTest extends TestCase
         self::assertNull(EgressProxy::configured());
     }
 
+    public function testRemovingAProxyNoneWasSavedLeavesNone(): void
+    {
+        assert(self::$db !== null);
+        self::store()->forget(1, 1005);
+        self::assertNull(self::store()->read(), 'no proxy');
+        $row = self::$db->query('SELECT proxy_url, proxy_username, proxy_password, updated_by FROM 202_egress_proxy')->fetch_row();
+        self::assertSame(['', '', '', '1'], array_map('strval', $row), 'the one row holds no proxy, and who removed it');
+    }
+
     public function testASavedValueThatDoesNotReadRefusesToSend(): void
     {
         assert(self::$db !== null);
