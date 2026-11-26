@@ -183,8 +183,7 @@ func ltvGet(path string, params map[string]string) error {
 	if err != nil {
 		return ltvFilterError(err)
 	}
-	render(data)
-	return nil
+	return render(data)
 }
 
 // ltvGetPage is ltvGet for a read that pages with --limit and --offset and answers no pagination: under a table it
@@ -198,7 +197,9 @@ func ltvGetPage(cmd *cobra.Command, path string, params map[string]string) error
 	if err != nil {
 		return ltvFilterError(err)
 	}
-	render(data)
+	if err := render(data); err != nil {
+		return err
+	}
 	notePagedRows(cmd, data)
 	return nil
 }
@@ -287,8 +288,7 @@ var ltvCustomersCmd = &cobra.Command{
 			if err != nil {
 				return ltvFilterError(err)
 			}
-			render(data)
-			return nil
+			return render(data)
 		}
 		rows, err := fetchAllRowsPaged(c, "ltv/customers", params, ltvMaxPage)
 		if err != nil {
@@ -301,8 +301,7 @@ var ltvCustomersCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("encoding %d customers: %w", len(rows), err)
 		}
-		render(encoded)
-		return nil
+		return render(encoded)
 	},
 }
 
@@ -420,13 +419,14 @@ var ltvEngagementCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(engagement)
+		if err := render(engagement); err != nil {
+			return err
+		}
 		nextOffer, err := c.Get(fmt.Sprintf("ltv/customers/%s/next-offer", args[0]), nil)
 		if err != nil {
 			return err
 		}
-		render(nextOffer)
-		return nil
+		return render(nextOffer)
 	},
 }
 

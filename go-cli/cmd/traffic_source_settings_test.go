@@ -9,6 +9,11 @@ import (
 func TestVariableCommandsSendThePagesFields(t *testing.T) {
 	_, seen := newSetupServer(t, setupFeatures, func(r *http.Request) (int, string) {
 		if r.Method == http.MethodDelete {
+			// A preview answers what the delete would remove, as the
+			// server's previewRouter does; the delete itself, nothing.
+			if r.URL.Query().Get("dry_run") == "1" {
+				return 200, `{"data":{"dry_run":true,"would_delete":{"ppc_variable_id":7}}}`
+			}
 			return 204, ""
 		}
 		return 200, `{"data":{"ppc_variable_id":7,"ppc_network_id":3,"name":"Ad id","parameter":"adid","placeholder":"{ad_id}"}}`

@@ -22,6 +22,17 @@ ask="${P202_EVAL_ASK:-$(cat)}"
 run_id="$$-$(date +%s)"
 
 case "$ask" in
+    # Several links in one call (setup-links.json): create-with-url --items
+    # takes every tracker and answers each with its link; one key per item.
+    *"EVAL Bulk Source 1"*"EVAL Bulk Source 2"*)
+        c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name=="EVAL Campaign A")][0].aff_campaign_id')
+        a1=$(p202 ppc-account list --json | jq -r '[.data[] | select(.ppc_account_name=="EVAL Bulk Source 1")][0].ppc_account_id')
+        a2=$(p202 ppc-account list --json | jq -r '[.data[] | select(.ppc_account_name=="EVAL Bulk Source 2")][0].ppc_account_id')
+        items=$(jq -nc --arg c "$c" --arg a1 "$a1" --arg a2 "$a2" '[{aff_campaign_id: $c, ppc_account_id: $a1}, {aff_campaign_id: $c, ppc_account_id: $a2}]')
+        out=$(p202 tracker create-with-url --items "$items" --idempotency-key "eval-bulk-links-$run_id" --json)
+        printf 'Made both links for EVAL Campaign A (campaign %s) in one call (`p202 tracker create-with-url --items`):\n- EVAL Bulk Source 1: %s\n- EVAL Bulk Source 2: %s\n' "$c" \
+            "$(printf '%s' "$out" | jq -r '.data[0].tracking_url.direct_url')" "$(printf '%s' "$out" | jq -r '.data[1].tracking_url.direct_url')"
+        ;;
     # A tester's office (visitors.json): an always-count entry wins over every
     # built-in check, so add one, leave the checks alone, and report a test.
     *"QA team"*"198.51.100.0/24"*)
@@ -947,6 +958,19 @@ EOF
         ;;
     # Traffic sources (setup-traffic-sources.json): a rename is an update of
     # the source that is there, so its accounts and their trackers keep it.
+    # An account's postback (setup-traffic-sources.json): a Postback pixel of
+    # that account, with the URL as given, its id read by name.
+    *"EVAL Account traffic source account"*"server-to-server pixel"*)
+        code=$(printf '%s' "$ask" | grep -oE 'https://[^ ]+' | head -1)
+        account=$(p202 ppc-account list --all --json | jq -r '[.data[] | select(.ppc_account_name=="EVAL Account")][0].ppc_account_id // empty')
+        if [ -z "$account" ] || [ -z "$code" ]; then
+            printf 'I found no traffic source account named "EVAL Account" (`p202 ppc-account list`), or no URL in the ask, so nothing was added.\n'
+        else
+            made=$(p202 ppc-account pixel create "$account" --type-id 4 --code "$code" --json)
+            printf 'Added a Postback (server to server) pixel to EVAL Account (account %s, pixel %s) with `p202 ppc-account pixel create`: %s. It fires when one of the account'"'"'s clicks converts.\n' \
+                "$account" "$(printf '%s' "$made" | jq -r '.data.pixel_id')" "$code"
+        fi
+        ;;
     # ChatGPT Ads (setup-traffic-sources.json): the one-step setup, never a
     # hand-built source with variables of the agent's own choosing.
     *"ads in ChatGPT"*)

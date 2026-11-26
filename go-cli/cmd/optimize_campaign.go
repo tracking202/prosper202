@@ -172,7 +172,9 @@ var campaignOptimizeCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "  p202 rotator rule-create <rid> --rule-name \"US\" --country US --redirect-campaign %d\n\n", selfID)
 		}
 
-		render(out)
+		if err := render(out); err != nil {
+			return err
+		}
 		if offersCut {
 			noteForPeople(cmd, coversFirstRowsNote("campaign", "most revenue first"))
 		}

@@ -106,6 +106,26 @@ var mcpDeferredToolSpecs = []mcpToolSpec{
 			"unallocated spend", "spend ledger"}},
 	{Name: "ad_spend_sync_status", Command: []string{"spend", "sync", "list"}, Title: "ChatGPT Ads spend sync status", Kind: mcpRead, NotHosted: true,
 		Words: []string{"spend sync", "is my spend sync working", "spend sync status", "last spend pull", "spend sync error", "chatgpt ads sync", "openai ads sync"}},
+
+	// A traffic source account's conversion pixels (Setup › Traffic Sources › an account's Advanced).
+	{Name: "ppc_account_pixel_list", Command: []string{"ppc-account", "pixel", "list"}, Title: "A traffic source account's pixels", Kind: mcpRead,
+		Args:  []mcpArg{pixelAccountArg()},
+		Words: []string{"pixels", "which pixel fires for this account", "postback url of a traffic source account", "traffic source pixel"}},
+	{Name: "ppc_account_pixel_create", Command: []string{"ppc-account", "pixel", "create"}, Title: "Add a pixel to a traffic source account", Kind: mcpCreate,
+		Args: []mcpArg{pixelAccountArg()}, Required: []string{"type-id", "code"},
+		Note:  "From then on it fires when one of the account's clicks converts.",
+		Words: []string{"add pixel", "add the facebook pixel", "add a postback to a traffic source account", "pixels"}},
+	{Name: "ppc_account_pixel_update", Command: []string{"ppc-account", "pixel", "update"}, Title: "Change a traffic source account's pixel", Kind: mcpUpdate,
+		Args:  []mcpArg{pixelAccountArg(), idArg("pixel_id", "Pixel id (from ppc_account_pixel_list).", true)},
+		Words: []string{"change pixel", "edit pixel url", "pixel correction url", "pixels"}},
+	{Name: "ppc_account_pixel_delete", Command: []string{"ppc-account", "pixel", "delete"}, Title: "Remove a traffic source account's pixel", Kind: mcpDelete,
+		Args:  []mcpArg{pixelAccountArg(), idArg("pixel_id", "Pixel id (from ppc_account_pixel_list); or give ids for several.", false)},
+		Note:  deleteNote,
+		Words: []string{"remove pixel", "delete pixel", "stop a pixel firing", "pixels"}},
+}
+
+func pixelAccountArg() mcpArg {
+	return idArg("ppc_account_id", "Traffic source account id (from ppc_account_list).", true)
 }
 
 // destinationDeliveriesNote names only keys the install's answer carries
