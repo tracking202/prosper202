@@ -328,7 +328,11 @@ their cost, the population the classic reports count.`,
 			}
 			return err
 		}
-		return render(data)
+		if err := render(data); err != nil {
+			return err
+		}
+		notePagedRows(cmd, data)
+		return nil
 	},
 }
 

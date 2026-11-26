@@ -234,16 +234,10 @@ const textAdNote = "To use it on a tracker, set the tracker's text_ad_id (tracke
 
 const reportFilterNote = "Filter with the *_id arguments (ids from the list tools) and choose the window with period, or time_from and time_to."
 
-// pageNote is on the report tools that answer one page: truncated: true
-// says rows remain. (winners and losers say it too, past 5000 rows, which
-// few reach.) The report commands add truncated; an answer passed on from
-// the API as it is (destination_deliveries) has none.
-const pageNote = "truncated: true: more rows at offset + limit."
-
 var mcpToolSpecs = []mcpToolSpec{
 	// Reports
 	{Name: "report_summary", Command: []string{"report", "summary"}, Title: "Performance totals", Kind: mcpRead, Note: reportFilterNote},
-	{Name: "report_breakdown", Command: []string{"report", "breakdown"}, Title: "Performance by dimension", Kind: mcpRead, Note: "The Overview and Analyze pages: choose the dimension with breakdown (campaign, ppc_account, country, keyword, landing_page, device, ...). " + reportFilterNote + " " + pageNote},
+	{Name: "report_breakdown", Command: []string{"report", "breakdown"}, Title: "Performance by dimension", Kind: mcpRead, Note: "The Overview and Analyze pages: choose the dimension with breakdown (campaign, ppc_account, country, keyword, landing_page, device, ...). " + reportFilterNote},
 	{Name: "report_timeseries", Command: []string{"report", "timeseries"}, Title: "Performance over time", Kind: mcpRead, Note: reportFilterNote, Omit: rareFilters},
 	{Name: "report_daypart", Command: []string{"report", "daypart"}, Title: "Performance by hour of day", Kind: mcpRead, Omit: rareFilters},
 	{Name: "report_weekpart", Command: []string{"report", "weekpart"}, Title: "Performance by day of week", Kind: mcpRead, Omit: rareFilters},
@@ -252,7 +246,7 @@ var mcpToolSpecs = []mcpToolSpec{
 		Note: "truncated: true: rows or columns left out."},
 	{Name: "report_winners", Command: []string{"report", "winners"}, Title: "Rows to scale", Kind: mcpRead, Omit: rareFilters},
 	{Name: "report_losers", Command: []string{"report", "losers"}, Title: "Rows to cut", Kind: mcpRead, Omit: rareFilters},
-	{Name: "report_breakeven", Command: []string{"report", "breakeven"}, Title: "Break-even CPC", Kind: mcpRead, Omit: rareFilters, Required: []string{"aff-campaign-id"}, Note: pageNote},
+	{Name: "report_breakeven", Command: []string{"report", "breakeven"}, Title: "Break-even CPC", Kind: mcpRead, Omit: rareFilters, Required: []string{"aff-campaign-id"}},
 	{Name: "forecast", Command: []string{"forecast"}, Title: "Forecast performance", Kind: mcpRead, Required: []string{"metric"}},
 	{Name: "attribution_breakdown", Command: []string{"attribution", "breakdown"}, Title: "Attributed conversions by dimension", Kind: mcpRead},
 
@@ -396,8 +390,8 @@ func rotatorRulesSchema() mcpProperty {
 	}
 	return mcpProperty{
 		Type: "array",
-		Description: "Every rule, in the order tried (the first active rule whose criteria all match sends the visitor). " +
-			"Send rotator_get's data.rules, edited: a rule with its id is kept, one without is added, one left out is removed.",
+		Description: "Every rule, in the order tried (the first active rule whose criteria all match wins). " +
+			"Send rotator_get's data.rules, edited: a rule with its id is kept, one without is added, one left out is removed ([] removes all).",
 		Items: &mcpProperty{
 			Type: "object",
 			Properties: map[string]mcpProperty{
@@ -418,6 +412,9 @@ const mcpInstructions = "Prosper202 is a self-hosted tracker and analytics app f
 	"These tools read and change this user's own Prosper202 install through its API; the user's role there, and this connection's access, decide what is allowed.\n" +
 	"- Find ids with the list tools (campaign_list, tracker_list, ppc_account_list, ...) before a get, update or delete.\n" +
 	"- Report tools take period (today, yesterday, last7, last30, thismonth, ...) or time_from and time_to, and filters such as aff_campaign_id or ppc_account_id.\n" +
+	// Every answer to a request taking offset carries truncated, as do the report commands' pages (winners and
+	// losers past 5000 rows): said once here rather than on each tool.
+	"- truncated: true: rows remain; before summing, call again at offset + limit until false.\n" +
 	"- An error comes back as JSON with a category, a message and usually a hint. Messages and hints name CLI commands and flags (`p202 campaign list`, --aff-campaign-id); the matching tool is campaign_list and the argument aff_campaign_id.\n" +
 	"- A delete runs without a further question once the tool call is approved; pass dry_run: true first and show the user what it would remove.\n" +
 	"- A rotator's rules are changed as one set: read them with rotator_get, edit the list, and send all of it back with rotator_set_rules (dry_run: true first)."

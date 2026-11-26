@@ -10,6 +10,7 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\NothingToUpdateException;
 use Api\V3\Exception\WriteCommittedException;
+use Api\V3\Support\PageRows;
 use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\ListQuery;
 use Api\V3\Support\QueryInt;
@@ -865,7 +866,7 @@ abstract class Controller
         }
 
         $sql = "SELECT $selectExpr FROM {$this->tableName()} $whereClause ORDER BY $orderBy LIMIT ? OFFSET ?";
-        $binds[] = $limit;
+        $binds[] = PageRows::fetchLimit($limit);
         $types .= 'i';
         $binds[] = $offset;
         $types .= 'i';
@@ -880,16 +881,20 @@ abstract class Controller
             $rows[] = $this->withVersionMetadata($row);
         }
         $stmt->close();
+        [$rows, $truncated] = PageRows::cut($rows, $limit);
 
         $nextCursor = null;
         $cursorExpiresAt = null;
-        if (($offset + $limit) < $total) {
+        // The row past the page says whether one follows, as `truncated`
+        // does; the count is a separate read and can disagree with it.
+        if ($truncated) {
             $cursorExpiresAt = time() + $cursorTtl;
             $nextCursor = $this->encodeOffsetCursor($offset + $limit, $cursorExpiresAt);
         }
 
         return [
             'data' => $rows,
+            'truncated' => $truncated,
             'pagination' => [
                 'total' => $total,
                 'limit' => $limit,

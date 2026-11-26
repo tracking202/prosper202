@@ -7,14 +7,15 @@ namespace Api\V3\Controllers;
 use Api\V3\ErrorCode;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
-use Api\V3\Exception\RemoteApiException;
 use Api\V3\Exception\SyncException;
 use Api\V3\Exception\SyncRecordException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\PageRows;
 use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\RemoteApiClient;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\SyncEngine;
+use Api\V3\Support\SyncFailure;
 use Api\V3\Support\SyncProfileKeys;
 use Api\V3\Support\QueryInt;
 use Api\V3\Support\RequestFlag;
@@ -26,6 +27,20 @@ class SyncController
 
     /** The statuses a job ends in: it runs no more, and keeps no key. */
     private const FINISHED = ['succeeded', 'failed', 'cancelled', 'partial'];
+
+    /**
+     * How long a job may read 'running' with no process holding its lock
+     * before it is taken as abandoned and failed. A live run holds the lock
+     * from before 'running' is saved until after its end is, and cannot
+     * outlast the sync's own time limit; this is that limit and five minutes
+     * for the work between remote calls. The lock alone would say sooner on
+     * one host, but a run on another host sharing the state directory holds a
+     * lock this host's flock() may not see, and the time cannot be wrong there.
+     */
+    public const ABANDONED_AFTER = RemoteApiClient::MAX_SECONDS + 300;
+
+    /** The fatal errors PHP ends a run with before any catch can see them. */
+    private const FATAL_ERRORS = [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR];
 
     public function __construct(
         private readonly \mysqli $db,
@@ -160,6 +175,7 @@ class SyncController
         if ($job === null) {
             throw new NotFoundException('Sync job not found');
         }
+        $job = $this->failIfAbandoned($job);
 
         return ['data' => $this->sanitizeJobForResponse($job)];
     }
@@ -170,6 +186,7 @@ class SyncController
         if ($job === null) {
             throw new NotFoundException('Sync job not found');
         }
+        $job = $this->failIfAbandoned($job);
         if (in_array((string)($job['status'] ?? ''), self::FINISHED, true)) {
             return ['data' => $this->sanitizeJobForResponse($job)];
         }
@@ -198,7 +215,14 @@ class SyncController
         $limit = QueryInt::param($params, 'limit', 100, 1, 500, 'events per page');
         $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'events to skip');
 
-        return $this->store->listJobEvents($jobId, $offset, $limit);
+        $page = $this->store->listJobEvents($jobId, $offset, PageRows::fetchLimit($limit));
+        [$events, $truncated] = PageRows::cut($page['data'], $limit);
+
+        return [
+            'data' => $events,
+            'truncated' => $truncated,
+            'pagination' => array_replace($page['pagination'], ['limit' => $limit]),
+        ];
     }
 
     public function reSync(array $payload): array
@@ -212,7 +236,9 @@ class SyncController
     {
         \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['limit'], 'a worker run');
         $limit = QueryInt::param($payload, 'limit', 10, 1, 100, 'queued jobs to run');
-        $all = $this->store->listJobs([], 0);
+        // A run whose process died left its job 'running', and this picks up
+        // only queued ones: without this it read 'running' for ever.
+        $all = array_map(fn (array $job): array => $this->failIfAbandoned($job), $this->store->listJobs([], 0));
         // A job that ended before 1.9.79 still holds both keys as sent; a
         // finished job needs none.
         foreach ($all as $job) {
@@ -367,6 +393,7 @@ class SyncController
         if ($job === null) {
             throw new NotFoundException('Sync job not found');
         }
+        $job = $this->failIfAbandoned($job);
         $status = (string)($job['status'] ?? '');
         if (in_array($status, self::FINISHED, true)) {
             return $job;
@@ -421,11 +448,24 @@ class SyncController
             $options['manifest'] = $manifest;
 
             $pairLock = $this->store->acquirePairLock((string)($source['url'] ?? ''), (string)($target['url'] ?? ''));
+            // Set while this process runs the job: a fatal error, a time or
+            // memory limit, or an exit ends the process with no catch run,
+            // and the shutdown function then fails the job saying so. What
+            // ends it without one (a kill) is failIfAbandoned()'s to find.
+            $running = new \ArrayObject(['on' => false]);
+            register_shutdown_function(function () use ($jobId, $running): void {
+                if ($running['on'] === true) {
+                    $this->failEndedRun($jobId);
+                }
+            });
             try {
                 $job['status'] = 'running';
                 $job['attempts'] = (int)($job['attempts'] ?? 0) + 1;
-                $this->store->saveJob($job);
+                $job['running_since'] = time();
+                // Logged first: what a lost run wrote is counted from it.
                 $this->store->appendJobEvent($jobId, 'info', 'Job started', ['attempt' => $job['attempts']]);
+                $this->store->saveJob($job);
+                $running['on'] = true;
 
                 $source = $this->keys()->open($source, 'source');
                 $target = $this->keys()->open($target, 'target');
@@ -480,6 +520,7 @@ class SyncController
                 $this->store->appendJobEvent($jobId, 'info', 'Job completed', ['status' => $job['status']]);
                 $this->appendAuditForJob($job);
             } finally {
+                $running['on'] = false;
                 $pairLock();
             }
         } catch (\Throwable $e) {
@@ -487,8 +528,13 @@ class SyncController
             $attempts = (int)($job['attempts'] ?? 1);
             $maxAttempts = max(1, (int)($job['max_attempts'] ?? 3));
             // Named, not "Internal server error": a remote refusal's own
-            // getMessage() is that sentence (RemoteApiException).
-            $job['error'] = $e instanceof RemoteApiException ? $e->describe() : $e->getMessage();
+            // getMessage() is that sentence (RemoteApiException), and so is
+            // every DatabaseException's, which this server's own failures
+            // are; those are logged with the job's id instead (SyncFailure).
+            $job['error'] = SyncFailure::report($e, 'job ' . $jobId);
+            if (SyncFailure::isInternal($e)) {
+                $job['error'] = 'The sync stopped on ' . $job['error'] . '.';
+            }
             $job['results'] = null;
             // A write the target refused with a 409 is not retried by the
             // job: the retry re-reads the target and force-writes over the
@@ -499,7 +545,8 @@ class SyncController
             // Nor is a URL this server will not call, a cap the sync reached
             // or a key that does not open: the next try meets the same.
             $cause = SyncException::in($e);
-            $job['error_code'] = $cause?->errorCode;
+            $job['error_code'] = $cause?->errorCode
+                ?? (SyncFailure::hasInternalCause($e) ? SyncException::INTERNAL : null);
             $job['written'] = $e instanceof SyncRecordException ? $e->written : null;
 
             if ((bool)($job['cancel_requested'] ?? false)) {
@@ -536,6 +583,192 @@ class SyncController
             throw new DatabaseException('Job persistence failed');
         }
         return $saved;
+    }
+
+    /**
+     * A job read 'running' whose run is gone, failed (or cancelled, when a
+     * cancel was asked for) with what its run logged writing. Gone means
+     * started more than ABANDONED_AFTER ago and no process holds its lock;
+     * a job that is not, or whose lock is held, is returned as it is.
+     *
+     * @param array<string, mixed> $job
+     * @return array<string, mixed>
+     */
+    private function failIfAbandoned(array $job): array
+    {
+        if ((string)($job['status'] ?? '') !== 'running' || !self::pastAbandonment($job)) {
+            return $job;
+        }
+        $jobId = (string)($job['job_id'] ?? '');
+        try {
+            $release = $this->store->acquireJobLock($jobId);
+        } catch (\Throwable) {
+            return $job;
+        }
+        try {
+            $current = $this->store->getJob($jobId);
+            if ($current === null) {
+                return $job;
+            }
+            if ((string)($current['status'] ?? '') !== 'running' || !self::pastAbandonment($current)) {
+                return $current;
+            }
+            $since = self::runningSince($current);
+            $when = $since !== null ? ' at ' . gmdate('Y-m-d H:i:s', $since) . ' UTC' : '';
+
+            return $this->abandon(
+                $current,
+                'The run that started' . $when . ' stopped without finishing: its process ended (killed, or out of '
+                    . 'memory or time) and nothing has held the job since; a run may take '
+                    . RemoteApiClient::MAX_SECONDS . ' seconds.'
+            );
+        } finally {
+            $release();
+        }
+    }
+
+    /**
+     * The shutdown of a process that was running a job: a fatal error, a
+     * limit or an exit ended it before the run could record its end. The job
+     * lock is still this process's, held until it exits.
+     */
+    private function failEndedRun(string $jobId): void
+    {
+        $fatal = error_get_last();
+        $why = is_array($fatal) && in_array($fatal['type'], self::FATAL_ERRORS, true)
+            ? 'PHP stopped the run with a fatal error: ' . $fatal['message'] . '.'
+            : 'The process running it ended before the run finished.';
+        // A memory limit leaves this no room to read the job in.
+        $limit = (string) ini_get('memory_limit');
+        if ($limit !== '-1') {
+            @ini_set('memory_limit', (string) (memory_get_usage() + 64 * 1024 * 1024));
+        }
+        try {
+            $job = $this->store->getJob($jobId);
+            if ($job !== null && (string)($job['status'] ?? '') === 'running') {
+                $this->abandon($job, $why);
+            }
+        } catch (\Throwable $e) {
+            // failIfAbandoned() fails it later; say why it could not now.
+            SyncFailure::report($e, 'job ' . $jobId . ' recording its end');
+        }
+    }
+
+    /**
+     * End a job whose run did not: the in-memory results went with the
+     * process, so what it wrote is read from its event log.
+     *
+     * @param array<string, mixed> $job
+     * @return array<string, mixed>
+     */
+    private function abandon(array $job, string $why): array
+    {
+        $jobId = (string)$job['job_id'];
+        $request = is_array($job['request'] ?? null) ? $job['request'] : [];
+        $options = is_array($request['options'] ?? null) ? $request['options'] : [];
+        $dryRun = ($options['dry_run'] ?? false) === true;
+        [$written, $complete] = $dryRun ? [[], true] : $this->writtenFromEvents($jobId);
+        if ($dryRun) {
+            $what = ' It was a dry run, so it wrote nothing.';
+        } elseif ($written === []) {
+            $what = ' It logged no write before it stopped.';
+        } else {
+            $parts = [];
+            foreach ($written as $entity => $counts) {
+                $done = [];
+                foreach ($counts as $kind => $count) {
+                    $done[] = $count . ' ' . $kind;
+                }
+                $parts[] = $entity . ' ' . implode(', ', $done);
+            }
+            $what = ' Writes it logged before it stopped'
+                . ($complete ? '' : ' (at least: the log keeps only its latest events)')
+                . ': ' . implode('; ', $parts) . '.';
+        }
+        $cancelled = (bool)($job['cancel_requested'] ?? false);
+        $job['status'] = $cancelled ? 'cancelled' : 'failed';
+        $job['error'] = $why . $what . ($cancelled ? '' : ' It is not tried again by itself: run the sync again to '
+            . 'finish it (plan first to see what is left).');
+        $job['error_code'] = SyncException::WORKER_LOST;
+        $job['written'] = $written;
+        $job['results'] = null;
+        $job['conflict'] = null;
+        $job['next_run_at'] = null;
+        $job = self::withoutKeys($job);
+        $this->store->saveJob($job);
+        $this->store->appendJobEvent($jobId, 'error', 'Job run lost', ['error' => $job['error']]);
+        $this->store->incrementMetric($cancelled ? 'jobs_cancelled' : 'jobs_failed', 1);
+        $this->store->incrementMetric('jobs_abandoned', 1);
+        $this->appendAuditForJob($job);
+
+        return $job;
+    }
+
+    /**
+     * What the job's last run logged writing, by entity, and whether the log
+     * still holds that run's start (it keeps only the latest events).
+     *
+     * @return array{0: array<string, array<string, int>>, 1: bool}
+     */
+    private function writtenFromEvents(string $jobId): array
+    {
+        $kinds = [
+            'Created target record' => 'created',
+            'Updated target record' => 'updated',
+            'Deleted target record' => 'pruned',
+        ];
+        $events = $this->store->listJobEvents($jobId, 0, PHP_INT_MAX);
+        $items = is_array($events['data'] ?? null) ? $events['data'] : [];
+        $written = [];
+        $complete = false;
+        for ($i = count($items) - 1; $i >= 0; $i--) {
+            $event = is_array($items[$i]) ? $items[$i] : [];
+            $message = (string)($event['message'] ?? '');
+            if ($message === 'Job started') {
+                $complete = true;
+                break;
+            }
+            if (!isset($kinds[$message])) {
+                continue;
+            }
+            $entity = (string)($event['data']['entity'] ?? '');
+            $written[$entity][$kinds[$message]] = ($written[$entity][$kinds[$message]] ?? 0) + 1;
+        }
+        $order = ['created' => 0, 'updated' => 1, 'pruned' => 2];
+        foreach ($written as &$counts) {
+            uksort($counts, static fn (string $a, string $b): int => $order[$a] <=> $order[$b]);
+        }
+        unset($counts);
+
+        return [array_reverse($written, true), $complete];
+    }
+
+    /** @param array<string, mixed> $job */
+    private static function pastAbandonment(array $job): bool
+    {
+        $since = self::runningSince($job);
+
+        // A start that cannot be read is no reason to keep it running for
+        // ever: the lock is still asked before it is failed.
+        return $since === null || time() - $since >= self::ABANDONED_AFTER;
+    }
+
+    /**
+     * When the job's run started. A job that started before 1.9.81 has no
+     * running_since; its last save was the start or a later cancel, so
+     * updated_at stands in, at worst late.
+     *
+     * @param array<string, mixed> $job
+     */
+    private static function runningSince(array $job): ?int
+    {
+        if (is_int($job['running_since'] ?? null)) {
+            return $job['running_since'];
+        }
+        $updated = $job['updated_at'] ?? null;
+        $time = is_string($updated) ? strtotime($updated) : false;
+
+        return $time === false ? null : $time;
     }
 
     private function appendAuditForJob(array $job): void
@@ -832,7 +1065,13 @@ class SyncController
 
         $sourceUrl = strtolower(trim((string)($source['url'] ?? '')));
         $targetUrl = strtolower(trim((string)($target['url'] ?? '')));
-        $activeJobs = $this->store->listJobs(['queued', 'running'], 5000);
+        $activeJobs = array_filter(
+            array_map(
+                fn (array $job): array => $this->failIfAbandoned($job),
+                $this->store->listJobs(['queued', 'running'], 5000)
+            ),
+            static fn (array $job): bool => in_array((string)($job['status'] ?? ''), ['queued', 'running'], true)
+        );
         $samePairCount = 0;
         foreach ($activeJobs as $job) {
             $request = is_array($job['request'] ?? null) ? $job['request'] : [];

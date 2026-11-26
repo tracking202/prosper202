@@ -109,7 +109,7 @@ final class SlackNoticesGoToTheAccountsOwnWebhookIntegrationTest extends TestCas
     private static function cleanUp(): void
     {
         foreach ([self::WITH_WEBHOOK, self::WITHOUT, self::BLANK] as $user) {
-            foreach (['202_user_role', '202_users_pref', '202_users'] as $table) {
+            foreach (['202_trackers', '202_user_role', '202_users_pref', '202_users'] as $table) {
                 self::q("DELETE FROM $table WHERE user_id = $user");
             }
         }
@@ -175,16 +175,22 @@ final class SlackNoticesGoToTheAccountsOwnWebhookIntegrationTest extends TestCas
         self::assertStringNotContainsString('192.0.2.11', $log);
     }
 
-    /** What the page logged, deleting a link (one there is none of) as $user. */
+    /**
+     * What the page logged, deleting one of $user's links. A delete that
+     * matched no row announces nothing, so the link is the account's own.
+     */
     private function deleteTrackerAs(int $user): string
     {
         self::requireScratch();
+        $tracker = self::insert('INSERT INTO 202_trackers SET user_id = ' . $user . ', tracker_id_public = 0,'
+            . ' aff_campaign_id = 0, text_ad_id = 0, ppc_account_id = 0, landing_page_id = 0, click_cloaking = 0,'
+            . ' tracker_time = ' . time());
         $log = (string) tempnam(sys_get_temp_dir(), 'p202-slack-page-');
         $env = [
             'P202_TEST_REPORT_USER' => (string) $user,
             'P202_TEST_SESSION_DIR' => self::$sessions,
             'P202_TEST_GET' => '{}',
-            'P202_TEST_POST' => (string) json_encode(['token' => 'SESSION', 'tracker_id' => '99009199']),
+            'P202_TEST_POST' => (string) json_encode(['token' => 'SESSION', 'tracker_id' => (string) $tracker]),
             'P202_WEBHOOK_ALLOW_NETWORKS' => '',
         ] + getenv();
         $proc = proc_open(
@@ -208,6 +214,7 @@ final class SlackNoticesGoToTheAccountsOwnWebhookIntegrationTest extends TestCas
         self::assertStringNotContainsString('Fatal error', $out . $err . $logged, $err . $logged);
         self::assertStringNotContainsString('Invalid token', $out, 'the delete ran');
         self::assertStringNotContainsString('could not be deleted', $out, 'the delete ran');
+        self::assertStringNotContainsString('not found on this account', $out, 'the delete found the link');
 
         return $logged . $err;
     }

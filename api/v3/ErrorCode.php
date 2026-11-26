@@ -47,6 +47,10 @@ final class ErrorCode
     public const SYNC_LIMIT = 'sync_limit';
     public const SYNC_KEY_UNREADABLE = 'sync_key_unreadable';
     public const SYNC_REMOTE_FAILED = 'sync_remote_failed';
+    public const SYNC_RECORD_UNUSABLE = 'sync_record_unusable';
+    public const SYNC_PAIR_BUSY = 'sync_pair_busy';
+    public const SYNC_WORKER_LOST = 'sync_worker_lost';
+    public const SYNC_INTERNAL = 'sync_internal';
 
     /** The code an answer with this status carries when nothing more specific was said. */
     private const BY_STATUS = [

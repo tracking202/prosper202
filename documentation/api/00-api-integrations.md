@@ -443,15 +443,26 @@ The envelope fields below (full `pagination` metadata, and `version`/`etag` on s
 ```json
 {
   "data": [ { ... }, { ... } ],
+  "truncated": true,
   "pagination": {
     "total": 142,
     "limit": 50,
     "offset": 0,
-    "cursor": null,
-    "cursor_expires_at": null
+    "cursor": "<opaque: the next page>",
+    "cursor_expires_at": 1795497200
   }
 }
 ```
+
+Every endpoint that takes `offset` answers `truncated`, the list endpoints
+and the paged reports alike: `true` when rows remain after the page, `false`
+on the last page, including a page of exactly the rows that remain. Read on
+with `offset` plus `limit` (or the `cursor`, which is handed out exactly when
+`truncated` is `true`) until it is `false`, and check it before summing or
+ranking the rows of one page. The server reads one row past the page to know;
+`total` is a separate count, which rows written or removed between two pages
+can make disagree with them. Servers from before `truncated` was added say
+nothing about the rows after a page.
 
 ### Filtering a List
 

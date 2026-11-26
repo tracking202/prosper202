@@ -874,6 +874,7 @@ try {
             $r->delete('/fields/{id}',            fn($ctx) => tap($crud($cls), fn($c) => $c->deleteField(PathId::of($ctx))));
             $r->post('/webhooks',                 fn() => ['_status' => 201] + $crud($cls)->createWebhook($payload));
             $r->put('/webhooks/{id}', fn($ctx) => $crud($cls)->updateWebhook(PathId::of($ctx), $payload));
+            $r->post('/webhooks/{id}/rotate-secret', fn($ctx) => $crud($cls)->rotateWebhookSecret(PathId::of($ctx), $payload));
             $r->delete('/webhooks/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteWebhook(PathId::of($ctx))));
             $r->post('/integrations',             fn() => ['_status' => 201] + $crud($cls)->createIntegration($payload));
             $r->delete('/integrations/{id}',      fn($ctx) => tap($crud($cls), fn($c) => $c->deleteIntegration(PathId::of($ctx))));
@@ -1386,6 +1387,11 @@ try {
         // ── Users (admin-gated writes, self-or-admin for reads) ──────────
         $router->group('/users', function (Router $r) use ($db, $auth, $idempotent, $payload, $queryParams) {
             $make = fn() => new \Api\V3\Controllers\UsersController($db);
+            // A user who is not there, removed or never created, is a 404 on
+            // every route under /users/{id}, as GET /users/{id} is. Asked
+            // after the route's authorization, so a caller refused there
+            // learns nothing of which users exist.
+            $liveUser = static fn(int $id) => $make()->requireUser($id);
 
             $r->get('/roles', fn() => $make()->listRoles());
 
@@ -1423,68 +1429,78 @@ try {
             });
 
             // Roles sub-resource
-            $r->post('/{id}/roles', function ($ctx) use ($auth, $make, $payload, $db) {
+            $r->post('/{id}/roles', function ($ctx) use ($auth, $make, $payload, $db, $liveUser) {
                 $auth->requireMayChangeRoles($db, PathId::of($ctx), \Api\V3\Controllers\UsersController::roleIdFrom($payload));
+                $liveUser(PathId::of($ctx));
                 return $make()->assignRole(PathId::of($ctx), $payload);
             });
-            $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make, $db) {
+            $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make, $db, $liveUser) {
                 $auth->requireMayChangeRoles($db, PathId::of($ctx), null);
+                $liveUser(PathId::of($ctx));
                 $make()->removeRole(PathId::of($ctx), PathId::of($ctx, 'roleId'));
                 return null;
             });
 
             // API keys (Personal settings: yours with the page's permission,
             // or a user you may manage)
-            $r->get('/{id}/api-keys', function ($ctx) use ($auth, $make, $db) {
+            $r->get('/{id}/api-keys', function ($ctx) use ($auth, $make, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return $make()->listApiKeys(PathId::of($ctx));
             });
-            $r->post('/{id}/api-keys', function ($ctx) use ($auth, $make, $payload, $db) {
+            $r->post('/{id}/api-keys', function ($ctx) use ($auth, $make, $payload, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return ['_status' => 201] + $make()->createApiKey(PathId::of($ctx), $payload, $auth);
             });
-            $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make, $db) {
+            $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 $make()->deleteApiKey(PathId::of($ctx), (string)$ctx['keyId']);
                 return null;
             });
             // The key to replace is in the body: it works for a day more,
             // and a path is logged.
-            $r->post('/{id}/api-keys/replace', function ($ctx) use ($auth, $make, $payload, $db) {
+            $r->post('/{id}/api-keys/replace', function ($ctx) use ($auth, $make, $payload, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return ['_status' => 201] + $make()->replaceApiKey(PathId::of($ctx), $payload, $auth);
             });
 
             // Identity linking key (self-or-admin): what the operator's
             // server signs customer ids with (cust_sig).
-            $r->get('/{id}/identity-key', function ($ctx) use ($auth, $make, $db) {
+            $r->get('/{id}/identity-key', function ($ctx) use ($auth, $make, $db, $liveUser) {
                 $auth->requireSelfOrMayManageUser($db, PathId::of($ctx));
                 // A read that hands out a signing secret: whoever holds the
                 // key can link any click to any customer id, which is a write
                 // to the account's identity graph. So a read-only or
                 // propose-only key (a reporting agent's) cannot fetch it.
                 $auth->requireScope('users:write');
+                $liveUser(PathId::of($ctx));
                 return $make()->identityKey(PathId::of($ctx));
             });
-            $r->post('/{id}/identity-key/rotate', function ($ctx) use ($auth, $make, $db) {
+            $r->post('/{id}/identity-key/rotate', function ($ctx) use ($auth, $make, $db, $liveUser) {
                 $auth->requireSelfOrMayManageUser($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return $make()->rotateIdentityKey(PathId::of($ctx));
             });
 
             // Preferences (Personal settings: yours with the page's
             // permission, or a user you may manage; they hold the account's
             // integration secrets, which GET answers only as stored or not)
-            $r->get('/{id}/preferences', function ($ctx) use ($auth, $make, $db) {
+            $r->get('/{id}/preferences', function ($ctx) use ($auth, $make, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return $make()->getPreferences(PathId::of($ctx));
             });
-            $r->put('/{id}/preferences', function ($ctx) use ($auth, $make, $payload, $db) {
+            $r->put('/{id}/preferences', function ($ctx) use ($auth, $make, $payload, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
-                // The LTV › Settings values ask what the LTV Settings writes ask.
+                $liveUser(PathId::of($ctx));
                 return $make()->updatePreferences(
                     PathId::of($ctx),
                     $payload,
                     null,
+                    // The LTV › Settings values ask what the LTV Settings writes ask.
                     static fn () => \Api\V3\Support\LtvAccess::require($auth, $db, 'settings_write')
                 );
             });
@@ -1493,29 +1509,38 @@ try {
             // the switches, the address list, and a test of one address
             // (?ip=), a read.
             $filter = fn() => new \Api\V3\Controllers\ClickFilterController($db);
-            $r->get('/{id}/click-filter', function ($ctx) use ($auth, $filter, $db) {
+            $r->get('/{id}/click-filter', function ($ctx) use ($auth, $filter, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return $filter()->get(PathId::of($ctx));
             });
-            $r->put('/{id}/click-filter', function ($ctx) use ($auth, $filter, $payload, $db) {
+            $r->put('/{id}/click-filter', function ($ctx) use ($auth, $filter, $payload, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return $filter()->update(PathId::of($ctx), $payload);
             });
-            $r->post('/{id}/click-filter/entries', function ($ctx) use ($auth, $filter, $payload, $db) {
+            $r->post('/{id}/click-filter/entries', function ($ctx) use ($auth, $filter, $payload, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return $filter()->addEntry(PathId::of($ctx), $payload);
             });
-            $r->put('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $filter, $payload, $db) {
+            $r->put(
+                '/{id}/click-filter/entries/{entryId}',
+                function ($ctx) use ($auth, $filter, $payload, $db, $liveUser) {
+                    $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                    $liveUser(PathId::of($ctx));
+                    return $filter()->updateEntry(PathId::of($ctx), PathId::of($ctx, 'entryId'), $payload);
+                }
+            );
+            $r->delete('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $filter, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
-                return $filter()->updateEntry(PathId::of($ctx), PathId::of($ctx, 'entryId'), $payload);
-            });
-            $r->delete('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $filter, $db) {
-                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 $filter()->deleteEntry(PathId::of($ctx), PathId::of($ctx, 'entryId'));
                 return null;
             });
-            $r->get('/{id}/click-filter/test', function ($ctx) use ($auth, $filter, $queryParams, $db) {
+            $r->get('/{id}/click-filter/test', function ($ctx) use ($auth, $filter, $queryParams, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return $filter()->test(PathId::of($ctx), $queryParams);
             });
         });
@@ -1601,7 +1626,7 @@ try {
                 'update'        => '/clicks/cpc, /conversions/{subids|subids/delete|subids/reset|uploads}',
                 'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart|groups|payout}',
                 'spend_ledger'  => '/spend-ledger[/conversions|/sync[/{id}[/run]]]',
-                'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}[/{id}][/deliveries]',
+                'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}[/{id}][/deliveries|/rotate-secret]',
                 'rotators'      => '/rotators[/{id}/rules|/{id}/stats]',
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
                 'apps'          => '/apps/{id|skan-encodings|postbacks|report|notifications|verify|schema|installs}[/installs|/install-token|/store-link|/integrity|/integrity-credential]',
@@ -1697,20 +1722,28 @@ try {
         });
         $previewRouter->group('/users', function (Router $r) use ($db, $auth) {
             $make = fn() => new \Api\V3\Controllers\UsersController($db);
+            // A user who is not there, removed or never created, is a 404 on
+            // every route under /users/{id}, as GET /users/{id} is. Asked
+            // after the route's authorization, so a caller refused there
+            // learns nothing of which users exist.
+            $liveUser = static fn(int $id) => $make()->requireUser($id);
             $r->delete('/{id}', function ($ctx) use ($auth, $make, $db) {
                 $auth->requireMayDeleteUser($db, PathId::of($ctx));
                 return $make()->deletePreview(PathId::of($ctx));
             });
-            $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make, $db) {
+            $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return $make()->deleteApiKeyPreview(PathId::of($ctx), (string)$ctx['keyId']);
             });
-            $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make, $db) {
+            $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make, $db, $liveUser) {
                 $auth->requireMayChangeRoles($db, PathId::of($ctx), null);
+                $liveUser(PathId::of($ctx));
                 return $make()->removeRolePreview(PathId::of($ctx), PathId::of($ctx, 'roleId'));
             });
-            $r->delete('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $db) {
+            $r->delete('/{id}/click-filter/entries/{entryId}', function ($ctx) use ($auth, $db, $liveUser) {
                 $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $liveUser(PathId::of($ctx));
                 return (new \Api\V3\Controllers\ClickFilterController($db))->deleteEntryPreview(
                     PathId::of($ctx),
                     PathId::of($ctx, 'entryId')
