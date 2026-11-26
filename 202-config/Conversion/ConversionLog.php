@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Conversion;
 
 use Prosper202\Conversion\Ledger\Amount;
+use Prosper202\Conversion\Ledger\ConsentWithheld;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\RowCurrency;
 use Prosper202\Database\Connection;
@@ -14,7 +15,9 @@ use Tracking202\Report\ReportWindow;
  * The account-wide conversion log (tracking202/logs/): every ledger row of
  * one account, newest first, a page at a time, deleted and reversal rows
  * included. Why a row does or does not count toward its click is the
- * per-click breakdown's answer (ClickBreakdown), not this list's.
+ * per-click breakdown's answer (ClickBreakdown), not this list's. A row
+ * whose visitor refused consent says so (`consent_withheld`): it counts
+ * here, and no destination, traffic source pixel or postback is told of it.
  *
  * Read-only. Every read is scoped to the account passed in.
  */
@@ -54,12 +57,16 @@ final class ConversionLog
         WHEN cl.pixel_type = 3 THEN 'universal_pixel' WHEN cl.user_agent = 'subid-upload' THEN 'subid_upload'
         ELSE 'api' END";
 
-    private const SELECT = 'SELECT cl.conv_id, cl.click_id, cl.campaign_id, cl.transaction_id, cl.click_payout,
+    /** The rows, with where their visitor refused consent (ConsentWithheld::partsSql()). */
+    private static function select(): string
+    {
+        return 'SELECT cl.conv_id, cl.click_id, cl.campaign_id, cl.transaction_id, cl.click_payout,
                     cl.click_time, cl.conv_time, cl.ip, cl.pixel_type, cl.user_agent, cl.deleted,
                     cl.source, cl.reverses_conv_id, cl.currency, cl.stated_amount, cl.stated_currency,
-                    ac.aff_campaign_name
+                    ac.aff_campaign_name, ' . ConsentWithheld::partsSql() . '
              FROM 202_conversion_logs cl
              LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cl.campaign_id AND ac.user_id = cl.user_id';
+    }
 
     public function __construct(private Connection $conn)
     {
@@ -214,7 +221,7 @@ final class ConversionLog
         $page = min(max(0, $page), max(0, intdiv($total - 1, self::PER_PAGE)));
 
         $stmt = $this->conn->prepareRead(
-            self::SELECT . '
+            self::select() . '
              WHERE ' . $whereSql . '
              ORDER BY cl.conv_time DESC, cl.conv_id DESC
              LIMIT ? OFFSET ?'
@@ -249,7 +256,7 @@ final class ConversionLog
         $count = 0;
         $after = null;
         do {
-            $sql = self::SELECT . ' WHERE ' . $whereSql;
+            $sql = self::select() . ' WHERE ' . $whereSql;
             $pageTypes = $types;
             $pageBinds = $binds;
             if ($after !== null) {
@@ -346,6 +353,8 @@ final class ConversionLog
             'reverses_conv_id' => $r['reverses_conv_id'] !== null ? (int) $r['reverses_conv_id'] : null,
             'deleted' => (int) $r['deleted'] === 1,
             'user_agent' => (string) $r['user_agent'],
+            // Where its visitor refused consent, or null: no ad platform or traffic source is told of it (AdPlatformConsent).
+            'consent_withheld' => ConsentWithheld::refusalOf($r),
         ];
     }
 

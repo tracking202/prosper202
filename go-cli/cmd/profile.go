@@ -177,8 +177,7 @@ var configListProfilesCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("encoding output: %w", err)
 		}
-		render(payload)
-		return nil
+		return render(payload)
 	},
 }
 

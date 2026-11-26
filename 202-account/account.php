@@ -1038,8 +1038,7 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
             $generation = \Prosper202\User\PasswordChange::store(
                 new \Prosper202\Database\Connection($db),
                 (int) ($_SESSION['user_own_id'] ?? 0),
-                $new_hash,
-                false
+                $new_hash
             );
             $passSaved = true;
         } catch (\RuntimeException | \mysqli_sql_exception $e) {

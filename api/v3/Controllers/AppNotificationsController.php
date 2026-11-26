@@ -21,7 +21,8 @@ use Api\V3\Support\ResponseSanitizer;
  * rows per announcement, each sent, retried and failed on its own. `meta.summary` counts every matching row by status —
  * pending (waiting, or backing off after a failed attempt), sent, failed
  * (attempts ran out), cancelled (replaced before it went out) and
- * suppressed (a correction no correction URL could carry) — under the same
+ * suppressed (a correction no correction URL could carry) and withheld
+ * (its visitor refused consent, AdPlatformConsent) — under the same
  * filters except `status`, so the summary still says what the other states
  * hold when the list is narrowed to one.
  */
@@ -29,7 +30,7 @@ final class AppNotificationsController
 {
     use MysqliStatements;
 
-    public const STATUSES = ['pending', 'sent', 'failed', 'cancelled', 'suppressed'];
+    public const STATUSES = ['pending', 'sent', 'failed', 'cancelled', 'suppressed', 'withheld'];
     public const KINDS = ['reached', 'correction', 'retraction'];
 
     /** The outcome of an install that a conversion is, one per conversion. */

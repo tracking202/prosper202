@@ -88,7 +88,7 @@ final class AnnouncedOncePerOutcomeTest extends TestCase
             ['event_id' => 'p1', 'name' => 'purchase', 'occurred_at' => $t + 1, 'properties' => ['amount' => 10]],
             ['event_id' => 'u1', 'name' => 'upsell', 'occurred_at' => $t + 2],
         ])['status']);
-        self::assertSame(['sent' => 2, 'failed' => 0, 'retrying' => 0], $this->outbox(false)->sendDue(10));
+        self::assertSame(['sent' => 2, 'failed' => 0, 'retrying' => 0, 'withheld' => 0], $this->outbox(false)->sendDue(10));
         self::assertSame(['Purchase', 'Upsell'], $this->sentGoals());
         $this->sent = [];
     }
@@ -144,7 +144,7 @@ final class AnnouncedOncePerOutcomeTest extends TestCase
         self::assertSame(['reached:0:cancelled', 'correction:0:suppressed'], self::rowsOf($aV3),
             'decision 2: A v1 announced n=1 before it was retired, so A v3 is a correction, not a fresh reached');
 
-        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 0], $this->outbox(false)->sendDue(10));
+        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 0, 'withheld' => 0], $this->outbox(false)->sendDue(10));
         self::assertSame([], $this->sent);
     }
 
@@ -160,7 +160,7 @@ final class AnnouncedOncePerOutcomeTest extends TestCase
 
         $this->edit($this->a, self::purchase(true));
         $this->reevaluate($this->a, $this->outbox(true));
-        self::assertSame(['sent' => 2, 'failed' => 0, 'retrying' => 0], $this->outbox(true)->sendDue(10));
+        self::assertSame(['sent' => 2, 'failed' => 0, 'retrying' => 0, 'withheld' => 0], $this->outbox(true)->sendDue(10));
         self::assertSame(['retraction', 'retraction'], $this->sentGoals());
         $retracted = array_map(static fn (string $u): string => (string) preg_replace('/^.*(v=[^&]*&was=[^&]*).*$/', '$1', $u), $this->sent);
         sort($retracted);
@@ -173,7 +173,7 @@ final class AnnouncedOncePerOutcomeTest extends TestCase
         self::assertSame(['reached:0:sent', 'retraction:0:sent', 'correction:0:pending'], self::rowsOf($bConv));
         self::assertSame(['reached:0:cancelled', 'correction:0:pending'], self::rowsOf($aV3));
 
-        self::assertSame(['sent' => 2, 'failed' => 0, 'retrying' => 0], $this->outbox(true)->sendDue(10));
+        self::assertSame(['sent' => 2, 'failed' => 0, 'retrying' => 0, 'withheld' => 0], $this->outbox(true)->sendDue(10));
         sort($this->sent);
         self::assertSame([
             'https://ts.example/fix?sub=100&v=3.00&was=0.00&conv=' . $bConv . '&k=correction',

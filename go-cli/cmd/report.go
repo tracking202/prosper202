@@ -108,8 +108,7 @@ var reportSummaryCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -173,7 +172,9 @@ var reportBreakdownCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(filtered)
+		if err := render(filtered); err != nil {
+			return err
+		}
 		note := breakdownMoreRowsNote(data, params, "")
 		if note != "" && breakdownFiltersSet(cmd) {
 			note += " --min-clicks, --min-cost, --zero-leads and --having filter only the rows read."
@@ -265,7 +266,9 @@ var reportTimeseriesCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
+		if err := render(data); err != nil {
+			return err
+		}
 		if w := timeseriesTruncationWarning(data, params["interval"]); w != "" {
 			fmt.Fprintln(cmd.ErrOrStderr(), w)
 		}
@@ -344,8 +347,7 @@ var reportWeekpartCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -366,8 +368,7 @@ var reportDaypartCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 

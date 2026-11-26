@@ -68,8 +68,8 @@ final class InstallIntakeIntegrationTest extends TestCase
 
             return true;
         });
-        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 0], $outbox->sendDue(10));
-        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 0], $outbox->sendDue(10));
+        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 0, 'withheld' => 0], $outbox->sendDue(10));
+        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 0, 'withheld' => 0], $outbox->sendDue(10));
         self::assertSame([$out[0]['url']], $this->sent);
     }
 
@@ -565,6 +565,6 @@ final class InstallIntakeIntegrationTest extends TestCase
             static fn (array $r): bool => str_contains($r['url'], 'Second') || $r['kind'] !== 'reached'
         )));
         self::assertSame(['reached:cancelled', 'reached:sent', 'reached:cancelled', 'correction:suppressed', 'reached:cancelled', 'correction:suppressed'], $kinds);
-        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 0], (new NotificationOutbox(new Connection(self::$db), fn (): int => $this->clock, fn (string $u): bool => true))->sendDue(10));
+        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 0, 'withheld' => 0], (new NotificationOutbox(new Connection(self::$db), fn (): int => $this->clock, fn (string $u): bool => true))->sendDue(10));
     }
 }
