@@ -100,8 +100,7 @@ var reportGroupsCmd = &cobra.Command{
 		}
 		opts := renderOpts()
 		if opts.JSON && !opts.NDJSON {
-			render(data)
-			return nil
+			return render(data)
 		}
 		var resp struct {
 			Data   []map[string]interface{} `json:"data"`

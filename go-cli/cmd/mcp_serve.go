@@ -361,7 +361,14 @@ func mcpShapeResult(r mcpCallResult, readOnly, staged bool) *mcp.CallToolResult 
 		if text == "" {
 			return mcpErrorResult(fmt.Sprintf("the command exited %d without saying why", r.ExitCode), "server", "")
 		}
-		return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: text}}}
+		content := []mcp.Content{&mcp.TextContent{Text: text}}
+		if errText != "" && out != "" && utf8.RuneCountInString(out)+utf8.RuneCountInString(errText) <= mcpMaxResultChars {
+			// A partial failure answers what was done before it failed (each
+			// of a list's items): without it the model sends the done ones
+			// again.
+			content = append(content, &mcp.TextContent{Text: "The command's answer, before it failed: " + out})
+		}
+		return &mcp.CallToolResult{IsError: true, Content: content}
 	}
 	if out == "" {
 		out = errText

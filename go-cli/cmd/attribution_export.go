@@ -57,8 +57,7 @@ var attrExportListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -78,8 +77,7 @@ var attrExportGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -180,8 +178,7 @@ webhook_secret once when the export has a webhook: keep it with the receiver.`,
 			}
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -240,8 +237,7 @@ var attrExportRetryCmd = &cobra.Command{
 			}
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 

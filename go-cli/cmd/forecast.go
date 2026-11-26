@@ -299,8 +299,7 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		if boErr != nil {
 			return boErr
 		}
-		render(output)
-		return nil
+		return render(output)
 	}
 
 	series := parsed[metric]
@@ -338,8 +337,7 @@ func runForecast(cmd *cobra.Command, args []string) error {
 			if boErr != nil {
 				return boErr
 			}
-			render(output)
-			return nil
+			return render(output)
 		}
 		coherentFallback = "composition unavailable"
 		if rcErr != nil {
@@ -448,8 +446,7 @@ func runForecast(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	render(output)
-	return nil
+	return render(output)
 }
 
 // collectForecastFilters gathers entity filter flags.

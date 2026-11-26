@@ -500,21 +500,32 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
         <div class="p202-table-wrap">
             <table class="table p202-table">
                 <thead>
-                    <tr><th>#</th><th>Event</th><th>Status</th><th class="num">Attempts</th><th class="num">Last HTTP</th><th>Next Retry</th><th>Queued</th><th>Updated</th></tr>
+                    <tr><th>#</th><th>Event</th><th>Status</th><th>Last Response</th><th class="num">Attempts</th>
+                        <th class="num">Last HTTP</th><th>Next Retry</th><th>Queued</th><th>Updated</th></tr>
                 </thead>
                 <tbody>
                     <?php if ($deliveryLog === []) { ?>
-                        <tr><td colspan="8">
+                        <tr><td colspan="9">
                             <?php echo p202_ltv_empty('bi-inbox', 'No deliveries recorded for this webhook yet'); ?>
                         </td></tr>
                     <?php } ?>
                     <?php foreach ($deliveryLog as $delivery) {
                         $deliveryStatus = (string) ($delivery['status'] ?? '');
+                        $lastAnswer = $delivery['last_response_body'] ?? null;
+                        $lastResponse = \Prosper202\Ltv\DeliveryReason::line($lastAnswer);
+                        $lastResponseTitle = \Prosper202\Ltv\DeliveryReason::line($lastAnswer, 1000);
+                        $lastResponseTitle = $lastResponseTitle !== $lastResponse
+                            ? ' title="' . $esc($lastResponseTitle) . '"'
+                            : '';
+                        $lastResponse = $lastResponse !== ''
+                            ? $esc($lastResponse)
+                            : '<span class="text-secondary">—</span>';
                     ?>
                         <tr>
                             <td class="text-secondary">#<?php echo (int) $delivery['delivery_id']; ?></td>
                             <td><?php echo $esc($delivery['event_name'] ?? ''); ?></td>
                             <td><?php echo p202_ltv_status_pill($deliveryStatus); ?></td>
+                            <td class="small"<?php echo $lastResponseTitle; ?>><?php echo $lastResponse; ?></td>
                             <td class="num"><?php echo (int) ($delivery['attempts'] ?? 0); ?></td>
                             <td class="num"><?php echo ($delivery['last_status_code'] ?? null) !== null ? (int) $delivery['last_status_code'] : '<span class="text-secondary">—</span>'; ?></td>
                             <td><?php echo $deliveryStatus === 'pending' ? date('M j, g:ia', (int) ($delivery['next_attempt_at'] ?? 0)) : '<span class="text-secondary">—</span>'; ?></td>
