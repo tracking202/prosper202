@@ -131,10 +131,10 @@ final readonly class ParallelTrackingClick
         $stmt = $conn->prepareWrite(
             'SELECT c.click_id, cr.click_id_public, c.aff_campaign_id, c.click_time
                FROM 202_clicks AS c
-               INNER JOIN 202_google AS g ON g.click_id = c.click_id
                INNER JOIN 202_clicks_record AS cr ON cr.click_id = c.click_id
                INNER JOIN 202_clicks_advance AS ca ON ca.click_id = c.click_id
-              WHERE c.user_id = ? AND c.click_time >= ? AND c.landing_page_id = ? AND g.gclid = ?
+              WHERE c.user_id = ? AND c.click_time >= ? AND c.landing_page_id = ?
+                AND EXISTS (SELECT 1 FROM 202_google AS g WHERE g.click_id = c.click_id AND g.gclid = ?)
                 AND ca.ip_id = ? AND cr.click_id_public > 0
                 AND ' . LatestVisit::isLatest('c') . '
               ORDER BY c.click_id DESC

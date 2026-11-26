@@ -10,6 +10,24 @@ class CampaignsController extends Controller
 {
     protected function tableName(): string { return '202_aff_campaigns'; }
     protected function primaryKey(): string { return 'aff_campaign_id'; }
+
+    #[\Override]
+    protected function listSearchColumns(): array
+    {
+        return ['aff_campaign_name'];
+    }
+
+    #[\Override]
+    protected function listSortFields(): array
+    {
+        return [
+            'aff_campaign_id' => 'aff_campaign_id',
+            'aff_campaign_name' => 'aff_campaign_name',
+            'aff_campaign_payout' => 'aff_campaign_payout',
+            'aff_network_id' => 'aff_network_id',
+        ];
+    }
+
     protected function deletedColumn(): ?string { return 'aff_campaign_deleted'; }
 
     protected function fields(): array

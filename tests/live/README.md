@@ -38,6 +38,13 @@ a whole segment — `test`, `scratch`, `tmp`, `temp`, `ci`, `eval`, `fixture`,
 `production_live` is refused and `p202_w1` is not. To override it deliberately:
 `P202_DB_ALLOW_DESTRUCTIVE=yes-i-mean-it`.
 
+Many passes stand in for visitors from several addresses with
+`X-Forwarded-For` (and for a TLS proxy with `X-Forwarded-Proto`), which the
+instance believes only from a proxy `P202_TRUSTED_PROXIES` lists.
+`install-instance.sh` serves with loopback listed; an instance started
+another way needs `P202_TRUSTED_PROXIES=127.0.0.1,::1` in its server's
+environment.
+
 ```sh
 P202_BASE=http://127.0.0.1:8097 \
 P202_DB=p202_test P202_DB_USER=root \

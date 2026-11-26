@@ -263,6 +263,7 @@ final class SessionGenerationIntegrationTest extends TestCase
             'P202_SU_SESSION_ID' => $admins,
             'P202_SU_USER' => (string) self::ADMIN,
             'P202_SU_GET' => json_encode(['edit_user_id' => (string) self::USER], JSON_THROW_ON_ERROR),
+            'P202_SU_OPEN_FIRST' => json_encode(['edit_user_id' => (string) self::USER], JSON_THROW_ON_ERROR),
             'P202_SU_POST' => json_encode([
                 'token' => 'SESSION',
                 'user_id' => (string) self::USER,
@@ -410,8 +411,7 @@ final class SessionGenerationIntegrationTest extends TestCase
                 \Prosper202\User\PasswordChange::store(
                     new \Prosper202\Database\Connection(self::$db),
                     self::USER,
-                    password_hash(self::NEW_PASSWORD, PASSWORD_DEFAULT),
-                    false
+                    password_hash(self::NEW_PASSWORD, PASSWORD_DEFAULT)
                 );
             },
             'PUT /users/{id}' => static function (): void {
