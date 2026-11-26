@@ -144,8 +144,8 @@ does not):
 
 - **A list's counts**: `?with=usage` on `/campaigns`, `/aff-networks`,
   `/ppc-networks`, `/ppc-accounts`, `/landing-pages` and `/text-ads` adds a
-  `usage` object to each row. `/landing-pages` also takes `with=health`, or
-  both as `with=usage,health`. The fields are opt-in, so a row read for a
+  `usage` object to each row. `/landing-pages` also takes `with=health` and
+  `with=last_seen`, in any combination (`with=usage,health,last_seen`). The fields are opt-in, so a row read for a
   `PUT` body carries nothing the record does not have. Any other value, an
   empty item or a repeat is a `422` naming `with`.
 - **One record's uses**: `GET /campaigns/{id}/uses` (and the same under the
@@ -183,6 +183,20 @@ has now: `status`, `level` (`good`, `warn`, `bad` or `unchecked`), `label`
 (the words Setup › Landing Pages shows), `message` and `checked_at`. A page
 with no check of its present URL is `"status": "unchecked"` with a null
 `message` and `checked_at`. Reading it fetches nothing.
+
+`last_seen_at` on a landing page is when it last had a click, in unix
+seconds. Each click on the page notes its time once the click is stored, at
+most once a minute a page, so the answer can be up to 60 seconds behind the
+latest click, and a click recorded late never moves it back. A page with no
+click since the install was upgraded to 1.9.81 is `null`: the time starts
+then, and older clicks are not scanned for it.
+
+```json
+GET /landing-pages?with=last_seen
+{"data": [{"landing_page_id": 12, "landing_page_nickname": "Spring LP", …,
+           "last_seen_at": 1764150000},
+          {"landing_page_id": 13, …, "last_seen_at": null}], …}
+```
 
 ## Pixels and postback URLs — `GET /conversions/postback-code`
 

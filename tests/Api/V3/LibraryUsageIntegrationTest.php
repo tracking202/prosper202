@@ -14,6 +14,8 @@ use Api\V3\Controllers\TrackersController;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\LandingPageLastSeen;
+use Prosper202\Database\Connection;
 use Prosper202\Database\SchemaInstaller;
 
 /**
@@ -36,6 +38,7 @@ final class LibraryUsageIntegrationTest extends TestCase
     private const TABLES = [
         '202_trackers', '202_text_ads', '202_landing_pages', '202_aff_campaigns', '202_aff_networks',
         '202_ppc_accounts', '202_ppc_networks', '202_rotators', '202_ad_connections', '202_landing_page_checks',
+        '202_landing_page_last_seen',
     ];
 
     private static ?\mysqli $db = null;
@@ -364,6 +367,43 @@ final class LibraryUsageIntegrationTest extends TestCase
         self::assertArrayNotHasKey('usage', $plain['data'][0]);
     }
 
+    /**
+     * `with=last_seen` answers when each page last had a click as the click
+     * writer stored it, null for a page with none, and never another
+     * account's time for a page of the same id range.
+     */
+    public function testALandingPagesLastSeenIsItsLatestStoredClick(): void
+    {
+        $net = $this->network(self::USER);
+        $offer = $this->campaign(self::USER, $net, 'o');
+        $busy = $this->landingPage(self::USER, $offer, 'busy');
+        $quiet = $this->landingPage(self::USER, $offer, 'quiet');
+        $theirOffer = $this->campaign(self::OTHER, $this->network(self::OTHER), 't');
+        $theirs = $this->landingPage(self::OTHER, $theirOffer, 'theirs');
+        $seen = new LandingPageLastSeen(new Connection(self::$db));
+        self::assertTrue($seen->stamp(self::USER, $busy, 1_700_000_000));
+        self::assertTrue($seen->stamp(self::OTHER, $theirs, 1_700_000_500));
+        // The click's account does not own the page: nothing is written for it.
+        self::assertFalse($seen->stamp(self::USER, $theirs, 1_700_000_900));
+        // A row another account's click left for this page id answers nothing for this account.
+        $this->exec('INSERT INTO 202_landing_page_last_seen (landing_page_id, user_id, last_click_at)'
+            . " VALUES ($quiet, " . self::OTHER . ', 1700000700)');
+
+        $list = (new LandingPagesController(self::$db, self::USER))->list(['with' => 'last_seen']);
+        $times = self::byId($list, 'landing_page_id', 'last_seen_at');
+        ksort($times);
+        self::assertSame([$busy => 1_700_000_000, $quiet => null], $times);
+        foreach ($list['data'] as $row) {
+            self::assertArrayHasKey('last_seen_at', $row);
+            self::assertArrayNotHasKey('usage', $row);
+        }
+        $other = (new LandingPagesController(self::$db, self::OTHER))->list(['with' => 'last_seen,usage']);
+        self::assertSame([$theirs => 1_700_000_500], self::byId($other, 'landing_page_id', 'last_seen_at'));
+
+        $plain = (new LandingPagesController(self::$db, self::USER))->list([]);
+        self::assertArrayNotHasKey('last_seen_at', $plain['data'][0]);
+    }
+
     public function testNamedUsesStopAtTheirLimitAndCountTheRest(): void
     {
         $net = $this->network(self::USER);
@@ -388,6 +428,8 @@ final class LibraryUsageIntegrationTest extends TestCase
         yield 'empty item' => ['campaigns', 'usage,'];
         yield 'repeated' => ['landing-pages', 'usage,usage'];
         yield 'health off a landing page' => ['campaigns', 'health'];
+        yield 'last seen off a landing page' => ['campaigns', 'last_seen'];
+        yield 'last seen as its field' => ['landing-pages', 'last_seen_at'];
         yield 'case' => ['campaigns', 'Usage'];
         yield 'list' => ['campaigns', ['usage']];
     }

@@ -6,6 +6,7 @@ namespace Api\V3\Support;
 
 use Api\V3\Exception\ValidationException;
 use Prosper202\Database\Connection;
+use Prosper202\Database\Schema\TableRegistry;
 use Prosper202\Setup\LandingPageCheckStore;
 
 /**
@@ -33,7 +34,7 @@ final class LibraryUsage
         'aff-networks' => ['usage'],
         'ppc-networks' => ['usage'],
         'ppc-accounts' => ['usage'],
-        'landing-pages' => ['usage', 'health'],
+        'landing-pages' => ['usage', 'health', 'last_seen'],
         'text-ads' => ['usage'],
     ];
 
@@ -131,7 +132,10 @@ final class LibraryUsage
 
     /**
      * $rows (a list page) with what $with asks for added to each row:
-     * `usage` (kind => count, and `total`) and, for landing pages, `health`.
+     * `usage` (kind => count, and `total`) and, for landing pages, `health`
+     * and `last_seen_at` (when the page last had a click, to within
+     * LandingPageLastSeen::WINDOW seconds; null: none since the 1.9.81
+     * upgrade).
      *
      * @param list<array<string, mixed>> $rows
      * @param list<string> $with
@@ -148,6 +152,7 @@ final class LibraryUsage
         }
         $counts = in_array('usage', $with, true) ? $this->counts($resource, $ids) : [];
         $health = in_array('health', $with, true) ? $this->health() : [];
+        $seen = in_array('last_seen', $with, true) ? $this->lastSeen($ids) : null;
         foreach ($rows as $i => $row) {
             $id = (int) $row[$idColumn];
             if ($counts !== []) {
@@ -155,6 +160,9 @@ final class LibraryUsage
             }
             if (in_array('health', $with, true)) {
                 $rows[$i]['health'] = self::healthOf($health[$id] ?? null);
+            }
+            if ($seen !== null) {
+                $rows[$i]['last_seen_at'] = $seen[$id] ?? null;
             }
         }
 
@@ -253,6 +261,31 @@ final class LibraryUsage
     private function health(): array
     {
         return (new LandingPageCheckStore(new Connection($this->db)))->forAccount($this->userId);
+    }
+
+    /**
+     * When each of $ids, the account's landing pages, last had a click.
+     *
+     * @param list<int> $ids
+     * @return array<int, int> id => unix time; a page with no row has no key
+     */
+    private function lastSeen(array $ids): array
+    {
+        $in = implode(', ', array_fill(0, count($ids), '?'));
+        $stmt = $this->prepare(
+            'SELECT landing_page_id, last_click_at FROM ' . TableRegistry::LANDING_PAGE_LAST_SEEN
+                . " WHERE user_id = ? AND landing_page_id IN ($in)"
+        );
+        $this->bind($stmt, 'i' . str_repeat('i', count($ids)), $this->userId, ...$ids);
+        $this->execute($stmt, 'Landing page last seen times could not be read');
+        $result = $this->resultOf($stmt, 'Landing page last seen times could not be read');
+        $seen = [];
+        while ($row = $result->fetch_assoc()) {
+            $seen[(int) $row['landing_page_id']] = (int) $row['last_click_at'];
+        }
+        $stmt->close();
+
+        return $seen;
     }
 
     /**

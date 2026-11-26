@@ -14968,13 +14968,16 @@ components:
       required: false
       description: >-
         A comma list of `usage` (as on the other Library lists: trackers,
-        text ads and rotators pointing at each page, and `total`) and
-        `health` (each page's stored code check for its present URL, or
-        `status: unchecked`). Any other value, an empty item or a repeat is a
-        `422` naming `with`.
+        text ads and rotators pointing at each page, and `total`), `health`
+        (each page's stored code check for its present URL, or
+        `status: unchecked`) and `last_seen` (adds `last_seen_at`, when the
+        page last had a click in unix seconds, stored as clicks arrive and up
+        to 60 seconds behind the latest; null for a page with no click since
+        the install's 1.9.81 upgrade). Any other value, an empty item or a
+        repeat is a `422` naming `with`.
       schema:
         type: string
-        example: usage,health
+        example: usage,health,last_seen
     listQ:
       name: q
       in: query
