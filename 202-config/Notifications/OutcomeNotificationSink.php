@@ -18,7 +18,8 @@ interface OutcomeNotificationSink
 {
     /**
      * A new ledger row reached a notifying goal. Returns how many
-     * notifications were recorded.
+     * notifications were recorded. $requestRefused: the request that wrote
+     * it refused consent; nothing is sent for it (AdPlatformConsent).
      */
     public function queueReached(
         int $userId,
@@ -29,6 +30,7 @@ interface OutcomeNotificationSink
         string $dedupeKey,
         ?string $transactionId,
         ?int $goalId = null,
+        bool $requestRefused = false,
     ): int;
 
     /**
@@ -57,8 +59,9 @@ interface OutcomeNotificationSink
     public function onAnnouncedBefore(int $userId, int $newConvId, array $priorConvIds): bool;
 
     /**
-     * @return array{total: int, live: int, pending: int} the `reached` rows
-     *         for the conversion: all, not cancelled, still to send
+     * @return array{total: int, live: int, pending: int, withheld: int} the
+     *         `reached` rows for the conversion: all, neither cancelled nor
+     *         withheld, still to send, withheld for consent
      */
     public function reachedState(int $convId): array;
 }

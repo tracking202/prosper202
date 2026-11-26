@@ -146,6 +146,18 @@ class AUTH
     }
 
     /**
+     * The user this request's session is signed in as, by logged_in()'s
+     * rule (its standing and session generation read now, the session
+     * ended when either says no), or null. The v3 API's session sign-in
+     * (Api\V3\SessionSignIn) asks this, so it ends a session where the
+     * pages would.
+     */
+    public static function signedInUserId(): ?int
+    {
+        return self::logged_in() ? self::sessionUserId() : null;
+    }
+
+    /**
      * connect.php, once it has read the session's user (new User()): a
      * session whose user may no longer act, or which began before the user's
      * password changed (sessionUserStands()), is ended there, before the page
@@ -621,19 +633,24 @@ class AUTH
     }
 
     /**
-     * The EU/UK answer for the connecting peer, or for the visitor Cloudflare
-     * names when the peer is a Cloudflare edge server. Any other forwarding
-     * header is the client's own claim and could turn an EU account's held
-     * analytics on, so a request carrying one is unknown.
+     * The EU/UK answer for the client: the connecting peer, or the client a
+     * proxy listed in P202_TRUSTED_PROXIES names (VisitorIp::knownClient()).
+     * A forwarding header from any other peer is the client's own claim,
+     * which could turn an EU account's held analytics on, or the sign of a
+     * proxy nobody listed, so a request carrying one is unknown.
      *
      * @param array<string, mixed> $server normally $_SERVER
      * @param (callable(string): ?array{0: string, 1: bool})|null $country
      *   the address's ISO country and EU flag, null when unresolved; GeoLite2
      *   when not given
+     * @param ?\Prosper202\Http\TrustedProxies $trusted the environment's setting when not given
      */
-    public static function sign_in_is_eu(array $server, ?callable $country = null): ?bool
-    {
-        $ip = \Prosper202\Http\VisitorIp::cloudflareOrUnforwardedPeer($server);
+    public static function sign_in_is_eu(
+        array $server,
+        ?callable $country = null,
+        ?\Prosper202\Http\TrustedProxies $trusted = null
+    ): ?bool {
+        $ip = \Prosper202\Http\VisitorIp::knownClient($server, $trusted);
         if ($ip === '') {
             return null;
         }
@@ -1200,12 +1217,10 @@ class AUTH
     }
 
     /**
-     * The visitor's address, validated (VisitorIp: the forwarding headers
-     * the click path reads, the leftmost hop, REMOTE_ADDR when that is not an
-     * address), or '0.0.0.0' when the request carries none — so the throttle
-     * key and the audit log only ever see a real IP that fits their column.
-     * It is the address the client claims; see VisitorIp for what that may
-     * and may not decide.
+     * The client's address, validated (VisitorIp: REMOTE_ADDR, or the client
+     * a proxy listed in P202_TRUSTED_PROXIES names), or '0.0.0.0' when the
+     * request carries none, so the throttle key and the audit log only ever
+     * see a real IP that fits their column.
      */
     public static function client_ip(): string
     {

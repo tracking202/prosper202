@@ -55,6 +55,7 @@ final class RotatorRuleWritesAreCheckedTest extends TestCase
         self::CONTROLLER => 'the API: each public method that reaches a write is held to ENTRY_POINTS',
         'tracking202/setup/rotator.php' => 'removes a redirector with every rule, criterion and destination it has',
         '202-config/functions-upgrade.php' => 'the upgrade ladder, moving stored destinations into their own table',
+        '202-config/Rotator/CriterionRepair.php' => 'the 1.9.81 upgrade rewriting a stored criterion value as Criterion::normalize(), which the redirects read the same',
     ];
 
     /** The check of a rule. */

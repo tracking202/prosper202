@@ -59,6 +59,7 @@
 - [System](api/15-system.md)
 - [Sync](api/16-sync.md)
 - [Capabilities](api/17-capabilities.md)
+- [Me: who is signed in](api/30-me.md)
 - [Legacy API (v1)](api/99-legacy-api.md)
 
 ### CLI Reference

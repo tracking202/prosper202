@@ -33,6 +33,9 @@ func (f *clickFilterFake) server(t *testing.T) *httptest.Server {
 			_, _ = w.Write([]byte(`{"data":{"preferred":"v3","supported":["v3"]}}`))
 		case r.URL.Path == "/api/v3/capabilities":
 			_, _ = w.Write([]byte(`{"data":{"features":{"staged_writes":true,"delete_dry_run":true},"principal":{"user_id":4,"roles":["Admin"],"scopes":["*"]}}}`))
+		case r.Method == http.MethodDelete && r.URL.Query().Get("dry_run") == "1":
+			// The server's preview answers what the delete would remove.
+			_, _ = w.Write([]byte(`{"data":{"dry_run":true,"would_delete":{"entry_id":3}}}`))
 		case r.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusNoContent)
 		default:

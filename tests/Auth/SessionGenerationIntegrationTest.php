@@ -411,8 +411,7 @@ final class SessionGenerationIntegrationTest extends TestCase
                 \Prosper202\User\PasswordChange::store(
                     new \Prosper202\Database\Connection(self::$db),
                     self::USER,
-                    password_hash(self::NEW_PASSWORD, PASSWORD_DEFAULT),
-                    false
+                    password_hash(self::NEW_PASSWORD, PASSWORD_DEFAULT)
                 );
             },
             'PUT /users/{id}' => static function (): void {

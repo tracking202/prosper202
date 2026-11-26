@@ -53,6 +53,12 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=10
+      # InstallIdCacheIntegrationTest's real-memcached case (P202_TEST_MEMCACHED
+      # below). Off the default port, so no suite that reaches 11211 finds it.
+      memcached:
+        image: memcached:1.6
+        ports:
+          - 11240:11211
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -113,6 +119,7 @@ jobs:
           P202_TEST_DB_USER: root
           P202_TEST_DB_PASS: root
           P202_TEST_DB_NAME: p202_integration_test
+          P202_TEST_MEMCACHED: 127.0.0.1:11240
           P202_IT_LOG_DIR: ${{ runner.temp }}/integration-logs
           P202_IT_SHARD_COUNT: 8
           P202_IT_SHARD_INDEX: ${{ matrix.shard }}

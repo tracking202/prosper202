@@ -14,10 +14,10 @@ $mysql['user_pass_key'] = $db->real_escape_string($submitted_key);
 // Never look up on a blank key. Reset keys are cleared to NULL after use, but
 // guarding here keeps an empty "?key=" from ever matching a row by accident.
 if ($submitted_key === '') {
-	$user_row = null;
+    $user_row = null;
 } else {
-	$user_sql = "SELECT * FROM 202_users WHERE user_pass_key='" . $mysql['user_pass_key'] . "'";
-	$user_result = _mysqli_query($db, $user_sql);
+    $user_sql = "SELECT * FROM 202_users WHERE user_pass_key='" . $mysql['user_pass_key'] . "'";
+    $user_result = _mysqli_query($db, $user_sql);
     if ($user_result === false) {
         // Read as no row, a good key was answered "no key was found".
         record_mysql_error($db, $user_sql);
@@ -26,65 +26,70 @@ if ($submitted_key === '') {
 }
 
 if (!$user_row) {
-	$error['user_pass_key'] = '<div class="error">No key was found like that</div>';
+    $error['user_pass_key'] = '<div class="error">No key was found like that</div>';
 }
 
 if (!$error) {
 
-	//how many days ago was this code activated, this code will only work if the activation reset code is at least current within the last 3 days
-	$date_today = time();
-	$days = (($date_today - $user_row['user_pass_time']) / 86400);
-
-	if ($days > 3) {
-		$error['user_pass_key'] = ($error['user_pass_key'] ?? '') . 'Sorry, this key has expired, they expire in three (3) days.';
-	}
+    // A key allows a reset for three days; PasswordChange::store() asks the
+    // same window again in the write that consumes it.
+    $date_today = time();
+    $issuedAt = (int) ($user_row['user_pass_time'] ?? 0);
+    if ($date_today - $issuedAt > \Prosper202\User\PasswordChange::RESET_KEY_SECONDS) {
+        $error['user_pass_key'] = ($error['user_pass_key'] ?? '') . 'Sorry, this key has expired, they expire in three (3) days.';
+    }
 }
 
 
 //if the key is legit, make sure their new posted password is legit
 if (!$error and ($_SERVER['REQUEST_METHOD'] == "POST")) {
 
-	//check tokens (CSRF): the form embeds the session token; reject forged posts
-	if (!AUTH::check_csrf_token()) {
-		$error['user_pass'] = '<div class="error">Your session has expired. Please reload the page and try again.</div>';
-	}
+    //check tokens (CSRF): the form embeds the session token; reject forged posts
+    if (!AUTH::check_csrf_token()) {
+        $error['user_pass'] = '<div class="error">Your session has expired. Please reload the page and try again.</div>';
+    }
 
-	if (!$error && ($_POST['user_pass'] ?? '') == '') {
-		$error['user_pass'] = '<div class="error">You must type in your desired password</div>';
-	}
-	if (!$error && ($_POST['verify_user_pass'] ?? '') == '') {
-		$error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">You must type verify your password</div>';
-	}
-	// Cap at 72 bytes (bcrypt's effective input length under PASSWORD_DEFAULT).
-	if (!$error && ((strlen((string) ($_POST['user_pass'] ?? '')) < 8) or (strlen((string) ($_POST['user_pass'] ?? '')) > 72))) {
-		$error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">Passwords must be 8 to 72 characters long</div>';
-	}
-	if (!$error && (($_POST['user_pass'] ?? '') != ($_POST['verify_user_pass'] ?? ''))) {
-		$error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">Your passwords did not match, please try again</div>';
-	}
+    if (!$error && ($_POST['user_pass'] ?? '') == '') {
+        $error['user_pass'] = '<div class="error">You must type in your desired password</div>';
+    }
+    if (!$error && ($_POST['verify_user_pass'] ?? '') == '') {
+        $error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">You must type verify your password</div>';
+    }
+    // Cap at 72 bytes (bcrypt's effective input length under PASSWORD_DEFAULT).
+    if (!$error && ((strlen((string) ($_POST['user_pass'] ?? '')) < 8) or (strlen((string) ($_POST['user_pass'] ?? '')) > 72))) {
+        $error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">Passwords must be 8 to 72 characters long</div>';
+    }
+    if (!$error && (($_POST['user_pass'] ?? '') != ($_POST['verify_user_pass'] ?? ''))) {
+        $error['user_pass'] = ($error['user_pass'] ?? '') . '<div class="error">Your passwords did not match, please try again</div>';
+    }
 
-	if (!$error) {
+    if (!$error) {
 
-		$hasher = function_exists('hash_user_pass') ? 'hash_user_pass' : 'salt_user_pass';
-		$user_pass = (string) $hasher($_POST['user_pass']);
+        $hasher = function_exists('hash_user_pass') ? 'hash_user_pass' : 'salt_user_pass';
+        $user_pass = (string) $hasher($_POST['user_pass']);
 
-		// The password, the reset key and its time cleared (the link is
-		// single-use, even inside its 3 days), and every remember-me key of the
-		// user deleted, in one transaction: a reset is how an owner locks out
-		// whoever holds a stolen cookie.
-		try {
-			\Prosper202\User\PasswordChange::store(
-				new \Prosper202\Database\Connection($db),
-				(int) $user_row['user_id'],
-				$user_pass,
-				true
-			);
-			$success = true;
-		} catch (\RuntimeException | \mysqli_sql_exception $e) {
-			error_log('202-pass-reset.php: the new password was not stored: ' . p202FailedQueryMessage(0, $e->getMessage()));
-			$error['user_pass'] = '<div class="error">Could not save your new password, please try again.</div>';
-		}
-	}
+        // The password, the reset key and its time cleared (the link is
+        // single-use, even inside its 3 days), and every remember-me key of the
+        // user deleted, in one transaction: a reset is how an owner locks out
+        // whoever holds a stolen cookie. The write consumes the key only while
+        // it is still there, so of two submits of one link that both passed
+        // the read above, the second stores nothing.
+        try {
+            \Prosper202\User\PasswordChange::store(
+                new \Prosper202\Database\Connection($db),
+                (int) $user_row['user_id'],
+                $user_pass,
+                (string) $user_row['user_pass_key'],
+                $date_today
+            );
+            $success = true;
+        } catch (\Prosper202\User\ResetKeyNotUsable $e) {
+            $error['user_pass_key'] = 'This link has already been used to set a password, or it has expired.';
+        } catch (\RuntimeException | \mysqli_sql_exception $e) {
+            error_log('202-pass-reset.php: the new password was not stored: ' . p202FailedQueryMessage(0, $e->getMessage()));
+            $error['user_pass'] = '<div class="error">Could not save your new password, please try again.</div>';
+        }
+    }
 }
 
 $html['user_name'] = htmlentities((string)($user_row['user_name'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -94,12 +99,12 @@ $html['user_name'] = htmlentities((string)($user_row['user_name'] ?? ''), ENT_QU
 //if password was changed successfully
 if ($success == true) {
 
-	_die("<h6>Password changed</h6><small>Your password has been reset. You can now <a href=\"" . get_absolute_url() . "202-login.php\">sign in</a> with your new password.</small>");
+    _die("<h6>Password changed</h6><small>Your password has been reset. You can now <a href=\"" . get_absolute_url() . "202-login.php\">sign in</a> with your new password.</small>");
 }
 
 if (!empty($error['user_pass_key'])) {
 
-	_die("<h6>This reset link does not work</h6><small>" . htmlspecialchars(p202_standalone_error_text($error['user_pass_key']), ENT_QUOTES, 'UTF-8') . " Please use the <a href=\"" . get_absolute_url() . "202-lost-pass.php\">password retrieval tool</a> to get a new password reset link.</small>");
+    _die("<h6>This reset link does not work</h6><small>" . htmlspecialchars(p202_standalone_error_text($error['user_pass_key']), ENT_QUOTES, 'UTF-8') . " Please use the <a href=\"" . get_absolute_url() . "202-lost-pass.php\">password retrieval tool</a> to get a new password reset link.</small>");
 }
 
 //else if none of the above, show the code to reset! 
@@ -107,24 +112,24 @@ if (!empty($error['user_pass_key'])) {
 
 <?php info_top(['title' => 'Choose a new password - Prosper202 ClickServer']);
 echo p202_standalone_card('Choose a new password', 'Type it twice. It must be 8 to 72 characters.'); ?>
-	<?php if (!empty($error['user_pass'])) { ?>
-		<div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><?php echo htmlspecialchars(p202_standalone_error_text($error['user_pass']), ENT_QUOTES, 'UTF-8'); ?></div></div>
-	<?php } ?>
-	<form method="post" action="" id="pass-reset-form">
-		<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
-		<div class="mb-3">
-			<label class="form-label" for="user_name">Username</label>
-			<input type="text" class="form-control" id="user_name" value="<?php echo $html['user_name']; ?>" autocomplete="username" readonly>
-		</div>
-		<div class="mb-3">
-			<label class="form-label" for="user_pass">New password</label>
-			<input type="password" class="form-control<?php echo !empty($error['user_pass']) ? ' is-invalid' : ''; ?>" id="user_pass" name="user_pass" autocomplete="new-password" minlength="8" maxlength="72" required autofocus>
-		</div>
-		<div class="mb-3">
-			<label class="form-label" for="verify_user_pass">Type it again</label>
-			<input type="password" class="form-control" id="verify_user_pass" name="verify_user_pass" autocomplete="new-password" minlength="8" maxlength="72" required>
-		</div>
-		<button class="btn btn-primary w-100" type="submit">Reset password</button>
-	</form>
+    <?php if (!empty($error['user_pass'])) { ?>
+        <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><?php echo htmlspecialchars(p202_standalone_error_text($error['user_pass']), ENT_QUOTES, 'UTF-8'); ?></div></div>
+    <?php } ?>
+    <form method="post" action="" id="pass-reset-form">
+        <input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
+        <div class="mb-3">
+            <label class="form-label" for="user_name">Username</label>
+            <input type="text" class="form-control" id="user_name" value="<?php echo $html['user_name']; ?>" autocomplete="username" readonly>
+        </div>
+        <div class="mb-3">
+            <label class="form-label" for="user_pass">New password</label>
+            <input type="password" class="form-control<?php echo !empty($error['user_pass']) ? ' is-invalid' : ''; ?>" id="user_pass" name="user_pass" autocomplete="new-password" minlength="8" maxlength="72" required autofocus>
+        </div>
+        <div class="mb-3">
+            <label class="form-label" for="verify_user_pass">Type it again</label>
+            <input type="password" class="form-control" id="verify_user_pass" name="verify_user_pass" autocomplete="new-password" minlength="8" maxlength="72" required>
+        </div>
+        <button class="btn btn-primary w-100" type="submit">Reset password</button>
+    </form>
 <?php echo p202_standalone_card_end();
 info_bottom();
