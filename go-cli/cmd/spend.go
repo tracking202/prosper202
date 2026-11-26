@@ -78,7 +78,9 @@ var spendListCmd = &cobra.Command{
 			}
 			return err
 		}
-		render(data)
+		if err := render(data); err != nil {
+			return err
+		}
 		var resp struct {
 			Truncated bool `json:"truncated"`
 			Limit     int  `json:"limit"`
@@ -134,7 +136,9 @@ var spendImportCmd = &cobra.Command{
 		if err != nil {
 			return spendImportError(err)
 		}
-		render(data)
+		if err := render(data); err != nil {
+			return err
+		}
 		var resp struct {
 			Data struct {
 				DryRun    bool `json:"dry_run"`
