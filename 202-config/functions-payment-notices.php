@@ -92,13 +92,15 @@ function p202_currency_mismatch_notice(
 /**
  * The warning on the JVZoo card of an account that reads the 1.9.56 URL as
  * an affiliate's while its notifications there look like a vendor's, with
- * the one button that reads it as a vendor's ('' for none).
+ * the one button that reads it as a vendor's ('' for none). $formFields are
+ * the hidden fields its form carries: the session token and the version of
+ * the stored choice (ShownSettings).
  */
 function p202_jvzoo_roleless_notice(
     ?RolelessTraffic $traffic,
     JVZooRole $stored,
     string $action,
-    string $tokenField
+    string $formFields
 ): string {
     $asAffiliate = $stored === JVZooRole::AFFILIATE;
     if ($traffic === null || !($traffic->conflict > 0 || ($asAffiliate && $traffic->looksLikeAVendor()))) {
@@ -147,7 +149,7 @@ function p202_jvzoo_roleless_notice(
         }
         $html .= '<form method="post" action="' . htmlspecialchars($action, ENT_QUOTES, 'UTF-8') . '" class="mt-2"'
             . ' data-jvzoo-read-as-vendor><input type="hidden" name="change_jvzoo_roleless_role" value="1">'
-            . $tokenField . '<input type="hidden" name="' . JVZooRole::ROLELESS_COLUMN . '" value="'
+            . $formFields . '<input type="hidden" name="' . JVZooRole::ROLELESS_COLUMN . '" value="'
             . JVZooRole::VENDOR->value . '">'
             . '<button class="btn btn-secondary btn-sm" type="submit">Read the 1.9.56 URL as a vendor’s</button>'
             . '</form>';

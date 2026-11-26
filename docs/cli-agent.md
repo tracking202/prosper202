@@ -1070,6 +1070,8 @@ p202 analytics         --group-by DIM [--period P | --days N]
                        [--sort METRIC] [--sort-dir ASC|DESC] [-l limit] [-o offset] [filters...] [--json]
 p202 report breakeven  --aff-campaign-id ID [-b dimension] [--max-cpc N]
                        [-l limit] [-o offset] [-p period] [filters...] [--json]
+                       # the payout is the reports' (GET /reports/payout): a Campaign
+                       # optimizer runs it, and the id is in report breakdown -b campaign
 p202 analytics         --group-by DIM --split-at YYYY-MM-DD|UNIX
                        [--days N | --time-from UNIX [--time-to UNIX]]
                        [--sort clicks|conversions|revenue[_per_day]] [--sort-dir ASC|DESC]
@@ -1292,8 +1294,9 @@ p202 ltv integrations list | create --provider P [--name S] [--config JSON | --c
   by default): `status`, `attempts`, `next_attempt_at` (pending only),
   `last_status_code` and `last_response_body` (the last response or error,
   e.g. `curl: …`, `blocked: …`, or `expired: …` for a delivery still unsent
-  7 days after it was queued, which is never sent); never the secret, never
-  the payload. The minutely cron job sends what is due, so a `pending`
+  7 days after it was queued, which is never sent; a credential in a
+  receiver's answer reads `[removed]`); never the secret, never the
+  payload. The minutely cron job sends what is due, so a `pending`
   delivery whose `next_attempt_at` is past waits for the next cron run. An
   unknown webhook id is a 404 whose hint names `p202 ltv webhooks list`.
 - `ltv webhooks revive` makes a dead webhook (one delivery failed 6 times)
@@ -1524,7 +1527,10 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
   `ad_connection_check`, `ad_campaign_list`, `ad_campaign_pause`,
   `ad_campaign_activate` and `ad_campaign_spend`, and `ad_spend` and
   `ad_spend_sync_status` (what ad platforms billed per ad, and each ChatGPT
-  Ads connection's hourly spend pull); `--read-only` and `--staged` leave out
+  Ads connection's hourly spend pull), and `ppc_account_pixel_list`,
+  `ppc_account_pixel_create`, `ppc_account_pixel_update` and
+  `ppc_account_pixel_delete` (a traffic source account's conversion pixels,
+  `p202 ppc-account pixel`); `--read-only` and `--staged` leave out
   `destination_test` and `ad_connection_check`. The destination tools, the
   check and the two spend tools are local only: the hosted server below
   refuses them.
@@ -1653,7 +1659,7 @@ Visitor-authored (or visitor-derived) fields returned by this CLI:
 | SubIDs `c1`--`c4` | Query parameters on the tracking link | `click get` (`c1`..`c4`), `report breakdown`/`analytics` by `c1`..`c4` |
 | UTM values | `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content` on the tracking link | `report breakdown`/`analytics` by `utm_source` .. `utm_content` |
 | Ad click ids | `gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid`, `oppref` on the tracking or landing URL | `click list`/`click get` (`gclid`, `gbraid`, `wbraid`, `ttclid`, `msclkid`, `fbclid`, `oppref`; capped at 1,000 characters, not 512) |
-| IP addresses | The visitor's connection (or the `X-Forwarded-For` header the redirect honours) | `report breakdown`/`analytics` by `ip` |
+| IP addresses | The visitor's connection (or, behind Cloudflare or a proxy listed in `P202_TRUSTED_PROXIES`, the client its `X-Forwarded-For` or `Forwarded` header names) | `report breakdown`/`analytics` by `ip` |
 | Browser, platform, device names | Parsed from the visitor's user-agent string | `click list`/`click get` resolved names, `report breakdown`/`analytics` by `browser`/`platform`/`device` |
 | Region, city, ISP names | GeoIP resolution of the visitor's IP | `click list`/`click get`, `report breakdown`/`analytics` by `region`/`city`/`isp` |
 

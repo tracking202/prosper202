@@ -7,6 +7,7 @@ namespace Prosper202\Ltv;
 use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookRefused;
 use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 use RuntimeException;
 
 /**
@@ -42,6 +43,9 @@ final class MysqlWebhookRepository
         'alert.postback_refusals_spiked',
         'alert.test',
     ];
+
+    /** Deliveries enqueueEach() inserts per statement. */
+    public const ENQUEUE_ROWS = 500;
 
     /** Max delivery attempts before a delivery is failed and the hook may die. */
     public const MAX_ATTEMPTS = 6;
@@ -294,14 +298,7 @@ final class MysqlWebhookRepository
             self::assertEventName($name);
         }
 
-        $stmt = $this->conn->prepareRead(
-            "SELECT webhook_id FROM 202_ltv_webhooks
-             WHERE user_id = ? AND status IN ('active', 'dead')
-               AND (subscribed_events = ''"
-            . str_repeat(' OR FIND_IN_SET(?, subscribed_events) > 0', count($subscribedToAny)) . ')'
-        );
-        $this->conn->bind($stmt, 'i' . str_repeat('s', count($subscribedToAny)), [$userId, ...$subscribedToAny]);
-        $webhooks = $this->conn->fetchAll($stmt);
+        $webhooks = $this->subscribers($userId, $subscribedToAny);
         if ($webhooks === []) {
             return 0;
         }
@@ -335,16 +332,87 @@ final class MysqlWebhookRepository
     }
 
     /**
+     * enqueue() of one event per payload, for a write that changes many
+     * records at once (a company rename rewrites every customer attached):
+     * the subscribers are read once and the deliveries inserted
+     * ENQUEUE_ROWS to a statement, where enqueue() per record made one lookup
+     * and one insert per webhook for each. Answers how many deliveries it
+     * queued, 0 when no webhook subscribes or there is no payload.
+     *
+     * @param list<array<string, mixed>> $payloads
+     */
+    public function enqueueEach(int $userId, string $eventName, array $payloads): int
+    {
+        self::assertEventName($eventName);
+        if ($payloads === []) {
+            return 0;
+        }
+        $webhooks = $this->subscribers($userId, [$eventName]);
+        if ($webhooks === []) {
+            return 0;
+        }
+
+        $now = time();
+        $rows = [];
+        foreach ($payloads as $payload) {
+            $body = json_encode(['event' => $eventName, 'occurred_at' => $now, 'data' => $payload]);
+            if ($body === false) {
+                throw new RuntimeException('Failed to encode webhook payload for ' . $eventName);
+            }
+            foreach ($webhooks as $webhook) {
+                $rows[] = [(int) $webhook['webhook_id'], $userId, $eventName, $body, $now, $now, $now];
+            }
+        }
+        foreach (array_chunk($rows, self::ENQUEUE_ROWS) as $chunk) {
+            $ins = $this->conn->prepareWrite(
+                'INSERT INTO 202_ltv_webhook_deliveries
+                    (webhook_id, user_id, event_name, payload, status, attempts, next_attempt_at,
+                     created_at, updated_at)
+                 VALUES ' . implode(', ', array_fill(0, count($chunk), "(?, ?, ?, ?, 'pending', 0, ?, ?, ?)"))
+            );
+            $this->conn->bind($ins, str_repeat('iissiii', count($chunk)), array_merge(...$chunk));
+            $written = $this->conn->executeUpdate($ins);
+            if ($written !== count($chunk)) {
+                throw new QueryException('Queued ' . $written . ' of ' . count($chunk) . ' ' . $eventName
+                    . ' deliveries');
+            }
+        }
+
+        return count($rows);
+    }
+
+    /**
+     * The account's active or dead webhooks subscribed to any of the names,
+     * or to every event.
+     *
+     * @param non-empty-list<string> $subscribedToAny
+     * @return list<array<string, mixed>>
+     */
+    private function subscribers(int $userId, array $subscribedToAny): array
+    {
+        $stmt = $this->conn->prepareRead(
+            "SELECT webhook_id FROM 202_ltv_webhooks
+             WHERE user_id = ? AND status IN ('active', 'dead')
+               AND (subscribed_events = ''"
+            . str_repeat(' OR FIND_IN_SET(?, subscribed_events) > 0', count($subscribedToAny)) . ')'
+        );
+        $this->conn->bind($stmt, 'i' . str_repeat('s', count($subscribedToAny)), [$userId, ...$subscribedToAny]);
+
+        return $this->conn->fetchAll($stmt);
+    }
+
+    /**
      * Delivery history for one endpoint, newest first — the operator-facing
      * log behind the settings UI (attempt counts, last status codes, backoff
-     * schedule). Response bodies are already stored truncated.
+     * schedule, the last response or error). Response bodies are stored
+     * truncated, and served with credentials removed.
      *
      * @return list<array<string, mixed>>
      */
     public function recentDeliveries(int $userId, int $webhookId, int $limit = 25): array
     {
         $stmt = $this->conn->prepareRead(
-            'SELECT delivery_id, event_name, status, attempts, last_status_code,
+            'SELECT delivery_id, event_name, status, attempts, last_status_code, last_response_body,
                     next_attempt_at, created_at, updated_at
              FROM 202_ltv_webhook_deliveries
              WHERE webhook_id = ? AND user_id = ?
@@ -353,7 +421,25 @@ final class MysqlWebhookRepository
         );
         $this->conn->bind($stmt, 'iii', [$webhookId, $userId, max(1, $limit)]);
 
-        return $this->conn->fetchAll($stmt);
+        return self::redactedLog($this->conn->fetchAll($stmt));
+    }
+
+    /**
+     * A log's rows with each last response put through DeliveryReason::redact():
+     * a row stored before the dispatcher redacted it can hold a credential.
+     *
+     * @param list<array<string, mixed>> $rows
+     * @return list<array<string, mixed>>
+     */
+    private static function redactedLog(array $rows): array
+    {
+        foreach ($rows as $i => $row) {
+            if (isset($row['last_response_body'])) {
+                $rows[$i]['last_response_body'] = DeliveryReason::redactSafely((string) $row['last_response_body']);
+            }
+        }
+
+        return $rows;
     }
 
     /** The states a delivery is in (the column's enum). */
@@ -362,8 +448,9 @@ final class MysqlWebhookRepository
     /**
      * The delivery log the API serves: recentDeliveries()'s columns plus
      * the last attempt's response body or error ("curl: …", "blocked: …",
-     * stored truncated to 1,000 bytes), optionally one status only, newest
-     * first. Never the payload, never the endpoint's secret.
+     * stored truncated to 1,000 bytes, credentials removed), optionally one
+     * status only, newest first. Never the payload, never the endpoint's
+     * secret.
      *
      * @return list<array<string, mixed>>
      */
@@ -388,7 +475,7 @@ final class MysqlWebhookRepository
             $this->conn->bind($stmt, 'iii', [$webhookId, $userId, max(1, $limit)]);
         }
 
-        return $this->conn->fetchAll($stmt);
+        return self::redactedLog($this->conn->fetchAll($stmt));
     }
 
     /**

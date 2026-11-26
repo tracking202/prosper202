@@ -329,6 +329,16 @@ no-break or ideographic spaces) names no company: the job stores it as `""`,
 as clearing it would, and the customer's email domain does not attach it.
 Either is a change to the customer, and its `updated_at` is when the job made it.
 
+A rename (`name`) rewrites the `company` of every customer attached, and a
+merge moves the source's customers to the surviving company; each queues
+`customer.updated` for every customer whose `company` it changed (a rename
+that changes only `domain`, or a customer already spelled the new way, sends
+none). The job's attach, its blank-name clear and its repair of a `company`
+that drifted from its company's name queue it too, but only for customers
+last written in the last 7 days, the time a delivery is kept trying: like
+the sweep's `subscription.changed`, a subscriber is not sent a backlog of
+old records the first time the job runs after an upgrade.
+
 ```bash
 p202 ltv product upsert --sku PRO-1 --name "Pro plan" --price 49
 p202 ltv fields create --key plan --type select --option free --option pro

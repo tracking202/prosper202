@@ -34,7 +34,7 @@ final class FieldErrorPathsAreDottedTest extends TestCase
      * @var array<string, array{int, string}>
      */
     private const ALLOWED = [
-        'api/v3/Controller.php' => [
+        'api/v3/Support/ListQuery.php' => [
             1,
             'filter[<field>]: the name of the query parameter the caller sent, as it sent it',
         ],

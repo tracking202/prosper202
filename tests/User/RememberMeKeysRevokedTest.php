@@ -356,6 +356,15 @@ final class RememberMeKeysRevokedTest extends TestCase
                 $wrap("\$sql = 'UPDATE 202_users SET ' . implode(', ', \$sets) . ' WHERE user_id = ?';"),
                 [false],
             ],
+            'with an index hint' => [
+                $wrap("\$sql = 'UPDATE 202_users FORCE INDEX (PRIMARY) SET user_pass = ? WHERE user_id = ?';"),
+                [false],
+            ],
+            'through an alias, with two index hints' => [
+                $wrap("\$sql = 'UPDATE `202_users` AS u USE INDEX (user_name) IGNORE KEY FOR JOIN (user_pass_key)"
+                    . " SET u.user_pass = ? WHERE u.user_id = ?';"),
+                [false],
+            ],
             'a standing column only' => [$wrap("\$sql = 'UPDATE 202_users SET user_active = 0';"), []],
             'a new user' => [$wrap("\$sql = 'INSERT INTO 202_users (user_name, user_pass) VALUES (?, ?)';"), []],
             'the sign-in log' => [
@@ -566,7 +575,10 @@ final class RememberMeKeysRevokedTest extends TestCase
             return true;
         }
         $clauses = [];
-        $update = '/\bUPDATE\s+`?202_users`?(?![\w])(?:\s+(?:AS\s+)?`?\w+`?)?\s+SET\b(.*?)(?:\bWHERE\b|$)/is';
+        // An alias and index hints may stand between the table and SET.
+        $update = '/\bUPDATE\s+`?202_users`?(?![\w])(?:\s+(?:AS\s+)?`?\w+`?)?'
+            . '(?:\s+(?:USE|FORCE|IGNORE)\s+(?:INDEX|KEY)(?:\s+FOR\s+\w+(?:\s+BY)?)?\s*\([^)]*\))*'
+            . '\s+SET\b(.*?)(?:\bWHERE\b|$)/is';
         if (preg_match_all($update, $sql, $m) > 0) {
             $clauses = $m[1];
         }

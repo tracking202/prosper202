@@ -22,6 +22,24 @@ class LandingPagesController extends Controller
 
     protected function tableName(): string { return '202_landing_pages'; }
     protected function primaryKey(): string { return 'landing_page_id'; }
+
+    #[\Override]
+    protected function listSearchColumns(): array
+    {
+        return ['landing_page_nickname'];
+    }
+
+    #[\Override]
+    protected function listSortFields(): array
+    {
+        return [
+            'landing_page_id' => 'landing_page_id',
+            'landing_page_nickname' => 'landing_page_nickname',
+            'landing_page_url' => 'landing_page_url',
+            'aff_campaign_id' => 'aff_campaign_id',
+        ];
+    }
+
     protected function deletedColumn(): ?string { return 'landing_page_deleted'; }
 
     protected function fields(): array

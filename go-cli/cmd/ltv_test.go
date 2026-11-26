@@ -277,6 +277,41 @@ func TestLtvCohortsAndProducts(t *testing.T) {
 	}
 }
 
+// One company's ABM detail is not paged, and the server refuses limit and
+// offset there rather than drop them: the CLI sends neither with --company
+// and refuses them by name when given.
+func TestLtvAbmCompanySendsNoPaging(t *testing.T) {
+	srv := newLtvServer(t, nil)
+	if _, _, err := executeCommand("ltv", "abm", "--company", "Acme", "--days", "30"); err != nil {
+		t.Fatalf("ltv abm --company: %v", err)
+	}
+	req := srv.only(t)
+	q := queryOf(t, req.RawQuery)
+	if req.Path != "/ltv/abm/company" || q.Get("name") != "Acme" || q.Get("days") != "30" || q.Has("limit") || q.Has("offset") {
+		t.Errorf("abm --company request = %s?%s", req.Path, req.RawQuery)
+	}
+
+	for _, flag := range []string{"--limit", "--offset"} {
+		srv = newLtvServer(t, nil)
+		_, _, err := executeCommand("ltv", "abm", "--company", "Acme", flag, "5")
+		if err == nil || exitCodeForError(err) != 1 || !strings.Contains(err.Error(), flag) || len(srv.seen()) != 0 {
+			t.Errorf("abm --company %s 5: err = %v, requests %d; want a validation error before any request", flag, err, len(srv.seen()))
+			continue
+		}
+		if hint := hintFor(err); !strings.Contains(hint, "Drop --company") {
+			t.Errorf("abm --company %s: hint %q does not say what to change", flag, hint)
+		}
+	}
+
+	srv = newLtvServer(t, nil)
+	if _, _, err := executeCommand("ltv", "abm", "--limit", "5"); err != nil {
+		t.Fatalf("ltv abm --limit: %v", err)
+	}
+	if req := srv.only(t); req.Path != "/ltv/abm" || queryOf(t, req.RawQuery).Get("limit") != "5" {
+		t.Errorf("abm --limit request = %s?%s", req.Path, req.RawQuery)
+	}
+}
+
 // A repeatable flag must start every command empty. The shell and the tests
 // reset the flag tree between commands, and pflag's Set appends to a slice
 // flag that was parsed before — the second command used to send the first

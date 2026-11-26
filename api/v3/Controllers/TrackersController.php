@@ -7,6 +7,7 @@ namespace Api\V3\Controllers;
 use Api\V3\Controller;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\ListQuery;
 use Api\V3\Support\TrackingBaseLookup;
 use Prosper202\Click\TrackingLinkVariables;
 use Prosper202\Database\Connection;
@@ -20,6 +21,33 @@ class TrackersController extends Controller
 
     protected function tableName(): string { return '202_trackers'; }
     protected function primaryKey(): string { return 'tracker_id'; }
+
+    /**
+     * A tracker has no name of its own: q finds the trackers of this
+     * account's campaigns whose name contains it.
+     */
+    #[\Override]
+    protected function listSearchCondition(string $pattern): ?array
+    {
+        return [
+            'aff_campaign_id IN (SELECT c.aff_campaign_id FROM 202_aff_campaigns AS c'
+                . " WHERE c.user_id = ? AND LOWER(c.aff_campaign_name) LIKE ? ESCAPE '" . ListQuery::ESCAPE . "')",
+            [$this->userId, $pattern],
+            'is',
+        ];
+    }
+
+    #[\Override]
+    protected function listSortFields(): array
+    {
+        return [
+            'tracker_id' => 'tracker_id',
+            'aff_campaign_id' => 'aff_campaign_id',
+            'ppc_account_id' => 'ppc_account_id',
+            'landing_page_id' => 'landing_page_id',
+            'text_ad_id' => 'text_ad_id',
+        ];
+    }
 
     protected function fields(): array
     {

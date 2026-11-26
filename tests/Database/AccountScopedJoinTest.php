@@ -737,6 +737,8 @@ final class AccountScopedJoinTest extends TestCase
             'a commented-out tie (/* */)' => ["<?php \$s = 'SELECT 1 FROM 202_clicks c $j /* AND ac.user_id = c.user_id */';", $untied],
             'not an account table' => ["<?php \$s = 'SELECT 1 FROM 202_clicks c LEFT JOIN 202_keywords k ON k.keyword_id = c.keyword_id';", $none],
             'an array key is not SQL' => ["<?php \$a = ['join' => 1, \$b['join']];", $none],
+            'a literal \\x01 is text, not a hole' => ["<?php \$r = \"\\x01(\" . \$p . \")\\x01i\"; \$s = 'SELECT 1 FROM 202_clicks c $j';", $untied],
+            'a literal \\x01 and \\x02 in the SQL' => ["<?php \$s = \"SELECT 1 FROM 202_clicks c $j WHERE c.x = '\\x01\\x02'\";", $untied],
             'a quote between PHP blocks is not a string' => ["<?php if (1) { ?>\"<?php } \$s = 'SELECT 1 FROM 202_clicks c $j';", $untied],
         ];
     }

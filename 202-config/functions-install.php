@@ -99,6 +99,9 @@ class INSTALL
         // for every install, so a database installed again under the same
         // name does not read its predecessor's state (InstallId).
         \Prosper202\Database\InstallId::ensure($db);
+        // And names its cache entries: memcached is told the new id now, so
+        // what a previous install here cached is not read (InstallIdCache).
+        \Prosper202\Database\InstallIdCache::remember($db, p202InstallPlace());
 
         // Add publisher IDs to all existing users
         createPublisherIds();
