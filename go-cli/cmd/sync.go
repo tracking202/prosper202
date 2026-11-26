@@ -902,6 +902,15 @@ func syncJobErrorHint(code string) string {
 			"a Prosper202 API does not, so check that install with `p202 --profile <name> system health` before running the same sync again."
 	case "sync_key_unreadable":
 		return "The job's stored API key could not be opened on the server. Run the same `p202 sync` again: it queues a new job with the profiles' keys."
+	case "sync_record_unusable":
+		return "The error names the record and what the sync needs changed on the source (a name it matches by, or a record it refers to that the target lacks). " +
+			"Change it and run the same sync again, or add --skip-errors to sync the rest."
+	case "sync_worker_lost":
+		return "The server process running the job ended before it finished, and the job is not tried again by itself; the job's `written` lists what it had written. " +
+			"Run the same `p202 sync` with --dry-run to see what is left, then without it to finish."
+	case "sync_internal":
+		return "The sync stopped on an error inside the server, not an answer from either instance; the error names the server's error log entry. " +
+			"Check that install's error log, then run the same sync again."
 	}
 	return ""
 }

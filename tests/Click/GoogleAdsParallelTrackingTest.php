@@ -111,6 +111,34 @@ final class GoogleAdsParallelTrackingTest extends TestCase
         );
     }
 
+    /**
+     * The link's gbraid, wbraid and ttclid ride in the pass-on (getPrePopVars()),
+     * and each was added again from the click's ids: the saved page got them twice.
+     */
+    public function testTheSavedPageGetsEachClickIdOnce(): void
+    {
+        $ids = ['gclid' => 'C', 'gbraid' => 'G', 'wbraid' => 'W', 'ttclid' => 'T', 'msclkid' => 'M',
+            'fbclid' => 'F', 'oppref' => 'O'];
+        self::assertSame(
+            'https://shop.example/landing?x=1&promo=1&gclid=C&gbraid=G&wbraid=W&ttclid=T&msclkid=M&fbclid=F&oppref=O',
+            GoogleAdsParallelTracking::redirectTarget(self::PAGE, '', $ids, 'promo=1&gbraid=G&wbraid=W&ttclid=T&')
+        );
+    }
+
+    /** The saved page's tokens are not filled: its URL does not decide, the ad's ids go on. */
+    public function testTheSavedPagesUrlDoesNotHoldBackTheAdsIds(): void
+    {
+        self::assertSame(
+            'https://shop.example/p?gbraid=[[gbraid]]&promo=1&gclid=C&gbraid=G',
+            GoogleAdsParallelTracking::redirectTarget(
+                'https://shop.example/p?gbraid=[[gbraid]]',
+                '',
+                ['gclid' => 'C', 'gbraid' => 'G'],
+                'promo=1&gbraid=G'
+            )
+        );
+    }
+
     public function testAPageWithNoAddressHasNowhereToGo(): void
     {
         self::assertSame('', GoogleAdsParallelTracking::redirectTarget('', '', self::IDS, 'promo=1&'));

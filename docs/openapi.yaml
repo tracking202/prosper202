@@ -8064,6 +8064,8 @@ paths:
           description: Role assigned
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/roles/{roleId}:
     parameters:
@@ -8089,6 +8091,8 @@ paths:
           description: Role removed
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/api-keys:
     parameters:
@@ -8160,6 +8164,8 @@ paths:
                             that does not end.
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     post:
       tags: [Users]
       summary: Create an API key
@@ -8226,6 +8232,8 @@ paths:
                         type: integer
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/api-keys/replace:
     parameters:
@@ -8324,6 +8332,8 @@ paths:
           description: API key deleted
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/identity-key:
     parameters:
@@ -8408,6 +8418,8 @@ paths:
                     $ref: "#/components/schemas/UserPreferences"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     put:
       tags: [Users]
       summary: Update user preferences
@@ -8453,6 +8465,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/click-filter:
     parameters:
@@ -8479,6 +8493,8 @@ paths:
                     $ref: "#/components/schemas/ClickFilter"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     put:
       tags: [Users]
       summary: Change the click filter's checks
@@ -8508,6 +8524,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/click-filter/entries:
     parameters:
@@ -8548,6 +8566,8 @@ paths:
           description: The same addresses are on the list already, as `entry_id`.
         "422":
           $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/click-filter/entries/{entryId}:
     parameters:
@@ -8638,6 +8658,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
 # ═══════════════════════════════════════════════════════════════════════
 # Components
@@ -13637,8 +13659,16 @@ paths:
         of 500 records of one list, or 900 seconds in all, reached),
         `sync_key_unreadable` (the job's stored key does not open: queue the
         sync again) and `sync_remote_failed` (no answer, or one no Prosper202
-        API gives). The first four stop the whole sync, with skip_errors too;
-        only `sync_url_unresolved` and `sync_remote_failed` are retried.
+        API gives), `sync_pair_busy` (another sync of the same pair is
+        running: the job waits and is retried), `sync_record_unusable` (a
+        record that cannot be matched or written as the source has it; it
+        stops the run only without skip_errors), `sync_worker_lost` (the
+        process running the job ended; a killed run is failed once it began
+        1200 seconds ago and nothing holds the job, with `written` counted
+        from its events) and `sync_internal` (an error inside this server;
+        `error` names the log entry). The first four stop the whole sync,
+        with skip_errors too; `sync_url_unresolved`, `sync_remote_failed`,
+        `sync_pair_busy` and `sync_internal` are retried.
         `written` is what the target had confirmed writing when a run
         stopped, by entity (`created`, `updated`, `pruned`), and `error` ends
         saying the same.
