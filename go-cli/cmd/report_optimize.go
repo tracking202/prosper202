@@ -61,18 +61,44 @@ func campaignIDError(id string) error {
 
 // fetchCampaignPayout returns the default payout for a campaign (internal id): a JSON number, or a numeric string from
 // a server before 1.9.77. A payout it cannot read is an error, never 0, which would price every click as worthless.
+// A server that says features.report_payout answers it under the reports' rules (GET reports/payout), which a role
+// with campaign data but not Setup (Campaign optimizer) may read; an older one only as the Setup record
+// (GET campaigns/<id>).
 func fetchCampaignPayout(c *api.Client, campaignID string) (float64, error) {
 	if !isAllDigits(campaignID) {
 		return 0, campaignIDError(campaignID)
 	}
-	data, err := c.Get("campaigns/"+campaignID, nil)
+	path, params := "campaigns/"+campaignID, map[string]string(nil)
+	shown := "GET campaigns/" + campaignID
+	inspect := fmt.Sprintf("`p202 campaign get %s --json` shows what it sent; check the server with `p202 system health`.", campaignID)
+	viaReports := c.SupportsCapability("features", "report_payout")
+	if viaReports {
+		path, params = "reports/payout", map[string]string{"aff_campaign_id": campaignID}
+		shown = "GET reports/payout?aff_campaign_id=" + campaignID
+		inspect = "Check the server with `p202 system health`."
+	}
+	data, err := c.Get(path, params)
 	if err != nil {
 		err = fmt.Errorf("reading campaign %s's payout: %w", campaignID, err)
 		var apiErr *api.APIError
 		if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
+			if viaReports {
+				return 0, withHint(err, "This account has no campaign %s (or it is deleted): `p202 report breakdown --breakdown campaign` lists the internal ids of the campaigns with traffic, and `p202 campaign list` every one, for a role with Setup.", campaignID)
+			}
 			return 0, withHint(err, "This account has no campaign %s (or it is deleted): `p202 campaign list` shows the internal ids.", campaignID)
 		}
+		if !viaReports && errors.As(err, &apiErr) && apiErr.Status == http.StatusForbidden &&
+			strings.Contains(apiErr.Message, "'access_to_setup_section'") {
+			return 0, withHint(err, "%s", "This server reads a payout only from Setup's campaign record: upgrade Prosper202 to 1.9.81 or later, "+
+				"which lets a role with campaign data read it; or give the payout with --payout (or the target with --max-cpc) where the command takes it; "+
+				"or have an admin grant a role with access_to_setup_section: `p202 user role list`, then `p202 user role assign <user_id> <role_id>`.")
+		}
 		return 0, err
+	}
+	if viaReports {
+		if err := refuseMaskedFigures(data, "This command"); err != nil {
+			return 0, err
+		}
 	}
 	var resp struct {
 		Data map[string]interface{} `json:"data"`
@@ -90,8 +116,8 @@ func fetchCampaignPayout(c *api.Client, campaignID string) (float64, error) {
 	}
 	if why != "" {
 		return 0, &CLIError{Category: "server", ExitCode: ExitServer, Cause: err,
-			Message: fmt.Sprintf("the server's answer to GET campaigns/%s has no payout to read (%s)", campaignID, why),
-			Hint:    fmt.Sprintf("`p202 campaign get %s --json` shows what it sent; check the server with `p202 system health`.", campaignID)}
+			Message: fmt.Sprintf("the server's answer to %s has no payout to read (%s)", shown, why),
+			Hint:    inspect}
 	}
 	return payout, nil
 }
@@ -271,8 +297,7 @@ func renderRows(rows []map[string]interface{}) error {
 	if err != nil {
 		return err
 	}
-	render(out)
-	return nil
+	return render(out)
 }
 
 // breakdownFiguresHint is the next step when a ranking's figures cannot be encoded.
@@ -351,7 +376,9 @@ var reportBreakevenCmd = &cobra.Command{
 		if err != nil {
 			return withHint(err, "%s", breakdownFiguresHint)
 		}
-		render(out)
+		if err := render(out); err != nil {
+			return err
+		}
 		noteForPeople(cmd, breakdownMoreRowsNote(data, params, ", most clicks first (each page ranked by margin)"))
 		return nil
 	},
@@ -992,8 +1019,7 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 			if truncated {
 				noteForPeople(cmd, coversFirstRowsNote(params["breakdown"], "most clicks first"))
 			}
-			render(out)
-			return nil
+			return render(out)
 		},
 	}
 	return c

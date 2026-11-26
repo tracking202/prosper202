@@ -11,7 +11,6 @@ use Prosper202\Database\Connection;
 use Prosper202\InboundLog\Entry;
 use Prosper202\InboundLog\InboundLog;
 use Prosper202\InboundLog\Redactor;
-use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
 
 /**
  * Setup › Inbound Log, Conversion Logs' download and the cron health
@@ -150,7 +149,7 @@ final class InboundLogPagesIntegrationTest extends TestCase
         self::q("DELETE FROM 202_destinations WHERE user_id IN ($users)");
         self::q("DELETE FROM 202_inbound_log WHERE user_id IN (0, $users)");
         self::q("DELETE FROM 202_postback_auth WHERE user_id IN ($users)");
-        self::q('UPDATE 202_users_pref SET ' . ShopifyWebhookSecret::COLUMN . " = '' WHERE user_id IN ($users)");
+        self::q("DELETE FROM 202_integration_secrets WHERE user_id IN ($users)");
     }
 
     private static function cleanUp(): void
@@ -255,7 +254,7 @@ final class InboundLogPagesIntegrationTest extends TestCase
     public function testASearchCoversOnlyWhatTheAccountMayRead(): void
     {
         // The account stores a Shopify secret, so it is shown the webhooks no secret verified, without their values.
-        self::q('UPDATE 202_users_pref SET ' . ShopifyWebhookSecret::COLUMN . " = 'demo-store-secret' WHERE user_id = " . self::USER);
+        \Tests\Support\StoredShopifySecret::set(self::requireScratch(), self::USER, 'demo-store-secret');
         (new InboundLog(self::requireScratch()))->append(new Entry('shopify', 'POST', 401, 'unverified', 'No stored secret verifies it.',
             0, null, null, '5550001234', ['order_id' => '5550001234']), self::ARRIVED);
         $own = self::refusedPostback(['subid' => (string) self::CLICK, 'txid' => '5550001234']);
@@ -306,6 +305,25 @@ final class InboundLogPagesIntegrationTest extends TestCase
 
         $list = self::page('tracking202/logs/index.php', [], self::USER, ['range' => 'alltime']);
         self::assertStringContainsString('inbound_log.php?click_id=' . self::CLICK . '">its inbound requests</a>', $list);
+    }
+
+    /** A conversion whose visitor refused consent says, on the page and in the download, that no ad platform was told. */
+    public function testConversionLogsSayWhichConversionsWereHeldBackForConsent(): void
+    {
+        p202RecordLegacyConversion(self::requireScratch(), self::CLICK, 2, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID,
+            ['user_id' => self::USER, 'transaction_id' => 'ORD-ASKED', 'conv_time' => self::ARRIVED]);
+        $lines = self::csv();
+        self::assertSame('held_back_for_consent', end($lines[0]));
+        self::assertSame('no', array_combine($lines[0], $lines[1])['held_back_for_consent'], 'a consenting visitor');
+        self::assertStringNotContainsString('Held back for consent', self::page('tracking202/logs/index.php', [], self::USER, ['range' => 'alltime']));
+
+        self::q("UPDATE 202_conversion_logs SET consent_withheld = 1 WHERE transaction_id = 'ORD-ASKED' AND user_id = " . self::USER);
+        $lines = self::csv();
+        self::assertSame('yes', array_combine($lines[0], $lines[1])['held_back_for_consent']);
+        self::assertStringContainsString(
+            'Held back for consent: no ad platform, traffic source pixel or postback was told',
+            self::page('tracking202/logs/index.php', [], self::USER, ['range' => 'alltime'])
+        );
     }
 
     public function testADownloadLongerThanItsCapSaysSo(): void

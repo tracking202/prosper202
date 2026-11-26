@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Api\V3\Exception;
 
+use Api\V3\ErrorCode;
+
 /**
  * An update whose body names nothing to change: no writable field, only
  * read-only ones sent back with the values the record holds. A PUT answers it
@@ -12,4 +14,8 @@ namespace Api\V3\Exception;
  */
 final class NothingToUpdateException extends ValidationException
 {
+    protected function defaultErrorCode(): string
+    {
+        return ErrorCode::NOTHING_TO_UPDATE;
+    }
 }

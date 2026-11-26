@@ -11,6 +11,7 @@ use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookRefused;
 use Prosper202\Attribution\WebhookTarget;
 use Prosper202\Attribution\WebhookUnresolved;
+use Prosper202\Http\EgressProxy;
 
 /**
  * Another Prosper202 install's API, as a sync (SyncEngine) reads and writes
@@ -20,7 +21,8 @@ use Prosper202\Attribution\WebhookUnresolved;
  * WebhookGuard::checkSync() (https, public addresses, http:// and private
  * ones only where P202_WEBHOOK_ALLOW_NETWORKS admits them, link-local and
  * metadata never) and made to the address it approved, pinned, with no
- * proxy (one would resolve the name itself) and no redirect followed (the
+ * proxy but the operator's egress proxy (Http\EgressProxy::routeOptions();
+ * another would resolve the name itself) and no redirect followed (the
  * key would go with it).
  *
  * What a remote can make this server read is bounded: MAX_ANSWER_BYTES of
@@ -258,6 +260,22 @@ class RemoteApiClient
             if ($total !== null && !(is_int($total) && $total >= 0)) {
                 throw SyncException::remoteFailed($at . ' answered a pagination total that is not a whole number.');
             }
+            // `truncated` says whether records follow the page; a remote
+            // from before it says nothing, and the page's length and the
+            // total decide as they did.
+            if (array_key_exists('truncated', $resp)) {
+                if (!is_bool($resp['truncated'])) {
+                    throw SyncException::remoteFailed($at . ' answered a truncated that is not true or false.');
+                }
+                if ($resp['truncated'] && count($list) < self::PAGE_ROWS) {
+                    throw SyncException::remoteFailed($at . ' answered ' . count($list) . ' records with more to follow, '
+                        . 'to a request for ' . self::PAGE_ROWS . '.');
+                }
+                if (!$resp['truncated']) {
+                    break;
+                }
+                continue;
+            }
             if (count($list) < self::PAGE_ROWS) {
                 break; // a short page: no more records, whatever total says
             }
@@ -369,7 +387,8 @@ class RemoteApiClient
 
         try {
             $this->guard ??= new WebhookGuard();
-            $target = $this->guard->checkSync($this->baseUrl, self::operatorHosts());
+            $target = $this->guard->checkSync($this->baseUrl, self::operatorHosts(), $this->deadline);
+            $proxy = EgressProxy::configured();
         } catch (WebhookUnresolved $e) {
             throw SyncException::urlUnresolved('Not sent to ' . $this->remote() . ': ' . $e->getMessage(), $e);
         } catch (WebhookRefused $e) {
@@ -377,13 +396,20 @@ class RemoteApiClient
         } catch (\UnexpectedValueException $e) {
             throw SyncException::urlRefused('Not sent to ' . $this->remote() . ': ' . $e->getMessage(), $e);
         }
+        // The lookup came out of the sync's time.
+        $left = (int) floor($this->deadline - microtime(true));
+        if ($left < 1) {
+            throw $this->outOfTime($what);
+        }
 
-        $answer = ($this->transport)(self::curlOptions($target, $method, $url, $headers, $body, $left));
+        $answer = ($this->transport)(self::curlOptions($target, $method, $url, $headers, $body, $left, $proxy));
 
         $connected = $answer['primary_ip'];
-        if ($connected !== null && $connected !== '' && !self::sameAddress($connected, $target->pinned())) {
-            throw SyncException::urlRefused($what . ': the connection went to ' . $connected . ' instead of the '
-                . 'checked address ' . $target->pinned() . '; the pin did not hold, so nothing it answered is read.');
+        $peer = EgressProxy::expectedPeer($target, $proxy);
+        if ($peer !== null && $connected !== null && $connected !== '' && !self::sameAddress($connected, $peer)) {
+            throw SyncException::urlRefused($what . ': the connection went to ' . $connected . ' instead of '
+                . (EgressProxy::tunnels($target, $proxy) ? 'the egress proxy ' : 'the checked address ') . $peer
+                . '; the pin did not hold, so nothing it answered is read.');
         }
         if ($answer['capped']) {
             throw SyncException::limit($what . ': the answer is larger than ' . self::MAX_ANSWER_BYTES . ' bytes, '
@@ -424,7 +450,8 @@ class RemoteApiClient
         string $url,
         array $headers,
         ?string $body,
-        int $timeout = self::REQUEST_TIMEOUT
+        int $timeout = self::REQUEST_TIMEOUT,
+        ?EgressProxy $proxy = null
     ): array {
         $protocol = str_starts_with(strtolower($target->url), 'https://') ? CURLPROTO_HTTPS : CURLPROTO_HTTP;
         $options = [
@@ -435,8 +462,6 @@ class RemoteApiClient
             CURLOPT_REDIR_PROTOCOLS => $protocol,
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_MAXREDIRS => 0,
-            CURLOPT_PROXY => '',
-            CURLOPT_NOPROXY => '*',
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_CONNECTTIMEOUT => max(1, min(self::CONNECT_TIMEOUT, $timeout)),
@@ -446,12 +471,8 @@ class RemoteApiClient
         if ($body !== null) {
             $options[CURLOPT_POSTFIELDS] = $body;
         }
-        $resolve = $target->resolveEntry();
-        if ($resolve !== null) {
-            $options[CURLOPT_RESOLVE] = [$resolve];
-        }
 
-        return $options;
+        return array_replace($options, EgressProxy::routeOptions($target, $proxy));
     }
 
     /**
@@ -481,11 +502,12 @@ class RemoteApiClient
 
             return strlen($chunk);
         };
-        if (!curl_setopt_array($ch, $options)) {
-            $error = curl_error($ch);
+        try {
+            \Prosper202\Http\CurlOptions::set($ch, $options);
+        } catch (\Prosper202\Http\CurlOptionRefused $e) {
             curl_close($ch);
 
-            return self::noAnswer('curl refused an option' . ($error !== '' ? ': ' . $error : ''));
+            return self::noAnswer($e->getMessage());
         }
         $ok = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);

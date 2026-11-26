@@ -1,0 +1,2 @@
+-- Fixed: An offer URL that named gbraid, wbraid or ttclid with its token (gbraid=[[gbraid]]) got the parameter twice, the token's value and the link's passed-on copy, from direct links, redirectors, cloaked links, landing pages and Google Ads parallel tracking. A destination now gets each ad click id once: an id its URL already carries is not passed on again. Every other passed-on parameter is unchanged.
+app: Fixed: An offer URL with a gbraid, wbraid or ttclid token no longer gets that parameter twice.

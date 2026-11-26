@@ -1,0 +1,2 @@
+-- Fixed: `p202 sync` against a server that runs sync jobs ignored the error from each request to start the server's sync worker, so when every one failed it printed the job as queued and exited 0 with nothing synced. It now fails with the request's error and exit code, names the job, and says what will run it (the next `p202 sync` from that install, or `202-cronjobs/sync-worker.php` where its crontab runs it); a job the server is already running is a warning.
+app: Fixed: p202 sync no longer reports success when the server's sync worker could not be started.

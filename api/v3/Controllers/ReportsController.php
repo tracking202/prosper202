@@ -8,6 +8,8 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\AccountTimezone;
+use Api\V3\Support\PageRows;
+use Api\V3\Support\QueryInt;
 use Api\V3\Support\ReportFilter;
 use Api\V3\Support\ResponseSanitizer;
 use Api\V3\Support\StatementHelpers;
@@ -361,6 +363,39 @@ class ReportsController
     }
 
     /**
+     * A campaign's default payout, which the losers, winners and break-even
+     * rankings price a click with. GET /campaigns/{id} is Setup's, so a role
+     * with campaign data but not Setup (Campaign optimizer) could not read
+     * it; the reports can. One of the account's live campaigns, else 404.
+     *
+     * @param array<string, mixed> $params
+     * @return array{data: array{aff_campaign_id: int, aff_campaign_name: string, aff_campaign_payout: float, aff_campaign_currency: string}}
+     */
+    public function payout(array $params): array
+    {
+        ReportFilter::rejectUnknown($params, ['aff_campaign_id']);
+        $id = QueryInt::required($params, 'aff_campaign_id', 1, PHP_INT_MAX, "the campaign's internal id");
+
+        $stmt = $this->prepare(
+            'SELECT aff_campaign_id, aff_campaign_name, aff_campaign_payout, aff_campaign_currency FROM 202_aff_campaigns'
+                . ' WHERE aff_campaign_id = ? AND user_id = ? AND aff_campaign_deleted = 0 LIMIT 1'
+        );
+        $this->bind($stmt, 'ii', $id, $this->userId);
+        $this->execute($stmt, 'Campaign payout lookup failed');
+        $row = $this->fetchAll($stmt, 'Campaign payout lookup failed')[0] ?? null;
+        if ($row === null) {
+            throw new NotFoundException('Campaign not found');
+        }
+
+        return ['data' => [
+            'aff_campaign_id' => (int) $row['aff_campaign_id'],
+            'aff_campaign_name' => (string) $row['aff_campaign_name'],
+            'aff_campaign_payout' => (float) $row['aff_campaign_payout'],
+            'aff_campaign_currency' => (string) $row['aff_campaign_currency'],
+        ]];
+    }
+
+    /**
      * What a report's money is in: `currency`, the account's, and
      * `other_currencies`, the revenue of the report's period that the ledger
      * recorded in another currency (or none), each with its conversions and
@@ -453,7 +488,7 @@ class ReportsController
             LIMIT ? OFFSET ?";
 
         // One row past the page says whether rows remain (`truncated`).
-        $binds[] = $limit + 1;
+        $binds[] = PageRows::fetchLimit($limit);
         $types .= 'i';
         $binds[] = $offset;
         $types .= 'i';
@@ -479,10 +514,7 @@ class ReportsController
         }
         $stmt->close();
 
-        $truncated = count($rows) > $limit;
-        if ($truncated) {
-            $rows = array_slice($rows, 0, $limit);
-        }
+        [$rows, $truncated] = PageRows::cut($rows, $limit);
 
         return [
             'data' => $rows,

@@ -15,6 +15,8 @@ use Api\V3\Exception\ValidationException;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Connection;
 use Prosper202\Database\DataSeeder;
+use Prosper202\Database\SchemaReconciler;
+use Prosper202\Database\Tables\TrackingTables;
 use Prosper202\DataEngine\ClickRollupSql;
 use Prosper202\Setup\TrafficSourceOwners;
 use Prosper202\Setup\TrafficSourceRepairRefused;
@@ -704,18 +706,54 @@ final class TrafficSourceSplitIntegrationTest extends TestCase
     }
 
     /**
-     * 202_ppc_network_variables.ppc_network_id is a signed mediumint, and a
-     * source's id is not: a server without strict mode clips a copy's id
-     * past 8388607 to 8388607 in the variables it writes, which is another
-     * source's (here a source of THIRD's). Such a split is refused whole.
+     * A copy's custom variables are kept under its own id past 8388607, the
+     * signed mediumint 202_ppc_network_variables.ppc_network_id was before
+     * 1.9.81, where a server without strict mode stored them under 8388607,
+     * another source (here a source of THIRD's).
+     */
+    public function testACopyPastTheOldSignedWidthKeepsItsVariables(): void
+    {
+        self::row('202_ppc_networks', [
+            'ppc_network_id' => 8388607, 'user_id' => self::THIRD, 'ppc_network_name' => 'Highest signed id',
+            'ppc_network_time' => self::CREATED,
+        ]);
+        self::q("SET SESSION sql_mode=''");
+        try {
+            $answer = self::controller(self::ADMIN)->split(['ppc_network_id' => self::MIXED])['data'];
+            $copy = (int) ($answer['copies'][0]['ppc_network_id'] ?? 0);
+            $kept = self::variablesOf($copy);
+            $onto = self::variablesOf(8388607);
+        } finally {
+            self::q(self::$strict);
+            self::q('DELETE FROM 202_ppc_network_variables WHERE ppc_network_id >= 8388607');
+            self::q('UPDATE 202_ppc_accounts SET ppc_network_id = ' . self::MIXED . ' WHERE ppc_network_id >= 8388607');
+            self::q('UPDATE 202_users_pref SET user_pref_ppc_network_id = ' . self::MIXED
+                . ' WHERE user_pref_ppc_network_id >= 8388607');
+            self::q('DELETE FROM 202_ppc_networks WHERE ppc_network_id >= 8388607');
+            self::q('ALTER TABLE 202_ppc_networks AUTO_INCREMENT = 1');
+        }
+        self::assertSame(8388608, $copy, 'the copy took the first id past the old width');
+        self::assertSame([
+            ['name' => 'Keyword', 'parameter' => 'kw', 'placeholder' => '{keyword}', 'deleted' => '0'],
+            ['name' => 'Ad', 'parameter' => 'ad', 'placeholder' => '{adid}', 'deleted' => '0'],
+        ], $kept, 'the copy keeps the variables under its own id');
+        self::assertSame([], $onto, "nothing was written onto THIRD's source");
+    }
+
+    /**
+     * Before the 1.9.81 upgrade has widened the column (the files are
+     * deployed first), a copy past 8388607 would have its variables clipped
+     * onto another source by a server without strict mode. The split reads
+     * back what it wrote, and is refused whole.
      */
     public function testACopyWhoseIdTheVariablesCannotHoldIsRefusedWhole(): void
     {
         $state = self::state();
         self::row('202_ppc_networks', [
-            'ppc_network_id' => 8388607, 'user_id' => self::THIRD, 'ppc_network_name' => 'Highest variable id',
+            'ppc_network_id' => 8388607, 'user_id' => self::THIRD, 'ppc_network_name' => 'Highest signed id',
             'ppc_network_time' => self::CREATED,
         ]);
+        self::q('ALTER TABLE 202_ppc_network_variables MODIFY COLUMN `ppc_network_id` mediumint(8) NOT NULL');
         self::q("SET SESSION sql_mode=''");
         try {
             self::controller(self::ADMIN)->split(['ppc_network_id' => self::MIXED]);
@@ -729,6 +767,8 @@ final class TrafficSourceSplitIntegrationTest extends TestCase
             self::q(self::$strict);
             $onto = self::variablesOf(8388607);
             self::q('DELETE FROM 202_ppc_network_variables WHERE ppc_network_id >= 8388607');
+            self::q('ALTER TABLE 202_ppc_network_variables MODIFY COLUMN '
+                . SchemaReconciler::requiredColumns(TrackingTables::ppcNetworkVariables())['ppc_network_id']);
             self::q('DELETE FROM 202_ppc_networks WHERE ppc_network_id >= 8388607');
             self::q('ALTER TABLE 202_ppc_networks AUTO_INCREMENT = 1');
         }

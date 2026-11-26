@@ -18,7 +18,10 @@ use Prosper202\Setup\FacebookPixelAssistantSettings;
  *
  * Nothing is answered unless the visitor may be sent a third-party pixel,
  * which sets cookies (mayTrack(): the privacy setting in force, the page's
- * consent and the campaign's identity capture), the page's assistant is
+ * consent and the campaign's identity capture), no request of the click
+ * refused consent where that is kept (ConsentRefusal: the tracking
+ * template's hit a parallel-tracking page takes its click from, an earlier
+ * visit), the page's assistant is
  * on, and the click's traffic source (the account's own) has a "Bot202
  * Facebook Pixel Assistant" pixel holding a Meta Pixel ID. With dynamic EPV on, the
  * outbound click carries the source's earnings per outbound click over
@@ -56,7 +59,7 @@ final class FacebookPixelAssistantScript
         }
         try {
             $settings = self::config($conn, $userId, $landingPageId, $ppcAccountId, $clickId, $cache, $now ?? time());
-            if ($settings === null) {
+            if ($settings === null || self::clickRefused($conn, $clickId)) {
                 return '';
             }
             $json = json_encode(
@@ -105,6 +108,31 @@ final class FacebookPixelAssistantScript
 
             return $value;
         };
+    }
+
+    /**
+     * Whether a request of the click refused consent (ConsentRefusal), read
+     * only for a page that would send events. On the write connection: the
+     * refusal may be this request's own write, and a lagging replica would
+     * answer "none". Before the 1.9.80 upgrade adds the table no refusal
+     * could be kept, and the page's own consent (mayTrack()) is all there
+     * is. Any other failure is forClick()'s, which answers nothing.
+     */
+    private static function clickRefused(Connection $conn, int $clickId): bool
+    {
+        try {
+            $stmt = $conn->prepareWrite('SELECT ' . \Prosper202\Identity\ConsentRefusal::standsSql('?') . ' AS refused');
+            $conn->bind($stmt, 'i', [$clickId]);
+            $row = $conn->fetchOne($stmt);
+        } catch (\Throwable $e) {
+            if (\Prosper202\Conversion\Ledger\ConsentWithheld::storageMissing($e)) {
+                return false;
+            }
+            throw $e;
+        }
+
+        // Anything but a 0 is a refusal (CLAUDE.md #11).
+        return (string) ($row['refused'] ?? '1') !== '0';
     }
 
     /** @return array<string, string|float>|null */

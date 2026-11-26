@@ -17,6 +17,25 @@ class PpcNetworksController extends Controller
 {
     protected function tableName(): string { return '202_ppc_networks'; }
     protected function primaryKey(): string { return 'ppc_network_id'; }
+
+    #[\Override]
+    protected function libraryResource(): ?string
+    {
+        return 'ppc-networks';
+    }
+
+    #[\Override]
+    protected function listSearchColumns(): array
+    {
+        return ['ppc_network_name'];
+    }
+
+    #[\Override]
+    protected function listSortFields(): array
+    {
+        return ['ppc_network_id' => 'ppc_network_id', 'ppc_network_name' => 'ppc_network_name'];
+    }
+
     protected function deletedColumn(): ?string { return 'ppc_network_deleted'; }
 
     protected function fields(): array

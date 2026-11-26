@@ -7,6 +7,8 @@ namespace Prosper202\Ltv;
 use Prosper202\Attribution\WebhookGuard;
 use Prosper202\Attribution\WebhookRefused;
 use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
+use Prosper202\Webhooks\StandardWebhook;
 use RuntimeException;
 
 /**
@@ -43,6 +45,9 @@ final class MysqlWebhookRepository
         'alert.test',
     ];
 
+    /** Deliveries enqueueEach() inserts per statement. */
+    public const ENQUEUE_ROWS = 500;
+
     /** Max delivery attempts before a delivery is failed and the hook may die. */
     public const MAX_ATTEMPTS = 6;
 
@@ -55,6 +60,12 @@ final class MysqlWebhookRepository
 
     /** The last response of a delivery a revival without requeue set aside (revive()). */
     public const REVIVED_HELD_REASON = 'held: its webhook was revived for new events only, so it was not sent';
+
+    /** How long rotateSecret() signs with the replaced secret too, unless told otherwise. */
+    public const ROTATION_OVERLAP_DEFAULT_SECONDS = 86400;
+
+    /** The longest overlap rotateSecret() takes: a week. */
+    public const ROTATION_OVERLAP_MAX_SECONDS = 7 * 86400;
 
     /** How long revive() waits for a dispatcher run in flight to end. */
     public const REVIVE_LOCK_WAIT_SECONDS = 20;
@@ -97,7 +108,9 @@ final class MysqlWebhookRepository
     }
 
     /**
-     * Compute the signature header value for a payload body.
+     * The X-P202-Signature value for a payload body: HMAC-SHA256 of the
+     * body alone, under the secret's text. Sent beside the Standard Webhooks
+     * headers (DeliverySender) through StandardWebhook::LEGACY_SIGNATURE_LAST_RELEASE.
      */
     public static function signature(string $body, string $secret): string
     {
@@ -190,7 +203,11 @@ final class MysqlWebhookRepository
 
     /**
      * Register a webhook endpoint. Returns [webhook_id, secret] — the secret
-     * is generated server-side and shown once.
+     * is generated server-side and shown once: a whsec_ secret
+     * (StandardWebhook::newSecret()), which a Standard Webhooks library takes
+     * as it is. $standardSecret false mints the hex form every webhook had
+     * before 1.9.81, for the Landing Page Optimizer's pairing, whose secret
+     * the Tracking202 service is handed and takes as it took it before.
      *
      * @param list<string> $events names from KNOWN_EVENTS, or ['*'] to
      *        subscribe to every current AND future event — stored as '',
@@ -199,7 +216,7 @@ final class MysqlWebhookRepository
      * @return array{webhookId: int, secret: string}
      * @throws WebhookRefused naming why the URL is refused (urlRefusal())
      */
-    public function create(int $userId, string $url, array $events): array
+    public function create(int $userId, string $url, array $events, bool $standardSecret = true): array
     {
         $refused = self::urlRefusal($url);
         if ($refused !== null) {
@@ -229,7 +246,7 @@ final class MysqlWebhookRepository
             $subscribedEvents = implode(',', $events);
         }
 
-        $secret = bin2hex(random_bytes(24));
+        $secret = $standardSecret ? StandardWebhook::newSecret() : bin2hex(random_bytes(24));
         $now = time();
 
         $stmt = $this->conn->prepareWrite(
@@ -294,24 +311,17 @@ final class MysqlWebhookRepository
             self::assertEventName($name);
         }
 
-        $stmt = $this->conn->prepareRead(
-            "SELECT webhook_id FROM 202_ltv_webhooks
-             WHERE user_id = ? AND status IN ('active', 'dead')
-               AND (subscribed_events = ''"
-            . str_repeat(' OR FIND_IN_SET(?, subscribed_events) > 0', count($subscribedToAny)) . ')'
-        );
-        $this->conn->bind($stmt, 'i' . str_repeat('s', count($subscribedToAny)), [$userId, ...$subscribedToAny]);
-        $webhooks = $this->conn->fetchAll($stmt);
+        $webhooks = $this->subscribers($userId, $subscribedToAny);
         if ($webhooks === []) {
             return 0;
         }
 
-        $body = json_encode(['event' => $eventName, 'occurred_at' => time(), 'data' => $payload]);
+        $now = time();
+        $body = json_encode(self::envelope($eventName, $payload, $now, StandardWebhook::newMessageId()));
         if ($body === false) {
             throw new RuntimeException('Failed to encode webhook payload for ' . $eventName);
         }
 
-        $now = time();
         foreach ($webhooks as $webhook) {
             $ins = $this->conn->prepareWrite(
                 "INSERT INTO 202_ltv_webhook_deliveries
@@ -335,16 +345,149 @@ final class MysqlWebhookRepository
     }
 
     /**
+     * The body of one event, the same for every webhook it is queued for:
+     * the Standard Webhooks envelope, `type` (the versioned event type,
+     * StandardWebhook::versionedType()), `timestamp` (when it was queued,
+     * ISO 8601 UTC) and `data`; then `id`, the message id every attempt
+     * sends as webhook-id (messageId()); and `event` and `occurred_at`, the
+     * names the body had before 1.9.81, kept while X-P202-Signature is.
+     *
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    public static function envelope(string $eventName, array $data, int $occurredAt, string $messageId): array
+    {
+        return [
+            'type' => StandardWebhook::versionedType($eventName),
+            'timestamp' => gmdate('Y-m-d\TH:i:s\Z', $occurredAt),
+            'data' => $data,
+            'id' => $messageId,
+            'event' => $eventName,
+            'occurred_at' => $occurredAt,
+        ];
+    }
+
+    /**
+     * The webhook-id of a delivery: the `id` its body was queued with, the
+     * same on every attempt and for every webhook the event went to. A
+     * delivery queued before 1.9.81 has none, and is named by its delivery
+     * id (msg_ltv_<id>), which is as stable; so is one whose body cannot be
+     * read, which is sent as it was queued.
+     *
+     * @param array<string, mixed> $delivery a duePending() row
+     */
+    public static function messageId(array $delivery): string
+    {
+        $decoded = json_decode((string) ($delivery['payload'] ?? ''), true);
+        if (is_array($decoded) && isset($decoded['id']) && is_string($decoded['id'])
+            && preg_match('/^msg_[0-9a-f]{32}$/D', $decoded['id']) === 1) {
+            return $decoded['id'];
+        }
+
+        return 'msg_ltv_' . (int) $delivery['delivery_id'];
+    }
+
+    /**
+     * The secrets a delivery is signed with at $now: the webhook's, then the
+     * one a rotation replaced while it has not expired.
+     *
+     * @param array<string, mixed> $delivery a duePending() row
+     * @return non-empty-list<string>
+     */
+    public static function signingSecrets(array $delivery, int $now): array
+    {
+        $secrets = [(string) $delivery['webhook_secret']];
+        $previous = $delivery['previous_secret'] ?? null;
+        $until = $delivery['previous_secret_expires_at'] ?? null;
+        if (is_string($previous) && $previous !== '' && $until !== null && (int) $until > $now) {
+            $secrets[] = $previous;
+        }
+
+        return $secrets;
+    }
+
+    /**
+     * enqueue() of one event per payload, for a write that changes many
+     * records at once (a company rename rewrites every customer attached):
+     * the subscribers are read once and the deliveries inserted
+     * ENQUEUE_ROWS to a statement, where enqueue() per record made one lookup
+     * and one insert per webhook for each. Answers how many deliveries it
+     * queued, 0 when no webhook subscribes or there is no payload.
+     *
+     * @param list<array<string, mixed>> $payloads
+     */
+    public function enqueueEach(int $userId, string $eventName, array $payloads): int
+    {
+        self::assertEventName($eventName);
+        if ($payloads === []) {
+            return 0;
+        }
+        $webhooks = $this->subscribers($userId, [$eventName]);
+        if ($webhooks === []) {
+            return 0;
+        }
+
+        $now = time();
+        $rows = [];
+        foreach ($payloads as $payload) {
+            $body = json_encode(self::envelope($eventName, $payload, $now, StandardWebhook::newMessageId()));
+            if ($body === false) {
+                throw new RuntimeException('Failed to encode webhook payload for ' . $eventName);
+            }
+            foreach ($webhooks as $webhook) {
+                $rows[] = [(int) $webhook['webhook_id'], $userId, $eventName, $body, $now, $now, $now];
+            }
+        }
+        foreach (array_chunk($rows, self::ENQUEUE_ROWS) as $chunk) {
+            $ins = $this->conn->prepareWrite(
+                'INSERT INTO 202_ltv_webhook_deliveries
+                    (webhook_id, user_id, event_name, payload, status, attempts, next_attempt_at,
+                     created_at, updated_at)
+                 VALUES ' . implode(', ', array_fill(0, count($chunk), "(?, ?, ?, ?, 'pending', 0, ?, ?, ?)"))
+            );
+            $this->conn->bind($ins, str_repeat('iissiii', count($chunk)), array_merge(...$chunk));
+            $written = $this->conn->executeUpdate($ins);
+            if ($written !== count($chunk)) {
+                throw new QueryException('Queued ' . $written . ' of ' . count($chunk) . ' ' . $eventName
+                    . ' deliveries');
+            }
+        }
+
+        return count($rows);
+    }
+
+    /**
+     * The account's active or dead webhooks subscribed to any of the names,
+     * or to every event.
+     *
+     * @param non-empty-list<string> $subscribedToAny
+     * @return list<array<string, mixed>>
+     */
+    private function subscribers(int $userId, array $subscribedToAny): array
+    {
+        $stmt = $this->conn->prepareRead(
+            "SELECT webhook_id FROM 202_ltv_webhooks
+             WHERE user_id = ? AND status IN ('active', 'dead')
+               AND (subscribed_events = ''"
+            . str_repeat(' OR FIND_IN_SET(?, subscribed_events) > 0', count($subscribedToAny)) . ')'
+        );
+        $this->conn->bind($stmt, 'i' . str_repeat('s', count($subscribedToAny)), [$userId, ...$subscribedToAny]);
+
+        return $this->conn->fetchAll($stmt);
+    }
+
+    /**
      * Delivery history for one endpoint, newest first — the operator-facing
      * log behind the settings UI (attempt counts, last status codes, backoff
-     * schedule). Response bodies are already stored truncated.
+     * schedule, the last response or error). Response bodies are stored
+     * truncated, and served with credentials removed.
      *
      * @return list<array<string, mixed>>
      */
     public function recentDeliveries(int $userId, int $webhookId, int $limit = 25): array
     {
         $stmt = $this->conn->prepareRead(
-            'SELECT delivery_id, event_name, status, attempts, last_status_code,
+            'SELECT delivery_id, event_name, status, attempts, last_status_code, last_response_body,
                     next_attempt_at, created_at, updated_at
              FROM 202_ltv_webhook_deliveries
              WHERE webhook_id = ? AND user_id = ?
@@ -353,7 +496,25 @@ final class MysqlWebhookRepository
         );
         $this->conn->bind($stmt, 'iii', [$webhookId, $userId, max(1, $limit)]);
 
-        return $this->conn->fetchAll($stmt);
+        return self::redactedLog($this->conn->fetchAll($stmt));
+    }
+
+    /**
+     * A log's rows with each last response put through DeliveryReason::redact():
+     * a row stored before the dispatcher redacted it can hold a credential.
+     *
+     * @param list<array<string, mixed>> $rows
+     * @return list<array<string, mixed>>
+     */
+    private static function redactedLog(array $rows): array
+    {
+        foreach ($rows as $i => $row) {
+            if (isset($row['last_response_body'])) {
+                $rows[$i]['last_response_body'] = DeliveryReason::redactSafely((string) $row['last_response_body']);
+            }
+        }
+
+        return $rows;
     }
 
     /** The states a delivery is in (the column's enum). */
@@ -362,8 +523,9 @@ final class MysqlWebhookRepository
     /**
      * The delivery log the API serves: recentDeliveries()'s columns plus
      * the last attempt's response body or error ("curl: …", "blocked: …",
-     * stored truncated to 1,000 bytes), optionally one status only, newest
-     * first. Never the payload, never the endpoint's secret.
+     * stored truncated to 1,000 bytes, credentials removed), optionally one
+     * status only, newest first. Never the payload, never the endpoint's
+     * secret.
      *
      * @return list<array<string, mixed>>
      */
@@ -388,7 +550,7 @@ final class MysqlWebhookRepository
             $this->conn->bind($stmt, 'iii', [$webhookId, $userId, max(1, $limit)]);
         }
 
-        return $this->conn->fetchAll($stmt);
+        return self::redactedLog($this->conn->fetchAll($stmt));
     }
 
     /**
@@ -425,7 +587,8 @@ final class MysqlWebhookRepository
     {
         $stmt = $this->conn->prepareRead(
             "SELECT d.delivery_id, d.webhook_id, d.user_id, d.event_name, d.payload, d.attempts, d.next_attempt_at,
-                    w.webhook_url, w.webhook_secret, w.status AS webhook_status
+                    w.webhook_url, w.webhook_secret, w.previous_secret, w.previous_secret_expires_at,
+                    w.status AS webhook_status
              FROM 202_ltv_webhook_deliveries d
              JOIN 202_ltv_webhooks w ON w.webhook_id = d.webhook_id
              WHERE d.status = 'pending' AND d.next_attempt_at <= ?
@@ -648,6 +811,111 @@ final class MysqlWebhookRepository
         $requeued = $this->conn->executeUpdate($stmt);
 
         return ['revived' => true, 'requeued' => $requeued, 'attempts_reset' => $reset, 'held' => 0];
+    }
+
+    /**
+     * Give a webhook a new secret (StandardWebhook::newSecret()), returned
+     * once as create()'s is. For $overlapSeconds after $now every delivery
+     * is also signed by the secret it replaces, a second v1 signature in
+     * webhook-signature, so a receiver can switch to the new secret without
+     * one delivery failing; 0 drops the old one at once. X-P202-Signature,
+     * one signature only, is the new secret's from the start. A secret
+     * rotated away within an earlier rotation's overlap stops at once.
+     *
+     * The Landing Page Optimizer's webhook (the one lpo_bridge_config names)
+     * is refused: the Tracking202 service holds its secret and verifies with
+     * it, and a pairing gives it a new one. A pairing record that cannot be
+     * read refuses too, since whether it names this webhook cannot be told.
+     * Another account's webhook, or none, is a RecordNotFoundException.
+     *
+     * @return array{secret: string, previous_secret_expires_at: ?int}
+     * @throws LtvInputException naming overlap_hours, or webhook_id for the optimizer's webhook
+     */
+    public function rotateSecret(int $userId, int $webhookId, int $overlapSeconds, int $now): array
+    {
+        if ($overlapSeconds < 0 || $overlapSeconds > self::ROTATION_OVERLAP_MAX_SECONDS) {
+            throw new LtvInputException(
+                'overlap_hours',
+                'The overlap is 0 to ' . intdiv(self::ROTATION_OVERLAP_MAX_SECONDS, 3600) . ' hours'
+            );
+        }
+
+        return $this->conn->transaction(function () use ($userId, $webhookId, $overlapSeconds, $now): array {
+            $lock = $this->conn->prepareWrite(
+                'SELECT webhook_secret FROM 202_ltv_webhooks WHERE webhook_id = ? AND user_id = ? FOR UPDATE'
+            );
+            $this->conn->bind($lock, 'ii', [$webhookId, $userId]);
+            $row = $this->conn->fetchOne($lock);
+            if ($row === null) {
+                throw new RecordNotFoundException('Webhook not found');
+            }
+
+            $pairing = $this->pairingWebhookOf($userId, true);
+            if ($pairing === false || $pairing === $webhookId) {
+                throw new LtvInputException('webhook_id', $pairing === false
+                    ? 'The Landing Page Optimizer pairing record cannot be read, so whether this webhook is the'
+                        . ' optimizer\'s cannot be told; its secret was not rotated'
+                    : 'This is the Landing Page Optimizer\'s webhook: the optimizer verifies its deliveries with'
+                        . ' the secret the pairing gave it, so it is not rotated here. Disconnect the optimizer'
+                        . ' and connect it again for a new one');
+            }
+
+            $secret = StandardWebhook::newSecret();
+            $previous = $overlapSeconds > 0 ? (string) $row['webhook_secret'] : null;
+            $until = $overlapSeconds > 0 ? $now + $overlapSeconds : null;
+            $stmt = $this->conn->prepareWrite(
+                'UPDATE 202_ltv_webhooks
+                 SET webhook_secret = ?, previous_secret = ?, previous_secret_expires_at = ?, updated_at = ?
+                 WHERE webhook_id = ? AND user_id = ?'
+            );
+            $this->conn->bind($stmt, 'ssiiii', [$secret, $previous, $until, $now, $webhookId, $userId]);
+            $this->conn->executeUpdate($stmt);
+
+            return ['secret' => $secret, 'previous_secret_expires_at' => $until];
+        });
+    }
+
+    /**
+     * The webhook the account's Landing Page Optimizer pairing uses, which
+     * rotateSecret() refuses: null when there is none, false when the
+     * pairing record cannot be read. $write reads on the write connection,
+     * for rotateSecret()'s transaction.
+     */
+    public function pairingWebhookOf(int $userId, bool $write = false): int|false|null
+    {
+        $sql = 'SELECT lpo_bridge_config FROM 202_users_pref WHERE user_id = ? LIMIT 1';
+        $stmt = $write ? $this->conn->prepareWrite($sql) : $this->conn->prepareRead($sql);
+        $this->conn->bind($stmt, 'i', [$userId]);
+        $row = $this->conn->fetchOne($stmt);
+
+        return self::pairingWebhookId((string) ($row['lpo_bridge_config'] ?? ''));
+    }
+
+    /**
+     * The webhook id a stored lpo_bridge_config names: null when there is no
+     * pairing record or it names none, false when it cannot be read.
+     */
+    private static function pairingWebhookId(string $bridgeConfig): int|false|null
+    {
+        if (trim($bridgeConfig) === '') {
+            return null;
+        }
+        $state = json_decode($bridgeConfig, true);
+        if (!is_array($state)) {
+            return false;
+        }
+        if (!array_key_exists('webhook_id', $state) || $state['webhook_id'] === null) {
+            return null;
+        }
+        $id = $state['webhook_id'];
+        if (is_int($id)) {
+            return $id;
+        }
+        if (is_string($id) && preg_match('/^[1-9][0-9]{0,9}$/D', $id) === 1) {
+            return (int) $id;
+        }
+
+        return false;
     }
 
     /**

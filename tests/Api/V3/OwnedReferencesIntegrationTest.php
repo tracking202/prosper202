@@ -9,6 +9,7 @@ use Api\V3\Controllers\LandingPagesController;
 use Api\V3\Controllers\PpcAccountsController;
 use Api\V3\Controllers\TextAdsController;
 use Api\V3\Controllers\TrackersController;
+use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\ValidationException;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\SchemaInstaller;
@@ -280,6 +281,170 @@ final class OwnedReferencesIntegrationTest extends TestCase
         // An ad stored on a simple page before this was checked saves as it is.
         self::q("UPDATE 202_text_ads SET landing_page_id = {$m['landing_page_id']} WHERE text_ad_id = $ad");
         $ads->update($ad, ['text_ad_type' => 1, 'landing_page_id' => $m['landing_page_id'], 'text_ad_name' => 'y']);
+    }
+
+    /**
+     * An advanced page is not made simple while text ads of type 1 name it:
+     * Get Links offers those only on an advanced page, so the change left
+     * them offered nowhere with a 200. The refusal names every such ad and
+     * none other (a removed one, a campaign's, another account's), on a PUT
+     * and on a bulk row; once none remain, the change is made.
+     */
+    public function testAnAdvancedPageWithTextAdsIsNotMadeSimple(): void
+    {
+        $m = $this->ids['mine'];
+        $pages = new LandingPagesController(self::$db, self::USER);
+        $ads = new TextAdsController(self::$db, self::USER);
+        $page = (int) $pages->create(['landing_page_url' => 'https://adv.example', 'landing_page_nickname' => 'adv', 'landing_page_type' => 1, 'aff_campaign_id' => 0])['data']['landing_page_id'];
+        $body = ['text_ad_name' => 'x', 'text_ad_headline' => 'h', 'text_ad_description' => 'd', 'text_ad_display_url' => 'x', 'text_ad_type' => 1, 'aff_campaign_id' => 0, 'landing_page_id' => $page];
+        $first = (int) $ads->create($body)['data']['text_ad_id'];
+        $second = (int) $ads->create(['text_ad_name' => 'y'] + $body)['data']['text_ad_id'];
+        $removed = (int) $ads->create(['text_ad_name' => 'z'] + $body)['data']['text_ad_id'];
+        $ads->delete($removed);
+        self::q("INSERT INTO 202_text_ads SET user_id = " . self::USER . ", aff_campaign_id = {$m['aff_campaign_id']}, landing_page_id = $page, text_ad_type = 0, text_ad_name = 'c', text_ad_headline = 'h', text_ad_description = 'd', text_ad_display_url = 'x', text_ad_time = 0");
+        self::q("INSERT INTO 202_text_ads SET user_id = " . self::OTHER . ", aff_campaign_id = 0, landing_page_id = $page, text_ad_type = 1, text_ad_name = 'o', text_ad_headline = 'h', text_ad_description = 'd', text_ad_display_url = 'x', text_ad_time = 0");
+        $makeSimple = ['landing_page_type' => 0, 'aff_campaign_id' => $m['aff_campaign_id']];
+        $type = static fn (): int => (int) $pages->get($page)['data']['landing_page_type'];
+
+        try {
+            $pages->update($page, $makeSimple);
+            self::fail('an advanced page its ads name was made simple');
+        } catch (ValidationException $e) {
+            $said = $e->getFieldErrors()['landing_page_type'] ?? '';
+            self::assertStringContainsString("2 text ads of text_ad_type 1 name it (text_ad_id $first, $second)", $said, json_encode($e->getFieldErrors()));
+            self::assertStringContainsString("GET /text-ads?filter[landing_page_id]=$page&filter[text_ad_type]=1", $said);
+        }
+        self::assertSame(1, $type(), 'the refused update changed the type');
+        $pages->update($page, ['landing_page_nickname' => 'renamed']);
+
+        \Api\V3\RequestContext::setHeaders(['Idempotency-Key' => 'simple-' . bin2hex(random_bytes(6))]);
+        try {
+            $result = $pages->bulkUpsert(['rows' => [['landing_page_id' => $page] + $makeSimple]]);
+        } finally {
+            \Api\V3\RequestContext::reset();
+        }
+        self::assertSame(['error'], array_column($result['data'], 'status'), json_encode($result));
+        self::assertArrayHasKey('landing_page_type', $result['data'][0]['field_errors'] ?? [], json_encode($result['data'][0]));
+        self::assertSame(1, $type(), 'the refused row changed the type');
+
+        $ads->update($first, ['text_ad_type' => 0, 'aff_campaign_id' => $m['aff_campaign_id']]);
+        $ads->delete($second);
+        self::assertSame(0, (int) $pages->update($page, $makeSimple)['data']['landing_page_type']);
+
+        // A page already simple saves with an ad of type 1 stored on it before #260.
+        self::q("UPDATE 202_text_ads SET text_ad_type = 1 WHERE text_ad_id = $first");
+        $pages->update($page, ['landing_page_type' => 0, 'landing_page_nickname' => 'still simple']);
+    }
+
+    public function testAnAdvancedPageItsAdsOrTrackersNameIsNotDeleted(): void
+    {
+        $m = $this->ids['mine'];
+        $u = self::USER;
+        $o = self::OTHER;
+        $pages = new LandingPagesController(self::$db, $u);
+        $ads = new TextAdsController(self::$db, $u);
+        $page = (int) $pages->create([
+            'landing_page_url' => 'https://adv.example', 'landing_page_nickname' => 'adv',
+            'landing_page_type' => 1, 'aff_campaign_id' => 0,
+        ])['data']['landing_page_id'];
+        $body = [
+            'text_ad_name' => 'x', 'text_ad_headline' => 'h', 'text_ad_description' => 'd',
+            'text_ad_display_url' => 'x', 'text_ad_type' => 1, 'aff_campaign_id' => 0, 'landing_page_id' => $page,
+        ];
+        $ad = (int) $ads->create($body)['data']['text_ad_id'];
+        $removed = (int) $ads->create(['text_ad_name' => 'z'] + $body)['data']['text_ad_id'];
+        $ads->delete($removed);
+        $tracker = static fn (int $user, int $lp): int => self::q(
+            "INSERT INTO 202_trackers SET user_id = $user, tracker_id_public = " . random_int(100000000, 999999999)
+            . ", aff_campaign_id = 0, text_ad_id = 0, ppc_account_id = 0, landing_page_id = $lp, rotator_id = 0,"
+            . ' click_cloaking = 0, tracker_time = 0'
+        );
+        $first = $tracker($u, $page);
+        $second = $tracker($u, $page);
+        // Another account's rows naming the id are not this page's.
+        $tracker($o, $page);
+        self::q("INSERT INTO 202_text_ads SET user_id = $o, aff_campaign_id = 0, landing_page_id = $page,"
+            . " text_ad_type = 1, text_ad_name = 'o', text_ad_headline = 'h', text_ad_description = 'd',"
+            . " text_ad_display_url = 'x', text_ad_time = 0");
+        $deleted = static fn (int $id): string => (string) self::$db
+            ->query("SELECT landing_page_deleted FROM 202_landing_pages WHERE landing_page_id = $id")->fetch_row()[0];
+
+        $calls = ['delete' => fn () => $pages->delete($page), 'dry run' => fn () => $pages->deletePreview($page)];
+        foreach ($calls as $what => $call) {
+            try {
+                $call();
+                self::fail("the $what of an advanced page its ad and trackers name was not refused");
+            } catch (ConflictException $e) {
+                $said = $e->getMessage();
+                self::assertStringContainsString("Landing page $page is advanced and 1 text ad of text_ad_type 1"
+                    . " (text_ad_id $ad) and 2 trackers (tracker_id $first, $second) name it", $said, $what);
+                self::assertStringContainsString("GET /text-ads?filter[landing_page_id]=$page&filter[text_ad_type]=1"
+                    . " and GET /trackers?filter[landing_page_id]=$page list them.", $said, $what);
+                self::assertSame(['text_ad_ids' => [$ad], 'tracker_ids' => [$first, $second]], $e->getDetails(), $what);
+            }
+            self::assertSame('0', $deleted($page), "the refused $what removed the page");
+        }
+
+        // Once the ad is a campaign's, the trackers alone still hold the page.
+        $ads->update($ad, ['text_ad_type' => 0, 'aff_campaign_id' => $m['aff_campaign_id']]);
+        try {
+            $pages->delete($page);
+            self::fail('an advanced page its trackers name was deleted');
+        } catch (ConflictException $e) {
+            $said = $e->getMessage();
+            self::assertStringContainsString(
+                "Landing page $page is advanced and 2 trackers (tracker_id $first, $second) name it",
+                $said
+            );
+            self::assertStringContainsString('or delete it (DELETE /trackers/{id})', $said);
+            self::assertSame(['text_ad_ids' => [], 'tracker_ids' => [$first, $second]], $e->getDetails());
+        }
+        self::q("DELETE FROM 202_trackers WHERE tracker_id IN ($first, $second)");
+        self::assertSame('delete', $pages->deletePreview($page)['data']['action']);
+        $pages->delete($page);
+        self::assertSame('1', $deleted($page));
+
+        // A simple page is removed as before: its trackers name its campaign's link.
+        $simple = $m['landing_page_id'];
+        $tracker($u, $simple);
+        $pages->delete($simple);
+        self::assertSame('1', $deleted($simple));
+    }
+
+    public function testThePageIsHeldWhileItsDeleteDecides(): void
+    {
+        $page = $this->ids['mine']['landing_page_id'];
+        $conn = new \Prosper202\Database\Connection(self::$db);
+        $trackers = new \Prosper202\Setup\LandingPageTrackers($conn);
+        try {
+            $trackers->lockPage(self::USER, $page);
+            self::fail('the page was locked outside a transaction, where the lock ends with the statement');
+        } catch (\LogicException) {
+        }
+
+        $other = new \mysqli(
+            (string) getenv('P202_TEST_DB_HOST'),
+            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+            (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+        );
+        self::assertTrue($other->query('SET SESSION innodb_lock_wait_timeout = 1'));
+        try {
+            $conn->transaction(function () use ($trackers, $page, $other): void {
+                self::assertSame(0, $trackers->lockPage(self::USER, $page));
+                self::assertNull($trackers->lockPage(self::OTHER, $page), "another account's page is no page");
+                $wrote = $other->query("UPDATE 202_landing_pages SET landing_page_type = 1"
+                    . " WHERE landing_page_id = $page");
+                self::assertFalse($wrote, 'a second write of the page landed while the delete held it');
+                self::assertSame(1205, $other->errno, $other->error);
+            });
+        } finally {
+            $other->close();
+        }
+        self::assertNull((new \Prosper202\Database\Connection(self::$db))->transaction(
+            fn (): ?int => $trackers->lockPage(self::USER, $this->ids['removed']['landing_page_id'])
+        ), 'a removed page is no page');
     }
 
     public function testBulkUpsertRefusesTheRowNotTheBatch(): void

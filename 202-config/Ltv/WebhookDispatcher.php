@@ -243,6 +243,7 @@ final class WebhookDispatcher
                 } catch (\Throwable $e) {
                     [$success, $statusCode, $responseBody] = [false, null, 'error: ' . $e->getMessage()];
                 }
+                $responseBody = DeliveryReason::redactSafely($responseBody, (string) ($delivery['webhook_secret'] ?? ''));
                 $repo->recordAttempt($deliveryId, $webhookId, $success, $statusCode, $responseBody);
 
                 if ($success) {
@@ -277,10 +278,11 @@ final class WebhookDispatcher
     }
 
     /**
-     * The request headers of a delivery: its signature over the exact body
-     * with the webhook's secret, its event and its id, which a receiver
-     * de-duplicates by (a delivery whose outcome could not be recorded is
-     * sent again once its claim lapses).
+     * The request headers of a delivery (DeliverySender::headers()): the
+     * Standard Webhooks signature and the older X-P202 ones, and the ids a
+     * receiver de-duplicates by, webhook-id per event and X-P202-Delivery
+     * per webhook (a delivery whose outcome could not be recorded is sent
+     * again once its claim lapses).
      *
      * @param array<string, mixed> $delivery a duePending() row
      * @return list<string>

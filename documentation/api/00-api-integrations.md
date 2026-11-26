@@ -29,6 +29,39 @@ belongs to is deactivated…` until the user is switched on again — on the
 legacy v1 and v2 APIs too, as the sign-in page refuses them. A deactivated
 user's keys used to keep working with the user's role.
 
+### Signed in by the session (a page on the same origin)
+
+A page served from the same origin as Prosper202, such as a dashboard, may
+call the API with the session cookie the sign-in set and no key. The
+session is read as the pages read it: on every call the user's standing and
+session generation are read again, so switching the user off or changing
+their password (in any browser) ends the access on the next call, `401`.
+The role's permissions apply as for a key; a session holds every scope.
+
+Every method but `GET` and `HEAD` sends the session's anti-CSRF token in an
+`X-P202-CSRF` header. [`GET /me`](30-me.md) answers it as
+`auth.csrf_token`. A write without it, or with another value, is `403` and
+changes nothing:
+
+```js
+const me = (await (await fetch('/api/v3/me')).json()).data;
+await fetch('/api/v3/aff-networks', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'X-P202-CSRF': me.auth.csrf_token },
+  body: JSON.stringify({ aff_network_name: 'Spring offers' }),
+});
+```
+
+- A request with an `Authorization` header is a key's, cookie or not: a
+  wrong key is `401`, never answered by the session.
+- The remember-me cookie is not read here; a browser holding only that
+  signs in by opening a page first.
+- `POST /connect/revoke` removes the key a request bears, so from a session
+  it is `400`.
+- The cookie is the one PHP names by `session.name` (`PHPSESSID` by
+  default). It is HttpOnly and SameSite Lax, so another site cannot send it
+  with a write, and the token header is still required.
+
 ### API Key Scopes
 
 A key may carry a **scope** that attenuates what it can do, independent of
@@ -97,7 +130,8 @@ scope is missing and what grants it, in its message and in fields:
 
 The message keeps its first sentence as before, so a reader matching it still
 matches. A refusal for the user's role (`Admin access required.`, a missing
-permission) is a `403` with `error`, `message` and `status` only.
+permission) is a `403` with `error`, `message`, `status` and `code`
+(`forbidden`) only.
 
 ### Role Permissions
 
@@ -250,7 +284,8 @@ redirector's rules) when they build a body from another record.
 
 | Header | Direction | Description |
 | ------ | --------- | ----------- |
-| `Authorization: Bearer <key>` | Request | Required for authenticated endpoints. |
+| `Authorization: Bearer <key>` | Request | Required for authenticated endpoints, except from a signed-in session on the same origin. |
+| `X-P202-CSRF: <token>` | Request | Required on every method but GET and HEAD from a signed-in session: the session's token, which `GET /me` answers as `auth.csrf_token`. |
 | `X-P202-API-Version` | Request | Optional version negotiation; defaults to `v3` if omitted. |
 | `X-P202-API-Version-Resolved: v3` | Response | Always present; reports the resolved API version. |
 | `Idempotency-Key: <string>` | Request | Required for bulk-upsert operations. Optional on single POST creates (CRUD entities, conversions, rotators + rules, attribution models + exports, users): a retry of the same request replays the recorded response (`idempotent_replay: true` in the body) instead of creating a duplicate. A key is scoped to the caller and identifies one request, so reusing it for anything else — a changed body, or a different endpoint — is refused with `422`; mint a new key for a different create. A retry sent while the first request is still running gets `409`; if the first request died outright without recording a response, whether it created the record is unknown, so the key is spent — later retries get `409` telling you to check state and use a new key rather than risking a duplicate. Not honored on API-key creation (secret responses are never stored) or LTV writes (they have their own upsert/dedup semantics). |
@@ -408,15 +443,26 @@ The envelope fields below (full `pagination` metadata, and `version`/`etag` on s
 ```json
 {
   "data": [ { ... }, { ... } ],
+  "truncated": true,
   "pagination": {
     "total": 142,
     "limit": 50,
     "offset": 0,
-    "cursor": null,
-    "cursor_expires_at": null
+    "cursor": "<opaque: the next page>",
+    "cursor_expires_at": 1795497200
   }
 }
 ```
+
+Every endpoint that takes `offset` answers `truncated`, the list endpoints
+and the paged reports alike: `true` when rows remain after the page, `false`
+on the last page, including a page of exactly the rows that remain. Read on
+with `offset` plus `limit` (or the `cursor`, which is handed out exactly when
+`truncated` is `true`) until it is `false`, and check it before summing or
+ranking the rows of one page. The server reads one row past the page to know;
+`total` is a separate count, which rows written or removed between two pages
+can make disagree with them. Servers from before `truncated` was added say
+nothing about the rows after a page.
 
 ### Filtering a List
 
@@ -496,11 +542,21 @@ Empty response body.
   "error": true,
   "message": "Descriptive error message",
   "status": 422,
+  "code": "validation_failed",
   "field_errors": {
     "field_name": "Validation message"
   }
 }
 ```
+
+Every `4xx` and `5xx` carries `code`, a stable name for what went wrong:
+`version_conflict` for an update made on an older read, `name_taken` when
+another record has the name, `idempotency_key_reused`, `upgrade_pending` when
+the database is behind the code, and so on. A program decides on `code`, never
+on `message`, whose wording can change. The list, with each code's status and
+meaning, is the Errors section of `docs/openapi.yaml` (the `Error` schema's
+`code` enum). Codes are only ever added; treat one you do not know as the
+generic code of its status (`conflict` for a 409, `server_error` for a 500).
 
 A `403` for the key's scope adds `code`, `required_scope`, `key_scope`,
 `key_source`, `remedy` and, for an AI connection, `connect_access`
@@ -686,6 +742,7 @@ checked: put it where only the server's user can write.
 | System | Health, version, cron, errors, metrics, db-stats | [System](15-system.md) |
 | Sync | Jobs, planning, change feed, audit | [Sync](16-sync.md) |
 | Capabilities | Version and feature discovery | [Capabilities](17-capabilities.md) |
+| Me | Who is signed in: user, account, roles, permissions and flags, switches, install version | [Me](30-me.md) |
 
 ## Discovery Endpoints (No Auth Required)
 

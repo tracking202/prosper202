@@ -201,18 +201,40 @@ TLS verified against the host name, no proxy and no redirects. An operator
 whose receiver is on their own network can allow that network with
 `define('P202_WEBHOOK_ALLOW_NETWORKS', '10.20.0.0/16');` in `202-config.php`;
 link-local and the metadata endpoints can never be allowed, and an entry that
-does not parse stops every webhook until it is fixed. The same setting, and
+does not parse stops every webhook until it is fixed. A server that reaches
+the internet only through a proxy names it on Account › Settings › Egress
+proxy (an admin's page: the proxy URL, a user name and password under
+Advanced that are never shown again, and a Test connection button), or with
+`define('P202_EGRESS_PROXY', 'http://proxy.example:3128');` in
+`202-config.php`, which overrides the saved one (an `https://` proxy, and
+`user:password@` before the host, percent-encoded, are read too; the port is
+required). Each webhook is then
+checked here as before, its host looked up by this server, and sent through a
+CONNECT tunnel to the address that passed: the proxy is never asked to look
+up the name, and must allow CONNECT to the receiver's port. An address only
+`P202_WEBHOOK_ALLOW_NETWORKS` admits is reached directly, as without a proxy.
+A value that does not read as a proxy URL, or a saved one that cannot be
+read, stops every webhook, postback, Slack notice, sync and destination, and
+every call to my.tracking202.com and the other fixed services, until it is
+fixed; nothing is sent around the proxy instead. The same setting, and
 the same address rules, govern the LTV webhooks ([20-ltv.md](20-ltv.md#webhooks))
 and, with http:// allowed, the traffic sources' server-to-server postbacks
 ([27-setup.md](27-setup.md#an-accounts-pixels--ppc-accountsidpixels)).
 
-Each delivery carries `X-P202-Export-Id`, `X-P202-Delivery-Attempt`,
+Each delivery is signed the [Standard Webhooks](https://www.standardwebhooks.com/)
+way, as an LTV webhook's is ([Verifying a delivery](20-ltv.md#verifying-a-delivery)):
+`webhook-id` (the same on every attempt at one export), `webhook-timestamp`
+and `webhook-signature`, which a Standard Webhooks library verifies with the
+export's secret. The secret generated for an export is a `whsec_` one; one you
+choose is used as its own bytes (a library takes it as `whsec_` followed by its
+base64), and one starting `whsec_` must be base64 after the prefix. It also
+carries `X-P202-Export-Id` and `X-P202-Delivery-Attempt`, and, through 1.9.82,
 `X-P202-Timestamp` and `X-P202-Signature: sha256=<hex>`, the HMAC-SHA256 of
-`<timestamp>.<body>` under the export's secret. Verify it with a constant-time
-comparison and refuse a timestamp more than a few minutes old. A 2xx answer
-completes the export; no connection, a timeout, 5xx, 408 or 429 is retried
-after one minute and then two (three runs in all); a redirect, another 4xx or
-a refused address fails the export at once. The file stays downloadable
+`<timestamp>.<body>` under the export's secret, which 1.9.83 stops sending. A
+2xx answer completes the export; no connection, a timeout, 5xx, 408 or 429, a
+host that does not resolve, or a `P202_WEBHOOK_ALLOW_NETWORKS` that does not
+parse is retried after one minute and then two (three runs in all); a redirect,
+another 4xx or a refused address fails the export at once. The file stays downloadable
 whatever the webhook did.
 
 ```bash

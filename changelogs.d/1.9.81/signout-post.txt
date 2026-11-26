@@ -1,0 +1,2 @@
+-- Fixed: Signing out took a plain GET of 202-account/signout.php, so a link or an image on any other site could sign a Prosper202 user out. The page now signs out only on a POST carrying the session's token; a GET, or a POST without the token, shows a Sign out button. The menu's Sign Out, the upgrade pages' sign-in buttons and the ClickServer switch-off now post that form.
+app: Fixed: Another site can no longer sign you out with a link; Sign Out now asks your own page to confirm.

@@ -173,6 +173,10 @@ foreach ($result['rows'] as $row) {
     if ($row['reverses_conv_id'] !== null) {
         $type .= '<div class="form-text">' . $e('Reverses conversion ' . $row['reverses_conv_id']) . '</div>';
     }
+    // Counted here, told to no one: the visitor refused consent.
+    if ($row['consent_withheld'] !== null) {
+        $type .= '<div class="form-text">' . $e('Held back for consent: no ad platform, traffic source pixel or postback was told') . '</div>';
+    }
     $agent = $row['user_agent'] !== '' ? '<code class="small text-break">' . $e($row['user_agent']) . '</code>' : '—';
     $rows[] = [
         'click' => ['html' => p202_click_breakdown_button($base, $row['click_id'])

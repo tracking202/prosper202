@@ -1,0 +1,3 @@
+# HRR9: gpb.php and upx.php send a traffic source's pixels the click's values as stored.
+-- Fixed: The traffic source pixels the global postback (gpb.php) and the universal pixel (upx.php) render for a conversion SQL-escaped each click value (keyword, c1 to c4, gclid, UTM values, the referrer) before URL-encoding it, so a value with a quote, a double quote or a backslash reached the network altered: O'Brien arrived as O%5C%27Brien. They now send the values as stored, URL-encoded once, as the queued server postbacks already did.
+app: Fixed: Traffic source pixels fired by the global postback and the universal pixel now carry a keyword or c1 to c4 value with a quote or backslash unchanged.

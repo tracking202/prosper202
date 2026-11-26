@@ -68,18 +68,6 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
     private string $log = '';
     private string|false $savedLog = false;
 
-    /**
-     * The tests move the clock up to four hours on and expect the account's
-     * day not to change, so the run starts at least five hours before the
-     * account's midnight: a real time() an hour before it failed in CI.
-     */
-    private static function farFromTheAccountsMidnight(int $now): int
-    {
-        $dayStart = AccountActivity::dayStart($now, self::ZONE);
-
-        return $now - $dayStart > 19 * 3600 ? $dayStart + 12 * 3600 : $now;
-    }
-
     public static function setUpBeforeClass(): void
     {
         require_once dirname(__DIR__, 2) . '/202-config/functions-alerts-ui.php';
@@ -87,7 +75,13 @@ final class MoneyLossAlertsIntegrationTest extends TestCase
             return;
         }
         self::cleanUp();
-        self::$now = self::farFromTheAccountsMidnight(time());
+        // Noon yesterday in the account's zone, not time(): the runs reach
+        // hours past $now and must stay in its local day, which time() leaves
+        // whenever CI runs in that day's last hours.
+        self::$now = (new \DateTimeImmutable('@' . time()))
+            ->setTimezone(new \DateTimeZone(self::ZONE))
+            ->modify('yesterday noon')
+            ->getTimestamp();
         self::user(self::OWNER, self::ZONE);
         self::user(self::OTHER);
         self::user(self::QUIET);

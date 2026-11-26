@@ -206,11 +206,17 @@ but unchanged keys is `422` (`No valid fields to update`).
 | `ipqs_api_key`, `cb_key`, `zaxaa_api_signature` | up to 250 characters, or `""`; changing `cb_key` resets `cb_verified` | Integrations |
 | `jvzoo_ipn_secret_key` | the JVZIPN secret key both JVZoo URLs are verified with, stored trimmed: up to 250 characters of text (a line break, a control character or bytes that are not UTF-8 are refused, since no notification would verify with them), or `""` | Integrations |
 | `paykickstart_ipn_secret_keys` | the keys PayKickstart's product IPN is verified with, one for each PayKickstart campaign, separated by commas, spaces or new lines: at most 20, each 8 to 128 letters, digits and punctuation other than the comma. The list **replaces** every stored key (none can be read back), so send them all; `""` removes them. A key that is not one is refused by its place in the list (`Key 2 is 5 characters long; …`), never by its text | Integrations |
-| `shopify_webhook_secret` | the secret Shopify signs the store's webhooks with (Settings › Notifications › Webhooks, or a custom app's client secret), which `tracking202/static/shopify.php` verifies `X-Shopify-Hmac-Sha256` with, stored trimmed: 16 to 250 letters, digits and punctuation, or `""` | Integrations |
+| `shopify_webhook_secret` | the secret Shopify signs the store's webhooks with (Settings › Notifications › Webhooks, or a custom app's client secret), which `tracking202/static/shopify.php` verifies `X-Shopify-Hmac-Sha256` with, stored trimmed and sealed (it replaces the stored one at once, with no overlap; `documentation/features/integration-secrets.md`): 16 to 250 letters, digits and punctuation, or `""` | Integrations |
 | `user_ltv_customer_cparam` | `0` (off), `1`-`4` (c1-c4) | LTV › Settings |
 | `user_ltv_personalization_fields` | comma list of `first_name`, `last_name`, `company`, `city`, `country`, `cf:<field_key>`, `rec:next_offer` | LTV › Settings |
 | `user_ltv_score_weights` | `volume:N,time:N,scroll:N,video:N,recency:N` summing to 100, or `""` for the defaults | LTV › Settings |
 | `user_ltv_rec_fatigue` | `times,days` such as `3,21`, `0` for off, `""` for the defaults | LTV › Settings |
+
+A change to one of the four `user_ltv_` values asks what LTV › Settings asks
+of the other LTV settings writes: a key with `ltv:write` whose user's role has
+`access_to_api_integrations`, or `403` naming what is missing and nothing
+written. The value `GET` gave, sent back, is no change and passes whatever the
+role (`principal.ltv.settings_write` on [`/capabilities`](17-capabilities.md)).
 
 ### Privacy (`user_pref_privacy`)
 
@@ -283,7 +289,8 @@ affected.
 ### Ad click id parameters (`user_pref_click_id_params`)
 
 Personal settings › Advanced › **Match conversions by ad click id**. When a
-global postback (`gpb.php`) arrives with its SubID empty or unfilled, it finds
+postback or pixel (`gpb.php`, `pb.php`, `gpx.php`, `upx.php`) arrives with its
+SubID empty or unfilled, it finds
 the click by an ad click id the postback sends back
 ([Setup](27-setup.md#when-the-network-does-not-send-the-subid-back)). A
 postback that sends the id as `gclid`, `gbraid`, `wbraid`, `msclkid`,

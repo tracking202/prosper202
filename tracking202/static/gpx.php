@@ -51,8 +51,17 @@ $purLinkKey = $purLink['key'] ?? null;
 // How the click was found, kept on the conversion (MatchMethod): the
 // parameter or the cookie that named it, or the address it was guessed from.
 $matchedBy = $requestedClick['method'] ?? \Prosper202\Conversion\Ledger\MatchMethod::SAME_IP;
+// The accounts a click found by a parameter an account lists may belong to; null for any.
+$adClickOwners = null;
+// Neither the SubID nor a cookie named a click: the one click carrying an ad
+// click id the request sends, as gpb.php finds it (p202PixelClickByAdClickId()).
+$adClick = $requestedClick['click_id'] === null ? p202PixelClickByAdClickId($db, $_GET, 'gpx') : null;
 if ($requestedClick['click_id'] !== null) {
     $mysql['click_id'] = (string) $requestedClick['click_id'];
+} elseif ($adClick !== null) {
+    $mysql['click_id'] = (string) $adClick['click_id'];
+    $adClickOwners = $adClick['owners'];
+    $matchedBy = \Prosper202\Conversion\Ledger\MatchMethod::AD_CLICK_ID;
 } else {
             // Nothing named a click: the latest click from this address of
             // the account whose pixel this is (pixelAccount()), when
@@ -87,7 +96,10 @@ if (is_numeric($mysql['click_id'])) {
         record_mysql_error($db, $cpa_sql);
     }
     $cpa_row = p202FetchRow($cpa_result, $cpa_sql);
-	if (!$cpa_row) {
+    // A click found by a parameter an account lists is that account's (as on gpb.php).
+    $notTheListingAccounts = $cpa_row && $adClickOwners !== null
+        && !in_array((int) $cpa_row['user_id'], $adClickOwners, true);
+    if (!$cpa_row || $notTheListingAccounts) {
 		// Unknown click id; nothing to convert.
 		\Prosper202\InboundLog\RequestLog::current()?->click((int) $mysql['click_id']);
 		\Prosper202\InboundLog\RequestLog::current()?->legacyResult('unknown_click');

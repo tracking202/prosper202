@@ -41,6 +41,7 @@
         "error": true,
         "message": "The install is invalid",
         "status": 400,
+        "code": "bad_request",
         "field_errors": {
           "install_uuid": "…"
         }
@@ -53,7 +54,8 @@
       "body": {
         "error": true,
         "message": "Unknown app token",
-        "status": 404
+        "status": 404,
+        "code": "not_found"
       }
     },
     {
@@ -157,6 +159,7 @@
         "error": true,
         "message": "…",
         "status": 503,
+        "code": "service_unavailable",
         "match": "pending_click"
       }
     }

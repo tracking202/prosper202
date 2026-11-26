@@ -46,6 +46,11 @@ final class MysqlClickRepository implements ClickRepositoryInterface
     {
         $stmt = $this->conn->prepareWrite('INSERT INTO 202_clicks_counter SET click_id = DEFAULT');
         $clickId = $this->conn->executeInsert($stmt);
+        // The one writer of the counter (ClickCounterWrittenOnlyByAllocatorTest),
+        // so only a write outside the code moves it this far.
+        if (ClickId::isEdge($clickId)) {
+            throw new EdgeClickIdRefused($clickId);
+        }
         RecordedClicks::note($clickId);
 
         return $clickId;
@@ -115,6 +120,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
         });
         $this->recordFilterReason($click);
         $this->recordPublisher($click);
+        $this->recordLastSeen($click);
         $this->link($click);
     }
 
@@ -242,6 +248,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                 ]
             );
         });
+        $this->recordLastSeen($click);
         $this->link($click);
     }
 
@@ -1206,6 +1213,24 @@ final class MysqlClickRepository implements ClickRepositoryInterface
         } catch (\Throwable $e) {
             error_log('Prosper202 publisher credit: click ' . $click->clickId . '\'s publisher (user '
                 . $click->publisherUserId . ') was not recorded: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * When the click's landing page last had a click (LandingPageLastSeen),
+     * written as the filter reason is: after the click commits, a failure
+     * logged and never the click's.
+     */
+    private function recordLastSeen(ClickRecord $click): void
+    {
+        if ($click->landingPageId < 1) {
+            return;
+        }
+        try {
+            (new LandingPageLastSeen($this->conn))->stamp($click->userId, $click->landingPageId, $click->clickTime);
+        } catch (\Throwable $e) {
+            error_log('Prosper202 landing page last seen: click ' . $click->clickId . '\'s landing page ('
+                . $click->landingPageId . ') was not noted as seen: ' . $e->getMessage());
         }
     }
 

@@ -5,11 +5,15 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	osexec "os/exec"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -48,8 +52,12 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 	// paid for by a shorter help line on the link-token flags; get_more_tools
 	// and its sentence in the instructions about 700 (every later tool is
 	// listed on request, mcpDeferredToolSpecs), paid for by the click
-	// filter tools' user_id, which their Omit meant to leave out.
-	const budget = 100500
+	// filter tools' user_id, which their Omit meant to leave out; the
+	// instructions' line on truncated (every paged answer's) about 100, paid
+	// for by the two report tools' notes it replaced; items on
+	// tracker_create_with_url and tracker_update (many trackers in one call)
+	// about 410.
+	const budget = 100950
 	if len(body) > budget {
 		t.Fatalf("the tool list is %d characters, over its %d budget; trim notes or omit flags", len(body), budget)
 	}
@@ -393,6 +401,7 @@ var mcpDeferredAnswerSources = map[string]string{
 	"ad-connection": "AdConnectionsController.php",
 	"ad-campaign":   "AdCampaignsController.php",
 	"spend":         "SpendLedgerController.php",
+	"ppc-account":   "PpcAccountPixelsController.php",
 }
 
 // A deferred tool's Note names only keys its answer carries: the answer is
@@ -452,14 +461,16 @@ func TestMCPToolsListsTheDeferredOnes(t *testing.T) {
 		return out
 	}
 	if got := strings.Join(names("mcp", "tools", "--deferred"), ","); got != "destination_list,destination_deliveries,destination_test,ad_connection_list,ad_connection_check,"+
-		"ad_campaign_list,ad_campaign_pause,ad_campaign_activate,ad_campaign_spend,ad_spend,ad_spend_sync_status" {
+		"ad_campaign_list,ad_campaign_pause,ad_campaign_activate,ad_campaign_spend,ad_spend,ad_spend_sync_status,"+
+		"ppc_account_pixel_list,ppc_account_pixel_create,ppc_account_pixel_update,ppc_account_pixel_delete" {
 		t.Errorf("--deferred lists %s", got)
 	}
-	if got := strings.Join(names("mcp", "tools", "--deferred", "--read-only"), ","); got != "destination_list,destination_deliveries,ad_connection_list,ad_campaign_list,ad_campaign_spend,ad_spend,ad_spend_sync_status" {
+	if got := strings.Join(names("mcp", "tools", "--deferred", "--read-only"), ","); got != "destination_list,destination_deliveries,ad_connection_list,ad_campaign_list,ad_campaign_spend,ad_spend,ad_spend_sync_status,ppc_account_pixel_list" {
 		t.Errorf("--deferred --read-only lists %s", got)
 	}
 	if got := strings.Join(names("--staged", "mcp", "tools", "--deferred"), ","); got != "destination_list,destination_deliveries,ad_connection_list,"+
-		"ad_campaign_list,ad_campaign_pause,ad_campaign_activate,ad_campaign_spend,ad_spend,ad_spend_sync_status" {
+		"ad_campaign_list,ad_campaign_pause,ad_campaign_activate,ad_campaign_spend,ad_spend,ad_spend_sync_status,"+
+		"ppc_account_pixel_list,ppc_account_pixel_create,ppc_account_pixel_update,ppc_account_pixel_delete" {
 		t.Errorf("--staged --deferred lists %s", got)
 	}
 	for _, name := range names("mcp", "tools") {
@@ -496,8 +507,10 @@ func TestMCPDeferredToolsDoNothingAPersonWasNotAsked(t *testing.T) {
 	seen := map[string]bool{}
 	for _, tool := range tools {
 		seen[tool.Name] = true
-		// A pause or an activate changes what OpenAI serves at once: a client should ask first.
-		if want := tool.Name == "ad_campaign_pause" || tool.Name == "ad_campaign_activate"; tool.Annotations.DestructiveHint != want {
+		// A pause or an activate changes what OpenAI serves at once, and a pixel's
+		// change or removal changes what the account reports: a client should ask first.
+		destructive := map[string]bool{"ad_campaign_pause": true, "ad_campaign_activate": true, "ppc_account_pixel_update": true, "ppc_account_pixel_delete": true}
+		if want := destructive[tool.Name]; tool.Annotations.DestructiveHint != want {
 			t.Errorf("%s destructiveHint %v, want %v", tool.Name, tool.Annotations.DestructiveHint, want)
 		}
 		if tool.Name == "ad_connection_check" && tool.Annotations.ReadOnlyHint {
@@ -626,5 +639,100 @@ func TestMCPGetMoreToolsLoadsTheSpendToolsOverStdio(t *testing.T) {
 	}
 	if !mcpHit(fake.requests(), "GET /api/v3/spend-ledger/sync") {
 		t.Fatalf("requests: %q", fake.requests())
+	}
+}
+
+// Through the real server, as an app asks: get_more_tools loads the pixel
+// tools for a pixel question, and each one reaches the account's pixel route
+// with the API's field names; a delete with dry_run previews and removes
+// nothing.
+func TestMCPGetMoreToolsLoadsThePixelToolsOverStdio(t *testing.T) {
+	var mu sync.Mutex
+	var hits, bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		hits = append(hits, r.Method+" "+r.URL.RequestURI())
+		if len(body) > 0 {
+			bodies = append(bodies, string(body))
+		}
+		mu.Unlock()
+		switch {
+		case r.URL.Path == "/api/versions":
+			_, _ = w.Write([]byte(`{"data":{"preferred":"v3","supported":["v3"]}}`))
+		case r.URL.Path == "/api/v3/capabilities":
+			_, _ = w.Write([]byte(`{"data":{"features":{"staged_writes":true,"delete_dry_run":true},"cli":true,"principal":{"user_id":1,"roles":["Super user"],"scopes":["*"]}}}`))
+		case r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"data":[{"pixel_id":9,"pixel_type_id":4,"pixel_code":"https://network.example/pb?c=[[subid]]"}]}`))
+		case r.Method == http.MethodDelete:
+			_, _ = w.Write([]byte(`{"data":{"dry_run":true,"would_delete":{"pixel_id":9}}}`))
+		default:
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"data":{"pixel_id":10,"pixel_type_id":4,"pixel_code":"https://network.example/pb?c=[[subid]]"}}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key-123456")
+	t.Setenv(mcpTestChildEnv, "1")
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "p202-test", Version: "1"}, nil)
+	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: osexec.Command(exe, "mcp")}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: mcpGetMoreTools, Arguments: map[string]any{"task": "which pixels does my traffic source account fire"}})
+	if err != nil || res.IsError {
+		t.Fatalf("get_more_tools: %v %s", err, mcpResultText(res))
+	}
+	var answer struct {
+		Tools []struct{ Name string } `json:"tools"`
+	}
+	if err := json.Unmarshal([]byte(mcpResultText(res)), &answer); err != nil || len(answer.Tools) == 0 || answer.Tools[0].Name != "ppc_account_pixel_list" {
+		t.Fatalf("get_more_tools answered %s (%v)", mcpResultText(res), err)
+	}
+	calls := []struct {
+		name string
+		args map[string]any
+		hit  string
+	}{
+		{"ppc_account_pixel_list", map[string]any{"ppc_account_id": "4"}, "GET /api/v3/ppc-accounts/4/pixels"},
+		{"ppc_account_pixel_create", map[string]any{"ppc_account_id": "4", "type_id": "4", "code": "https://network.example/pb?c=[[subid]]"}, "POST /api/v3/ppc-accounts/4/pixels"},
+		{"ppc_account_pixel_update", map[string]any{"ppc_account_id": "4", "pixel_id": "9", "correction_url": "https://network.example/fix?tx=[[transactionid]]"}, "PUT /api/v3/ppc-accounts/4/pixels/9"},
+		{"ppc_account_pixel_delete", map[string]any{"ppc_account_id": "4", "pixel_id": "9", "dry_run": true}, "DELETE /api/v3/ppc-accounts/4/pixels/9?dry_run=1"},
+	}
+	for _, c := range calls {
+		res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: c.name, Arguments: c.args})
+		if err != nil || res.IsError {
+			t.Fatalf("%s: %v %s", c.name, err, mcpResultText(res))
+		}
+		mu.Lock()
+		got := append([]string(nil), hits...)
+		mu.Unlock()
+		if !mcpHit(got, c.hit) {
+			t.Errorf("%s did not send %s: %q", c.name, c.hit, got)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, h := range hits {
+		if strings.HasPrefix(h, "DELETE ") && !strings.Contains(h, "dry_run=1") {
+			t.Errorf("a dry run deleted: %s", h)
+		}
+	}
+	want := []string{`"pixel_code":"https://network.example/pb?c=[[subid]]"`, `"pixel_type_id":"4"`, `"correction_url":"https://network.example/fix?tx=[[transactionid]]"`}
+	joined := strings.Join(bodies, "\n")
+	for _, w := range want {
+		if !strings.Contains(joined, w) {
+			t.Errorf("no body carried %s: %s", w, joined)
+		}
 	}
 }

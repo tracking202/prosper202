@@ -171,6 +171,43 @@ final class ServerPostbacksAreQueuedTest extends TestCase
         }
     }
 
+    /**
+     * Every caller says whether the visitor consented (AdPlatformConsent):
+     * fire() sends nothing without the answer, so a call that leaves it out
+     * would hold back every pixel, and one that passes null would too.
+     */
+    public function testEveryCallerPassesTheVisitorsConsent(): void
+    {
+        $arg = static function (array $args, int $position): string {
+            foreach ($args as $a) {
+                if (preg_match('/\Aconsent :\s*(.*)\z/s', $a, $m) === 1) {
+                    return trim($m[1]);
+                }
+            }
+
+            return $args[$position] ?? '(omitted)';
+        };
+        $seen = [];
+        foreach (self::files() as $file) {
+            if ($file === '202-config/Conversion/TrafficSourcePixels.php') {
+                continue;
+            }
+            $src = (string) file_get_contents(self::ROOT . $file);
+            foreach ([['p202FireTrafficSourcePixels', null, 6], ['fire', 'TrafficSourcePixels', 7]] as [$name, $class, $position]) {
+                foreach (self::calls($src, $name, $class) as [$line, $args]) {
+                    $consent = $arg($args, $position);
+                    self::assertNotContains(strtolower($consent), ['(omitted)', 'null'], "$file:$line calls $name() without the visitor's consent: pass AdPlatformConsent::ofConversion() (or ofClick(), or the answer already read)");
+                    $seen[] = "$file $name";
+                }
+            }
+        }
+        foreach (['tracking202/static/gpb.php p202FireTrafficSourcePixels', 'tracking202/static/upx.php p202FireTrafficSourcePixels',
+            '202-config/Click/PurLinkPixels.php fire', '202-config/Goals/TrafficSourceNotifier.php fire',
+            '202-config/static-endpoint-helpers.php fire'] as $caller) {
+            self::assertContains($caller, $seen, 'the scan found ' . $caller);
+        }
+    }
+
     public function testNoRequestPathSendsTheQueue(): void
     {
         $sending = [];
@@ -181,6 +218,8 @@ final class ServerPostbacksAreQueuedTest extends TestCase
                 '202-config/Notifications/NotificationOutbox.php',
                 '202-config/Destinations/DestinationQueue.php',
                 '202-config/static-endpoint-helpers.php',
+                // Slack notices: sent by the cron job, or at the request's end once its answer has gone (below).
+                '202-config/Notifications/SlackNoticeQueue.php',
             ];
             if (in_array($file, $senders, true)) {
                 continue;
@@ -202,6 +241,21 @@ final class ServerPostbacksAreQueuedTest extends TestCase
         $body = substr($body, 0, (int) strpos($body, '->sendDue('));
         self::assertStringContainsString('$released = fastcgi_finish_request();', $body, 'after releasing the client');
         self::assertStringContainsString("if (\$released !== true) {\n            return;", $body, 'and only then');
+
+        // The Slack notice queue sends a request's notices in one place, after
+        // the answer: FPM's finish (false there is a request already finished),
+        // or LiteSpeed's when it says it finished; anywhere else, not at all.
+        $slack = (string) file_get_contents(self::ROOT . '202-config/Notifications/SlackNoticeQueue.php');
+        self::assertSame(2, substr_count($slack, 'sendDue('), 'its definition and one call');
+        $body = substr($slack, (int) strpos($slack, 'private static function sendQueuedHere('));
+        $body = substr($body, 0, (int) strpos($body, '->sendDue('));
+        self::assertMatchesRegularExpression(
+            "/if \\(PHP_SAPI === 'fpm-fcgi' && function_exists\\('fastcgi_finish_request'\\)\\) \\{"
+                . "[^}]*fastcgi_finish_request\\(\\);\\s*\\} elseif \\(!function_exists\\('litespeed_finish_request'\\)"
+                . " \\|\\| litespeed_finish_request\\(\\) !== true\\) \\{\\s*return;/",
+            $body,
+            'after releasing the client'
+        );
 
         // pb.php and the payment notifications queue too since QZ3M, and send after their answer the same way.
         $after = ['tracking202/static/gpb.php', 'tracking202/static/upx.php', 'tracking202/static/pb.php',

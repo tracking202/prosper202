@@ -89,6 +89,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	
 	$text_ad_display_url = trim((string) $_POST['text_ad_display_url']);
 	if (empty($text_ad_display_url)) { $error['text_ad_display_url'] = '<div class="error">What is your ad display URL?</div>'; }
+
+    // The value saved is the one posted, so that is the one measured.
+    $lengthLabels = [
+        'text_ad_name' => 'The ad nickname',
+        'text_ad_headline' => 'The headline',
+        'text_ad_description' => 'The description',
+        'text_ad_display_url' => 'The display URL',
+    ];
+    foreach ($lengthLabels as $lengthField => $lengthLabel) {
+        $postedText = (string) ($_POST[$lengthField] ?? '');
+        $tooLong = \Prosper202\Setup\FieldLength::refusal($lengthField, $postedText, $lengthLabel);
+        if ($tooLong !== null && !isset($error[$lengthField])) {
+            $error[$lengthField] = '<div class="error">' . htmlspecialchars($tooLong, ENT_QUOTES, 'UTF-8') . '</div>';
+        }
+    }
 	
 
 	
@@ -197,21 +212,19 @@ if (isset($_GET['delete_text_ad_id'])) {
 	}
 
 	if ($userObj->hasPermission("remove_text_ad")) {
-		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-		$mysql['text_ad_id'] = $db->real_escape_string((string)$_GET['delete_text_ad_id']);
-		$mysql['text_ad_time'] = time();
-		
-		$delete_sql = " UPDATE  `202_text_ads`
-						SET     `text_ad_deleted`='1',
-								`text_ad_time`='".$mysql['text_ad_time']."'
-						WHERE   `user_id`='".$mysql['user_id']."'
-						AND     `text_ad_id`='".$mysql['text_ad_id']."'";
-        if ($db->query($delete_sql)) {
-            $delete_success = true;
+		// Removed only when it is the account's and still there; anything else
+		// says so rather than redirecting to "Removed".
+		try {
+			$delete_success = \Prosper202\Setup\SetupRemoval::mark(new \Prosper202\Database\Connection($db),
+				'text_ad', $_GET['delete_text_ad_id'], (int) $_SESSION['user_id'], time());
+		} catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+			record_mysql_error($db, 'UPDATE 202_text_ads (remove a text ad)', $e->getMessage());
+		}
+        if ($delete_success === true) {
             if($slack)
                 $slack->push('ad_copy_deleted', ['name' => $_GET['delete_text_ad_name'], 'user' => $user_row['username']]);
         } else {
-            record_mysql_error($delete_sql);
+            $error['delete_text_ad'] = 'That text ad was not found on this account. Nothing was removed.';
         }
 	} else {
 		header('location: '.get_absolute_url().'tracking202/setup/text_ads.php');
@@ -457,23 +470,23 @@ if ($error) {
 
 					<div class="mb-3">
 						<label class="form-label" for="text_ad_name">Ad nickname</label>
-						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'text_ad_name'); ?>" id="text_ad_name" name="text_ad_name" value="<?php echo p202_setup_e($form['text_ad_name']); ?>" maxlength="255" required>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'text_ad_name'); ?>" id="text_ad_name" name="text_ad_name" value="<?php echo p202_setup_e($form['text_ad_name']); ?>" maxlength="<?php echo \Prosper202\Setup\FieldLength::of('text_ad_name'); ?>" required>
 						<div class="form-text">How you find this ad among the others in reports.</div>
 						<?php echo p202_setup_feedback($error, 'text_ad_name'); ?>
 					</div>
 					<div class="mb-3">
 						<label class="form-label" for="text_ad_headline">Headline</label>
-						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'text_ad_headline'); ?>" id="text_ad_headline" name="text_ad_headline" value="<?php echo p202_setup_e($form['text_ad_headline']); ?>" required>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'text_ad_headline'); ?>" id="text_ad_headline" name="text_ad_headline" value="<?php echo p202_setup_e($form['text_ad_headline']); ?>" maxlength="<?php echo \Prosper202\Setup\FieldLength::of('text_ad_headline'); ?>" required>
 						<?php echo p202_setup_feedback($error, 'text_ad_headline'); ?>
 					</div>
 					<div class="mb-3">
 						<label class="form-label" for="text_ad_description">Description</label>
-						<textarea class="form-control<?php echo p202_setup_invalid($error, 'text_ad_description'); ?>" id="text_ad_description" name="text_ad_description" rows="2" required><?php echo p202_setup_e($form['text_ad_description']); ?></textarea>
+						<textarea class="form-control<?php echo p202_setup_invalid($error, 'text_ad_description'); ?>" id="text_ad_description" name="text_ad_description" rows="2" maxlength="<?php echo \Prosper202\Setup\FieldLength::of('text_ad_description'); ?>" required><?php echo p202_setup_e($form['text_ad_description']); ?></textarea>
 						<?php echo p202_setup_feedback($error, 'text_ad_description'); ?>
 					</div>
 					<div class="mb-3">
 						<label class="form-label" for="text_ad_display_url">Display URL</label>
-						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'text_ad_display_url'); ?>" id="text_ad_display_url" name="text_ad_display_url" value="<?php echo p202_setup_e($form['text_ad_display_url']); ?>" required>
+						<input type="text" class="form-control<?php echo p202_setup_invalid($error, 'text_ad_display_url'); ?>" id="text_ad_display_url" name="text_ad_display_url" value="<?php echo p202_setup_e($form['text_ad_display_url']); ?>" maxlength="<?php echo \Prosper202\Setup\FieldLength::of('text_ad_display_url'); ?>" required>
 						<?php echo p202_setup_feedback($error, 'text_ad_display_url'); ?>
 					</div>
 
