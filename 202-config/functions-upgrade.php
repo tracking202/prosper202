@@ -5656,6 +5656,9 @@ class UPGRADE
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
                 \Prosper202\Database\Tables\UserTables::publisherGrants(),
+                // A rotated LTV webhook secret signs alongside the new one
+                // until it expires (previous_secret, previous_secret_expires_at).
+                \Prosper202\Database\Tables\LtvTables::ltvWebhooks(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
                 // Each landing page's split test, whose variant the page's
                 // script writes into the click's C4 (Prosper202\Setup\
