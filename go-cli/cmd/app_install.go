@@ -133,8 +133,7 @@ var appInstallGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -173,8 +172,7 @@ var appInstallTokenCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -284,8 +282,7 @@ var appInstallSimulateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 

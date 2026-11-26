@@ -252,6 +252,10 @@ func (f *mcpFakeInstall) server(t *testing.T) *httptest.Server {
 			_, _ = w.Write([]byte(`{"data":{"features":{"staged_writes":true,"delete_dry_run":true},"cli":true,"principal":{"user_id":1,"roles":["Super user"],"scopes":["*"]}}}`))
 		case r.Method == http.MethodGet:
 			_, _ = w.Write([]byte(`{"data":[],"pagination":{"total":0,"limit":50,"offset":0}}`))
+		case r.Method == http.MethodDelete && r.URL.Query().Get("staged") == "1":
+			// A staged write answers 202 with the change it recorded.
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"data":{"change_id":"chg_1","status":"pending"}}`))
 		case r.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusNoContent)
 		default:

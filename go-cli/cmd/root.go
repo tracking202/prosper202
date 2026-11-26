@@ -102,6 +102,7 @@ func run(args []string, stderr io.Writer) int {
 		err = unknownSubcommandError(rootCmd, args)
 	}
 	if err == nil {
+		api.ForgetLastAnswer()
 		rootCmd.SetArgs(args)
 		err = rootCmd.Execute()
 	}

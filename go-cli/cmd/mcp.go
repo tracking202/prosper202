@@ -151,6 +151,7 @@ func runMCPCall(cmd *cobra.Command, args []string) error {
 	// resets them between the two runs), so --profile and --staged carry
 	// over; TestMCPCallCarriesProfileAndStaged holds that.
 	rootCmd.SetArgs(argv)
+	api.ForgetLastAnswer()
 	err = rootCmd.Execute()
 	if api.AnswerTooManyValues(err) {
 		// Whatever the command wrapped it in, it is this refusal, with how

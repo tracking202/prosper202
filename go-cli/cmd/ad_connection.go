@@ -111,8 +111,7 @@ var adConnectionListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -132,8 +131,7 @@ var adConnectionGetCmd = &cobra.Command{
 		if err != nil {
 			return withStatusHint(err, statusHint{http.StatusNotFound, "", adConnectionListHint})
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -166,8 +164,7 @@ var adConnectionCreateCmd = &cobra.Command{
 			return withStatusHint(err, statusHint{http.StatusUnprocessableEntity, "api_key", advertiserKeyWhere},
 				statusHint{http.StatusUnprocessableEntity, "ppc_account_id", ppcAccountListHint})
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -206,8 +203,7 @@ var adConnectionUpdateCmd = &cobra.Command{
 				statusHint{http.StatusUnprocessableEntity, "api_key", advertiserKeyWhere},
 				statusHint{http.StatusUnprocessableEntity, "ppc_account_id", ppcAccountListHint})
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -244,8 +240,7 @@ var adConnectionCheckCmd = &cobra.Command{
 		if err != nil {
 			return withStatusHint(err, statusHint{http.StatusNotFound, "", adConnectionListHint})
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -320,8 +315,7 @@ var adConnectionSetupCmd = &cobra.Command{
 			return withStatusHint(err, statusHint{http.StatusNotFound, "", adConnectionListHint},
 				statusHint{http.StatusUnprocessableEntity, "api_key", replace})
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 

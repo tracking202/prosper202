@@ -803,7 +803,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 $eventName ?? '',
                 Amount::fromUnits($amountUnits),
                 $dedupeKey,
-                $transactionId
+                $transactionId,
+                null,
+                $consentWithheld
             );
         }
 

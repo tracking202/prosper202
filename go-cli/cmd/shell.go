@@ -536,6 +536,7 @@ func executeShellCommandWith(line string, forceJSON bool) ([]byte, error) {
 	rootCmd.SetArgs(tokens)
 
 	var cmdErr error
+	api.ForgetLastAnswer()
 	captured := captureStdout(func() {
 		cmdErr = rootCmd.Execute()
 	})
