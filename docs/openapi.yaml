@@ -7464,7 +7464,8 @@ paths:
         A campaign with no goals of its own that pays for none keeps
         recording other `event=` postbacks as plain conversions; an event
         this goal takes (its trigger, `where` conditions holding) is counted
-        by the goal there, tracked, not paid.
+        by the goal there, tracked, not paid; one that reaches no outcome yet
+        is still recorded as the plain conversion.
         Body `{}`. Asks `manage_attribution_models`, like the account goal's
         other writes. Stageable.
       operationId: setGoalEveryCampaign

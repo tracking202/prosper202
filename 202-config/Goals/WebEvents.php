@@ -241,6 +241,25 @@ final class WebEvents
         return $campaignId > 0 && self::anyLive((new MysqlGoalRepository($this->conn))->specsForCampaign($userId, $campaignId), $at);
     }
 
+    /** Whether the campaign has a goal of its own, or pays for one, live at $at. */
+    public function campaignChoseGoals(int $userId, int $campaignId, int $at): bool
+    {
+        return $campaignId > 0 && self::anyLive((new MysqlGoalRepository($this->conn))->specsForCampaign($userId, $campaignId, true), $at);
+    }
+
+    /**
+     * Whether a hit a goal took, but that wrote no outcome, is still the
+     * plain conversion: on a campaign that chose no goals, a newly accepted
+     * event that changed nothing (a count not yet met, a goal it waits for).
+     *
+     * @param array{accepted: list<string>, outcomes_written: int, outcomes_retired: int} $result
+     */
+    public function takenEventLeftNoOutcome(int $userId, int $campaignId, int $at, array $result): bool
+    {
+        return $result['accepted'] !== [] && $result['outcomes_written'] === 0 && $result['outcomes_retired'] === 0
+            && !$this->campaignChoseGoals($userId, $campaignId, $at);
+    }
+
     /**
      * Whether a postback or pixel hit ($get) is evaluated by goals rather
      * than recorded as the plain conversion it always was. A campaign that
@@ -258,7 +277,7 @@ final class WebEvents
             return false;
         }
         $repo = new MysqlGoalRepository($this->conn);
-        if (self::anyLive($repo->specsForCampaign($userId, $campaignId, true), $at)) {
+        if ($this->campaignChoseGoals($userId, $campaignId, $at)) {
             return true;
         }
         try {

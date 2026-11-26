@@ -94,9 +94,9 @@ keeps recording an `event=` postback as one plain, paid conversion, as before.
 With a goal on every campaign, only the events that goal takes (its trigger
 event with its `where` conditions holding, or a goal it waits for) are counted
 by goals there: a `purchase` that goal takes becomes a tracked outcome, not a
-paid conversion, until the campaign pays for the goal. Whether the goal then
-reaches an outcome (a count, a window, a goal it waits for) is the goal's own
-rule, and an event it takes that reaches none records nothing. A campaign that has goals of its own, or pays for one,
+paid conversion, until the campaign pays for the goal. An event it takes that
+reaches no outcome yet (the third of three purchases, a goal it waits for, an
+expired window) is still recorded as the plain conversion. A campaign that has goals of its own, or pays for one,
 counts every event by its goals.
 
 A share starts when it is made: events received before it are not

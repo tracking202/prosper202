@@ -1547,6 +1547,9 @@ if (!function_exists('p202RecordWebEvent')) {
             }
             throw $e;
         }
+        if ($events->takenEventLeftNoOutcome($click['user_id'], $click['campaign_id'], $now, $result)) {
+            return ['status' => 'no_goals', 'event_name' => \Prosper202\Goals\WebEvents::nameFrom($get)];
+        }
         if ($result['accepted'] !== []) {
             p202LinkConversionIdentity($db, $clickId, $get);
         }
@@ -1626,7 +1629,12 @@ if (!function_exists('p202RecordPurLinkWebEvent')) {
                     if ($subject === null) {
                         throw new \Prosper202\Goals\GoalEngineException('PurLink subject not found', \Prosper202\Goals\GoalEngineException::NOT_FOUND);
                     }
-                    return $engine->ingestPurLinkInTransaction($user, $subject, [$event], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
+                    $done = $engine->ingestPurLinkInTransaction($user, $subject, [$event], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
+                    if ($events->takenEventLeftNoOutcome($user, $campaign, $now, $done['result'])) {
+                        throw new \Prosper202\Goals\PurLinkNoGoals();
+                    }
+
+                    return $done;
                 }
             );
         } catch (\Prosper202\Goals\PurLinkNoGoals) {
