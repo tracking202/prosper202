@@ -204,6 +204,16 @@ final class SqlJoinScan
     }
 
     /**
+     * A string's literal text with the bytes that mark a hole replaced by
+     * spaces: a literal "\x01" (CriterionMatcher's regex delimiter) read as
+     * a hole's opening never found its close, and the tokenizer looped.
+     */
+    private static function literal(string $text): string
+    {
+        return strtr($text, [self::HOLE_OPEN => ' ', self::HOLE_CLOSE => ' ']);
+    }
+
+    /**
      * Appends one string literal (single or double quoted, heredoc, nowdoc)
      * to $text, holes for its interpolations. Returns its last token index.
      *
@@ -215,9 +225,9 @@ final class SqlJoinScan
         $t = $tokens[$i];
         if ($t->id === T_CONSTANT_ENCAPSED_STRING) {
             $body = substr($t->text, 1, -1);
-            $text .= $t->text[0] === "'"
+            $text .= self::literal($t->text[0] === "'"
                 ? str_replace(["\\'", '\\\\'], ["'", '\\'], $body)
-                : stripcslashes($body);
+                : stripcslashes($body));
 
             return $i;
         }
@@ -230,7 +240,7 @@ final class SqlJoinScan
                 return $j;
             }
             if ($u->id === T_ENCAPSED_AND_WHITESPACE) {
-                $text .= $nowdoc ? $u->text : stripcslashes($u->text);
+                $text .= self::literal($nowdoc ? $u->text : stripcslashes($u->text));
                 continue;
             }
             if ($u->id === T_CURLY_OPEN || $u->id === T_DOLLAR_OPEN_CURLY_BRACES) {
@@ -426,6 +436,9 @@ final class SqlJoinScan
             }
             if ($c === self::HOLE_OPEN) {
                 $end = strpos($text, self::HOLE_CLOSE, $i);
+                if ($end === false) {
+                    throw new RuntimeException('A hole opened at byte ' . $i . ' of the SQL text never closes');
+                }
                 $index = (int) substr($text, $i + 1, (int) $end - $i - 1);
                 $out[] = ['k' => 'hole', 'v' => $holes[$index] ?? '', 'u' => $holes[$index] ?? '', 'g' => $i === 0 || ctype_space($text[$i - 1])];
                 $i = (int) $end + 1;

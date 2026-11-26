@@ -48,6 +48,28 @@
         "rubric": "PASS if a click from 203.0.113.50 through the redirector now lands on https://eval-ip-rule.example/landing and other visitors still reach the redirector's default, and the reply says so. FAIL if the rule matches everyone, if the existing EVAL US Traffic rule was removed or changed, or if the agent reports success without the rule being in place."
       },
       "notes": "The first check fires a real click through rtr.php. A URL redirect made through the API used to be stored with redirect_campaign 0, which the redirect read as a campaign with no campaign: the matching visitor got 302 with an empty Location, and this check failed."
+    },
+    {
+      "id": "setup-link-004-several-tracking-links-in-one-call",
+      "priority": "medium",
+      "state": "seeded fixture; setup makes the traffic source accounts EVAL Bulk Source 1 and EVAL Bulk Source 2 when missing and deletes every tracker on them",
+      "setup": [
+        "net=$(p202 ppc-network list --json | jq -r '[.data[] | select(.ppc_network_name==\"EVAL Traffic Network\")][0].ppc_network_id') && for n in 'EVAL Bulk Source 1' 'EVAL Bulk Source 2'; do p202 ppc-account list --json | jq -e --arg n \"$n\" '.data[] | select(.ppc_account_name==$n)' >/dev/null || p202 ppc-account create --ppc-account-name=\"$n\" --ppc-network-id=\"$net\" --json >/dev/null || exit 1; done",
+        "for n in 'EVAL Bulk Source 1' 'EVAL Bulk Source 2'; do a=$(p202 ppc-account list --json | jq -r --arg n \"$n\" '[.data[] | select(.ppc_account_name==$n)][0].ppc_account_id') && for t in $(p202 tracker list --all --ppc-account-id \"$a\" --json | jq -r '.data[].tracker_id'); do p202 tracker delete \"$t\" --force >/dev/null || exit 1; done || exit 1; done"
+      ],
+      "ask": "Make tracking links for EVAL Campaign A on both EVAL Bulk Source 1 and EVAL Bulk Source 2, in one command, and give me the two links.",
+      "expected": {
+        "runs_one_of": ["--items"],
+        "reply_includes": ["dl.php?t202id="],
+        "checks": [
+          {
+            "run": "c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign A\")][0].aff_campaign_id') && for n in 'EVAL Bulk Source 1' 'EVAL Bulk Source 2'; do a=$(p202 ppc-account list --json | jq -r --arg n \"$n\" '[.data[] | select(.ppc_account_name==$n)][0].ppc_account_id') && p202 tracker list --all --ppc-account-id \"$a\" --json | jq -r --arg c \"$c\" '\"\\([.data[] | select((.aff_campaign_id|tostring)==$c)] | length) of \\(.data | length)\"'; done | tr '\\n' ' '",
+            "includes": ["1 of 1 1 of 1"]
+          }
+        ],
+        "rubric": "PASS if one command (create-with-url with --items, or tracker_create_with_url with items) made exactly one tracker for EVAL Campaign A on each of the two accounts, and the reply gives both links, each named with its account. FAIL if a second tracker was made on either account, the links are swapped or for another campaign, or the agent made the two links with two separate creates."
+      },
+      "notes": "`p202 tracker create-with-url --items` (MCP: items on tracker_create_with_url, and on tracker_update) takes up to 50 trackers and answers each on its own; before it, 27 links and their text ads took 54 calls."
     }
   ]
 }

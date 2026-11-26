@@ -92,7 +92,8 @@ final class WebEventsIntegrationTest extends TestCase
             $this->clock += 10;
         }
         $stamped = array_map(fn (GoalEvent $e): GoalEvent => new GoalEvent(
-            $e->eventId, $e->name, $e->occurredAt, $this->clock, $e->properties, $e->revenue, $e->revenueTrusted, $e->transactionId, false, $e->clockedByServer
+            $e->eventId, $e->name, $e->occurredAt, $this->clock, $e->properties, $e->revenue, $e->revenueTrusted, $e->transactionId, false, $e->clockedByServer,
+            consentWithheld: $e->consentWithheld,
         ), $events);
 
         return $engine->ingest(1, $engine->clickSubject(1, $clickId), $stamped, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
@@ -122,7 +123,7 @@ final class WebEventsIntegrationTest extends TestCase
         self::assertSame(1, $first['notifications'][0]['queued'], 'the server postback waits in the outbox, committed with the conversion');
         self::assertSame(1, $first['notifications'][0]['browser_skipped'], 'no browser on this path: the image pixel is counted, not rendered');
         self::assertSame([], $this->fetched, 'the request itself sends nothing');
-        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 0], $this->deliver());
+        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 0, 'withheld' => 0], $this->deliver());
         self::assertSame(['https://s2s.test/pb?g=Sign%20up&id=' . $signup . '&v=1.50&p=1.50&tx=NET%209&s=100'], $this->fetched);
 
         $again = $this->send($engine, 100, [$this->event('e1', 'signup', self::T, [], null, false, 'NET 9')]);
@@ -163,6 +164,36 @@ final class WebEventsIntegrationTest extends TestCase
         $this->deliver();
         self::assertCount(1, $this->fetched);
         self::assertStringContainsString("<img src='https://img.test/px?g=Loud'", $notifier->markup(), 'a browser path renders the image pixel');
+    }
+
+    /** A visitor who refused consent: the outcome counts, and no pixel or postback tells the traffic source. */
+    public function testARefusedVisitorsOutcomeIsToldToNoTrafficSource(): void
+    {
+        $this->campaign(7, 'accumulate');
+        $this->click(100, 7);
+        $this->click(101, 7);
+        $this->pixels();
+        $this->goal(7, ['name' => 'Sale', 'trigger' => ['event' => 'sale'], 'value' => ['type' => 'fixed', 'amount' => 4]]);
+        $refusing = fn (string $id): GoalEvent => new GoalEvent($id, 'sale', self::T, self::T, [], null, false, null, consentWithheld: true);
+
+        // Refused on the event's own request.
+        $notifier = $this->notifier(true);
+        $result = $this->send($this->engineWith($notifier), 100, [$refusing('r1')]);
+        self::assertSame('suppressed', $result['outcomes'][0]['kind']);
+        self::assertSame(['not_sent', 'consent_withheld'], [$result['notifications'][0]['status'], $result['notifications'][0]['reason']]);
+        self::assertSame('', $notifier->markup(), 'no image pixel for the browser either');
+        self::assertSame(['withheld'], array_column(self::$db->query('SELECT n.status FROM 202_notification_pending AS n JOIN 202_conversion_logs AS cl ON cl.conv_id = n.conv_id WHERE cl.click_id = 100')->fetch_all(MYSQLI_ASSOC), 'status'));
+
+        // Refused on an earlier visit of the click: a later event that says nothing is held back too.
+        self::fixture('INSERT INTO 202_click_consent_refusals SET click_id = 101, refused_at = 1');
+        $notifier = $this->notifier(true);
+        $later = $this->send($this->engineWith($notifier), 101, [$this->event('s1', 'sale', self::T)]);
+        self::assertSame(['not_sent', 'consent_withheld'], [$later['notifications'][0]['status'], $later['notifications'][0]['reason']]);
+        self::assertSame('', $notifier->markup());
+
+        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 0, 'withheld' => 0], $this->deliver());
+        self::assertSame([], $this->fetched);
+        self::assertSame(2, (int) self::$db->query("SELECT COUNT(*) AS n FROM 202_conversion_logs WHERE click_id IN (100, 101) AND deleted = 0")->fetch_assoc()['n'], 'both still count');
     }
 
     public function testAReplaysReplacementIsSuppressedNotResent(): void
@@ -232,9 +263,9 @@ final class WebEventsIntegrationTest extends TestCase
         $first = $this->send($engine, 100, [$this->event('late', 'buy', self::T + 100, [], 10, true)]);
         self::assertSame('reached', $first['outcomes'][0]['kind']);
         self::assertSame(2, $first['notifications'][0]['queued'], 'one row per URL (a doubled space is not a destination)');
-        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 1], $this->deliver());
+        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 1, 'withheld' => 0], $this->deliver());
         $this->clock += NotificationOutbox::backoff(1);
-        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 1], $this->deliver(), 'only the refusing URL is due again');
+        self::assertSame(['sent' => 0, 'failed' => 0, 'retrying' => 1, 'withheld' => 0], $this->deliver(), 'only the refusing URL is due again');
         self::assertSame(['https://up.test/pb?g=Buy&v=10.00', 'https://down.test/pb?g=Buy&v=10.00', 'https://down.test/pb?g=Buy&v=10.00'], $this->fetched,
             'the accepting URL heard the conversion once; the refusing one was asked twice');
         $rows = self::$db->query('SELECT destination, kind, status, attempts FROM 202_notification_pending ORDER BY notification_id')->fetch_all(MYSQLI_ASSOC);
@@ -275,7 +306,7 @@ final class WebEventsIntegrationTest extends TestCase
         $engine = $this->engineWith($this->notifier());
 
         $this->send($engine, 100, [$this->event('late', 'buy', self::T + 100, [], 10, true)]);
-        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 0], $this->outbox()->sendDue(1), 'the worker gets through the first URL only');
+        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 0, 'withheld' => 0], $this->outbox()->sendDue(1), 'the worker gets through the first URL only');
         $replay = $this->send($engine, 100, [$this->event('early', 'buy', self::T, [], 1, true)]);
         self::assertSame('reached', $replay['outcomes'][0]['kind'], 'announced where the network has not heard it');
         self::assertSame(1, $replay['notifications'][0]['queued']);
@@ -378,7 +409,7 @@ final class WebEventsIntegrationTest extends TestCase
         self::assertSame([$a, $b], $applied['goals']);
         self::assertSame(['reached', 'reached'], array_column($applied['subjects'][0]['notifications'], 'kind'));
         self::assertSame(['queued', 'queued'], array_column($applied['subjects'][0]['notifications'], 'status'));
-        self::assertSame(['sent' => 2, 'failed' => 0, 'retrying' => 0], $this->deliver());
+        self::assertSame(['sent' => 2, 'failed' => 0, 'retrying' => 0, 'withheld' => 0], $this->deliver());
         $heard = array_map(static fn (string $u): string => (string) preg_replace('/^.*[?&]g=([^&]*).*$/', '$1', $u), $this->fetched);
         sort($heard);
         self::assertSame(['Buy', 'Upsell'], $heard, 'A and the dependent that waited on it are each announced once');

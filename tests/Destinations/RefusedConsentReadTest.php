@@ -5,21 +5,25 @@ declare(strict_types=1);
 namespace Tests\Destinations;
 
 use PHPUnit\Framework\TestCase;
-use Prosper202\Destinations\DestinationQueue;
+use Prosper202\Conversion\AdPlatformConsent;
+use Prosper202\Conversion\Ledger\ConsentWithheld;
 
 /**
- * DestinationQueue reads its three refusal columns as the offline export's
- * reasonFor() does: only a 0 is "not refused". A NULL, a missing column or
- * any other value withholds (CLAUDE.md #11). The SQL gives only 0 or 1, so
- * the integration tests cannot see a reader that loosens this.
+ * The three refusal columns (ConsentWithheld::partsSql()) are read as the
+ * offline export's reasonFor() reads its one: only a 0 is "not refused". A
+ * NULL, a missing column or any other value withholds (CLAUDE.md #11). The
+ * SQL gives only 0 or 1, so the integration tests cannot see a reader that
+ * loosens this. DestinationQueue, the traffic source pixels and the
+ * notification outbox all read them through refusalOf().
  */
 final class RefusedConsentReadTest extends TestCase
 {
     private static function read(array $conv): ?string
     {
-        $method = new \ReflectionMethod(DestinationQueue::class, 'refusedConsent');
+        $where = ConsentWithheld::refusalOf($conv);
+        self::assertSame($where === null, AdPlatformConsent::fromParts($conv)->allows(), 'the pixels and postbacks read it the same way');
 
-        return $method->invoke(null, $conv);
+        return $where;
     }
 
     /** @return array<string, array{0: mixed}> */

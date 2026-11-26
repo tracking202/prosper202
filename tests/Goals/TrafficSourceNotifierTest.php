@@ -19,6 +19,7 @@ final class TrafficSourceNotifierTest extends TestCase
             $db = new FakeMysqliConnection();
             $db->whenQueryContainsReturnRows('pa.ppc_account_id', [['click_id' => 42, 'ppc_account_id' => 3, 'click_cpc' => '0']]);
             $db->whenQueryContainsReturnRows('FROM 202_goals', [['name' => 'Sale']]);
+            $db->whenQueryContainsReturnRows('AS refused_request', [['refused_request' => '0', 'refused_replaced' => '0', 'refused_visit' => '0']]);
             $db->whenQueryContainsReturnRows('FROM 202_ppc_account_pixels WHERE ppc_account_id = ?', [
                 ['pixel_id' => 7, 'pixel_code' => '123456789012345', 'pixel_type_id' => 6],
             ]);
@@ -48,6 +49,7 @@ final class TrafficSourceNotifierTest extends TestCase
             $db = new FakeMysqliConnection();
             $db->whenQueryContainsReturnRows('pa.ppc_account_id', [['click_id' => 42, 'ppc_account_id' => 3, 'click_cpc' => '0']]);
             $db->whenQueryContainsReturnRows('FROM 202_goals', [['name' => 'Sale']]);
+            $db->whenQueryContainsReturnRows('AS refused_request', [['refused_request' => '0', 'refused_replaced' => '0', 'refused_visit' => '0']]);
             $db->whenQueryContainsReturnRows('FROM 202_ppc_account_pixels WHERE ppc_account_id = ?', [
                 ['pixel_id' => 7, 'pixel_code' => '123456789012345', 'pixel_type_id' => 6],
             ]);
@@ -66,6 +68,41 @@ final class TrafficSourceNotifierTest extends TestCase
         self::assertStringContainsString('eid=goal%3A1%3A9', $render(['conversion_id' => null, 'payable' => false, 'transaction_id' => null]), 'no conversion: its own key');
     }
 
+    /** A visitor who refused consent is told to no traffic source: the notice says so, and no pixel renders. */
+    public function testARefusedVisitorGetsNoPixel(): void
+    {
+        $notify = static function (array $parts, ?int $conversionId, bool $requestRefused = false): array {
+            $db = new FakeMysqliConnection();
+            $db->whenQueryContainsReturnRows('pa.ppc_account_id', [['click_id' => 42, 'ppc_account_id' => 3, 'click_cpc' => '0']]);
+            $db->whenQueryContainsReturnRows('FROM 202_goals', [['name' => 'Sale']]);
+            $db->whenQueryContainsReturnRows('AS refused_request', $parts);
+            $db->whenQueryContainsReturnRows('FROM 202_ppc_account_pixels WHERE ppc_account_id = ?', [
+                ['pixel_id' => 7, 'pixel_code' => '<img src="https://ts.example/p">', 'pixel_type_id' => 5],
+            ]);
+            $notifier = new TrafficSourceNotifier(new Connection($db), true, static fn (int $click): bool => true, $requestRefused);
+            $out = $notifier->notify(5, new GoalSubject(GoalSubject::CLICK, 42, 0, null, [], 42), [
+                ['goal_id' => 1, 'n' => 1, 'outcome_id' => 9, 'kind' => 'reached', 'amount' => '5', 'transaction_id' => 'T',
+                    'conversion_id' => $conversionId, 'payable' => $conversionId !== null],
+            ]);
+
+            return [$out[0]['status'], $out[0]['reason'] ?? null, $notifier->markup()];
+        };
+        $none = [['refused_request' => '0', 'refused_replaced' => '0', 'refused_visit' => '0']];
+
+        self::assertSame('rendered', $notify($none, 77)[0], 'control: consent given renders');
+        self::assertSame('rendered', $notify($none, null)[0], 'control: no conversion, its click consented');
+        foreach ([
+            'on the conversion' => [[['refused_request' => '1', 'refused_replaced' => '0', 'refused_visit' => '0']], 77, false],
+            'on a replaced conversion' => [[['refused_request' => '0', 'refused_replaced' => '1', 'refused_visit' => '0']], 77, false],
+            'on the click' => [[['refused_request' => '0', 'refused_replaced' => '0', 'refused_visit' => '1']], null, false],
+            'on this request' => [$none, 77, true],
+            'conversion not found' => [[], 77, false],
+            'click not found' => [[], null, false],
+        ] as $case => [$parts, $conversionId, $requestRefused]) {
+            self::assertSame(['not_sent', 'consent_withheld', ''], $notify($parts, $conversionId, $requestRefused), $case);
+        }
+    }
+
     /** The conversion endpoints and the web-event path hand the check down. */
     public function testTheBrowserPathsPassTheVisitorCheck(): void
     {
@@ -73,13 +110,14 @@ final class TrafficSourceNotifierTest extends TestCase
         // gpb.php reads the merged query and form body ($request); upx.php the query.
         foreach (['tracking202/static/upx.php' => '\$_GET', 'tracking202/static/gpb.php' => '\$request'] as $file => $source) {
             self::assertMatchesRegularExpression(
-                '/p202FireTrafficSourcePixels\([^;]*?static fn \(\): bool => p202ConversionMayTrack\(\$db, [^;]*?' . $source . '\)\s*\)/s',
+                '/p202FireTrafficSourcePixels\([^;]*?static fn \(\): bool => p202ConversionMayTrack\(\$db, [^;]*?' . $source . '\),[^;]*?'
+                . 'AdPlatformConsent::ofConversion\([^;]*?!\\\\Prosper202\\\\Identity\\\\RequestSignals::consentGiven\(' . $source . '\)\s*\)\s*\)/s',
                 (string) file_get_contents("$root/$file"),
                 $file
             );
         }
         self::assertMatchesRegularExpression(
-            '/new \\\\Prosper202\\\\Goals\\\\TrafficSourceNotifier\([^;]*?p202ConversionMayTrack\(\$db, \$click, \$get\)/s',
+            '/new \\\\Prosper202\\\\Goals\\\\TrafficSourceNotifier\([^;]*?p202ConversionMayTrack\(\$db, \$click, \$get\),\s*!\\\\Prosper202\\\\Identity\\\\RequestSignals::consentGiven\(\$get\)\s*\)/s',
             (string) file_get_contents("$root/202-config/static-endpoint-helpers.php")
         );
     }

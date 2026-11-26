@@ -459,11 +459,8 @@ $computeAndRecordClick = function () use ($db, &$mysql, $custom_var_ids, $tracki
 	// ISP lookup (MaxMind; only when the tracker enables it)
 	$mysql['isp_id'] = '0';
 	if ($tracker_row['maxmind_isp'] == '1') {
-		$IspData = getIspData($ip_address);
-		if (is_string($IspData)) {
-			$IspDataParts = explode(',', $IspData);
-			$IspData = $IspDataParts[0];
-		}
+		// Recorded as a redirector's ISP rule reads it (Criterion::visitorIsp()).
+		$IspData = \Prosper202\Rotator\Criterion::visitorIsp((string) getIspData($ip_address));
 		$mysql['isp_id'] = (string) $locationRepo->findOrCreateIsp($IspData);
 	}
 

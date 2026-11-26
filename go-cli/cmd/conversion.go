@@ -72,8 +72,7 @@ var conversionListCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("encoding %d conversions: %w", len(rows), err)
 			}
-			render(encoded)
-			return nil
+			return render(encoded)
 		}
 
 		for _, f := range []string{"limit", "offset"} {
@@ -85,8 +84,7 @@ var conversionListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -145,8 +143,7 @@ var conversionMatchMethodsCmd = &cobra.Command{
 // answer through, totals included.
 func renderConversionMatchMethods(data []byte) error {
 	if jsonOutput || ndjsonOutput || quietOutput {
-		render(data)
-		return nil
+		return render(data)
 	}
 	var resp struct {
 		Data   []map[string]interface{} `json:"data"`
@@ -171,7 +168,9 @@ func renderConversionMatchMethods(data []byte) error {
 	if err != nil {
 		return fmt.Errorf("encoding the match method breakdown: %w", err)
 	}
-	render(encoded)
+	if err := render(encoded); err != nil {
+		return err
+	}
 	if csvOutput || len(rows) == 0 {
 		return nil
 	}
@@ -189,8 +188,7 @@ func renderConversionMatchMethods(data []byte) error {
 		return fmt.Errorf("encoding the match method totals: %w", err)
 	}
 	fmt.Println("\nTotals by match method:")
-	render(encoded)
-	return nil
+	return render(encoded)
 }
 
 var conversionGetCmd = &cobra.Command{
@@ -206,8 +204,7 @@ var conversionGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -290,7 +287,9 @@ var conversionCreateCmd = &cobra.Command{
 		if err != nil {
 			return hintConversionCreateError(err)
 		}
-		render(data)
+		if err := render(data); err != nil {
+			return err
+		}
 		if n := conversionCreateNote(data); n != "" {
 			fmt.Fprintln(cmd.ErrOrStderr(), n)
 		}

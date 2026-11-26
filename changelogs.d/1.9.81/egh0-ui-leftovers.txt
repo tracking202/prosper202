@@ -1,0 +1,2 @@
+-- Changed: The Flash chart library (202-charts: charts.php, charts.swf and its library), which nothing in the app renders, is removed from the tree and the release zip. An install upgraded by copying the new files over the old keeps its copy until removed by hand; nothing reads it.
+-- Changed: A structural test (JqueryAndInlineStylesOnlyShrinkTest) lists the served files that still use jQuery or inline style attributes, with how many each has, so a new use fails the build and the list can only shrink.
