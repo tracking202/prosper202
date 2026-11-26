@@ -9,6 +9,7 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\AccountTimezone;
+use Api\V3\Support\PageRows;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\TimeBound;
 use Prosper202\Attribution\AttributionReports;
@@ -313,15 +314,17 @@ class AttributionController
             $groupBy,
             $from,
             $to,
-            $limit,
+            PageRows::fetchLimit($limit),
             $offset,
             $cohort,
             $keys,
             $timezone
         );
+        [$rows, $truncated] = PageRows::cut($result['rows'], $limit);
 
         return [
-            'data' => $result['rows'],
+            'data' => $rows,
+            'truncated' => $truncated,
             'totals' => $result['totals'],
             'meta' => [
                 'group_by' => $groupBy,

@@ -197,6 +197,8 @@ var searchTasks = []searchTask{
 		Phrases: []string{"clicks per publisher link", "links of a publisher", "tracking link of a publisher's clicks"}},
 	{Run: "p202 ltv summary", Pages: []string{"Analyze › Customer LTV"},
 		Phrases: []string{"customer lifetime value"}},
+	{Run: "p202 ltv products",
+		Phrases: []string{"product catalog", "list products", "products by sku"}},
 	{Run: "p202 ltv webhooks revive",
 		Phrases: []string{"revive webhook", "reactivate webhook", "webhook stopped sending", "resend missed webhook deliveries"}},
 	{Run: "p202 ltv webhooks rotate-secret",
