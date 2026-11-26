@@ -46,7 +46,7 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 - MySQL 8.0+ or MariaDB 10.6+ (the installer and the upgrade page refuse older versions)
 - Web server: **Nginx with PHP-FPM (recommended for manual installs)** or **Apache** (as used in the official Docker image)
 - Composer (installs from source only; the release zip bundles `vendor/`)
-- Go 1.27.3+ (optional, to build the Go CLI from source; the release zip bundles its binaries)
+- Go 1.27.4+ (optional, to build the Go CLI from source; the release zip bundles its binaries)
 
 ### Supported versions
 
@@ -627,6 +627,7 @@ process — versioning, tagging, CI, local builds, and troubleshooting — see
 - User, API and CLI guides: [Documentation](https://prosper.tracking202.com/documentation/) ([introduction](https://prosper.tracking202.com/documentation/introduction)); source in [`documentation/`](documentation/)
 - API reference: [`docs/openapi.yaml`](docs/openapi.yaml); CLI references: [`docs/cli.md`](docs/cli.md), [`docs/cli-agent.md`](docs/cli-agent.md)
 - Help and paid support plans: [Help and Support](https://prosper.tracking202.com/documentation/tutorials-and-guides/help-and-support)
+- Security vulnerabilities: report them privately, as [SECURITY.md](SECURITY.md) says, not in a public issue
 
 ## License
 

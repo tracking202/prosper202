@@ -203,7 +203,8 @@ answer in `reference-agent.sh`: Agent Evals runs only after landing
   commit (`p202WithHeldCacheWrites()`). When a lookup's answer changes,
   change its key subject and pin the old key unserved. A namespace is a
   claim about whose values and when: `systemHash()` names the install
-  (directory and database) with no shared fallback
+  (directory, database and `InstallIdCache`'s id, so a reinstall in place
+  starts cold) with no shared fallback
   (`SystemHashNamesTheDatabaseTest`), and click-path keys carry the code
   version (`LookupRepositoryFactory::cacheNamespace()`,
   `CacheKeyNamespaceTest`). `Ipv6RowJoinIsGuardedTest` holds every join of
@@ -259,8 +260,11 @@ skip duplicates (`p202 conversion import`) owes the same comparison.
 ### 16. On a public endpoint, identity is what the attacker cannot choose
 Split every value a security decision keys on into what the peer proved and
 what the request claimed.
-- Rate limits key on `REMOTE_ADDR`; the `X-Forwarded-For` value is for
-  display. A dedupe hash covers the full body. Aggregates over rows anyone
+- Rate limits key on `VisitorIp::fromServer()`: REMOTE_ADDR, or behind a
+  proxy `P202_TRUSTED_PROXIES` lists (`TrustedProxies`; Cloudflare's ranges
+  when unset), its X-Forwarded-For or Forwarded chain read from the right,
+  the two never merged (`ForwardedIpHeaderReadTest`). A dedupe hash covers
+  the full body. Aggregates over rows anyone
   can insert count only verified rows by default.
 - Host and scheme: ask who will follow the URL. Back to the requester:
   `TrackingBaseUrl::forRequest()` / `domainForResponse()`. Sent to someone
@@ -563,6 +567,11 @@ unconfirmed commit is `unconfirmed`, never `retryable` (#13).
   in their order (`TrafficSourceOwnersIntegrationTest`).
 - A confirmation carries what the operator was shown, and the server
   compares with that (`owner_user_id`, `repair_to_user_id`).
+- A read made before the lock decides nothing the lock protects. The
+  payment refunds capped at a sale read before the writer locked the click,
+  so a sale still committing read as none and its refund took the click
+  below 0 (R4CE). The writer applies the cap under the lock (`cap_at_sale`;
+  `ClickBankInsIntegrationTest` holds the lock while the refund waits).
 - Not seen: statements on the raw handle (`writeConnection()`), reads
   `isPlainRead()` does not recognise, and locks other than a click's.
 

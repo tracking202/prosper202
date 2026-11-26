@@ -501,8 +501,7 @@ var ltvCustomerUpsertCmd = &cobra.Command{
 		if err != nil {
 			return ltvAliasConflict(ltvNotFound(err, ltvCustomerListHint), "<customer-id>")
 		}
-		render(data)
-		return nil
+		return render(data)
 	}),
 }
 
@@ -534,8 +533,7 @@ var ltvCustomerUpdateCmd = &cobra.Command{
 		if err != nil {
 			return ltvAliasConflict(ltvNotFound(err, ltvCustomerListHint), id)
 		}
-		render(data)
-		return nil
+		return render(data)
 	}),
 }
 
@@ -583,8 +581,7 @@ var ltvCustomerMergeCmd = &cobra.Command{
 		if err != nil {
 			return ltvNotFound(err, ltvCustomerListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	}),
 }
 
@@ -648,8 +645,7 @@ var ltvCustomerAliasAddCmd = &cobra.Command{
 		if err != nil {
 			return ltvAliasConflict(ltvNotFound(err, ltvCustomerListHint), id)
 		}
-		render(data)
-		return nil
+		return render(data)
 	}),
 }
 
@@ -717,8 +713,7 @@ var ltvCompanyCreateCmd = &cobra.Command{
 		if err != nil {
 			return ltvCompanyConflict(err)
 		}
-		render(data)
-		return nil
+		return render(data)
 	}),
 }
 
@@ -751,8 +746,7 @@ var ltvCompanyUpdateCmd = &cobra.Command{
 		if err != nil {
 			return ltvCompanyConflict(err)
 		}
-		render(data)
-		return nil
+		return render(data)
 	}),
 }
 
@@ -798,8 +792,7 @@ var ltvCompanyMergeCmd = &cobra.Command{
 		if err != nil {
 			return ltvNotFound(err, ltvCompanyListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	}),
 }
 
@@ -913,7 +906,9 @@ var ltvRevenueRecordCmd = &cobra.Command{
 		if err != nil {
 			return ltvNotFound(err, ltvCustomerListHint)
 		}
-		render(data)
+		if err := render(data); err != nil {
+			return err
+		}
 		var resp struct {
 			Data struct {
 				EventID   json.Number `json:"event_id"`
@@ -968,8 +963,7 @@ var ltvEngagementEventRecordCmd = &cobra.Command{
 		if err != nil {
 			return ltvNotFound(err, ltvCustomerListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	}),
 }
 
@@ -1051,8 +1045,7 @@ var ltvSubscriptionUpsertCmd = &cobra.Command{
 		if err != nil {
 			return ltvNotFound(err, ltvCustomerListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	}),
 }
 
@@ -1130,7 +1123,9 @@ var ltvSubscriptionEventCmd = &cobra.Command{
 		if err != nil {
 			return ltvNotFound(err, "`p202 ltv subscriptions` lists the subscriptions (external_sub_id); `p202 ltv subscription upsert` creates one.")
 		}
-		render(data)
+		if err := render(data); err != nil {
+			return err
+		}
 		var resp struct {
 			Data struct {
 				Changed *bool `json:"changed"`
@@ -1180,8 +1175,7 @@ var ltvProductUpsertCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	}),
 }
 
@@ -1236,8 +1230,7 @@ var ltvProductUpdateCmd = &cobra.Command{
 		if err != nil {
 			return ltvNotFound(err, ltvProductListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	}),
 }
 
@@ -1307,8 +1300,7 @@ var ltvNextOfferImpressionCmd = &cobra.Command{
 			}
 			return ltvNotFound(err, ltvCustomerListHint)
 		}
-		render(data)
-		return nil
+		return render(data)
 	}),
 }
 

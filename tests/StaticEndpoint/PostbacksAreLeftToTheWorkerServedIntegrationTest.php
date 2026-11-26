@@ -32,6 +32,11 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
     private const AFTER_CLICK = 66080003;
     private const SLOW_CLICK = 66080004;
     private const SLOW_ACCOUNT = 6609;
+    private const CONSENT_ACCOUNT = 6610;
+    private const REFUSED_CLICK = 66080005;
+    private const REFUSED_VISIT_CLICK = 66080006;
+    private const CONSENTING_CLICK = 66080007;
+    private const REFUSED_GPB_CLICK = 66080008;
 
     /** @var resource|null */
     private static $server = null;
@@ -98,16 +103,20 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
 
     private static function cleanUp(): void
     {
-        $clicks = implode(', ', [self::GPB_CLICK, self::UPX_CLICK, self::AFTER_CLICK, self::SLOW_CLICK]);
+        $clicks = implode(', ', [
+            self::GPB_CLICK, self::UPX_CLICK, self::AFTER_CLICK, self::SLOW_CLICK,
+            self::REFUSED_CLICK, self::REFUSED_VISIT_CLICK, self::CONSENTING_CLICK, self::REFUSED_GPB_CLICK,
+        ]);
         self::q('DELETE FROM 202_notification_pending WHERE conv_id IN'
             . " (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($clicks))");
         $tables = [
             '202_conversion_logs', '202_clicks', '202_clicks_spy', '202_clicks_tracking', '202_click_latest_visits',
+            '202_click_consent_refusals',
         ];
         foreach ($tables as $table) {
             self::q("DELETE FROM $table WHERE click_id IN ($clicks)");
         }
-        $accounts = self::ACCOUNT . ', ' . self::SLOW_ACCOUNT;
+        $accounts = self::ACCOUNT . ', ' . self::SLOW_ACCOUNT . ', ' . self::CONSENT_ACCOUNT;
         self::q("DELETE FROM 202_ppc_account_pixels WHERE ppc_account_id IN ($accounts)");
         self::q("DELETE FROM 202_ppc_accounts WHERE ppc_account_id IN ($accounts)");
         self::q('DELETE FROM 202_aff_campaigns WHERE aff_campaign_id = ' . self::CAMPAIGN);
@@ -145,10 +154,25 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
             'pixel_code' => 'https://slow.example/a?s=[[subid]] https://slow.example/b?s=[[subid]]'
                 . ' https://fast.example/c?s=[[subid]]',
         ]);
+        // An image pixel and a server postback, for the consent cases.
+        self::row('202_ppc_accounts', [
+            'ppc_account_id' => self::CONSENT_ACCOUNT, 'user_id' => self::USER, 'ppc_network_id' => 0,
+            'ppc_account_name' => 'video ads', 'ppc_account_time' => time(),
+        ]);
+        self::row('202_ppc_account_pixels', [
+            'ppc_account_id' => self::CONSENT_ACCOUNT, 'pixel_type_id' => 1,
+            'pixel_code' => 'https://img.example/px?s=[[subid]]',
+        ]);
+        self::row('202_ppc_account_pixels', [
+            'ppc_account_id' => self::CONSENT_ACCOUNT, 'pixel_type_id' => 4,
+            'pixel_code' => 'https://s2s.example/pb?s=[[subid]]',
+        ]);
         $conn = new Connection(self::$db);
         $clicks = [
             self::GPB_CLICK => self::ACCOUNT, self::UPX_CLICK => self::ACCOUNT,
             self::AFTER_CLICK => self::ACCOUNT, self::SLOW_CLICK => self::SLOW_ACCOUNT,
+            self::REFUSED_CLICK => self::CONSENT_ACCOUNT, self::REFUSED_VISIT_CLICK => self::CONSENT_ACCOUNT,
+            self::CONSENTING_CLICK => self::CONSENT_ACCOUNT, self::REFUSED_GPB_CLICK => self::CONSENT_ACCOUNT,
         ];
         foreach ($clicks as $click => $account) {
             $columns = "click_id = $click, user_id = " . self::USER . ', aff_campaign_id = ' . self::CAMPAIGN
@@ -160,6 +184,8 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
                 . ' c1_id = 0, c2_id = 0, c3_id = 0, c4_id = 0');
             LatestVisit::refresh($conn, $click);
         }
+        // The visit refused consent; the conversion's request names no p202_consent.
+        \Prosper202\Identity\ConsentRefusal::record($conn, self::REFUSED_VISIT_CLICK, time() - 60);
     }
 
     /** @return array{0: int, 1: string} status and body */
@@ -291,5 +317,55 @@ final class PostbacksAreLeftToTheWorkerServedIntegrationTest extends TestCase
         );
         $attempts = array_column(self::queued(self::SLOW_CLICK), 'attempts', 'url');
         self::assertSame('0', (string) $attempts["https://slow.example/b?s=$s"], 'left for the next run, untried');
+    }
+
+    /**
+     * A visitor who refused consent gets no traffic source pixel and no
+     * postback (T5PB): the image pixel is not in the answer, the postback's
+     * row is held back saying why, and the worker sends nothing for it.
+     *
+     * @return iterable<string, array{0: int, 1: string}>
+     */
+    public static function refusals(): iterable
+    {
+        yield 'refused on the conversion\'s request' => [self::REFUSED_CLICK, '&p202_consent=0'];
+        yield 'refused on the click\'s visit' => [self::REFUSED_VISIT_CLICK, ''];
+    }
+
+    /** @dataProvider refusals */
+    public function testAVisitorWhoRefusedConsentIsToldToNoTrafficSource(int $click, string $consent): void
+    {
+        [$status, $body] = self::get('/tracking202/static/upx.php?subid=' . $click . '&amount=3&txid=R' . $click . $consent);
+        self::assertSame(200, $status, $body . $this->serverLog());
+        self::assertStringNotContainsString('img.example', $body, 'no browser pixel');
+
+        $rows = self::queued($click);
+        self::assertCount(1, $rows, 'the conversion was recorded and its postback kept');
+        self::assertSame('withheld', $rows[0]['status'], 'held back, not pending');
+        self::assertSame('0', (string) $rows[0]['attempts']);
+        $note = self::$db->query('SELECT n.last_error FROM 202_notification_pending n JOIN 202_conversion_logs c USING (conv_id)'
+            . " WHERE c.click_id = $click")->fetch_row()[0];
+        self::assertStringStartsWith(\Prosper202\Conversion\AdPlatformConsent::REFUSED, (string) $note);
+
+        self::assertSame([], array_filter(self::runWorker(), static fn (string $u): bool => str_contains($u, "s=$click")),
+            'the worker sends nothing for it');
+        self::assertSame('withheld', self::queued($click)[0]['status']);
+    }
+
+    public function testTheGlobalPostbackOfARefusalQueuesNothingToSendAndAnswersAsBefore(): void
+    {
+        [$status, $body] = self::get('/tracking202/static/gpb.php?subid=' . self::REFUSED_GPB_CLICK . '&amount=3&txid=RG&p202_consent=0');
+        self::assertSame(202, $status, $body . $this->serverLog());
+        self::assertStringContainsString('"msg":"Postback successful"', $body, 'the network is answered as it always was');
+        self::assertSame(['withheld'], array_column(self::queued(self::REFUSED_GPB_CLICK), 'status'));
+    }
+
+    public function testAConsentingVisitorStillGetsThePixelAndThePostback(): void
+    {
+        [$status, $body] = self::get('/tracking202/static/upx.php?subid=' . self::CONSENTING_CLICK . '&amount=3&txid=C1&p202_consent=1');
+        self::assertSame(200, $status, $body . $this->serverLog());
+        self::assertStringContainsString('https://img.example/px?s=' . self::CONSENTING_CLICK, $body, 'the image pixel is rendered');
+        self::assertSame(['pending'], array_column(self::queued(self::CONSENTING_CLICK), 'status'));
+        self::assertContains('https://s2s.example/pb?s=' . self::CONSENTING_CLICK, self::runWorker());
     }
 }

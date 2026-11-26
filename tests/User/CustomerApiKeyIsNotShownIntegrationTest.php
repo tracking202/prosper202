@@ -6,6 +6,7 @@ namespace Tests\User;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\DataSeeder;
+use Prosper202\User\ShownSettings;
 
 /**
  * The Prosper202 customer API key, the license key that unlocks a paid
@@ -118,7 +119,7 @@ final class CustomerApiKeyIsNotShownIntegrationTest extends TestCase
     }
 
     /**
-     * @param array<string, string>|null $post
+     * @param array<string, string|array<string, string>>|null $post
      * @param array<string, string> $get
      * @return array{output: string, result: array<string, mixed>}
      */
@@ -128,6 +129,9 @@ final class CustomerApiKeyIsNotShownIntegrationTest extends TestCase
             'P202_SU_USER' => (string) self::USER,
             'P202_SU_SESSION_DIR' => self::$sessions,
             'P202_SU_GET' => json_encode((object) $get, JSON_THROW_ON_ERROR),
+            // One shown-settings secret for every request, so the version a page
+            // shows is current in the save that posts it back.
+            'P202_SU_SHOWN_SECRET' => str_repeat('5a', 32),
             'HTTPS_PROXY' => 'http://127.0.0.1:9',
             'https_proxy' => 'http://127.0.0.1:9',
             'NO_PROXY' => '',
@@ -135,6 +139,9 @@ final class CustomerApiKeyIsNotShownIntegrationTest extends TestCase
         ];
         if (!$signedIn) {
             $env['P202_SU_SESSION'] = 'anonymous';
+        }
+        if (($post['update_p202_customer_api_key'] ?? '') === '1' && !isset($post[ShownSettings::FIELD])) {
+            $post[ShownSettings::FIELD] = self::shown();
         }
         if ($post !== null) {
             $env['P202_SU_POST'] = json_encode($post + ['token' => 'SESSION'], JSON_THROW_ON_ERROR);
@@ -159,6 +166,25 @@ final class CustomerApiKeyIsNotShownIntegrationTest extends TestCase
         self::assertNull($result['uncaught'], $stdout . $stderr);
 
         return ['output' => substr($stdout, 0, $at) . $stderr, 'result' => $result];
+    }
+
+    /**
+     * The version the page shows for the key's form, as a browser posts it
+     * back: a settings save without it is refused as stale.
+     *
+     * @return array<string, string>
+     */
+    private static function shown(): array
+    {
+        $page = self::request(self::ACCOUNT)['output'];
+        $form = 'p202_customer_api_key';
+        self::assertSame(1, preg_match(
+            '/name="' . preg_quote(ShownSettings::FIELD . '[' . $form . ']', '/') . '" value="([^"]+)"/',
+            $page,
+            $found
+        ), "the page shows the $form form's version");
+
+        return [$form => $found[1]];
     }
 
     /** The account page as drawn after a request: a save redirects, so the next GET shows its flash. */
@@ -244,6 +270,11 @@ final class CustomerApiKeyIsNotShownIntegrationTest extends TestCase
             preg_match('/<input type="hidden" name="p202_customer_api_key" value="' . self::HANDED_BACK . '">/', $page)
         );
         self::assertStringContainsString('value=""', self::field($page), 'the visible field stays empty');
+        self::assertSame(
+            2,
+            substr_count($page, 'name="' . ShownSettings::FIELD . '[p202_customer_api_key]"'),
+            'the hand-back\'s Save and the typed key\'s Save each post the version the page shows'
+        );
         self::showsNoPartOf(self::SAVED, $page, 'beside the hand-back');
     }
 

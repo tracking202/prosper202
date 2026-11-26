@@ -15,6 +15,9 @@ use Prosper202\DataEngine\ClickRollupSql;
  *   https:// and says so, lists each page with its code check, and the
  *   check's endpoint keeps what it found (a loopback URL, so the guard
  *   refuses the fetch and nothing leaves the machine);
+ * - Setup › Landing Pages saves a page's split test with the page, shows
+ *   it on the edit form, refuses a list it cannot store without changing
+ *   the stored one, and writes none for another account's page;
  * - Visitors shows why a click was filtered, offers Not fraud on one
  *   filtered for its score, and the endpoint counts it again;
  * - Update Subids reads a payout pasted with the account currency's sign.
@@ -87,7 +90,7 @@ final class ClicksAndSetupPagesIntegrationTest extends TestCase
             '202_click_latest_visits', '202_clicks_filter_reason', '202_conversion_logs'] as $table) {
             self::q("DELETE FROM $table WHERE click_id IN ($clicks)");
         }
-        foreach (['202_landing_page_checks', '202_landing_pages', '202_click_filter_entries', '202_click_filter_settings', '202_dirty_hours',
+        foreach (['202_landing_page_checks', '202_landing_page_split_tests', '202_text_ads', '202_landing_pages', '202_click_filter_entries', '202_click_filter_settings', '202_dirty_hours',
             '202_revenue_events', '202_aff_campaigns', '202_aff_networks', '202_user_role', '202_users_pref', '202_users'] as $table) {
             self::q("DELETE FROM $table WHERE user_id IN ($users)");
         }
@@ -253,6 +256,126 @@ final class ClicksAndSetupPagesIntegrationTest extends TestCase
         self::assertStringNotContainsString('data-p202-lp-check-due', $notMine);
         self::assertStringContainsString('Invalid token', self::page('tracking202/ajax/check_landing_code.php', [], ['token' => 'wrong', 'landing_page_id' => (string) $loopback]));
         self::assertSame('0', self::one("SELECT COUNT(*) FROM 202_landing_page_checks WHERE landing_page_id = $theirs"));
+    }
+
+    public function testLandingPagesSavesAPagesSplitTestWithIt(): void
+    {
+        $u = self::USER;
+        $lp = 'tracking202/setup/landing_pages.php';
+        $page = ['token' => 'SESSION', 'landing_page_type' => '1'];
+        $page['landing_page_url'] = 'https://lp.example.com/split';
+        $ab = "$u|1|0|" . '[{"name":"headline-a","weight":30},{"name":"headline-b","weight":70}]';
+        self::page($lp, [], $page + [
+            'landing_page_nickname' => 'Split page', 'split_status' => '1', 'split_overwrite_c4' => '0',
+            'split_variants' => "headline-a 30\r\nheadline-b 70",
+        ]);
+        $id = (int) self::one("SELECT landing_page_id FROM 202_landing_pages WHERE user_id = $u"
+            . " AND landing_page_nickname = 'Split page'");
+        self::assertGreaterThan(0, $id, 'the page was saved');
+        $edit = ['edit_landing_page_id' => (string) $id];
+        $stored = "SELECT CONCAT_WS('|', user_id, split_status, split_overwrite_c4, split_variants)"
+            . " FROM 202_landing_page_split_tests WHERE landing_page_id = $id";
+        self::assertSame($ab, self::one($stored));
+
+        // The edit form shows it, open.
+        $form = self::page($lp, $edit);
+        $opened = '~<details class="p202-disclosure mb-3" open>\s*<summary>Split test~';
+        self::assertMatchesRegularExpression($opened, $form);
+        self::assertStringContainsString(">headline-a 30\nheadline-b 70</textarea>", $form);
+        self::assertMatchesRegularExpression('~id="split_status" name="split_status" value="1" checked>~', $form);
+        self::assertMatchesRegularExpression('~id="split_overwrite_c4" name="split_overwrite_c4" value="1">~', $form);
+
+        // A list that cannot be stored is refused under its field; the page and its test stay as they were.
+        $refused = self::page($lp, $edit, $page + [
+            'landing_page_id' => (string) $id, 'landing_page_nickname' => 'Split page renamed',
+            'split_status' => '1', 'split_variants' => 'only-one 5',
+        ]);
+        self::assertStringContainsString('A split test that is on needs at least two variants.', $refused);
+        self::assertStringContainsString('>only-one 5</textarea>', $refused, 'the lines are shown as typed');
+        $name = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = $id";
+        self::assertSame('Split page', self::one($name));
+        self::assertSame($ab, self::one($stored));
+
+        // Turned off and emptied, the row says so.
+        self::page($lp, $edit, $page + [
+            'landing_page_id' => (string) $id, 'landing_page_nickname' => 'Split page',
+            'split_status' => '0', 'split_overwrite_c4' => '0', 'split_variants' => '',
+        ]);
+        self::assertSame("$u|0|0|[]", self::one($stored));
+
+        // Another account's page, named by id, gets no test.
+        $others = self::insert('INSERT INTO 202_landing_pages SET user_id = ' . self::OTHER . ', aff_campaign_id = 0,'
+            . " landing_page_nickname = 'Not mine', landing_page_url = 'https://store.example.net/',"
+            . ' landing_page_id_public = 7126, landing_page_time = 0, landing_page_type = 1');
+        self::page($lp, ['edit_landing_page_id' => (string) $others], $page + [
+            'landing_page_id' => (string) $others, 'landing_page_nickname' => 'Taken',
+            'split_status' => '1', 'split_variants' => "a 1\nb 1",
+        ]);
+        $noTest = "SELECT COUNT(*) FROM 202_landing_page_split_tests WHERE landing_page_id = $others";
+        self::assertSame('0', self::one($noTest));
+        self::q("DELETE FROM 202_landing_page_split_tests WHERE landing_page_id = $id");
+        self::q("DELETE FROM 202_landing_pages WHERE landing_page_id IN ($id, $others)");
+    }
+
+    /**
+     * An advanced page is not made simple while text ads of type 1 name it:
+     * Get Links offers those only on an advanced page, so the save left them
+     * offered nowhere. Once no ad names it, the change saves; a simple page
+     * with such an ad stored before #260 still saves as it is.
+     */
+    public function testAnAdvancedPageWhoseLinksOfferTextAdsIsNotMadeSimple(): void
+    {
+        $u = self::USER;
+        $network = self::insert("INSERT INTO 202_aff_networks SET user_id = $u, aff_network_name = 'Ads store', aff_network_time = 0");
+        $campaign = self::insert("INSERT INTO 202_aff_campaigns SET user_id = $u, aff_network_id = $network, aff_campaign_name = 'Ads offer',"
+            . " aff_campaign_url = 'https://shop.example.com', aff_campaign_payout = 3, aff_campaign_foreign_payout = 0, aff_campaign_time = 0");
+        $page = self::insert("INSERT INTO 202_landing_pages SET user_id = $u, aff_campaign_id = 0, landing_page_nickname = 'Ads page',"
+            . " landing_page_url = 'https://lp.example.com/ads', landing_page_id_public = 7131, landing_page_time = 0, landing_page_type = 1");
+        $ad = static fn (string $name, int $type, int $deleted = 0, int $user = self::USER): int => self::insert("INSERT INTO 202_text_ads SET user_id = $user,"
+            . " aff_campaign_id = 0, landing_page_id = $page, text_ad_type = $type, text_ad_name = '$name', text_ad_headline = 'h',"
+            . " text_ad_description = 'd', text_ad_display_url = 'x', text_ad_deleted = $deleted, text_ad_time = 0");
+        $first = $ad('Spring <b>banner</b>', 1);
+        $ad('Removed banner', 1, 1);
+        $ad('Campaign banner', 0);
+        $ad('Their banner', 1, 0, self::OTHER);
+        $makeSimple = static fn (string $nickname = 'Ads page'): string => self::page('tracking202/setup/landing_pages.php', ['edit_landing_page_id' => (string) $page], [
+            'token' => 'SESSION', 'landing_page_id' => (string) $page, 'landing_page_type' => '0', 'aff_campaign_id' => (string) $campaign,
+            'landing_page_nickname' => $nickname, 'landing_page_url' => 'https://lp.example.com/ads',
+        ]);
+
+        // The other tests count this account's pages, and the order is random.
+        try {
+            $refused = $makeSimple();
+            self::assertStringContainsString('This advanced page&#039;s links offer 1 text ad (&quot;Spring &lt;b&gt;banner&lt;/b&gt;&quot;), and a simple page offers none', $refused);
+            self::assertStringContainsString('Nothing was saved.', $refused);
+            self::assertSame('1', self::one("SELECT landing_page_type FROM 202_landing_pages WHERE landing_page_id = $page"), 'the refused save changed the type');
+            self::assertSame('0', self::one("SELECT aff_campaign_id FROM 202_landing_pages WHERE landing_page_id = $page"));
+
+            // Saved as advanced, the page's other fields still save.
+            self::page('tracking202/setup/landing_pages.php', ['edit_landing_page_id' => (string) $page], [
+                'token' => 'SESSION', 'landing_page_id' => (string) $page, 'landing_page_type' => '1', 'landing_page_nickname' => 'Ads page 2',
+                'landing_page_url' => 'https://lp.example.com/ads',
+            ]);
+            self::assertSame('Ads page 2', self::one("SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = $page"));
+
+            // Once the ad is a campaign's, the page is made simple.
+            self::q("UPDATE 202_text_ads SET text_ad_type = 0, aff_campaign_id = $campaign WHERE text_ad_id = $first");
+            $makeSimple();
+            self::assertSame(['0', (string) $campaign], [
+                self::one("SELECT landing_page_type FROM 202_landing_pages WHERE landing_page_id = $page"),
+                self::one("SELECT aff_campaign_id FROM 202_landing_pages WHERE landing_page_id = $page"),
+            ]);
+
+            // A simple page an ad of type 1 already names saves as it is.
+            self::q("UPDATE 202_text_ads SET text_ad_type = 1 WHERE text_ad_id = $first");
+            $makeSimple('Ads page 3');
+            self::assertSame('Ads page 3', self::one("SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = $page"));
+        } finally {
+            self::q("DELETE FROM 202_text_ads WHERE landing_page_id = $page");
+            self::q("DELETE FROM 202_landing_pages WHERE landing_page_id = $page");
+            self::q("DELETE FROM 202_aff_campaigns WHERE aff_campaign_id = $campaign");
+            self::q("DELETE FROM 202_aff_networks WHERE aff_network_id = $network");
+        }
     }
 
     public function testVisitorsSaysWhyAClickWasFilteredAndNotFraudCountsItAgain(): void

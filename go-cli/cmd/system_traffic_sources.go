@@ -279,8 +279,7 @@ var systemTrafficSourceOwnersShowCmd = &cobra.Command{
 			return err
 		}
 		if jsonOutput || ndjsonOutput {
-			render(data)
-			return nil
+			return render(data)
 		}
 		rows := make([]map[string]interface{}, 0, len(report.Data.Sources))
 		for _, e := range report.Data.Sources {
@@ -312,7 +311,9 @@ var systemTrafficSourceOwnersShowCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("encoding the report: %w", err)
 		}
-		render(encoded)
+		if err := render(encoded); err != nil {
+			return err
+		}
 		if note := report.Data.VariablesNote; note != nil && *note != "" {
 			fmt.Fprintln(os.Stderr, "Note: "+*note)
 		}
@@ -489,7 +490,9 @@ func runTsoRepair(cmd *cobra.Command, args []string) error {
 		}
 		return systemMalformed("moving the traffic source", err)
 	}
-	render(data)
+	if err := render(data); err != nil {
+		return err
+	}
 	moved := answer.Data.Repaired[0]
 	output.Success("Moved traffic source %d (%q) from user %d to user %d. Its accounts' clicks are queued for the cron job's report rollup.",
 		moved.PpcNetworkID, moved.Name, moved.From, moved.To)
@@ -516,7 +519,9 @@ func runTsoRepairAll(cmd *cobra.Command, c *api.Client, report tsoReport, force 
 		if err != nil {
 			return fmt.Errorf("encoding the answer: %w", err)
 		}
-		render(encoded)
+		if err := render(encoded); err != nil {
+			return err
+		}
 		output.Success("No traffic source can be moved without naming its user (%d ambiguous). Nothing was sent.", len(skipped))
 		return nil
 	}
@@ -584,7 +589,9 @@ func runTsoRepairAll(cmd *cobra.Command, c *api.Client, report tsoReport, force 
 	if err != nil {
 		return fmt.Errorf("encoding the answer: %w", err)
 	}
-	render(encoded)
+	if err := render(encoded); err != nil {
+		return err
+	}
 	output.Success("Moved %d traffic source(s); %d left as they are (skipped lists why).", len(repaired), len(skipped))
 	return nil
 }
@@ -699,7 +706,9 @@ func runTsoSplit(cmd *cobra.Command, args []string) error {
 		}
 		return systemMalformed("splitting the traffic source", err)
 	}
-	render(data)
+	if err := render(data); err != nil {
+		return err
+	}
 	copies := make([]string, 0, len(answer.Data.Copies))
 	for _, cp := range answer.Data.Copies {
 		copies = append(copies, fmt.Sprintf("user %d's %d account(s) now name traffic source %d", cp.UserID, len(cp.AccountIDs), cp.PpcNetworkID))

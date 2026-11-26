@@ -533,8 +533,7 @@ var goalCreateCmd = &cobra.Command{
 		if err != nil {
 			return hintGoalError(err)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -586,8 +585,7 @@ var goalUpdateCmd = &cobra.Command{
 		if err != nil {
 			return hintGoalError(err)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -613,8 +611,7 @@ var goalVersionsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -641,8 +638,7 @@ var goalOutcomesCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -662,8 +658,7 @@ var goalValidateCmd = &cobra.Command{
 		if err != nil {
 			return hintGoalError(err)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -705,8 +700,7 @@ var goalEvaluateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(out)
-		return nil
+		return render(out)
 	},
 }
 
@@ -764,8 +758,7 @@ var goalReevaluateCmd = &cobra.Command{
 			}
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -790,8 +783,7 @@ var goalCampaignListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -812,8 +804,7 @@ var goalCampaignSetCmd = &cobra.Command{
 		if err != nil {
 			return hintGoalError(err)
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 

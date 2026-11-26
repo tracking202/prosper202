@@ -256,11 +256,14 @@ func TestEveryPathThatSendsTheProfilesIsHeldToTheRefusal(t *testing.T) {
 // next step; one without a code keeps the general one.
 func TestSyncAJobStoppedByTheGuardOrACapSaysWhatToDo(t *testing.T) {
 	for code, want := range map[string]string{
-		"sync_url_refused":    "P202_WEBHOOK_ALLOW_NETWORKS",
-		"sync_url_unresolved": "does not resolve",
-		"sync_limit":          "system health",
-		"sync_key_unreadable": "queues a new job",
-		"":                    "found on the target by their natural key",
+		"sync_url_refused":     "P202_WEBHOOK_ALLOW_NETWORKS",
+		"sync_url_unresolved":  "does not resolve",
+		"sync_limit":           "system health",
+		"sync_key_unreadable":  "queues a new job",
+		"sync_record_unusable": "--skip-errors",
+		"sync_worker_lost":     "--dry-run to see what is left",
+		"sync_internal":        "error log",
+		"":                     "found on the target by their natural key",
 	} {
 		t.Run(code, func(t *testing.T) {
 			var reads int32

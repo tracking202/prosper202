@@ -135,7 +135,9 @@ var analyticsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
+		if err := render(data); err != nil {
+			return err
+		}
 		noteForPeople(cmd, breakdownMoreRowsNote(data, params, ""))
 		return nil
 	},

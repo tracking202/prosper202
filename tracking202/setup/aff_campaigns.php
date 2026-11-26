@@ -126,6 +126,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 	if (empty($aff_campaign_name)) {
 		$error['aff_campaign_name'] = '<div class="error">What is the name of this campaign.</div>';
 	}
+    $tooLong = \Prosper202\Setup\FieldLength::refusal('aff_campaign_name', $aff_campaign_name, 'The campaign name');
+    if ($tooLong !== null) {
+        $error['aff_campaign_name'] = '<div class="error">'
+            . htmlspecialchars($tooLong, ENT_QUOTES, 'UTF-8') . '</div>';
+    }
 
 	$aff_campaign_url = trim((string) $_POST['aff_campaign_url']);
 	if (empty($aff_campaign_url)) {
@@ -393,24 +398,21 @@ if (isset($_GET['delete_aff_campaign_id'])) {
 	}
 
 	if ($userObj->hasPermission("remove_campaign")) {
-		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-		$mysql['aff_campaign_id'] = $db->real_escape_string((string)$_GET['delete_aff_campaign_id']);
-		$mysql['date_deleted'] = time();
-
-		$delete_sql = " UPDATE  `202_aff_campaigns`
-						SET     `aff_campaign_deleted`='1',
-								`aff_campaign_time`='" . ($mysql['aff_campaign_time'] ?? time()) . "'
-						WHERE   `user_id`='" . $mysql['user_id'] . "'
-						AND     `aff_campaign_id`='" . $mysql['aff_campaign_id'] . "'";
-        if ($db->query($delete_sql)) {
-            $delete_success = true;
-
+		// Removed only when it is the account's and still there; anything else
+		// says so rather than redirecting to "Removed".
+		try {
+			$delete_success = \Prosper202\Setup\SetupRemoval::mark(new \Prosper202\Database\Connection($db),
+				'campaign', $_GET['delete_aff_campaign_id'], (int) $_SESSION['user_id'], time());
+		} catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+			record_mysql_error($db, 'UPDATE 202_aff_campaigns (remove a campaign)', $e->getMessage());
+		}
+        if ($delete_success === true) {
             // Landing Page Optimizer (segments-v2 G10): deletes change the
             // synced snapshot too (buildSnapshot omits deleted rows) — flag
             // dirty so the hourly cron re-pushes. DB-only — no HTTP here.
             \Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
         } else {
-            record_mysql_error($delete_sql);
+            $error['delete_aff_campaign'] = 'That campaign was not found on this account. Nothing was removed.';
         }
 	} else {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/aff_campaigns.php');

@@ -58,13 +58,13 @@ final class CorrectionUrlIntegrationTest extends TestCase
         self::assertSame(0, self::rows('202_notification_pending', "kind = 'reached' AND status = 'pending'"), 'the replacement is not announced as reached again');
 
         $this->sent = [];
-        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 0], $outbox->sendDue(10));
+        self::assertSame(['sent' => 1, 'failed' => 0, 'retrying' => 0, 'withheld' => 0], $outbox->sendDue(10));
         self::assertSame([$corrections[0]['url']], $this->sent, 'the worker sends the correction once');
 
         // The operator's read: every postback the app's goals queued, with
         // the summary by status.
         $read = (new \Api\V3\Controllers\AppNotificationsController(self::$db, 1))->list(['registration_id' => '5']);
-        self::assertSame(['pending' => 0, 'sent' => 2, 'failed' => 0, 'cancelled' => 1, 'suppressed' => 0], $read['meta']['summary'],
+        self::assertSame(['pending' => 0, 'sent' => 2, 'failed' => 0, 'cancelled' => 1, 'suppressed' => 0, 'withheld' => 0], $read['meta']['summary'],
             'the $10 second purchase and its correction sent; the $5 replacement\'s own reached cancelled (the install is unpaid here: the campaign lists goals, not the install)');
         self::assertSame(3, $read['pagination']['total']);
         self::assertSame(['correction', 'sent', 5, 'Summit'], [$read['data'][0]['kind'], $read['data'][0]['status'], $read['data'][0]['registration_id'], $read['data'][0]['app_name']]);

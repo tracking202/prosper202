@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 // Release signing (Ed25519, detached). See RELEASING.md, "Signed releases".
 //   sign <zip>...       writes <zip>.sig with the key in $P202_RELEASE_SIGNING_KEY
 //   keygen <key-file>   writes a new secret key to <key-file>, prints the public key

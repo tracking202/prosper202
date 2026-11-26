@@ -116,7 +116,9 @@ func runUserPrefsUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	renderPrefs(data)
+	if err := renderPrefs(data); err != nil {
+		return err
+	}
 	// What a change of the account's currency does to what is already
 	// recorded, as the server says it (--json carries it in the answer).
 	var answer struct {
@@ -134,12 +136,11 @@ func runUserPrefsUpdate(cmd *cobra.Command, args []string) error {
 // as whether one is stored, {"stored": true}; a table shows that as
 // (stored) or (not stored), and --json, --ndjson and --quiet get the answer
 // as the API gave it.
-func renderPrefs(data []byte) {
+func renderPrefs(data []byte) error {
 	if jsonOutput || ndjsonOutput || quietOutput {
-		render(data)
-		return
+		return render(data)
 	}
-	render(withStoredStates(data))
+	return render(withStoredStates(data))
 }
 
 // withStoredStates puts (stored) or (not stored) in place of each

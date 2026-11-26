@@ -24,6 +24,9 @@
 #  - after the user is removed, and their row restored, the old cookie is
 #    refused.
 #
+# A refused cookie is cleared by the response that refused it; one that signs
+# in is kept.
+#
 # It adds users named "rkend…" and removes them, with their keys.
 BASE=${P202_BASE:-http://127.0.0.1:8097}
 DB=${P202_DB:-p202_test}
@@ -76,14 +79,18 @@ sign_in() { # JAR USER PASS
   submit "$1" "$OUT/login.html" user_name 202-login.php "$OUT/signed-in.html" "user_name=$2" "user_pass=$3" "remember_me=on"
 }
 # A browser holding only COOKIE opens the sign-in page: "in" when the cookie
-# signs it in (sent on to the app), "refused" when the form is drawn.
+# signs it in (sent on to the app) and is kept, "refused" when the form is
+# drawn and the response clears the cookie, so the browser stops sending one
+# the database refused.
 cookie() { # COOKIE
-  local answer
-  answer=$(curl -sS -o "$OUT/cookie.html" -w '%{http_code} %{redirect_url}' -b "remember_me=$1" "$BASE/202-login.php")
-  case "$answer" in
-    "302 $BASE/202-account") echo in ;;
-    "200 ") grep -q 'name="user_pass"' "$OUT/cookie.html" && echo refused || echo "200 without the form" ;;
-    *) echo "$answer" ;;
+  local answer cleared=no
+  answer=$(curl -sS -D "$OUT/cookie.h" -o "$OUT/cookie.html" -w '%{http_code} %{redirect_url}' -b "remember_me=$1" "$BASE/202-login.php")
+  grep -qi '^set-cookie: remember_me=deleted' "$OUT/cookie.h" && cleared=yes
+  case "$answer/$cleared" in
+    "302 $BASE/202-account/no") echo in ;;
+    "200 /yes") grep -q 'name="user_pass"' "$OUT/cookie.html" && echo refused || echo "200 without the form" ;;
+    "200 /no") echo "refused, and its cookie kept" ;;
+    *) echo "$answer (cookie cleared: $cleared)" ;;
   esac
 }
 # A remembered browser of the user: signs in, prints its cookie.
@@ -130,7 +137,11 @@ COPIED=$(remember "$OUT/one.jar")
 OTHER=$(remember "$OUT/two.jar")
 eq "$(keys)" "2" "two remembered browsers, two stored keys"
 eq "$(cookie "$COPIED")" "in" "the copied cookie signs a browser in"
-eq "$(get "$OUT/one.jar" 202-account/signout.php "$OUT/signout.html")" "302 $BASE/" "its browser signs out"
+eq "$(get "$OUT/one.jar" 202-account/signout.php "$OUT/signout.html" | cut -d' ' -f1)" "200" "a GET of the sign-out page draws its button"
+eq "$(keys)" "2" "and signs nobody out"
+eq "$(curl -sS -b "$OUT/one.jar" -c "$OUT/one.jar" -o "$OUT/refused.html" -w '%{http_code}' --data 'token=forged' "$BASE/202-account/signout.php")" "403" "a POST with another token is refused"
+eq "$(keys)" "2" "and signs nobody out"
+eq "$(submit "$OUT/one.jar" "$OUT/signout.html" token 202-account/signout.php "$OUT/signed-out.html")" "302 $BASE/" "its browser signs out by the page's form"
 eq "$(remembered "$OUT/one.jar")" "" "and its cookie is cleared"
 eq "$(keys)" "1" "its stored key is gone"
 eq "$(cookie "$COPIED")" "refused" "the copied cookie signs nobody in"

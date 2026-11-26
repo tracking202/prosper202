@@ -229,8 +229,11 @@ final class TrafficSourceOwners
             // The accounts are read, not locked: a click's rollup (INSERT …
             // SELECT, ClickRollupSql) share-locks its account and then the
             // source, so a repair holding the source and waiting for an
-            // account deadlocked with it. Only the source's own user can put an
-            // account on it, and one put there meanwhile is listed again.
+            // account deadlocked with it. Every account write takes the
+            // account and then share-locks its sources
+            // (TrafficSourceAccountWrite), so one in flight holds the source:
+            // this waits for it here and reads its accounts as committed, and
+            // one that comes after waits for this and reads the source as moved.
             $this->lockUsers([$fromUserId, $toUserId]);
             $sources = $this->sources([$sourceId], true);
             $accounts = $this->accounts([$sourceId]);

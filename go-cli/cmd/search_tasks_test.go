@@ -239,6 +239,7 @@ var searchKnownMisses = map[string]string{
 	"admin-007-a-shopify-webhook-secret-is-stored-never-repeated":           "save a secret and give the URL to paste: two tasks; system integrations first, user prefs update second",
 	"attribution-003-development-postbacks-count-only-once-the-app-opts-in": "register an app and count its postbacks: two tasks; app report first, app create second",
 	"breakdown-002-no-such-transaction-is-said-not-invented":                "the expected command is a lookup step (conversion list), not the task asked",
+	"report-filter-lists-002-a-campaign-that-does-not-exist-is-said":        "the expected command is a lookup step (campaign list), not the task asked; click update-cpc first",
 	"ios-sdk-001-encode-a-funnel-goal":                                      "describes the encoding's meaning, not the command; app encoding create third",
 	"ltv-004-line-items-on-a-sale-with-no-known-customer":                   "the expected command is a lookup step (click list, fourth); the task asked, recording revenue, is first",
 	"optimize-002-no-campaign-earns-more-so-nothing-is-routed":              "\"per click\" on a traffic source account puts click update-cpc first; campaign optimize second",

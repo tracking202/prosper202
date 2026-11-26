@@ -27,6 +27,8 @@ function page(settings, query, options = {}) {
         utm_source: get('utm_source'), utm_medium: get('utm_medium'), utm_term: get('utm_term'),
         utm_content: get('utm_content'), utm_campaign: get('utm_campaign'),
         p202PurLinkEnabled: !!options.purlink, p202PurLinkPending: 'pending',
+        // No split test here (split-test-harness.js runs it with the settings).
+        p202VariantC4: (value) => value,
         configured: [], dcsSets: [],
     };
     vm.createContext(context);

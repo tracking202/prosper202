@@ -298,6 +298,52 @@ if ($user_result === false) {
 $user_row = p202FetchRow($user_result, $user_sql) ?? [];
 $currentUserEmail = isset($user_row['user_email']) ? (string)$user_row['user_email'] : '';
 
+// The stored values each settings form here shows (ShownSettings): its field
+// carries their version, and its save reads them again under the account's
+// settings lock and goes on only when they are what the page showed.
+$accountShownColumns = [
+    'profile' => $canPersonal
+        ? ['user_email', 'user_timezone', 'user_keyword_searched_or_bidded', 'user_pref_referer_data',
+            'user_pref_dynamic_bid', 'user_pref_privacy', 'user_pref_same_ip_fallback', 'user_pref_click_id_params',
+            'user_pref_cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain']
+        : ['user_email'],
+    'account_currency' => ['user_account_currency'],
+    'clickserver_api_key' => ['clickserver_api_key'],
+    'p202_customer_api_key' => ['p202_customer_api_key'],
+];
+$accountShown = static function (string $form, array $row) use ($accountShownColumns): array {
+    $values = [];
+    foreach ($accountShownColumns[$form] as $column) {
+        $values[$column] = $row[$column] ?? null;
+    }
+    return $values;
+};
+$accountRowSql = $user_sql;
+$accountRequireShown = static function (
+    string $form,
+    int $writesUser,
+    string $reloadTo,
+    string $stale = P202_ACCOUNT_SHOWN_STALE
+) use (
+    $db,
+    $accountRowSql,
+    $accountShown
+): array {
+    $readShown = static function () use ($db, $accountRowSql, $accountShown, $form): array {
+        $result = _mysqli_query($db, $accountRowSql);
+        if ($result === false) {
+            throw new RuntimeException('the account row could not be read: ' . $db->error);
+        }
+        $row = $result->fetch_assoc();
+        if (!is_array($row)) {
+            throw new RuntimeException('the account row was not found');
+        }
+        return $accountShown($form, $row);
+    };
+
+    return p202_account_require_shown($db, $writesUser, $form, $readShown, $reloadTo, $stale);
+};
+
 /** The choices each preference offers, value => label; the form renders these and the handler admits only these. */
 $keywordChoices = ['searched' => 'Pickup Searched Keyword', 'bidded' => 'Pickup Bidded Keyword'];
 $bidChoices = ['0' => 'Pickup Bid from setup data', '1' => 'Pickup Bid dynamically from t202b variable'];
@@ -343,7 +389,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$submittedEmail = isset($_POST['user_email']) ? trim((string)$_POST['user_email']) : $currentUserEmail;
 
 	if (isset($_POST['update_profile']) && $_POST['update_profile'] == '1') {
-		$originalUserEmail = $currentUserEmail;
 		$emailUpdated = false;
 
 		if (!AUTH::check_csrf_token()) {
@@ -354,6 +399,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		// rest of the form is valid or saves, so a revocation is never dropped.
 		$consentSaved = $p202RecordConsentChoices();
 		$consentRefused = 'Your Data & communication choice could not be saved. Try again.';
+        $profileStale = 'Your settings were changed in another window or session after this page opened,'
+            . ' so they were not saved'
+            . ($consentSaved
+                ? ', apart from any Data & communication choice you changed.'
+                : ', and your Data & communication choice could not be saved either.')
+            . ' The page now shows what is saved: make your change again.';
+        $user_row = array_merge($user_row, $accountRequireShown(
+            'profile',
+            (int) $_SESSION[$canPersonal ? 'user_id' : 'user_own_id'],
+            '202-account/account.php',
+            $profileStale
+        ));
+        $originalUserEmail = $currentUserEmail = (string) ($user_row['user_email'] ?? '');
 		if (check_email_address($submittedEmail) == false) {
 			$error['user_email'] = 'Please enter a valid email address.';
 		}
@@ -614,6 +672,10 @@ if (!empty($_POST['update_account_currency']) && $_POST['update_account_currency
 	if (!in_array($postedCurrency, \Api\V3\Controllers\UsersController::SUPPORTED_CURRENCIES, true)) {
 		$keyErrors['account_currency'] = 'Choose a currency from the list.';
 	} else {
+        $user_row = array_merge(
+            $user_row,
+            $accountRequireShown('account_currency', (int) $_SESSION['user_id'], '202-account/account.php#currency')
+        );
 		// The currency and every campaign it re-prices land together
 		// (the helper in functions-account-ui.php says why and how).
 		$currencySaved = false;
@@ -756,6 +818,10 @@ if (!empty($_POST['update_clickserver_api_key']) && $_POST['update_clickserver_a
 		p202_account_redirect($clickserverReturn);
 	}
 
+    $user_row = array_merge(
+        $user_row,
+        $accountRequireShown('clickserver_api_key', (int) $_SESSION['user_id'], $clickserverReturn)
+    );
 	$mysql['clickserver_api_key'] = $db->real_escape_string($csKey = trim((string) $_POST['clickserver_api_key']));
 
 	if (!preg_match('/\*/', (string) $_POST['clickserver_api_key'])) {
@@ -869,6 +935,11 @@ if (!empty($_POST['update_p202_customer_api_key']) && $_POST['update_p202_custom
 		p202_account_flash('bad', P202_ACCOUNT_TOKEN_REFUSED);
 		p202_account_redirect('202-account/account.php#customer-key');
 	}
+    $accountRequireShown(
+        'p202_customer_api_key',
+        (int) $_SESSION['user_own_id'],
+        '202-account/account.php#customer-key'
+    );
 	// The field is never filled with the saved key, so an empty one keeps it
 	// (SavedSecret::keeps()); removing it is the Remove key button.
 	$removeCustomerKey = ($_POST['remove_p202_customer_api_key'] ?? '') === '1';
@@ -974,8 +1045,7 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
             $generation = \Prosper202\User\PasswordChange::store(
                 new \Prosper202\Database\Connection($db),
                 (int) ($_SESSION['user_own_id'] ?? 0),
-                $new_hash,
-                false
+                $new_hash
             );
             $passSaved = true;
         } catch (\RuntimeException | \mysqli_sql_exception $e) {
@@ -1179,6 +1249,7 @@ echo p202_account_render_flashes($extraFlashes);
 				<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php'); ?>">
 					<input type="hidden" name="update_profile" value="1">
 					<?php echo p202_account_token_field(); ?>
+                    <?php echo p202_account_shown_field('profile', $accountShown('profile', $user_row)); ?>
 
 					<div class="mb-3">
 						<label class="form-label" for="user_email">Email <span class="text-danger">*</span></label>
@@ -1351,6 +1422,9 @@ echo p202_account_render_flashes($extraFlashes);
 					<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php#currency'); ?>">
 						<input type="hidden" name="update_account_currency" value="1">
 						<?php echo p202_account_token_field(); ?>
+                        <?php
+                        echo p202_account_shown_field('account_currency', $accountShown('account_currency', $user_row));
+                        ?>
 						<label class="form-label" for="account_currency">Currency</label>
 						<div class="input-group">
 							<select class="form-select<?php echo p202_account_invalid($keyErrors, 'account_currency'); ?>" name="account_currency" id="account_currency">
@@ -1542,6 +1616,7 @@ echo p202_account_render_flashes($extraFlashes);
 					<form method="post" class="mb-3" action="<?php echo $e(get_absolute_url() . '202-account/account.php#customer-key'); ?>">
 						<input type="hidden" name="update_p202_customer_api_key" value="1">
 						<?php echo p202_account_token_field(); ?>
+						<?php echo p202_account_shown_field('p202_customer_api_key', $accountShown('p202_customer_api_key', $user_row)); ?>
 						<?php // The hand-back's key, from this request's own URL, carried to the token-checked save. ?>
 						<input type="hidden" name="p202_customer_api_key" value="<?php echo $e($pendingCustomerApiKey); ?>">
 						<p class="mb-2">Key from my.tracking202.com: <span data-saved-secret><?php echo $e(str_replace('Saved', 'Ready to save', \Prosper202\Setup\SavedSecret::hint($pendingCustomerApiKey))); ?></span></p>
@@ -1551,6 +1626,7 @@ echo p202_account_render_flashes($extraFlashes);
 					<form method="post" action="<?php echo $e(get_absolute_url() . '202-account/account.php#customer-key'); ?>">
 						<input type="hidden" name="update_p202_customer_api_key" value="1">
 						<?php echo p202_account_token_field(); ?>
+						<?php echo p202_account_shown_field('p202_customer_api_key', $accountShown('p202_customer_api_key', $user_row)); ?>
 						<label class="form-label" for="p202_customer_api_key"><?php echo $customerKeySaved ? 'Replace it with a new key' : 'Customer API key'; ?></label>
 						<div class="input-group">
 							<input type="text" class="form-control<?php echo p202_account_invalid($keyErrors, 'p202_customer_api_key'); ?>" id="p202_customer_api_key" name="p202_customer_api_key" autocomplete="off" spellcheck="false" value="">

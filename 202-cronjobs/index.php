@@ -756,13 +756,19 @@ function RunSecondsCronjob()
         // whose rollup takes the clicks this marks. A no-op once done, and on
         // an install that never had such a click. A click that fails is
         // logged by the walk and is where the next run starts, until it has
-        // failed for an hour of runs and is stepped over.
+        // failed for an hour of runs and is stepped over; while it stops the
+        // walk, the output says so, as Settings does.
         try {
-            (new \Prosper202\Click\ReClickBackfill(new \Prosper202\Database\Connection($db)))
-                ->run(time() + \Prosper202\Click\ReClickBackfill::RUN_SECONDS);
+            $reClickStop = (new \Prosper202\Click\ReClickBackfill(new \Prosper202\Database\Connection($db)))
+                ->runFromCron(time());
+            if ($reClickStop !== null) {
+                echo htmlspecialchars($reClickStop, ENT_QUOTES) . '<br>';
+            }
         } catch (\Throwable $e) {
             $tagged = preg_match('/ \[errno (\d+)\]\z/', $e->getMessage(), $m) === 1 ? (int) $m[1] : 0;
             error_log('Re-click backfill failed: ' . p202FailedQueryMessage($tagged, $e->getMessage()));
+            echo 'Re-click backfill: this run failed before it reached a click; the server\'s error log says why'
+                . ' ("Re-click backfill failed: ...").<br>';
         }
 
         // Multi-touch attribution: drain the conversion outbox into
@@ -836,9 +842,9 @@ function RunSecondsCronjob()
         // failure is recorded on its row and retried with backoff.
         try {
             $notifications = (new \Prosper202\Notifications\NotificationOutbox(new \Prosper202\Database\Connection($db)))->sendDue(200);
-            if ($notifications['sent'] + $notifications['failed'] + $notifications['retrying'] > 0) {
+            if ($notifications['sent'] + $notifications['failed'] + $notifications['retrying'] + $notifications['withheld'] > 0) {
                 echo 'Traffic-source notifications: ' . (int) $notifications['sent'] . ' sent, ' . (int) $notifications['retrying'] . ' retrying, '
-                    . (int) $notifications['failed'] . ' failed<br>';
+                    . (int) $notifications['failed'] . ' failed, ' . (int) $notifications['withheld'] . ' held back for consent<br>';
             }
         } catch (\Throwable $e) {
             error_log('Notification outbox failed: ' . $e->getMessage());
