@@ -54,6 +54,7 @@ final class SettingsFormsCarryTheirVersionTest extends TestCase
             'name="database_management"' => 'deletes clicks before a date; rewrites no setting',
             'name="geoip_action" value="refresh"' => 'starts a download; rewrites no setting',
             'name="geoip_action" value="forget"' => 'removes the credentials; posts no values',
+            'name="egress_action" value="forget"' => 'removes the saved proxy; posts no values',
         ],
         '202-account/api-integrations.php' => [
             'name="postback_auth_action" value="rotate"' => 'names the credential it rotates',

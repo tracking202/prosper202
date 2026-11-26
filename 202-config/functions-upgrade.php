@@ -5714,6 +5714,10 @@ class UPGRADE
                 // until it expires (previous_secret, previous_secret_expires_at).
                 \Prosper202\Database\Tables\LtvTables::ltvWebhooks(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
+                // The egress proxy set on Account › Settings (Prosper202\Http\EgressProxyStore).
+                \Prosper202\Database\Tables\SecretTables::egressProxy(),
+                // Slack notices waiting to be sent (Prosper202\Notifications\SlackNoticeQueue).
+                \Prosper202\Database\Tables\MiscTables::slackNotices(),
                 // When each landing page last had a click, which the landing
                 // page list reads (Prosper202\Click\LandingPageLastSeen).
                 // Pages start with none: no old click is scanned for one.

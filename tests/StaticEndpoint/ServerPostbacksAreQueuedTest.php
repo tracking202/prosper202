@@ -218,6 +218,8 @@ final class ServerPostbacksAreQueuedTest extends TestCase
                 '202-config/Notifications/NotificationOutbox.php',
                 '202-config/Destinations/DestinationQueue.php',
                 '202-config/static-endpoint-helpers.php',
+                // Slack notices: sent by the cron job, or at the request's end once its answer has gone (below).
+                '202-config/Notifications/SlackNoticeQueue.php',
             ];
             if (in_array($file, $senders, true)) {
                 continue;
@@ -239,6 +241,21 @@ final class ServerPostbacksAreQueuedTest extends TestCase
         $body = substr($body, 0, (int) strpos($body, '->sendDue('));
         self::assertStringContainsString('$released = fastcgi_finish_request();', $body, 'after releasing the client');
         self::assertStringContainsString("if (\$released !== true) {\n            return;", $body, 'and only then');
+
+        // The Slack notice queue sends a request's notices in one place, after
+        // the answer: FPM's finish (false there is a request already finished),
+        // or LiteSpeed's when it says it finished; anywhere else, not at all.
+        $slack = (string) file_get_contents(self::ROOT . '202-config/Notifications/SlackNoticeQueue.php');
+        self::assertSame(2, substr_count($slack, 'sendDue('), 'its definition and one call');
+        $body = substr($slack, (int) strpos($slack, 'private static function sendQueuedHere('));
+        $body = substr($body, 0, (int) strpos($body, '->sendDue('));
+        self::assertMatchesRegularExpression(
+            "/if \\(PHP_SAPI === 'fpm-fcgi' && function_exists\\('fastcgi_finish_request'\\)\\) \\{"
+                . "[^}]*fastcgi_finish_request\\(\\);\\s*\\} elseif \\(!function_exists\\('litespeed_finish_request'\\)"
+                . " \\|\\| litespeed_finish_request\\(\\) !== true\\) \\{\\s*return;/",
+            $body,
+            'after releasing the client'
+        );
 
         // pb.php and the payment notifications queue too since QZ3M, and send after their answer the same way.
         $after = ['tracking202/static/gpb.php', 'tracking202/static/upx.php', 'tracking202/static/pb.php',

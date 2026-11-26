@@ -24,6 +24,17 @@ $mchost = 'localhostmemcache'; // this is the memcache server host, if you don't
 //
 // define('P202_CONVERSION_LOGS_CSV_MAX', 50000);
 
+// ** Optional: egress proxy ** //
+// For a server that reaches the internet only through an HTTP proxy. Set it on
+// Account › Settings › Egress proxy (with a Test connection button); a value
+// here overrides that one. Everything this server sends out then goes through
+// it, each request tunnelled (CONNECT) to the address this server looked up
+// itself; the proxy must allow CONNECT to the ports used (443, and 80 for http
+// postbacks). A value that does not read as http(s)://[user:password@]host:port
+// stops them all until it is fixed.
+//
+// define('P202_EGRESS_PROXY', 'http://proxy.example:3128');
+
 // ** Optional: the integration secrets key ** //
 // The key that seals the integration secrets (documentation/features/integration-secrets.md),
 // kept outside the database: a file holding 64 hexadecimal characters (openssl rand -hex 32).

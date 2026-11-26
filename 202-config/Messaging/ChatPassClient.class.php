@@ -145,12 +145,14 @@ final class ChatPassClient
                 'Content-Type: application/json',
             ],
         ];
-        if (!curl_setopt_array($ch, $options)) {
+        try {
+            \Prosper202\Http\CurlOptions::set($ch, $options);
+        } catch (\Prosper202\Http\CurlOptionRefused $e) {
             curl_close($ch);
-            throw new \RuntimeException('curl rejected the request options');
+            throw new \RuntimeException($e->getMessage(), 0, $e);
         }
 
-        $response = curl_exec($ch);
+        $response = \Prosper202\Http\FixedHostRoute::exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         $error = curl_error($ch);
         curl_close($ch);

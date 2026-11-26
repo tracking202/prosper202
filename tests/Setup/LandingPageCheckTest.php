@@ -251,6 +251,45 @@ final class LandingPageCheckTest extends TestCase
         self::assertStringContainsString('https://www.shop.example.com', $result->message, 'the page named is the one read');
     }
 
+    /**
+     * Each hop's lookup has what is left of the check's TIMEOUT, so a
+     * resolver that stalls cannot hold the page past it (backlog Y9Q3).
+     * The first hop's answer takes 5.2 of the 10 seconds.
+     */
+    public function testEachLookupHasWhatIsLeftOfTheChecksTime(): void
+    {
+        $given = [];
+        $guard = new WebhookGuard(static function (string $host, float $seconds) use (&$given): array {
+            $given[] = $seconds;
+
+            return [self::PUBLIC];
+        }, self::ALLOW);
+        $answers = [
+            ['status' => 301, 'redirect_url' => 'https://www.shop.example.com/spring'],
+            ['body' => self::page('')],
+        ];
+        $check = new LandingPageCheck($guard, function (array $options) use (&$answers): array {
+            $this->sent[] = $options;
+            if (count($this->sent) === 1) {
+                usleep(5_200_000);
+            }
+
+            return array_shift($answers) + ['status' => 200, 'error' => null, 'timed_out' => false,
+                'primary_ip' => self::pinnedIn($options), 'redirect_url' => null, 'body' => '', 'truncated' => false];
+        });
+
+        $check->check('http://shop.example.com/spring', self::ID);
+
+        self::assertCount(2, $given);
+        self::assertSame(WebhookGuard::LOOKUP_SECONDS, $given[0]);
+        self::assertLessThanOrEqual(4.8, $given[1], 'the first hop took 5.2 of the 10 seconds');
+        self::assertGreaterThan(4.4, $given[1]);
+        // curl has what is left, to the millisecond, set after CURLOPT_TIMEOUT so it is the one curl keeps.
+        self::assertLessThanOrEqual(4_800, $this->sent[1][CURLOPT_TIMEOUT_MS]);
+        self::assertGreaterThan(4_400, $this->sent[1][CURLOPT_TIMEOUT_MS]);
+        self::assertSame(CURLOPT_TIMEOUT_MS, array_key_last($this->sent[1]));
+    }
+
     public function testARedirectToAnInternalAddressIsNotFollowed(): void
     {
         $result = $this->checker(

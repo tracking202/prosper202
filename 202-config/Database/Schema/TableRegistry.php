@@ -123,6 +123,7 @@ final class TableRegistry
     public const string CONVERSION_UPLOADS = '202_conversion_uploads';
     public const string NOTIFICATION_PENDING = '202_notification_pending';
     public const string NOTIFICATION_CORRECTION_URLS = '202_notification_correction_urls';
+    public const string SLACK_NOTICES = '202_slack_notices';
     public const string OFFLINE_CONVERSION_FEEDS = '202_offline_conversion_feeds';
     public const string OFFLINE_CONVERSION_NAMES = '202_offline_conversion_names';
     public const string LEGACY_GOOGLE_FEED_FETCHES = '202_legacy_google_feed_fetches';
@@ -141,6 +142,7 @@ final class TableRegistry
     public const string DEPLOYMENT_SECRETS = '202_deployment_secrets';
     public const string GEOIP_REFRESH = '202_geoip_refresh';
     public const string LICENCE_ANSWERS = '202_licence_answers';
+    public const string EGRESS_PROXY = '202_egress_proxy';
     // Each account's integration secrets, sealed (Prosper202\Security\IntegrationSecretStore), and their changes
     public const string INTEGRATION_SECRETS = '202_integration_secrets';
     public const string INTEGRATION_SECRET_EVENTS = '202_integration_secret_events';

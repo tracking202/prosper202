@@ -225,21 +225,22 @@ final class ReleaseSignature
         if ($ch === false) {
             return null;
         }
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
-        curl_setopt($ch, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTPS);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, min(10, $timeoutSeconds));
-        curl_setopt($ch, CURLOPT_TIMEOUT, $timeoutSeconds);
-        // The body is held in memory, so its size is capped, a body sent without a length included.
-        curl_setopt($ch, CURLOPT_MAXFILESIZE, self::MAX_BYTES);
-        curl_setopt($ch, CURLOPT_NOPROGRESS, false);
-        curl_setopt($ch, CURLOPT_XFERINFOFUNCTION, static fn ($ch, int $total, int $received): int
-            => $received > self::MAX_BYTES ? 1 : 0);
-        $body = curl_exec($ch);
+        $body = \Prosper202\Http\FixedHostRoute::exec($ch, [
+            CURLOPT_URL => $url,
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
+            CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => min(10, $timeoutSeconds),
+            CURLOPT_TIMEOUT => $timeoutSeconds,
+            // The body is held in memory, so its size is capped, a body sent without a length included.
+            CURLOPT_MAXFILESIZE => self::MAX_BYTES,
+            CURLOPT_NOPROGRESS => false,
+            CURLOPT_XFERINFOFUNCTION => static fn ($ch, int $total, int $received): int
+                => $received > self::MAX_BYTES ? 1 : 0,
+        ], self::MAX_BYTES);
         if (curl_errno($ch) !== 0 || !is_string($body)) {
             error_log('ReleaseSignature: no answer from ' . $url . ': ' . curl_error($ch));
             return null;
