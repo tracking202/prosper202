@@ -444,3 +444,5 @@ Step 4: Paste the webhook URL here and save (once saved, the page shows only its
 ![incomingwebhook4.png](../images/3rd-party-integrations-4.png)
 Step 5: There is no step 5. Start receiving real time Prosper202 Pro notifications sent to your Slack
 ![slacknotifications.jpg](../images/3rd-party-integrations-5.jpg)
+
+Notices are queued and sent by the minute's cron job, so a page never waits on Slack. On PHP-FPM or LiteSpeed the page sends them itself once it has answered; on Apache's mod_php they wait for the cron job. A notice Slack does not answer, or answers with an error, is tried again for about half an hour; one Slack refuses (a removed or revoked webhook) or that cannot go out within a day is dropped and logged with why. A notice goes to the webhook saved when it is sent, so a webhook you change or remove applies to notices still waiting.

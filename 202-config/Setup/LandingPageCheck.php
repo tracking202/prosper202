@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Setup;
 
 use Prosper202\Attribution\WebhookGuard;
+use Prosper202\Http\EgressProxy;
 use Prosper202\Attribution\WebhookRefused;
 use Prosper202\Notifications\PostbackSender;
 
@@ -84,19 +85,29 @@ final class LandingPageCheck
         for ($redirects = 0;; $redirects++) {
             $where = PostbackSender::origin($hop);
             try {
-                $target = $this->guard->checkPage($hop);
+                $target = $this->guard->checkPage($hop, $deadline);
             } catch (WebhookRefused $e) {
                 return self::error(($redirects === 0
                     ? 'Your page was not fetched: '
                     : 'Your page redirected to ' . $where . ', which was not followed: ') . $e->getMessage());
             }
 
-            $left = (int) ceil($deadline - microtime(true));
-            if ($left < 1) {
+            $remaining = $deadline - microtime(true);
+            $left = (int) ceil($remaining);
+            if ($remaining < 0.001) {
                 return self::error('Checking your page took more than ' . self::TIMEOUT . ' seconds (looking up its host'
                     . ($redirects > 0 ? ' and following ' . $redirects . ' redirects' : '') . '), so it was stopped. Try again.');
             }
-            $answer = ($this->transport)(self::curlOptions($target, $left));
+            try {
+                $proxy = EgressProxy::configured();
+            } catch (\UnexpectedValueException $e) {
+                return self::error('Your page was not fetched: ' . $e->getMessage());
+            }
+            $options = self::curlOptions($target, $left, $proxy);
+            // The lookup came out of TIMEOUT. curl keeps whichever of
+            // CURLOPT_TIMEOUT and CURLOPT_TIMEOUT_MS is set last: this one, to the millisecond.
+            $options[CURLOPT_TIMEOUT_MS] = max(1, (int) floor($remaining * 1000));
+            $answer = ($this->transport)($options);
 
             $status = $answer['status'];
             if ($status === 0) {
@@ -105,10 +116,12 @@ final class LandingPageCheck
                     : 'Your page at ' . $where . ' could not be fetched: ' . ($answer['error'] ?? 'no answer') . '.');
             }
             // An answer from an address that cannot be confirmed as the checked one is not read.
+            // Through a proxy named by host name, the tunnel's own end is all that is known (EgressProxy::expectedPeer()).
             $connected = $answer['primary_ip'] ?? '';
-            if (!self::sameAddress($connected, $target->pinned())) {
+            $peer = EgressProxy::expectedPeer($target, $proxy);
+            if ($peer !== null && !self::sameAddress($connected, $peer)) {
                 return self::error('The connection to ' . $where . ' went to ' . ($connected === '' ? 'an address curl did not report' : $connected)
-                    . ' instead of the checked address ' . $target->pinned() . ', so the page was not read.');
+                    . ' instead of ' . (EgressProxy::tunnels($target, $proxy) ? 'the egress proxy ' : 'the checked address ') . $peer . ', so the page was not read.');
             }
             if ($status >= 300 && $status < 400) {
                 $location = $answer['redirect_url'];
@@ -288,9 +301,9 @@ final class LandingPageCheck
      *
      * @return array<int, mixed>
      */
-    public static function curlOptions(\Prosper202\Attribution\WebhookTarget $target, int $timeout): array
+    public static function curlOptions(\Prosper202\Attribution\WebhookTarget $target, int $timeout, ?EgressProxy $proxy = null): array
     {
-        $options = PostbackSender::curlOptions($target, min(self::TIMEOUT, $timeout));
+        $options = PostbackSender::curlOptions($target, min(self::TIMEOUT, $timeout), $proxy);
         $options[CURLOPT_USERAGENT] = self::USER_AGENT;
         $options[CURLOPT_HTTPHEADER] = ['Accept: text/html,application/xhtml+xml;q=0.9,*/*;q=0.5'];
         $options[CURLOPT_ENCODING] = '';
@@ -326,10 +339,10 @@ final class LandingPageCheck
 
             return strlen($chunk);
         };
-        if (!curl_setopt_array($ch, $options)) {
-            $error = curl_error($ch);
-
-            return ['error' => 'curl refused an option: ' . $error] + $none;
+        try {
+            \Prosper202\Http\CurlOptions::set($ch, $options);
+        } catch (\Prosper202\Http\CurlOptionRefused $e) {
+            return ['error' => $e->getMessage()] + $none;
         }
         $ok = curl_exec($ch);
         $errno = curl_errno($ch);

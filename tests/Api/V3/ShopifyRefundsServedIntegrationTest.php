@@ -11,7 +11,6 @@ use Prosper202\Database\Connection;
 use Prosper202\Database\DataSeeder;
 use Prosper202\PaymentNotification\Receiver;
 use Prosper202\PaymentNotification\Shopify\ShopifyAdapter;
-use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
 use Tests\PaymentNotification\ShopifyAdapterTest;
 
 /**
@@ -182,8 +181,7 @@ final class ShopifyRefundsServedIntegrationTest extends TestCase
                 . self::str($key) . ", '', " . time() . ')');
             self::$keys[$name] = $key;
         }
-        self::q('UPDATE 202_users_pref SET ' . ShopifyWebhookSecret::COLUMN . ' = ' . self::str(self::SECRET)
-            . ' WHERE user_id = ' . self::USER);
+        \Tests\Support\StoredShopifySecret::set(self::$db, self::USER, self::SECRET);
         self::q('INSERT INTO 202_aff_campaigns SET aff_campaign_id = ' . self::CAMPAIGN . ', user_id = ' . self::USER
             . ", aff_network_id = 1, aff_campaign_name = 'Demo coffee store',"
             . " aff_campaign_url = 'https://demo-coffee.example/products/beans',"

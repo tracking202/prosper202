@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\ErrorCode;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
@@ -99,10 +100,10 @@ class AttributionController
         $id = $this->conn->transaction(function () use ($name, $slug, $type, $config, $lookback, $status, $isDefault): int {
             $taken = $this->models->slugTaken($this->userId, $slug);
             if ($taken !== null) {
-                throw new ConflictException(
+                throw (new ConflictException(
                     'A model named like "' . $name . '" already exists (model ' . $taken . '); update it, or choose another name.',
                     ['model_id' => $taken]
-                );
+                ))->coded(ErrorCode::NAME_TAKEN);
             }
             $id = $this->models->insert($this->userId, $name, $slug, $type, $config, $lookback, $status, $isDefault);
             $this->audit($id, 'model_created', ['model_type' => $type->value, 'is_default' => $isDefault]);
@@ -174,10 +175,10 @@ class AttributionController
             $slug = ModelRepository::slugFor($name);
             $taken = $this->models->slugTaken($this->userId, $slug, $id);
             if ($taken !== null) {
-                throw new ConflictException(
+                throw (new ConflictException(
                     'A model named like "' . $name . '" already exists (model ' . $taken . ').',
                     ['model_id' => $taken]
-                );
+                ))->coded(ErrorCode::NAME_TAKEN);
             }
 
             $computes = $status === Model::STATUS_ACTIVE;

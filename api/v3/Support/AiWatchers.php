@@ -290,12 +290,14 @@ final class AiWatchers
             $raw .= $chunk;
             return strlen($chunk);
         };
-        if (!curl_setopt_array($ch, $options)) {
-            error_log('p202: AI watchers: curl refused an option: ' . curl_error($ch));
+        try {
+            \Prosper202\Http\CurlOptions::set($ch, $options);
+        } catch (\Prosper202\Http\CurlOptionRefused $e) {
+            error_log('p202: AI watchers: ' . $e->getMessage());
             $this->unreachable = true;
             return [0, null];
         }
-        $ok = curl_exec($ch);
+        $ok = \Prosper202\Http\FixedHostRoute::exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         $error = curl_error($ch);
         if ($ok === false || $status === 0) {

@@ -158,13 +158,15 @@ final class UserDataPurge
         'DELETE FROM 202_shopify_refund_transactions WHERE user_id = ?',
     ];
 
-    /** Queued traffic-source postbacks, where corrections to them would go, the destinations and their deliveries, and the ad platform connections: a deleted account's never go out. */
+    /** Queued traffic-source postbacks, where corrections to them would go, the destinations and their deliveries, the ad platform connections and queued Slack notices: a deleted account's never go out. */
     private const NOTIFICATION_STATEMENTS = [
         'DELETE FROM 202_notification_pending WHERE user_id = ?',
         'DELETE FROM 202_notification_correction_urls WHERE user_id = ?',
         'DELETE FROM 202_destination_deliveries WHERE user_id = ?',
         'DELETE FROM 202_destinations WHERE user_id = ?',
         'DELETE FROM 202_ad_connections WHERE user_id = ?',
+        // Slack notices still waiting: they would go to the account's webhook.
+        'DELETE FROM 202_slack_notices WHERE user_id = ?',
     ];
 
     /** Taken first in the delete's transaction: see deleteUser(). */
@@ -182,6 +184,9 @@ final class UserDataPurge
         'DELETE FROM 202_offline_conversion_feeds WHERE user_id = ?',
         // The postback token and whether postbacks must carry it.
         'DELETE FROM 202_postback_auth WHERE user_id = ?',
+        // The integration secrets the account stored (IntegrationSecretStore), and their changes.
+        'DELETE FROM 202_integration_secrets WHERE user_id = ?',
+        'DELETE FROM 202_integration_secret_events WHERE user_id = ?',
         // The click filter's settings and address list (the clicks' reasons stay with the clicks).
         'DELETE FROM 202_click_filter_entries WHERE user_id = ?',
         'DELETE FROM 202_click_filter_settings WHERE user_id = ?',

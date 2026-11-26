@@ -15,6 +15,8 @@ the same thing.
 | `POST` | `/conversions/subids/delete` | Delete Subids | clears each click's conversions |
 | `POST` | `/conversions/subids/reset` | Reset Campaign Subids | clears a category's or campaign's converted clicks |
 | `POST` | `/conversions/uploads` | Upload Revenue Reports | a `revenue_upload` conversion per CSV line, as a new batch |
+| `GET` | `/conversions/uploads` | Upload Revenue Reports | nothing: the account's upload batches, newest first |
+| `POST` | `/conversions/uploads/{id}/undo` | (none) | deletes the batch's conversions; each click goes back to its value before the upload |
 
 ## What every one of them shares
 
@@ -313,6 +315,60 @@ and holds neither in memory: a 440,000-line report previews within about 4 MB
 and failed under PHP's default 128 MB limit (measured in-process, MariaDB
 10.11).
 
+## List uploads — `GET /conversions/uploads`
+
+The account's upload batches, newest first: `batch_id`, `file_name`,
+`uploaded_at`, `line_count`, `recorded_count`, `skipped_count`, and
+`undone_at`/`undone_rows` (null until the batch is undone). `?limit=` takes
+1–500 (default 50); `next_before` is the `before=` of the next page, or null.
+
+```json
+{"data": [{"batch_id": 8, "file_name": "april.csv", "uploaded_at": 1795000000, "line_count": 120, "recorded_count": 118, "skipped_count": 2, "undone_at": null, "undone_rows": null}], "next_before": null}
+```
+
+## Undo an upload — `POST /conversions/uploads/{id}/undo`
+
+Deletes every live conversion the batch recorded and recomputes each of its
+clicks from what is left, so a click goes back to the earlier upload or the
+postback that the batch had replaced, and reports read as they did before the
+import. Only the account's own batches and clicks are touched; another
+account's batch id is a `404`, as one that never existed is. The body must be
+empty.
+
+`?dry_run=1` lists what the undo would remove and writes nothing:
+
+```json
+{
+  "data": {
+    "dry_run": true,
+    "batch": {"batch_id": 7, "file_name": "march.csv", "undone_at": null, "undone_rows": null, "...": "..."},
+    "would_remove": 2, "amounts": [{"currency": "USD", "amount": "11.00000"}], "clicks": 2,
+    "reversals_stop_netting": 0, "postbacks_cancelled": 0, "postbacks_retracted": 0,
+    "rows": [{"conv_id": 31, "click_id": 940001, "line": 2, "payout": "5.00000", "currency": "USD"}, {"conv_id": 32, "click_id": 940002, "line": 3, "payout": "6.00000", "currency": "USD"}],
+    "rows_unlisted": 0,
+    "click_values": [{"click_id": 940001, "before": {"lead": true, "value": "5.00000"}, "after": {"lead": true, "value": "9.00000"}}],
+    "click_values_unlisted": 0
+  }
+}
+```
+
+`rows` are the conversions it would delete (with the report's line number),
+`click_values` each click's value now and after. Both list the first 1,000;
+`rows_unlisted` and `click_values_unlisted` count the rest, and the counts and
+`amounts` are exact. A row's amount is in the currency it recorded, so
+`amounts` sums the rows per currency (`currency` null where a row's was not
+recorded), and each row names its own. A click that click retention has
+removed is listed with `before` and `after` null. A reversal (refund, chargeback) of a removed row stays but
+stops netting (`reversals_stop_netting`); a postback queued for a removed row
+is cancelled, and one already delivered is retracted. The write answers
+`removed`, `clicks`, the batch with `undone_at` and `undone_rows` set, and a
+`message`.
+
+Each click is undone in its own transaction. If one fails, the clicks before
+it stay undone and the error says how many; undoing the batch again is safe
+and deletes what is left. A batch already undone answers `removed: 0`.
+`undone_at` records the undo; it does not stop a later one.
+
 ## From the CLI
 
 ```bash
@@ -321,6 +377,8 @@ p202 conversion mark-subids subids.txt
 p202 conversion delete-subids subids.txt --dry-run
 p202 conversion reset-subids --aff-network-id 3 --aff-campaign-id 12
 p202 conversion upload-revenue march.csv
+p202 conversion uploads
+p202 conversion undo-upload 7 --dry-run
 ```
 
 See [the Go CLI guide](../cli/10-go-cli.md#update-cpc-subids-and-revenue-reports).

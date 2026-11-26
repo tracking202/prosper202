@@ -528,18 +528,23 @@ final class AccountAdministrationIntegrationTest extends TestCase
         }
         // Shopify's secret likewise: one with a space in it verifies nothing.
         foreach (['shopify secret with spaces' => false, ' demo-store-webhook-secret-01 ' => true] as $stored => $usable) {
-            self::q("UPDATE 202_users_pref SET shopify_webhook_secret = '" . self::$db->real_escape_string($stored)
-                . "' WHERE user_id = " . self::ADMIN);
+            \Tests\Support\StoredShopifySecret::set(self::$db, self::ADMIN, $stored);
             $answer = $this->admin()->integrations([
                 'HTTPS' => 'on', 'SERVER_NAME' => 'ignored.example', 'SERVER_PORT' => 443,
                 'DOCUMENT_ROOT' => dirname(__DIR__, 3),
             ])['data'];
             $byKey = array_column($answer['integrations'], null, 'integration');
             self::assertSame($usable, $byKey['shopify']['secret_stored']);
+            self::assertIsInt($byKey['shopify']['secret_set_at'], 'when it was set, from the sealed store');
+            self::assertNull($byKey['shopify']['previous_secret_expires_at']);
             self::assertStringNotContainsString('demo-store-webhook', (string) json_encode($answer));
         }
         self::q('UPDATE 202_users_pref SET cb_key = NULL, cb_verified = 0, paykickstart_ipn_secret_keys = NULL,'
-            . ' jvzoo_ipn_secret_key = NULL, shopify_webhook_secret = NULL WHERE user_id = ' . self::ADMIN);
+            . ' jvzoo_ipn_secret_key = NULL WHERE user_id = ' . self::ADMIN);
+        \Tests\Support\StoredShopifySecret::set(self::$db, self::ADMIN, null);
+        $none = array_column($this->admin()->integrations(['HTTPS' => 'on', 'SERVER_NAME' => 'ignored.example', 'SERVER_PORT' => 443,
+            'DOCUMENT_ROOT' => dirname(__DIR__, 3)])['data']['integrations'], null, 'integration')['shopify'];
+        self::assertSame([false, null, null], [$none['secret_stored'], $none['secret_set_at'], $none['previous_secret_expires_at']]);
 
         // With no domain stored by the caller, the URLs go back to the caller
         // to paste, as the Integrations page shows them: on the host the

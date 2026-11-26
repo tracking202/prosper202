@@ -27,6 +27,7 @@ final class CampaignTables
             self::ppcAccountPixels(),
             self::landingPages(),
             self::landingPageChecks(),
+            self::landingPageLastSeen(),
             self::landingPageSplitTests(),
             self::textAds(),
         ];
@@ -193,6 +194,26 @@ final class CampaignTables
                 PRIMARY KEY (`landing_page_id`),
                 KEY `user_id` (`user_id`),
                 KEY `checked_at` (`checked_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * When each landing page last had a click (Prosper202\Click\
+     * LandingPageLastSeen): one row per page, from 1.9.81 on, written by the
+     * click writer after the click commits, at most once a minute a page.
+     * A page with no click since its install's 1.9.81 upgrade has no row.
+     */
+    public static function landingPageLastSeen(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::LANDING_PAGE_LAST_SEEN,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::LANDING_PAGE_LAST_SEEN . "` (
+                `landing_page_id` mediumint(8) unsigned NOT NULL,
+                `user_id` mediumint(8) unsigned NOT NULL,
+                `last_click_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`landing_page_id`),
+                KEY `user_id` (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
     }

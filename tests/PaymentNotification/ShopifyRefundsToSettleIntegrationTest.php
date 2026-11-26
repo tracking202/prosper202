@@ -15,7 +15,6 @@ use Prosper202\PaymentNotification\OutcomeKind;
 use Prosper202\PaymentNotification\Receiver;
 use Prosper202\PaymentNotification\Shopify\RefundsToSettle;
 use Prosper202\PaymentNotification\Shopify\ShopifyAdapter;
-use Prosper202\PaymentNotification\Shopify\ShopifyWebhookSecret;
 use Prosper202\PaymentNotification\Shopify\WebhookStatus;
 
 /**
@@ -63,8 +62,7 @@ final class ShopifyRefundsToSettleIntegrationTest extends TestCase
             . " aff_campaign_url = 'https://demo-coffee.example/products/beans',"
             . ' aff_campaign_payout = 0, aff_campaign_time = 1, aff_campaign_foreign_payout = 0,'
             . " payout_mode = 'accumulate'");
-        self::q('UPDATE 202_users_pref SET ' . ShopifyWebhookSecret::COLUMN . ' = ' . self::str(self::SECRET)
-            . ' WHERE user_id = ' . self::ACCOUNT);
+        \Tests\Support\StoredShopifySecret::set(self::$db, self::ACCOUNT, self::SECRET);
     }
 
     public static function tearDownAfterClass(): void
