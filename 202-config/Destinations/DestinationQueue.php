@@ -6,6 +6,7 @@ namespace Prosper202\Destinations;
 
 use Prosper202\Click\FirstVisit;
 use Prosper202\Click\LatestVisit;
+use Prosper202\Click\OpenAiBrowserRef;
 use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\Ledger\RowCurrency;
 use Prosper202\Conversion\TrafficSourcePixels;
@@ -550,7 +551,9 @@ final class DestinationQueue
             null,
             self::pageUrl($conv['landing_url'] ?? null) ?? self::pageUrl($conv['outbound_url'] ?? null),
             $click['ppc_account_id'],
-            $eventId !== DestinationEventId::from($ownTransactionId, $convId)
+            $eventId !== DestinationEventId::from($ownTransactionId, $convId),
+            $userData && $destination['adapter'] instanceof OpenAiAdsDestination && self::visitorMayBeIdentified($conv)
+                ? (OpenAiBrowserRef::of($this->conn, $clickId) ?: null) : null
         );
         $result = $destination['adapter']->send($destination['settings'], $destination['credentials'], $facts, false, $now);
 

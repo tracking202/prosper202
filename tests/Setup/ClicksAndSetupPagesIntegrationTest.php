@@ -318,9 +318,10 @@ final class ClicksAndSetupPagesIntegrationTest extends TestCase
     }
 
     /**
-     * An advanced page is not made simple while text ads of type 1 name it:
-     * Get Links offers those only on an advanced page, so the save left them
-     * offered nowhere. Once no ad names it, the change saves; a simple page
+     * An advanced page is not made simple while text ads of type 1 or
+     * trackers name it: Get Links offers those ads only on an advanced page,
+     * and the trackers' links were built for one, so the save left them
+     * offered nowhere. Once none names it, the change saves; a simple page
      * with such an ad stored before #260 still saves as it is.
      */
     public function testAnAdvancedPageWhoseLinksOfferTextAdsIsNotMadeSimple(): void
@@ -348,7 +349,8 @@ final class ClicksAndSetupPagesIntegrationTest extends TestCase
             $refused = $makeSimple();
             self::assertStringContainsString('This advanced page&#039;s links offer 1 text ad (&quot;Spring &lt;b&gt;banner&lt;/b&gt;&quot;), and a simple page offers none', $refused);
             self::assertStringContainsString('Nothing was saved.', $refused);
-            self::assertSame('1', self::one("SELECT landing_page_type FROM 202_landing_pages WHERE landing_page_id = $page"), 'the refused save changed the type');
+            $type = self::one("SELECT landing_page_type FROM 202_landing_pages WHERE landing_page_id = $page");
+            self::assertSame('1', $type, 'the refused save changed the type');
             self::assertSame('0', self::one("SELECT aff_campaign_id FROM 202_landing_pages WHERE landing_page_id = $page"));
 
             // Saved as advanced, the page's other fields still save.
@@ -358,8 +360,35 @@ final class ClicksAndSetupPagesIntegrationTest extends TestCase
             ]);
             self::assertSame('Ads page 2', self::one("SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = $page"));
 
-            // Once the ad is a campaign's, the page is made simple.
+            // Trackers built on it hold it too (H5TL), beside the ad and alone; another account's do not.
+            $tracker = static fn (int $user): int => self::insert("INSERT INTO 202_trackers SET user_id = $user,"
+                . ' tracker_id_public = ' . random_int(100000000, 999999999) . ", aff_campaign_id = 0, text_ad_id = 0,"
+                . " ppc_account_id = 0, landing_page_id = $page, rotator_id = 0, click_cloaking = 0, tracker_time = 0");
+            $mine = $tracker($u);
+            $tracker(self::OTHER);
+            self::assertStringContainsString('so it would be offered nowhere. It is also used by 1 tracker'
+                . " (tracker $mine), built for an advanced page, so making it simple would leave its link"
+                . ' pointing at a page that no longer takes advanced traffic. In Text Ads, point the ad at'
+                . ' another advanced page or at a campaign, and in Get Links, delete the tracker or build it'
+                . ' on another page, then make this page simple.', $makeSimple());
+
+            // Once the ad is a campaign's, the tracker alone still holds it.
             self::q("UPDATE 202_text_ads SET text_ad_type = 0, aff_campaign_id = $campaign WHERE text_ad_id = $first");
+            $trackerOnly = $makeSimple();
+            self::assertStringContainsString(
+                "This advanced page is used by 1 tracker (tracker $mine), built for an advanced page",
+                $trackerOnly
+            );
+            self::assertStringContainsString(
+                'In Get Links, delete the tracker or build it on another page, then make this page simple.',
+                $trackerOnly
+            );
+            self::assertStringNotContainsString('a simple page offers none', $trackerOnly);
+            $type = self::one("SELECT landing_page_type FROM 202_landing_pages WHERE landing_page_id = $page");
+            self::assertSame('1', $type, 'the refused save changed the type');
+
+            // Once no tracker of the account's names it, the page is made simple.
+            self::q("DELETE FROM 202_trackers WHERE tracker_id = $mine");
             $makeSimple();
             self::assertSame(['0', (string) $campaign], [
                 self::one("SELECT landing_page_type FROM 202_landing_pages WHERE landing_page_id = $page"),
@@ -371,6 +400,7 @@ final class ClicksAndSetupPagesIntegrationTest extends TestCase
             $makeSimple('Ads page 3');
             self::assertSame('Ads page 3', self::one("SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = $page"));
         } finally {
+            self::q("DELETE FROM 202_trackers WHERE landing_page_id = $page");
             self::q("DELETE FROM 202_text_ads WHERE landing_page_id = $page");
             self::q("DELETE FROM 202_landing_pages WHERE landing_page_id = $page");
             self::q("DELETE FROM 202_aff_campaigns WHERE aff_campaign_id = $campaign");

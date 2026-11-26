@@ -633,6 +633,8 @@ try {
         $otherCurrencies = \Api\V3\Support\CampaignFigures::OTHER_CURRENCIES;
         $reportFigures = [...\Api\V3\Support\CampaignFigures::REPORT, ...$otherCurrencies];
         $matchFigures = [...\Api\V3\Support\CampaignFigures::MATCH_METHODS, ...$otherCurrencies];
+        // The summary's own counts (people, refunds, unmatched conversions) are campaign figures too.
+        $summaryFigures = [...$reportFigures, ...\Api\V3\Support\CampaignFigures::SUMMARY];
 
         // ── Clicks (read-only) ───────────────────────────────────────────
         $router->get('/clicks', fn() => $campaignFigures($crud(\Api\V3\Controllers\ClicksController::class)->list($queryParams), $recordMoney));
@@ -794,9 +796,16 @@ try {
         // Overview and Analyze ask for no permission; a role without
         // access_to_campaign_data gets them masked ($campaignFigures).
         $payoutFigures = \Api\V3\Support\CampaignFigures::PAYOUT;
-        $router->group('/reports', function (Router $r) use ($crud, $queryParams, $campaignFigures, $reportFigures, $payoutFigures) {
+        $router->group('/reports', function (Router $r) use (
+            $crud,
+            $queryParams,
+            $campaignFigures,
+            $reportFigures,
+            $summaryFigures,
+            $payoutFigures
+        ) {
             $cls = \Api\V3\Controllers\ReportsController::class;
-            $r->get('/summary',    fn() => $campaignFigures($crud($cls)->summary($queryParams), $reportFigures));
+            $r->get('/summary',    fn() => $campaignFigures($crud($cls)->summary($queryParams), $summaryFigures));
             $r->get('/breakdown',  fn() => $campaignFigures($crud($cls)->breakdown($queryParams), $reportFigures));
             $r->get('/timeseries', fn() => $campaignFigures($crud($cls)->timeseries($queryParams), $reportFigures));
             $r->get('/daypart',    fn() => $campaignFigures($crud($cls)->daypart($queryParams), $reportFigures));

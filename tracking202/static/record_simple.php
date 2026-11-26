@@ -500,6 +500,12 @@ echo \Prosper202\Click\FacebookPixelAssistantScript::forClick(
 	\Prosper202\Click\FacebookPixelAssistantScript::mayTrack(trackingEnabled(), $_GET, array_key_exists('identity_signals', $tracker_row) ? $tracker_row['identity_signals'] : null),
 	\Prosper202\Click\FacebookPixelAssistantScript::bootstrapCache()
 );
+// The ChatGPT Ads pixel, on the same terms, with the proof its browser reference is posted with.
+echo \Prosper202\Click\OpenAiPixelScript::forClick(
+	$conn, (int) $mysql['user_id'], (int) $mysql['landing_page_id'], (int) $mysql['ppc_account_id'], (int) $click_id,
+	\Prosper202\Click\FacebookPixelAssistantScript::mayTrack(trackingEnabled(), $_GET, array_key_exists('identity_signals', $tracker_row) ? $tracker_row['identity_signals'] : null),
+	static fn (): ?string => \Api\V3\Apps\Android\InstallTokenKey::load($db)
+);
 ?>
 
 <?php if (!empty($tracker_row['leave_behind_page_url'])) { ?>

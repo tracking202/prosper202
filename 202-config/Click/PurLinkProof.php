@@ -13,11 +13,13 @@ final class PurLinkProof
     public const PIXELS = 'pixels';
     /** A landing page's dcs.updateDataObj() changing the click's c1-c4 and keyword (PageUpdate). */
     public const UPDATE = 'update';
-    private const PURPOSES = [self::EXIT, self::PIXELS, self::UPDATE];
+    /** A landing page sending the ChatGPT Ads pixel's browser reference for the click (OpenAiBrowserRef). */
+    public const BROWSER_REF = 'browserref';
+    private const PURPOSES = [self::EXIT, self::PIXELS, self::UPDATE, self::BROWSER_REF];
     public const MAX_LIFETIME = 30 * 24 * 60 * 60;
 
     private const DOMAIN = "prosper202-purlink-proof-v1\0";
-    private const SHAPE = '/\A(exit|pixels|update)\.([1-9][0-9]{0,18})\.([1-9][0-9]{0,18})\.'
+    private const SHAPE = '/\A(exit|pixels|update|browserref)\.([1-9][0-9]{0,18})\.([1-9][0-9]{0,18})\.'
         . '([1-9][0-9]{0,18})\.([1-9][0-9]{0,18})\.([A-Za-z0-9_-]{43})\z/D';
 
     private function __construct()

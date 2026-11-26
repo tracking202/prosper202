@@ -34,6 +34,7 @@ final class ClickTables
             self::clicksTotal(),
             self::clickLatestVisits(),
             self::clickConsentRefusals(),
+            self::clickOpenAiRefs(),
             self::reClickBackfill(),
             self::clicksFilterReason(),
             self::clicksPublisher(),
@@ -296,6 +297,28 @@ final class ClickTables
             "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CLICK_CONSENT_REFUSALS . "` (
                 `click_id` bigint(20) unsigned NOT NULL,
                 `refused_at` int(10) unsigned NOT NULL,
+                PRIMARY KEY (`click_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * The ChatGPT Ads pixel's browser reference (its __obref cookie) for a
+     * click whose landing page loads the pixel (Prosper202\Click\
+     * OpenAiBrowserRef): one row per click, from 1.9.81 on, written by
+     * MysqlClickRepository from the page's request and removed when the
+     * visitor withdraws consent there, and deleted with the click
+     * (ClickRetention). The ChatGPT Ads destination sends it as user.obref.
+     * click_id is 202_clicks.click_id's type.
+     */
+    public static function clickOpenAiRefs(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::CLICK_OPENAI_REFS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CLICK_OPENAI_REFS . "` (
+                `click_id` bigint(20) unsigned NOT NULL,
+                `obref` varchar(255) COLLATE utf8mb4_bin NOT NULL,
+                `recorded_at` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`click_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );

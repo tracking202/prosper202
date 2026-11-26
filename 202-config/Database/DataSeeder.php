@@ -62,6 +62,7 @@ final readonly class DataSeeder
             ('Raw'),
             ('Bot202 Facebook Pixel Assistant')";
         $this->run($sql);
+        $this->run(\Prosper202\Conversion\OpenAiPixelId::seedStatement());
     }
 
     /**

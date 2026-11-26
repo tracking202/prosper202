@@ -116,9 +116,10 @@ final class FacebookPixelAssistantScript
      * refusal may be this request's own write, and a lagging replica would
      * answer "none". Before the 1.9.80 upgrade adds the table no refusal
      * could be kept, and the page's own consent (mayTrack()) is all there
-     * is. Any other failure is forClick()'s, which answers nothing.
+     * is. Any other failure is the caller's, which answers nothing
+     * (OpenAiPixelScript asks the same).
      */
-    private static function clickRefused(Connection $conn, int $clickId): bool
+    public static function clickRefused(Connection $conn, int $clickId): bool
     {
         try {
             $stmt = $conn->prepareWrite('SELECT ' . \Prosper202\Identity\ConsentRefusal::standsSql('?') . ' AS refused');

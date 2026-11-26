@@ -160,34 +160,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$error['wrong_user'] = '<div class="error">You are not authorized to modify another users campaign</div>';
 	}
 
-	// An advanced page is not made simple while its links offer text ads: Get Links
-	// offers those only on an advanced page (AdvancedPageTextAds; PUT /landing-pages refuses it too).
-	$advancedMadeSimple = $editing == true && $postedType === '0' && $postedPageId !== null
-		&& !isset($error['wrong_user']) && (string) ($landing_page_row['landing_page_type'] ?? '') === '1';
-	if ($advancedMadeSimple) {
-		try {
-			$pageAds = (new \Prosper202\Setup\AdvancedPageTextAds(new \Prosper202\Database\Connection($db)))
-				->naming((int) $_SESSION['user_id'], (int) $postedPageId);
-		} catch (\Throwable $adsFailure) {
-			error_log('landing_pages.php: the text ads naming the landing page could not be read: '
-				. $adsFailure->getMessage());
-			$pageAds = null;
-			$error['save'] = '<div class="error">The landing page could not be saved, and nothing was changed.'
-				. ' Try again.</div>';
-		}
-		if ($pageAds !== null && $pageAds !== []) {
-			$one = count($pageAds) === 1;
-			$error['landing_page_type'] = '<div class="error">This advanced page\'s links offer '
-				. count($pageAds) . ' text ' . ($one ? 'ad' : 'ads') . ' ('
-				. htmlspecialchars(\Prosper202\Setup\AdvancedPageTextAds::names($pageAds), ENT_QUOTES, 'UTF-8')
-				. '), and a simple page offers none, so ' . ($one ? 'it' : 'they') . ' would be offered nowhere. '
-				. 'In Text Ads, point ' . ($one ? 'it' : 'each') . ' at another advanced page or at a campaign, '
-				. 'then make this page simple.</div>';
-		}
-	}
-
 	// Bot202 Facebook Pixel Assistant: a simple page's settings, refused here before anything is saved.
 	$fbpaSettings = \Prosper202\Setup\FacebookPixelAssistantSettings::fromForm(
+		($_POST['landing_page_type'] ?? '') === '0' ? $_POST : [],
+		$error
+	);
+	// The ChatGPT Ads pixel switch: a simple page's, refused here before anything is saved.
+	$openAiPixel = \Prosper202\Setup\OpenAiPixelSettings::fromForm(
 		($_POST['landing_page_type'] ?? '') === '0' ? $_POST : [],
 		$error
 	);
@@ -216,15 +195,36 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$saveTypes .= 'ii';
 		$saveConn = new \Prosper202\Database\Connection($db);
 		try {
-			$savedId = $saveConn->transaction(static function () use ($saveConn, $editing, $postedPageId, $saveUserId, $saveSet, $saveTypes, $saveValues, $splitTest): int {
+			// An advanced page is not made simple while text ads or trackers use it (AdvancedPageMadeSimple;
+			// PUT /landing-pages refuses it too): the page is locked and its uses read in its transaction.
+			$save = static function () use (
+				$saveConn,
+				$editing,
+				$postedPageId,
+				$saveUserId,
+				$saveSet,
+				$saveTypes,
+				$saveValues,
+				$saveType,
+				$splitTest
+			): array {
 				$splitStore = new \Prosper202\Setup\LandingPageSplitTest($saveConn);
 				if ($editing) {
+					if ($saveType === 0) {
+						$refusal = \Prosper202\Setup\AdvancedPageMadeSimple::setupPageRefusal(
+							(new \Prosper202\Setup\AdvancedPageMadeSimple($saveConn))
+								->uses($saveUserId, (int) $postedPageId)
+						);
+						if ($refusal !== null) {
+							return [0, $refusal];
+						}
+					}
 					$stmt = $saveConn->prepareWrite('UPDATE `202_landing_pages` SET ' . $saveSet . ' WHERE `landing_page_id` = ? AND `user_id` = ?');
 					$saveConn->bind($stmt, $saveTypes . 'ii', [...$saveValues, (int) $postedPageId, $saveUserId]);
 					$saveConn->executeUpdate($stmt);
 					$splitStore->save($saveUserId, (int) $postedPageId, $splitTest);
 
-					return (int) $postedPageId;
+					return [(int) $postedPageId, null];
 				}
 				$stmt = $saveConn->prepareWrite('INSERT INTO `202_landing_pages` SET ' . $saveSet . ', `user_id` = ?');
 				$saveConn->bind($stmt, $saveTypes . 'i', [...$saveValues, $saveUserId]);
@@ -235,8 +235,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$saveConn->executeUpdate($public);
 				$splitStore->save($saveUserId, $newId, $splitTest);
 
-				return $newId;
-			});
+				return [$newId, null];
+			};
+			[$savedId, $madeSimpleRefusal] = $saveConn->transaction($save);
+			if ($madeSimpleRefusal !== null) {
+				$error['landing_page_type'] = '<div class="error">'
+					. htmlspecialchars($madeSimpleRefusal, ENT_QUOTES, 'UTF-8') . '</div>';
+			}
 		} catch (\Throwable $saveFailure) {
 			error_log('landing_pages.php: the landing page could not be saved: ' . $saveFailure->getMessage());
 			$error['save'] = '<div class="error">The landing page could not be saved, and nothing was changed. Try again.</div>';
@@ -288,6 +293,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$fbpaStore->save((int) $_SESSION['user_id'], (int) $mysql['landing_page_id'], $fbpaSettings);
 		} else {
 			$fbpaStore->switchOff((int) $_SESSION['user_id'], (int) $mysql['landing_page_id']);
+		}
+		$openAiStore = new \Prosper202\Setup\OpenAiPixelSettings(new \Prosper202\Database\Connection($db));
+		if (($_POST['landing_page_type'] ?? '') === '0') {
+			$openAiStore->save((int) $_SESSION['user_id'], (int) $mysql['landing_page_id'], $openAiPixel);
+		} else {
+			$openAiStore->switchOff((int) $_SESSION['user_id'], (int) $mysql['landing_page_id']);
 		}
 
 		// Landing Page Optimizer (segments-v2 G10): flag this user's dimension
@@ -432,6 +443,15 @@ if ($posted) {
 } elseif ($row !== []) {
 	$fbpaForm = (new \Prosper202\Setup\FacebookPixelAssistantSettings(new \Prosper202\Database\Connection($db)))
 		->load((int) $_SESSION['user_id'], (int) ($row['landing_page_id'] ?? 0)) ?? $fbpaForm;
+}
+// The ChatGPT Ads pixel switch: as posted, or the edited or copied page's.
+$openAiForm = \Prosper202\Setup\OpenAiPixelSettings::defaults();
+if ($posted) {
+	$openAiIgnored = [];
+	$openAiForm = \Prosper202\Setup\OpenAiPixelSettings::fromForm($_POST, $openAiIgnored);
+} elseif ($row !== []) {
+	$openAiForm = (new \Prosper202\Setup\OpenAiPixelSettings(new \Prosper202\Database\Connection($db)))
+		->load((int) $_SESSION['user_id'], (int) ($row['landing_page_id'] ?? 0)) ?? $openAiForm;
 }
 // The split test: as posted (its lines as typed), or the edited or copied page's.
 $splitForm = \Prosper202\Setup\LandingPageSplitTest::defaults();
@@ -620,6 +640,19 @@ if ($error) {
 								<?php echo p202_setup_options($fbpaOptions(\Prosper202\Setup\FacebookPixelAssistantSettings::CLICK_EVENTS), (string) $fbpaForm['outbound_clicks'], 'Not tracked', '0'); ?>
 							</select>
 							<?php echo p202_setup_feedback($error, 'fbpa_outbound_clicks'); ?>
+						</div>
+					</details>
+
+					<details class="p202-disclosure mb-3" data-p202-show-when="landing_page_type=0" data-p202-disable-hidden<?php echo $form['landing_page_type'] === '1' ? ' hidden' : ''; ?><?php echo $openAiForm['status'] === 1 || isset($error['openai_pixel_status']) ? ' open' : ''; ?>>
+						<summary>ChatGPT Ads pixel <span class="p202-disclosure__hint">OpenAI's browser pixel</span></summary>
+						<div class="p202-disclosure__body">
+							<div class="form-text mb-2">Loads OpenAI's ChatGPT Ads pixel on this page for visits from a traffic source with a "ChatGPT Ads Pixel" pixel holding your pixel id, and sends its browser reference with the conversions a ChatGPT Ads destination sends. Not for a visitor your privacy setting holds back, nor one who refused tracking on the page.</div>
+							<input type="hidden" name="openai_pixel_status" value="0"<?php echo $form['landing_page_type'] === '1' ? ' disabled' : ''; ?>>
+							<div class="form-check form-switch">
+								<input class="form-check-input<?php echo p202_setup_invalid($error, 'openai_pixel_status'); ?>" type="checkbox" role="switch" id="openai_pixel_status" name="openai_pixel_status" value="1"<?php echo $openAiForm['status'] === 1 ? ' checked' : ''; ?><?php echo $form['landing_page_type'] === '1' ? ' disabled' : ''; ?>>
+								<label class="form-check-label" for="openai_pixel_status">Load the ChatGPT Ads pixel on this page</label>
+							</div>
+							<?php echo p202_setup_feedback($error, 'openai_pixel_status'); ?>
 						</div>
 					</details>
 

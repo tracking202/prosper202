@@ -120,7 +120,10 @@ once.
   without the `+`, as OpenAI hashes them, and the visitor's IP address is
   sent too, only when the campaign captures identity, the visitor did not
   refuse consent (`p202_consent`), and the click stored the address
-  unmasked (a masked address names a network, not the visitor). The raw
+  unmasked (a masked address names a network, not the visitor). On the same
+  terms the browser reference OpenAI's pixel set on your landing page
+  (its `__obref` cookie, [kept with the click](chatgpt-ads.md#4-put-openais-pixel-on-your-landing-page))
+  goes as `user.obref`, unchanged. The raw
   values are never written to the queue, the log or an error.
 - **A visitor who refused consent is sent to no ad platform.** When a
   visitor refuses (`p202_consent` with any value but `1`), none of their
@@ -440,7 +443,8 @@ another type (or `custom` with a name of your own), to
   OpenAI counts an event once per pixel id, event name and id, and keeps
   the first it receives: if the ChatGPT Ads pixel on your page reports the
   same sale, give it this id as `event_id` and the same event name, or the
-  sale is counted twice.
+  sale is counted twice. A traffic source's *ChatGPT Ads Pixel* does that
+  for you.
 - `oppref`: OpenAI's click id from the click, as it arrived, sent whenever
   the click has one. A conversion of a visitor who refused consent is not
   sent at all (see Privacy and personal data), so neither is its `oppref`.

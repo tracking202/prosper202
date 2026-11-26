@@ -41,10 +41,46 @@ func render(data []byte) error {
 		return emptyAnswerError()
 	}
 	output.RenderWith(data, renderOpts())
-	if note := otherCurrenciesNote(data); note != "" && !jsonOutput && !ndjsonOutput && !quietOutput {
-		fmt.Fprintln(os.Stderr, "Note: "+note)
+	if jsonOutput || ndjsonOutput || quietOutput {
+		return nil
+	}
+	for _, note := range []string{otherCurrenciesNote(data), unmatchedConversionsNote(data)} {
+		if note != "" {
+			fmt.Fprintln(os.Stderr, "Note: "+note)
+		}
 	}
 	return nil
+}
+
+// unmatchedConversionsNote is what a table says under a summary whose window
+// holds conversions the inbound log refused because they named no click here
+// (`unmatched_conversions`, from 1.9.81). They have no campaign, so the count
+// is the account's whatever the summary filters by. "" when there are none,
+// when a campaign-data mask hid the count, or for any other answer.
+func unmatchedConversionsNote(data []byte) string {
+	var answer struct {
+		Unmatched *struct {
+			Conversions *json.Number `json:"conversions"`
+			Complete    bool         `json:"complete"`
+		} `json:"unmatched_conversions"`
+	}
+	if err := json.Unmarshal(data, &answer); err != nil || answer.Unmatched == nil || answer.Unmatched.Conversions == nil {
+		return ""
+	}
+	n, err := answer.Unmatched.Conversions.Int64()
+	if err != nil || n <= 0 {
+		return ""
+	}
+	count := answer.Unmatched.Conversions.String()
+	if !answer.Unmatched.Complete {
+		count = "at least " + count
+	}
+	noun := "conversions"
+	if n == 1 && answer.Unmatched.Complete {
+		noun = "conversion"
+	}
+	return fmt.Sprintf("%s %s received in this period named no click here, so no report counts them (they have no campaign, so this is the account's count whatever the filters). `p202 conversion inbound-log --outcome refused` lists them with what to do about each.",
+		count, noun)
 }
 
 // emptyAnswerError is render's refusal of an empty payload. An empty body is

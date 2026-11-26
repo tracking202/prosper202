@@ -706,6 +706,89 @@ document.addEventListener('mousedown', p202OnFollow, true);
 document.addEventListener('click', p202OnFollow, true);
 document.addEventListener('keydown', function(ev) { if (ev.key === 'Enter') { p202OnFollow(ev); } }, true);
 
+// --- ChatGPT Ads pixel ---
+// record.php's answer calls this when the page's switch is on and the visitor
+// may be tracked. OpenAI's base code with its consent first: the pixel sets
+// its cookies only while p202 consent stands, and withdrawing consent here
+// withdraws it there (which removes its cookies) and has the tracker drop
+// the browser reference it kept for the click.
+(function() {
+	var settings = null, loaded = false, sent = '', poll = null;
+	var refUrl = <?php echo $p202Js($baseUrl . 'tracking202/static/openai-ref.php'); ?>;
+	function post(body) {
+		try {
+			if (window.fetch) {
+				window.fetch(refUrl, {
+					method: 'POST', body: body, keepalive: true, mode: 'cors', credentials: 'omit',
+					headers: {'Content-Type': 'application/x-www-form-urlencoded'}
+				}).then(function() {}, function() {});
+			} else if (window.XMLHttpRequest) {
+				var xhr = new window.XMLHttpRequest();
+				xhr.open('POST', refUrl, true);
+				xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+				xhr.send(body);
+			}
+		} catch (e) { /* the page goes on */ }
+	}
+	// The pixel's browser reference, as OpenAI's cookie holds it (OpenAiBrowserRef::isValue()).
+	function browserRef() {
+		var m = /(?:^|;\s*)__obref=([^;]*)/.exec(document.cookie || '');
+		var ref = m ? m[1] : '';
+		return /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]{1,255}$/.test(ref) ? ref : '';
+	}
+	function sendRef() {
+		if (!settings || !settings.refProof || !p202ConsentGiven()) { return true; }
+		var ref = browserRef();
+		if (ref === '' || ref === sent) { return ref !== ''; }
+		sent = ref;
+		post('proof=' + encodeURIComponent(settings.refProof) + '&obref=' + encodeURIComponent(ref));
+		return true;
+	}
+	function watch() {
+		if (poll !== null) { return; }
+		var tries = 0;
+		poll = window.setInterval(function() {
+			if (sendRef() || ++tries >= 20) { window.clearInterval(poll); poll = null; }
+		}, 500);
+	}
+	function load() {
+		if (loaded || !settings || !p202ConsentGiven()) { return; }
+		loaded = true;
+		(function(w, d) {
+			if (w.oaiq) { return; }
+			var q = function() { q.q.push(arguments); };
+			q.q = [];
+			w.oaiq = q;
+			var js = d.createElement('script');
+			js.async = true;
+			js.src = 'https://bzrcdn.openai.com/sdk/oaiq.min.js';
+			var first = d.getElementsByTagName('script')[0];
+			if (first && first.parentNode) { first.parentNode.insertBefore(js, first); } else { (d.head || d.documentElement).appendChild(js); }
+		})(window, document);
+		window.oaiq('consent', false);
+		window.oaiq('init', {pixelId: settings.pixelId});
+		window.oaiq('consent', true);
+		watch();
+	}
+	window.p202OpenAiPixel = function(given) {
+		if (!given || typeof given.pixelId !== 'string' || given.pixelId === '' || settings) { return; }
+		settings = given;
+		load();
+	};
+	var consent = window.p202.consent;
+	window.p202.consent = function(given) {
+		var answer = consent(given);
+		if (given === false && settings) {
+			if (loaded && typeof window.oaiq === 'function') { window.oaiq('consent', false); }
+			if (settings.refProof) { post('proof=' + encodeURIComponent(settings.refProof) + '&p202_consent=0'); }
+			sent = '';
+		} else if (given === true && settings && answer) {
+			if (loaded && typeof window.oaiq === 'function') { window.oaiq('consent', true); watch(); } else { load(); }
+		}
+		return answer;
+	};
+})();
+
 // --- Bot202 Facebook Pixel Assistant ---
 // record.php's answer calls this when the page's assistant is on and the
 // visitor may be tracked; nothing loads or fires once consent is refused.

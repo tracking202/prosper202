@@ -161,14 +161,57 @@ The delivery log on the destination shows each conversion sent, withheld or
 failed, with the reason, and *resend* sends failed ones again after you fix the
 cause.
 
-## 4. If your pixel is also on the page
+## 4. Put OpenAI's pixel on your landing page
 
-If the ChatGPT Ads pixel on your site reports the same sale, give the pixel's
-event the event type the destination sends (`order_created` unless you picked
-another; for a `custom` type, its custom event name), and as its `event_id` the id Prosper202 sends (the
-conversion's transaction id, else `P202-<conversion id>`; a conversion that
-replaced another, as a newer revenue upload does, goes under the first one's id). Otherwise OpenAI
-counts the sale twice.
+The pixel lets OpenAI tie a conversion to the browser that saw the ad, even
+when the click's `oppref` is gone. Prosper202 loads it for you on a simple
+landing page and fires its conversion event; you set two things.
+
+1. On **Setup › Traffic Sources**, open your ChatGPT Ads account's
+   **Advanced** section and add a pixel of the type **ChatGPT Ads Pixel**.
+   Its code is your pixel id from Ads Manager › Conversions (`px_4821`);
+   OpenAI's base code or its image tag pasted whole works too, and only the
+   id is kept.
+2. On **Setup › Landing Pages**, open the page's **ChatGPT Ads pixel**
+   section and switch it on. It can't be switched on for an advanced landing
+   page.
+
+What then happens:
+
+- **On the page.** For a visit from that traffic source, the landing page
+  code loads OpenAI's pixel under your pixel id, on the terms the Bot202
+  Facebook Pixel Assistant loads on: the privacy setting in force, a visitor
+  who refused consent (`p202_consent`) and the campaign's identity capture
+  hold it back, and consent withdrawn on the page turns it off. A visit
+  from any other source, or with the switch off, loads nothing of OpenAI's.
+- **The browser reference.** Once the pixel sets its `__obref` cookie, the
+  page sends it to your Prosper202, which keeps it with the click, and a
+  ChatGPT Ads destination sends it as `user.obref` with hashed email and
+  phone ([what is sent](destinations.md#privacy-and-personal-data)). When
+  the visitor withdraws consent on the page, the pixel is told and the kept
+  reference is removed.
+- **The conversion.** When a conversion is recorded in the browser (a pixel
+  on your thank-you page), the traffic source's ChatGPT Ads Pixel fires
+  OpenAI's event under the event type the destination sends for that
+  campaign (`order_created` without one) and the id it sends (the
+  conversion's transaction id, else `P202-<conversion id>`), with the
+  click's `oppref` and the payout. OpenAI counts the pixel's event and the
+  destination's once. A postback-recorded conversion fires no browser pixel.
+- **A rotator** that sends the visit to your own landing page passes the
+  ad's `oppref` on to the page while the pixel is on there.
+- **A Content-Security-Policy** on the page must allow OpenAI's hosts:
+  `script-src https://bzrcdn.openai.com`,
+  `connect-src https://bzr.openai.com https://bzrcdn.openai.com` and
+  `img-src https://bzr.openai.com`, plus your Prosper202 domain in
+  `connect-src`.
+
+**If you placed OpenAI's pixel on the page yourself**, give its conversion
+event the event type the destination sends (`order_created` unless you
+picked another; for a `custom` type, its custom event name), and as its
+`event_id` the id Prosper202 sends (the conversion's transaction id, else
+`P202-<conversion id>`; a conversion that replaced another, as a newer
+revenue upload does, goes under the first one's id). Otherwise OpenAI counts
+the sale twice. Don't load it twice: with the switch on, remove your own.
 
 ## 5. Make cost what OpenAI billed
 

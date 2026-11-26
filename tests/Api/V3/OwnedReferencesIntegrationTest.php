@@ -311,7 +311,11 @@ final class OwnedReferencesIntegrationTest extends TestCase
             self::fail('an advanced page its ads name was made simple');
         } catch (ValidationException $e) {
             $said = $e->getFieldErrors()['landing_page_type'] ?? '';
-            self::assertStringContainsString("2 text ads of text_ad_type 1 name it (text_ad_id $first, $second)", $said, json_encode($e->getFieldErrors()));
+            self::assertStringContainsString(
+                "landing page $page is advanced and 2 text ads of text_ad_type 1 (text_ad_id $first, $second) name it.",
+                $said,
+                json_encode($e->getFieldErrors())
+            );
             self::assertStringContainsString("GET /text-ads?filter[landing_page_id]=$page&filter[text_ad_type]=1", $said);
         }
         self::assertSame(1, $type(), 'the refused update changed the type');
@@ -334,6 +338,147 @@ final class OwnedReferencesIntegrationTest extends TestCase
         // A page already simple saves with an ad of type 1 stored on it before #260.
         self::q("UPDATE 202_text_ads SET text_ad_type = 1 WHERE text_ad_id = $first");
         $pages->update($page, ['landing_page_type' => 0, 'landing_page_nickname' => 'still simple']);
+    }
+
+    /**
+     * Nor while trackers name it (H5TL): their links were built for an
+     * advanced page. The refusal names this account's trackers and no
+     * other's, alone or beside the page's ads, on a PUT and on a bulk row,
+     * and writes nothing; once none remain, the change is made.
+     */
+    public function testAnAdvancedPageItsTrackersNameIsNotMadeSimple(): void
+    {
+        $m = $this->ids['mine'];
+        $u = self::USER;
+        $pages = new LandingPagesController(self::$db, $u);
+        $ads = new TextAdsController(self::$db, $u);
+        $page = (int) $pages->create([
+            'landing_page_url' => 'https://adv.example', 'landing_page_nickname' => 'adv',
+            'landing_page_type' => 1, 'aff_campaign_id' => 0,
+        ])['data']['landing_page_id'];
+        $first = $this->tracker($u, $page);
+        $second = $this->tracker($u, $page);
+        $this->tracker(self::OTHER, $page);
+        $makeSimple = ['landing_page_type' => 0, 'aff_campaign_id' => $m['aff_campaign_id']];
+        $type = static fn (): int => (int) $pages->get($page)['data']['landing_page_type'];
+
+        try {
+            $pages->update($page, $makeSimple + ['landing_page_nickname' => 'not saved']);
+            self::fail('an advanced page its trackers name was made simple');
+        } catch (ValidationException $e) {
+            $said = $e->getFieldErrors()['landing_page_type'] ?? '';
+            self::assertStringContainsString(
+                "landing page $page is advanced and 2 trackers (tracker_id $first, $second) name it.",
+                $said,
+                json_encode($e->getFieldErrors())
+            );
+            self::assertStringContainsString('or delete it (DELETE /trackers/{id})', $said);
+            self::assertStringContainsString("GET /trackers?filter[landing_page_id]=$page lists them.", $said);
+            self::assertStringNotContainsString('text_ad', $said, 'no ad names the page');
+        }
+        self::assertSame(1, $type(), 'the refused update changed the type');
+        $nickname = (string) $pages->get($page)['data']['landing_page_nickname'];
+        self::assertSame('adv', $nickname, 'the refused update wrote a field');
+
+        $ad = (int) $ads->create([
+            'text_ad_name' => 'x', 'text_ad_headline' => 'h', 'text_ad_description' => 'd',
+            'text_ad_display_url' => 'x', 'text_ad_type' => 1, 'aff_campaign_id' => 0, 'landing_page_id' => $page,
+        ])['data']['text_ad_id'];
+        try {
+            $pages->update($page, $makeSimple);
+            self::fail('an advanced page its ad and trackers name was made simple');
+        } catch (ValidationException $e) {
+            $said = $e->getFieldErrors()['landing_page_type'] ?? '';
+            self::assertStringContainsString("landing page $page is advanced and 1 text ad of text_ad_type 1"
+                . " (text_ad_id $ad) and 2 trackers (tracker_id $first, $second) name it.", $said);
+            self::assertStringContainsString("GET /text-ads?filter[landing_page_id]=$page&filter[text_ad_type]=1"
+                . " and GET /trackers?filter[landing_page_id]=$page list them.", $said);
+        }
+        $ads->delete($ad);
+
+        \Api\V3\RequestContext::setHeaders(['Idempotency-Key' => 'simple-trackers-' . bin2hex(random_bytes(6))]);
+        try {
+            $result = $pages->bulkUpsert(['rows' => [['landing_page_id' => $page] + $makeSimple]]);
+        } finally {
+            \Api\V3\RequestContext::reset();
+        }
+        self::assertSame(['error'], array_column($result['data'], 'status'), json_encode($result));
+        self::assertStringContainsString(
+            "2 trackers (tracker_id $first, $second)",
+            $result['data'][0]['field_errors']['landing_page_type'] ?? '',
+            json_encode($result['data'][0])
+        );
+        self::assertSame(1, $type(), 'the refused row changed the type');
+
+        self::q("DELETE FROM 202_trackers WHERE tracker_id IN ($first, $second)");
+        self::assertSame(0, (int) $pages->update($page, $makeSimple)['data']['landing_page_type']);
+    }
+
+    /**
+     * The uses are read under the page's lock in the transaction that writes
+     * the page: asked outside one, where the lock would end before the save,
+     * the read is refused.
+     */
+    public function testTheUsesAreReadOnlyUnderTheSavesLock(): void
+    {
+        $page = $this->ids['mine']['landing_page_id'];
+        $conn = new \Prosper202\Database\Connection(self::$db);
+        $madeSimple = new \Prosper202\Setup\AdvancedPageMadeSimple($conn);
+        try {
+            $madeSimple->uses(self::USER, $page);
+            self::fail('the uses were read outside the transaction that writes the page');
+        } catch (\LogicException) {
+        }
+        $uses = $conn->transaction(fn (): ?array => $madeSimple->uses(self::USER, $page));
+        self::assertNull($uses, 'a simple page is not held');
+    }
+
+    /** A change record is written once the update has committed; a failed read-back undoes the write and says why. */
+    public function testAnUpdateThatRolledBackIsNotAnsweredAsLanded(): void
+    {
+        $pages = new class (self::$db, self::USER) extends LandingPagesController {
+            public bool $failReadBack = false;
+            private int $reads = 0;
+
+            public function get(int|string $id): array
+            {
+                if ($this->failReadBack && ++$this->reads === 2) {
+                    throw new \RuntimeException('read-back failed');
+                }
+
+                return parent::get($id);
+            }
+        };
+        $page = (int) $pages->create([
+            'landing_page_url' => 'https://adv.example', 'landing_page_nickname' => 'before',
+            'landing_page_type' => 1, 'aff_campaign_id' => 0,
+        ])['data']['landing_page_id'];
+        $pages->failReadBack = true;
+        $thrown = null;
+        try {
+            $pages->update($page, ['landing_page_nickname' => 'after']);
+        } catch (\RuntimeException $e) {
+            $thrown = $e;
+        }
+        $pages->failReadBack = false;
+        self::assertNotNull($thrown, 'a failed read-back was not answered');
+        self::assertNotInstanceOf(
+            \Api\V3\Exception\WriteCommittedException::class,
+            $thrown,
+            'a write its transaction rolled back was answered as landed'
+        );
+        self::assertSame('read-back failed', $thrown->getMessage());
+        $nickname = (string) $pages->get($page)['data']['landing_page_nickname'];
+        self::assertSame('before', $nickname, 'the write was not undone');
+    }
+
+    private function tracker(int $user, int $lp): int
+    {
+        return self::q(
+            "INSERT INTO 202_trackers SET user_id = $user, tracker_id_public = " . random_int(100000000, 999999999)
+            . ", aff_campaign_id = 0, text_ad_id = 0, ppc_account_id = 0, landing_page_id = $lp, rotator_id = 0,"
+            . ' click_cloaking = 0, tracker_time = 0'
+        );
     }
 
     public function testAnAdvancedPageItsAdsOrTrackersNameIsNotDeleted(): void

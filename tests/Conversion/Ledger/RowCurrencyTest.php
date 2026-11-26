@@ -102,4 +102,32 @@ final class RowCurrencyTest extends TestCase
         self::assertNull($masked['data']['total_income']);
         self::assertTrue($masked['masked']);
     }
+
+    /** The summary's people and refund counts, and the conversions that matched no click, are hidden with its money. */
+    public function testTheSummarysCountsAreHiddenWithItsFigures(): void
+    {
+        $api = (string) file_get_contents(dirname(__DIR__, 3) . '/api/v3/index.php');
+        self::assertStringContainsString(
+            '$summaryFigures = [...$reportFigures, ...\\Api\\V3\\Support\\CampaignFigures::SUMMARY];',
+            $api
+        );
+        self::assertStringContainsString(
+            '->get(\'/summary\',    fn() => $campaignFigures($crud($cls)->summary($queryParams), $summaryFigures));',
+            $api
+        );
+
+        $masked = \Api\V3\Support\CampaignFigures::mask(
+            ['data' => ['total_clicks' => 7, 'total_leads' => 2, 'unique_visitors' => 5, 'unidentified_clicks' => 2,
+                'total_conversions' => 3, 'total_refunds' => 2, 'total_refund_amount' => 12.0, 'refund_rate' => 66.6667,
+                'currency' => 'USD'],
+                'unmatched_conversions' => ['conversions' => 3, 'complete' => true]],
+            [...\Api\V3\Support\CampaignFigures::REPORT, ...\Api\V3\Support\CampaignFigures::OTHER_CURRENCIES,
+                ...\Api\V3\Support\CampaignFigures::SUMMARY]
+        );
+
+        self::assertSame(['total_clicks' => null, 'total_leads' => null, 'unique_visitors' => null,
+            'unidentified_clicks' => null, 'total_conversions' => null, 'total_refunds' => null,
+            'total_refund_amount' => null, 'refund_rate' => 66.6667, 'currency' => 'USD'], $masked['data']);
+        self::assertSame(['conversions' => null, 'complete' => true], $masked['unmatched_conversions']);
+    }
 }

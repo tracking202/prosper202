@@ -46,7 +46,7 @@ trait SetupScratchDatabase
         $db->query("SET SESSION sql_mode=''");
         (new SchemaInstaller($db))->install();
         // As the installer seeds them (DataSeeder::seedPixelTypes()).
-        $db->query("INSERT IGNORE INTO 202_pixel_types (pixel_type) VALUES ('Image'), ('Iframe'), ('Javascript'), ('Postback'), ('Raw'), ('Bot202 Facebook Pixel Assistant')");
+        $db->query("INSERT IGNORE INTO 202_pixel_types (pixel_type) VALUES ('Image'), ('Iframe'), ('Javascript'), ('Postback'), ('Raw'), ('Bot202 Facebook Pixel Assistant'), ('ChatGPT Ads Pixel')");
         $db->query("SET SESSION sql_mode='STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'");
         $row = $db->query('SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = 1')->fetch_row();
         self::$savedDomain = $row === null ? null : (string) $row[0];

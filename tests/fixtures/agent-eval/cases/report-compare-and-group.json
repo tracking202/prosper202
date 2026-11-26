@@ -1,0 +1,62 @@
+{
+  "cases": [
+    {
+      "id": "report-compare-001-today-against-yesterday-so-far",
+      "priority": "high",
+      "state": "seeded fixture; every click seed.sh fires is from today, so today has clicks and yesterday up to the same time has none on a fresh instance",
+      "ask": "How do today's clicks and conversions so far compare with yesterday's up to the same time of day?",
+      "expected": {
+        "runs_one_of": [
+          "--compare previous",
+          "--compare=previous"
+        ],
+        "never_runs": [
+          "conversion create",
+          "campaign delete",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "p202 report summary --period today --compare previous --json | jq '.previous.time_to < .window.time_from and (.data.total_clicks | tonumber) >= 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if the reply gives today's clicks and conversions beside yesterday's up to the same time, read from one compared summary (report summary --period today --compare previous) or from two summaries whose bounds it states, and says which window each covers. FAIL if yesterday's figures are the whole of yesterday, if either figure was not read, or if it compares with a window of another length without saying so."
+      },
+      "notes": "compare=previous answers both windows from one clock, so the comparison covers what it says; before it an agent had to compute yesterday's bounds in a timezone it could not see."
+    },
+    {
+      "id": "report-group-001-a-series-per-campaign",
+      "priority": "high",
+      "state": "seeded fixture; seed.sh fires today's clicks on EVAL Campaign A and EVAL Campaign B",
+      "ask": "Show my clicks per day over the last 7 days, with one series for each campaign.",
+      "expected": {
+        "runs_one_of": [
+          "--group-by campaign",
+          "--group-by=campaign",
+          "--group-by offer"
+        ],
+        "never_runs": [
+          "conversion create",
+          "campaign delete",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "a=$(p202 report timeseries --period last7 --group-by campaign --json) && b=$(p202 report timeseries --period last7 --json) && jq -n --argjson a \"$a\" --argjson b \"$b\" '$a.group_by == \"campaign\" and ([$a.data[] | {p: .period, c: (.total_clicks | tonumber)}] | group_by(.p) | map({p: .[0].p, c: (map(.c) | add)})) == ([$b.data[] | {p: .period, c: (.total_clicks | tonumber)}] | sort_by(.p))'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "reply_includes": [
+          "EVAL Campaign B"
+        ],
+        "rubric": "PASS if the reply gives each campaign's clicks per day for the last 7 days, read from one grouped timeseries (report timeseries --group-by campaign) or from a series per campaign, naming EVAL Campaign B. FAIL if it gives only the ungrouped series, splits the days by another dimension, or states counts it did not read."
+      },
+      "notes": "group_by answers a series per campaign in one call, each what the series filtered to that campaign answers; the check holds the grouped rows of each day to the ungrouped series."
+    }
+  ]
+}

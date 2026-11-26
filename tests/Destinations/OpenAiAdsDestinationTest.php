@@ -62,11 +62,12 @@ final class OpenAiAdsDestinationTest extends TestCase
         int $campaign = 30,
         int $source = 70,
         bool $restates = false,
+        ?string $obref = null,
     ): ConversionFacts {
         return new ConversionFacts(
             7, 4242, $campaign, $convTime, $value, $currency, 'ORD-1001',
             $click + ['c1' => '', 'gclid' => ''], $customer, $emails, [], 'UTC', self::NOW - 3600,
-            $ip, null, $page, $source, $restates
+            $ip, null, $page, $source, $restates, $obref
         );
     }
 
@@ -245,6 +246,24 @@ final class OpenAiAdsDestinationTest extends TestCase
             'ip_address' => '203.0.113.7',
         ], $user);
         self::assertArrayNotHasKey('user', OpenAiAdsDestination::body($this->settings(), self::facts())['events'][0], 'no user data, no user object');
+    }
+
+    /** The pixel's browser reference goes as OpenAI asks: unchanged and unhashed, as user.obref. */
+    public function testTheBrowserReferenceGoesUnchanged(): void
+    {
+        $event = OpenAiAdsDestination::body($this->settings(), self::facts(obref: 'ob.Ab-1_2'))['events'][0];
+        self::assertSame(['obref' => 'ob.Ab-1_2'], $event['user']);
+        self::assertSame(['obref'], OpenAiAdsDestination::summary(['events' => [$event]], self::facts())['user'], 'the log names it, never its value');
+        self::assertArrayNotHasKey('user', OpenAiAdsDestination::body($this->settings(), self::facts(obref: ''))['events'][0]);
+    }
+
+    /** The event type the pixel's conversion image asks too. */
+    public function testTheEventTypeIsTheCampaignsThenTheDestinations(): void
+    {
+        self::assertSame('lead_created', OpenAiAdsDestination::eventType(['event_type' => 'trial_started', 'event_types' => [30 => 'lead_created']], 30));
+        self::assertSame('trial_started', OpenAiAdsDestination::eventType(['event_type' => 'trial_started', 'event_types' => [30 => 'lead_created']], 31));
+        self::assertSame('order_created', OpenAiAdsDestination::eventType([], 31));
+        self::assertSame('order_created', OpenAiAdsDestination::eventType(['event_types' => 'corrupt'], 31));
     }
 
     public function testScopeHoldsBackWhatTheDestinationDoesNotSend(): void

@@ -425,6 +425,72 @@ final class MysqlClickRepository implements ClickRepositoryInterface
         );
     }
 
+    /**
+     * The click tables purgeAccount() deletes a purged account's rows from:
+     * what a visitor's browser told the page, not the click itself.
+     * UserDataPurge's preview lists them.
+     */
+    public const ACCOUNT_PURGED_TABLES = [TableRegistry::CLICK_OPENAI_REFS];
+
+    /**
+     * Delete the account's rows of ACCOUNT_PURGED_TABLES, joined to its
+     * clicks, inside UserDataPurge's transaction.
+     */
+    public function purgeAccount(int $userId): void
+    {
+        $this->write(
+            'DELETE r FROM `' . TableRegistry::CLICK_OPENAI_REFS . '` AS r'
+                . ' JOIN 202_clicks AS c ON c.click_id = r.click_id WHERE c.user_id = ?',
+            'i',
+            [$userId]
+        );
+    }
+
+    /**
+     * A landing page's ChatGPT Ads pixel browser reference (OpenAiBrowserRef):
+     * $obref stored for the click, or with null the stored one removed (the
+     * visitor withdrew consent on the page), under the click's lock and only
+     * while every row of it is the account's and its latest visit is on
+     * $landingPageId, as recordPageValues() asks. False when refused.
+     */
+    public function recordOpenAiRef(int $userId, int $clickId, int $landingPageId, ?string $obref, int $now): bool
+    {
+        return (new MysqlConversionLedger($this->conn))->clickTransaction(
+            $clickId,
+            $userId,
+            function (?array $locked) use ($userId, $clickId, $landingPageId, $obref, $now): bool {
+                if ($locked === null || $this->accountsClickFirstTime($userId, $clickId) === null) {
+                    return false;
+                }
+                $stmt = $this->conn->prepareWrite('SELECT c.landing_page_id FROM ' . LatestVisit::of('?') . ' AS c');
+                $this->conn->bind($stmt, 'i', [$clickId]);
+                $latest = $this->conn->fetchOne($stmt);
+                if ($latest === null || self::intColumn($latest, 'landing_page_id') !== $landingPageId) {
+                    return false;
+                }
+                if ($obref === null) {
+                    $this->write(
+                        'DELETE r FROM 202_click_openai_refs AS r'
+                            . ' JOIN 202_clicks AS c ON c.click_id = r.click_id AND c.user_id = ?'
+                            . ' WHERE r.click_id = ? AND ' . LatestVisit::isLatest('c'),
+                        'ii',
+                        [$userId, $clickId]
+                    );
+
+                    return true;
+                }
+                $this->write(
+                    'INSERT INTO 202_click_openai_refs (click_id, obref, recorded_at) VALUES (?, ?, ?)'
+                        . ' ON DUPLICATE KEY UPDATE obref = VALUES(obref), recorded_at = VALUES(recorded_at)',
+                    'isi',
+                    [$clickId, $obref, max(0, $now)]
+                );
+
+                return true;
+            }
+        );
+    }
+
     #[\Override]
     public function isAccountsClick(int $userId, int $clickId): bool
     {
