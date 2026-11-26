@@ -922,6 +922,7 @@ func (c *Client) doWith(httpClient *http.Client, method, path string, params map
 		return nil, &RequestError{Kind: "validation", Op: OpDownloadTooLarge, Err: fmt.Errorf("the file is larger than %d MB, the most this client downloads", limit>>20)}
 	}
 
+	noteAnswer(Answer{Method: method, Path: "/" + strings.TrimLeft(path, "/"), Status: resp.StatusCode, Bytes: len(respBody)})
 	return respBody, nil
 }
 

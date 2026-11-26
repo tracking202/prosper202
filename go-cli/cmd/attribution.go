@@ -76,8 +76,7 @@ var attrModelListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -98,8 +97,7 @@ var attrModelGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -162,8 +160,7 @@ var attrModelCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -191,8 +188,7 @@ var attrModelUpdateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -332,8 +328,7 @@ their cost, the population the classic reports count.`,
 			}
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -353,8 +348,7 @@ var attrJourneysCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -375,8 +369,7 @@ var attrJourneyCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -400,8 +393,7 @@ var attrQueueCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
@@ -431,8 +423,7 @@ row carries last_error. Fix what it names, then run this.`,
 		if err != nil {
 			return withHint(err, "Nothing was run again. See what is failing and why with `p202 attribution queue`; if the server itself is failing, check `p202 system health`.")
 		}
-		render(data)
-		return nil
+		return render(data)
 	},
 }
 
