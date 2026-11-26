@@ -7902,6 +7902,8 @@ paths:
           description: Role assigned
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/roles/{roleId}:
     parameters:
@@ -7927,6 +7929,8 @@ paths:
           description: Role removed
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/api-keys:
     parameters:
@@ -7998,6 +8002,8 @@ paths:
                             that does not end.
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     post:
       tags: [Users]
       summary: Create an API key
@@ -8064,6 +8070,8 @@ paths:
                         type: integer
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/api-keys/replace:
     parameters:
@@ -8162,6 +8170,8 @@ paths:
           description: API key deleted
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/identity-key:
     parameters:
@@ -8246,6 +8256,8 @@ paths:
                     $ref: "#/components/schemas/UserPreferences"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     put:
       tags: [Users]
       summary: Update user preferences
@@ -8291,6 +8303,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/click-filter:
     parameters:
@@ -8317,6 +8331,8 @@ paths:
                     $ref: "#/components/schemas/ClickFilter"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     put:
       tags: [Users]
       summary: Change the click filter's checks
@@ -8346,6 +8362,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/click-filter/entries:
     parameters:
@@ -8386,6 +8404,8 @@ paths:
           description: The same addresses are on the list already, as `entry_id`.
         "422":
           $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users/{id}/click-filter/entries/{entryId}:
     parameters:
@@ -8476,6 +8496,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
 # ═══════════════════════════════════════════════════════════════════════
 # Components
