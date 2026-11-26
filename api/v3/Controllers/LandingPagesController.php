@@ -17,6 +17,12 @@ class LandingPagesController extends Controller
     protected function primaryKey(): string { return 'landing_page_id'; }
 
     #[\Override]
+    protected function libraryResource(): ?string
+    {
+        return 'landing-pages';
+    }
+
+    #[\Override]
     protected function listSearchColumns(): array
     {
         return ['landing_page_nickname'];

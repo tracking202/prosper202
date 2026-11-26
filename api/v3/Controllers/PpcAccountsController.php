@@ -16,6 +16,12 @@ class PpcAccountsController extends Controller
     protected function primaryKey(): string { return 'ppc_account_id'; }
 
     #[\Override]
+    protected function libraryResource(): ?string
+    {
+        return 'ppc-accounts';
+    }
+
+    #[\Override]
     protected function listSearchColumns(): array
     {
         return ['ppc_account_name'];

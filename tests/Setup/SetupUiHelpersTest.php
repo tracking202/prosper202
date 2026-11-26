@@ -189,6 +189,16 @@ final class SetupUiHelpersTest extends TestCase
         self::assertSame(['p202-pill', 'Not checked yet'], \Prosper202\Setup\LandingPageCheckStore::pill('something-new'));
     }
 
+    public function testAStatusLevelIsItsPillsLevel(): void
+    {
+        $statuses = (new \ReflectionClass(\Prosper202\Setup\LandingPageCheckResult::class))->getConstants();
+        foreach ([...array_values($statuses), null, 'something-new'] as $status) {
+            [$classes] = \Prosper202\Setup\LandingPageCheckStore::pill($status);
+            $pillLevel = preg_match('/p202-pill--(\w+)/', $classes, $m) === 1 ? $m[1] : 'unchecked';
+            self::assertSame($pillLevel, \Prosper202\Setup\LandingPageCheckStore::level($status), (string) $status);
+        }
+    }
+
     public function testCheckMyPageShowsTheLastAnswerUntilTheNextOne(): void
     {
         $html = p202_setup_lp_check('/p202/', 'token', 42, ['status' => 'present', 'message' => 'Found: your page carries this code.', 'checked_at' => 0]);

@@ -11,6 +11,7 @@ use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\NothingToUpdateException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\PayloadKeys;
+use Api\V3\Support\LibraryUsage;
 use Api\V3\Support\ListQuery;
 use Api\V3\Support\QueryInt;
 use Api\V3\Support\ServerStateStore;
@@ -756,8 +757,19 @@ abstract class Controller
 
     // ─── CRUD Operations ─────────────────────────────────────────────
 
+    /**
+     * The Library resource these records are (LibraryUsage: where each is
+     * used), or null for records no Library list shows.
+     */
+    protected function libraryResource(): ?string
+    {
+        return null;
+    }
+
     public function list(array $params): array
     {
+        $library = $this->libraryResource();
+        $with = $library === null ? [] : LibraryUsage::withOf($library, $params);
         $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
         $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
         // Absent and '' are no cursor; anything else is decoded or refused.
@@ -880,6 +892,9 @@ abstract class Controller
             $rows[] = $this->withVersionMetadata($row);
         }
         $stmt->close();
+        if ($library !== null) {
+            $rows = (new LibraryUsage($this->db, $this->userId))->addTo($library, $this->primaryKey(), $rows, $with);
+        }
 
         $nextCursor = null;
         $cursorExpiresAt = null;
@@ -1196,7 +1211,41 @@ abstract class Controller
             'mode' => $this->deletedColumn() !== null ? 'soft' : 'hard',
             'record' => $existing['data'],
             'cascade' => [],
-        ]];
+        ] + $this->inUseBy((int) $id)];
+    }
+
+    /**
+     * Where one of the account's Library records is used: GET
+     * /<resource>/{id}/uses. A record that is not the account's is a 404,
+     * as its GET is.
+     */
+    public function uses(int $id): array
+    {
+        $library = $this->libraryResource() ?? throw new \LogicException(static::class . ' is no Library resource');
+        $this->get($id);
+        $uses = (new LibraryUsage($this->db, $this->userId))->named($library, $id);
+        $total = 0;
+        foreach ($uses as $kind) {
+            $total += $kind['count'];
+        }
+
+        return ['data' => ['resource' => $library, 'id' => $id, 'total' => $total, 'uses' => $uses]];
+    }
+
+    /**
+     * A Library record's delete preview names what still points at it: a
+     * soft delete takes it out of the Library and leaves those pointing.
+     *
+     * @return array{}|array{in_use_by: array<string, mixed>}
+     */
+    private function inUseBy(int $id): array
+    {
+        $library = $this->libraryResource();
+        if ($library === null) {
+            return [];
+        }
+
+        return ['in_use_by' => (new LibraryUsage($this->db, $this->userId))->named($library, $id)];
     }
 
     public function bulkUpsert(array $payload): array
