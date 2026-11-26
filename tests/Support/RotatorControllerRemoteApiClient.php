@@ -17,7 +17,11 @@ use Api\V3\Support\RemoteApiClient;
  * a sync reads is empty.
  *
  * With $ruleSetRoute false it answers PUT /rotators/{id}/rules as an
- * install from before 1.9.79 does, with the router's bare 404.
+ * install from before 1.9.79 does, with the router's bare 404. With
+ * $withRules false its GET /capabilities does not advertise
+ * features.rotator_with_rules, as an install from before 1.9.81 does; its
+ * controller takes those bodies all the same, so a test of that path sees
+ * which requests the sync makes.
  */
 final class RotatorControllerRemoteApiClient extends RemoteApiClient
 {
@@ -27,7 +31,8 @@ final class RotatorControllerRemoteApiClient extends RemoteApiClient
     public function __construct(
         private readonly \mysqli $db,
         private readonly int $userId,
-        public bool $ruleSetRoute = true
+        public bool $ruleSetRoute = true,
+        public bool $withRules = true
     ) {
         parent::__construct('http://install-' . $userId . '.example', 'key');
     }
@@ -44,6 +49,9 @@ final class RotatorControllerRemoteApiClient extends RemoteApiClient
 
         try {
             $answer = match (true) {
+                $method === 'GET' && $path === 'capabilities' => ['data' => ['features' => [
+                    'rotator_with_rules' => $this->withRules && $this->ruleSetRoute,
+                ]]],
                 $method === 'GET' && $path === 'rotators' => $rotators->list($query),
                 $method === 'GET' && count($segments) === 1 => ['data' => [], 'pagination' => ['total' => 0]],
                 $method === 'GET' && count($segments) === 2 => $rotators->get((int) $segments[1]),

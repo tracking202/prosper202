@@ -80,6 +80,10 @@ final class RemovedRowsStayRemovedTest extends TestCase
                 . ' belongs to: a removed variable\'s values are still its clicks\', so its name is read and shown'
                 . ' as removed',
         ],
+        '202-config/functions-upgrade.php' => [
+            'read | 202_ppc_network_variables' => 'SHOW COLUMNS reads the source id column\'s type to widen it,'
+                . ' no rows (_upgrade_ppc_variable_network_width())',
+        ],
         '202-config/Spend/LedgerCost.php' => [
             'read | 202_ppc_network_variables' => 'a click\'s ad id is the value it was recorded with: removing'
                 . ' the ad_id variable later does not change which ad a past click came from, or what it cost',

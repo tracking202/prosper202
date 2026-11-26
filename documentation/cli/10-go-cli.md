@@ -53,6 +53,12 @@ the profile default `p202 config set-default output.format <format>`; an agent m
 its pretty-printed form, and `p202 config show` reports the format in use and why. The evidence for
 each marker is in `docs/cli-agent.md`.
 
+**One page of a list.** A command that reads one page (`--limit`, `--offset`) passes the server's
+`truncated` through under `--json`: `true` when rows remain after the page. A table says so on
+stderr, naming the next `--offset`; `--all` reads on while `truncated` is `true` and stops when it is
+`false`, whatever `pagination.total` says (from a server before `truncated`, the total and a short
+page decide, as before).
+
 ## Finding a Command
 
 `p202 commands --brief` is the catalog to read when choosing a command: every
@@ -678,7 +684,8 @@ Claude Desktop and Cursor take the same command in their MCP settings:
   set-rules`): it takes the whole rule set as a JSON list, as `rotator_get`
   answers it under `data.rules`, and the install writes it in one
   transaction, in the order given. There are no tools for one rule; a rule
-  is added, changed, moved or removed by sending the set without or with it.
+  is added, changed, moved or removed by sending the set without or with it,
+  and an empty list removes every rule (servers from 1.9.81).
   `dry_run: true` answers what would change.
 - `p202 mcp tools` lists the tools as JSON. `p202 mcp call <tool> --input
   '<json>'` runs one as the app would (`--input -` reads the JSON from stdin).

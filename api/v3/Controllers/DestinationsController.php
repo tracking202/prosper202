@@ -7,6 +7,7 @@ namespace Api\V3\Controllers;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\UpstreamUnavailableException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\PageRows;
 use Api\V3\Support\PayloadKeys;
 use Prosper202\AdPlatforms\AdConnectionInputException;
 use Prosper202\AdPlatforms\AdConnectionStore;
@@ -367,7 +368,7 @@ final class DestinationsController
         $data = [];
         foreach (
             $this->rows('SELECT delivery_id, conv_id, kind, status, attempts, next_attempt_at, last_status_code, last_error, summary, created_at, sent_at'
-            . $sql . ' ORDER BY delivery_id DESC LIMIT ? OFFSET ?', $types . 'ii', [...$binds, $limit, $offset]) as $row
+            . $sql . ' ORDER BY delivery_id DESC LIMIT ? OFFSET ?', $types . 'ii', [...$binds, PageRows::fetchLimit($limit), $offset]) as $row
         ) {
             foreach (['delivery_id', 'conv_id', 'attempts', 'next_attempt_at', 'last_status_code', 'created_at', 'sent_at'] as $int) {
                 $row[$int] = $row[$int] === null ? null : (int) $row[$int];
@@ -375,8 +376,9 @@ final class DestinationsController
             $row['summary'] = $row['summary'] === null ? null : json_decode((string) $row['summary'], true);
             $data[] = $row;
         }
+        [$data, $truncated] = PageRows::cut($data, $limit);
 
-        return ['data' => $data, 'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset], 'meta' => ['summary' => $summary]];
+        return ['data' => $data, 'truncated' => $truncated, 'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset], 'meta' => ['summary' => $summary]];
     }
 
     /**

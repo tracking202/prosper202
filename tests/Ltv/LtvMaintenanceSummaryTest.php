@@ -19,6 +19,8 @@ final class LtvMaintenanceSummaryTest extends TestCase
             'jobs' => LtvMaintenance::JOBS,
             'past_due' => 0,
             'canceled' => 0,
+            'lapsed_trials' => 0,
+            'lapsed_pauses' => 0,
             'swept_customers' => 0,
             'announced' => 0,
             'unannounced' => 0,
@@ -51,6 +53,22 @@ final class LtvMaintenanceSummaryTest extends TestCase
             LtvMaintenance::summary(self::report([
                 'jobs' => [LtvMaintenance::SWEEP], 'canceled' => 9, 'swept_customers' => 3,
                 'announced' => 1, 'unannounced' => 8,
+            ]))
+        );
+        self::assertSame(
+            'subscriptions 2 to past_due, 1 to canceled (1 from trialing),'
+                . ' 0 customer rollups refreshed, 3 announced as subscription.changed',
+            LtvMaintenance::summary(self::report([
+                'jobs' => [LtvMaintenance::SWEEP], 'past_due' => 2, 'canceled' => 1, 'lapsed_trials' => 1,
+                'announced' => 3,
+            ]))
+        );
+        self::assertSame(
+            'subscriptions 2 to past_due, 1 to canceled (1 from trialing, 2 from paused),'
+                . ' 0 customer rollups refreshed, 3 announced as subscription.changed',
+            LtvMaintenance::summary(self::report([
+                'jobs' => [LtvMaintenance::SWEEP], 'past_due' => 2, 'canceled' => 1, 'lapsed_trials' => 1,
+                'lapsed_pauses' => 2, 'announced' => 3,
             ]))
         );
         self::assertSame(
