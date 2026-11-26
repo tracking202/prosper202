@@ -5,18 +5,26 @@ declare(strict_types=1);
 namespace Prosper202\PaymentNotification\Shopify;
 
 use InvalidArgumentException;
+use Prosper202\Database\Connection;
+use Prosper202\Security\IntegrationSecretStore;
 
 /**
- * An account's Shopify webhook signing secret, in
- * 202_users_pref.shopify_webhook_secret: the key a store's admin webhooks are
- * signed with (Settings › Notifications › Webhooks, "Your webhooks will be
- * signed with …"), or a custom app's client secret. The page and
+ * An account's Shopify webhook signing secret: the key a store's admin
+ * webhooks are signed with (Settings › Notifications › Webhooks, "Your
+ * webhooks will be signed with …"), or a custom app's client secret. Kept
+ * sealed in the integration secrets store under NAME (the 1.9.81 upgrade
+ * moved it there from 202_users_pref) and never served back. The page and
  * PUT /users/{id}/preferences write it through parse(), and the endpoint
- * reads it through stored(), so what is stored is what verifies.
+ * reads it through stored(), so what is stored is what verifies. One
+ * replaced on the page with the overlap kept keeps verifying until it ends.
  */
 final class ShopifyWebhookSecret
 {
-    public const COLUMN = 'shopify_webhook_secret';
+    /** The secret's name in the store, and the field the page and the preferences API take it in. */
+    public const NAME = 'shopify_webhook_secret';
+
+    /** How long the page keeps the replaced secret verifying when asked to. */
+    public const OVERLAP_SECONDS = 7 * 86400;
 
     public const MIN_LENGTH = 16;
     public const MAX_LENGTH = 250;
@@ -43,33 +51,36 @@ final class ShopifyWebhookSecret
     }
 
     /** The stored secret as the endpoint verifies with it, or null when none is or it cannot be one. */
-    public static function stored(?string $column): ?string
+    public static function stored(?string $value): ?string
     {
-        $secret = trim((string) $column);
+        $secret = trim((string) $value);
 
         return $secret !== '' && self::problem($secret) === null ? $secret : null;
     }
 
-    /** Whether a secret is stored that is not one (written by hand, cut short): it verifies nothing. */
     /**
      * Whether the account stores a secret a webhook can verify with. Such an
      * account is shown the Shopify webhooks no secret verified, in the page
      * and the API alike: one may be its own.
+     *
+     * @throws \Prosper202\Security\UnreadableSecret when its secret is stored and cannot be opened
      */
-    public static function accountStores(\Prosper202\Database\Connection $conn, int $account): bool
+    public static function accountStores(Connection $conn, int $account): bool
     {
-        $stmt = $conn->prepareRead(
-            'SELECT ' . self::COLUMN . ' AS secret FROM 202_users_pref WHERE user_id = ? LIMIT 1'
-        );
-        $conn->bind($stmt, 'i', [$account]);
-        $secret = $conn->fetchOne($stmt)['secret'] ?? null;
+        $secret = (new IntegrationSecretStore($conn))->open($account, self::NAME, time());
+        foreach ($secret?->accepted() ?? [] as $value) {
+            if (self::stored($value) !== null) {
+                return true;
+            }
+        }
 
-        return self::stored(is_string($secret) ? $secret : null) !== null;
+        return false;
     }
 
-    public static function unreadable(?string $column): bool
+    /** Whether a secret is stored that is not one (moved from a column written by hand, cut short): it verifies nothing. */
+    public static function unreadable(?string $value): bool
     {
-        return trim((string) $column) !== '' && self::stored($column) === null;
+        return trim((string) $value) !== '' && self::stored($value) === null;
     }
 
     private static function problem(string $secret): ?string

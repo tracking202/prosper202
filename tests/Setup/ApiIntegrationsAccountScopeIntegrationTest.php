@@ -318,20 +318,29 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
     {
         $set = ["cb_verified = 1", "ipqs_api_key = ''"];
         foreach (self::SECRETS as $column => $value) {
-            $set[] = "$column = '" . self::$db->real_escape_string($value) . "'";
+            if ($column !== 'shopify_webhook_secret') {
+                $set[] = "$column = '" . self::$db->real_escape_string($value) . "'";
+            }
         }
         self::q('UPDATE 202_users_pref SET ' . implode(', ', $set) . ' WHERE user_id = ' . self::USER);
+        // The Shopify secret is in the sealed store, not a column.
+        self::q('DELETE FROM 202_integration_secrets WHERE user_id = ' . self::USER);
+        self::q('DELETE FROM 202_integration_secret_events WHERE user_id = ' . self::USER);
+        \Tests\Support\StoredShopifySecret::set(self::$db, self::USER, self::SECRETS['shopify_webhook_secret']);
     }
 
     /** @return array<string, string> the account's integration columns as stored */
     private static function secrets(): array
     {
         $found = self::$db->query('SELECT cb_key, cb_verified, zaxaa_api_signature, user_slack_incoming_webhook,'
-            . ' jvzoo_ipn_secret_key, ipqs_api_key, paykickstart_ipn_secret_keys, shopify_webhook_secret'
+            . ' jvzoo_ipn_secret_key, ipqs_api_key, paykickstart_ipn_secret_keys'
             . ' FROM 202_users_pref WHERE user_id = ' . self::USER);
         self::assertInstanceOf(\mysqli_result::class, $found, (string) self::$db->error);
         $row = $found->fetch_assoc();
         self::assertIsArray($row);
+        $row['shopify_webhook_secret'] = \Tests\Support\StoredShopifySecret::of(self::$db, self::USER);
+        $row['shopify_sealed'] = (string) self::$db->query('SELECT sealed FROM 202_integration_secrets WHERE user_id = '
+            . self::USER)->fetch_row()[0];
 
         return array_map('strval', $row);
     }
@@ -446,7 +455,70 @@ final class ApiIntegrationsAccountScopeIntegrationTest extends TestCase
             $new = self::save('change_shopify_webhook_secret', 'shopify_webhook_secret', ' it-shopify-rotated-secret-SH02 ');
             self::assertRedirected(self::page(self::PAGE, [], $new), 'a new Shopify secret is saved');
             self::assertSame('it-shopify-rotated-secret-SH02', self::secrets()['shopify_webhook_secret'], 'trimmed');
+            self::assertStringNotContainsString('SH02', self::secrets()['shopify_sealed'], 'sealed at rest');
+            $store = new \Prosper202\Security\IntegrationSecretStore(new \Prosper202\Database\Connection(self::$db));
+            self::assertSame(['it-shopify-rotated-secret-SH02'], $store->open(self::USER, 'shopify_webhook_secret', time())?->accepted(),
+                'replaced with no overlap: the old one stops');
+
+            // Kept verifying for the overlap when asked; a value that is not on or off is refused.
+            $odd = $new + ['shopify_keep_old' => 'yes'];
+            $odd['shopify_webhook_secret'] = 'it-shopify-rotated-secret-SH03';
+            self::assertStringContainsString('arrived as something other than on or off', self::page(self::PAGE, [], $odd));
+            self::assertSame('it-shopify-rotated-secret-SH02', self::secrets()['shopify_webhook_secret']);
+            $kept = ['shopify_keep_old' => '1', 'shopify_webhook_secret' => 'it-shopify-rotated-secret-SH03'] + $new;
+            self::assertRedirected(self::page(self::PAGE, [], $kept), 'rotated with the overlap');
+            self::assertSame(['it-shopify-rotated-secret-SH03', 'it-shopify-rotated-secret-SH02'],
+                $store->open(self::USER, 'shopify_webhook_secret', time())?->accepted());
+            $page = self::page(self::PAGE);
+            self::assertStringContainsString('The secret it replaced keeps verifying until', $page);
+            self::assertStringContainsString('Saved, ends in SH03', $page);
+            self::assertNoSecret($page, 'the rotated card', 'it-shopify-rotated-secret-SH02', 'it-shopify-rotated-secret-SH03');
+            self::assertSame(['set', 'replaced', 'rotated'], array_column(self::$db->query('SELECT action FROM 202_integration_secret_events'
+                . ' WHERE user_id = ' . self::USER . " AND secret_name = 'shopify_webhook_secret' ORDER BY event_id")->fetch_all(MYSQLI_ASSOC), 'action'));
+
+            // One sealed under a key the server does not have is said so, never shown as none or as a hint.
+            self::q("UPDATE 202_integration_secrets SET key_id = 'external:00000000deadbeef' WHERE user_id = " . self::USER);
+            $page = self::page(self::PAGE);
+            self::assertStringContainsString('Secret unreadable', $page);
+            self::assertStringContainsString('Could not be read (the server', $page);
+            self::assertStringNotContainsString('ends in SH03', $page);
         } finally {
+            self::seedSecrets();
+        }
+    }
+
+    /** A Shopify save from a page that showed an older sealed secret than the store's saves nothing (ShownSettings). */
+    public function testAShopifySaveOverANewerSecretIsRefused(): void
+    {
+        $store = new \Prosper202\Security\IntegrationSecretStore(new \Prosper202\Database\Connection(self::requireScratch()));
+        try {
+            $_SESSION['p202_shown_secret'] = self::SHOWN_SECRET;
+            $shown = \Prosper202\User\ShownSettings::version('shopify', [
+                'version' => $store->version(self::USER, 'shopify_webhook_secret'),
+            ]);
+            unset($_SESSION['p202_shown_secret']);
+            // Saved from another session after this page opened: the same value again still moves the version.
+            $store->put(self::USER, 'shopify_webhook_secret', self::SECRETS['shopify_webhook_secret'], 0, self::USER, 'page', time());
+
+            $stale = self::save('change_shopify_webhook_secret', 'shopify_webhook_secret', 'it-shopify-stale-tab-SH09')
+                + ['p202_shown' => ['shopify' => $shown]];
+            // The refusal is the guard's own: its flash, queued in the session the save ran in.
+            $staleFlashes = static fn (): int => count(array_filter(
+                glob(self::$sessions . '/sess_*') ?: [],
+                static fn (string $f): bool => str_contains((string) file_get_contents($f), 'changed in another window or session after this page')
+            ));
+            $before = $staleFlashes();
+            $out = self::page(self::PAGE, [], $stale);
+            self::assertStringNotContainsString('it-shopify-stale-tab', $out);
+            self::assertSame(self::SECRETS['shopify_webhook_secret'], self::secrets()['shopify_webhook_secret'],
+                'the newer secret is kept');
+            self::assertSame($before + 1, $staleFlashes(), 'refused as a save over a newer version');
+
+            $fresh = self::save('change_shopify_webhook_secret', 'shopify_webhook_secret', 'it-shopify-fresh-tab-SH10');
+            self::assertRedirected(self::page(self::PAGE, [], $fresh), 'a save from the page as it is now is made');
+            self::assertSame('it-shopify-fresh-tab-SH10', self::secrets()['shopify_webhook_secret']);
+        } finally {
+            unset($_SESSION['p202_shown_secret']);
             self::seedSecrets();
         }
     }

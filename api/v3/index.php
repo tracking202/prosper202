@@ -1491,7 +1491,8 @@ try {
                     $payload,
                     null,
                     // The LTV › Settings values ask what the LTV Settings writes ask.
-                    static fn () => \Api\V3\Support\LtvAccess::require($auth, $db, 'settings_write')
+                    static fn () => \Api\V3\Support\LtvAccess::require($auth, $db, 'settings_write'),
+                    $auth->userId()
                 );
             });
 
