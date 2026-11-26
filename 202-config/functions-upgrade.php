@@ -1238,6 +1238,42 @@ if (!function_exists('_upgrade_1956_baseline')) {
     }
 }
 
+if (!function_exists('_upgrade_ppc_variable_network_width')) {
+    /**
+     * 202_ppc_network_variables.ppc_network_id as wide as the source id it
+     * names, written as TrackingTables declares it; run by
+     * _upgrade_measurement_tables() whenever a step reconciles the table.
+     * Signed, it stores a source past 8388607 as 8388607 under the empty
+     * sql_mode. Widening keeps every source id; only a negative one, which
+     * names no source, becomes 0. A failed read is not "already wide"
+     * (CLAUDE.md #11).
+     */
+    function _upgrade_ppc_variable_network_width(): bool
+    {
+        $read = _upgrade_query("SHOW COLUMNS FROM `202_ppc_network_variables` LIKE 'ppc_network_id'");
+        $column = $read instanceof mysqli_result ? $read->fetch_assoc() : null;
+        if (!is_array($column)) {
+            _upgrade_note('could not read 202_ppc_network_variables.ppc_network_id; the step will retry.');
+
+            return false;
+        }
+        if (preg_match('/^mediumint(?:\(\d+\))?\s+unsigned\b/i', (string) ($column['Type'] ?? '')) === 1) {
+            return true;
+        }
+
+        $ddl = \Prosper202\Database\SchemaReconciler::requiredColumns(
+            \Prosper202\Database\Tables\TrackingTables::ppcNetworkVariables()
+        )['ppc_network_id'];
+        if (_upgrade_query('ALTER TABLE `202_ppc_network_variables` MODIFY COLUMN ' . $ddl) === false) {
+            _upgrade_note('failed to widen 202_ppc_network_variables.ppc_network_id; the step will retry.');
+
+            return false;
+        }
+
+        return true;
+    }
+}
+
 if (!function_exists('_upgrade_measurement_tables')) {
     /**
      * Create the measurement tables — the app registry and the Apple
@@ -1369,6 +1405,12 @@ if (!function_exists('_upgrade_measurement_tables')) {
             if ($hashApiKeys
                 && $definition->tableName === \Prosper202\Database\Schema\TableRegistry::API_KEYS
                 && !_upgrade_hash_api_keys()) {
+                $ok = false;
+            }
+            // The reconciler retypes no column; a custom variable's source id
+            // is widened to the source's own type here, once the table exists.
+            if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::PPC_NETWORK_VARIABLES
+                && !_upgrade_ppc_variable_network_width()) {
                 $ok = false;
             }
         }
@@ -5597,6 +5639,9 @@ class UPGRADE
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ConversionTables::shopifyPendingRefunds(),
                 \Prosper202\Database\Tables\ConversionTables::shopifyRefundTransactions(),
+                // 202_ppc_network_variables.ppc_network_id unsigned, as wide
+                // as the source id it names (_upgrade_ppc_variable_network_width()).
+                \Prosper202\Database\Tables\TrackingTables::ppcNetworkVariables(),
                 // A rotated LTV webhook secret signs alongside the new one
                 // until it expires (previous_secret, previous_secret_expires_at).
                 \Prosper202\Database\Tables\LtvTables::ltvWebhooks(),
