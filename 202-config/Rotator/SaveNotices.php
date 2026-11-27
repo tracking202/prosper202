@@ -59,7 +59,8 @@ final class SaveNotices
         }
         $kept = [];
         $keptCriteria = [];
-        $state = static fn (mixed $status): string => (int) $status === 1 ? 'active' : 'inactive';
+        // A status no state names takes no visitors: inactive, as the redirects read it.
+        $state = static fn (array $rule): string => (RuleStatus::tryOfStored($rule['status']) ?? RuleStatus::Inactive)->word();
         $words = static fn (array $c): string => $c['type'] . ' ' . $c['statement'] . ' ' . $c['value'];
         foreach ((array) $after['rules'] as $rule) {
             $name = (string) $rule['rule_name'];
@@ -71,9 +72,9 @@ final class SaveNotices
                 if ((string) $old['rule_name'] !== $name) {
                     $notices[] = ['rotator_rule_name_changed', ['rotator' => $rotator, 'old_name' => $old['rule_name'], 'new_name' => $name]];
                 }
-                if ($state($old['status']) !== $state($rule['status'])) {
+                if ($state($old) !== $state($rule)) {
                     $notices[] = ['rotator_rule_status_changed', ['rotator' => $rotator, 'rule' => $name,
-                        'old_status' => $state($old['status']), 'new_status' => $state($rule['status'])]];
+                        'old_status' => $state($old), 'new_status' => $state($rule)]];
                 }
             }
             foreach ((array) $rule['criteria'] as $c) {

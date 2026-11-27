@@ -136,7 +136,7 @@ final class NeverMatches
         $warnings = [];
         $taker = null;
         foreach (array_values($rules) as $i => $rule) {
-            $active = (string) ($rule['status'] ?? '') === '1';
+            $active = RuleStatus::storedMatchesTraffic($rule['status'] ?? null);
             $criteria = array_values((array) ($rule['criteria'] ?? []));
             if ($active && $taker !== null) {
                 $warnings[] = ['rule' => $i, 'criterion' => null, 'message' => 'Rule ' . ($taker[0] + 1)

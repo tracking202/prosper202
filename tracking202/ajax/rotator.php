@@ -244,12 +244,13 @@ function p202_rotator_page_payload(string $defaultType, string $default, array $
 {
 	$text = static fn (mixed $v): string => is_scalar($v) ? (string) $v : '';
 	$payload = ['default_' . $defaultType => $default, 'rules' => []];
+	$active = \Prosper202\Rotator\RuleStatus::Active;
 	foreach ($rules as $rule) {
 		$split = $text($rule['split'] ?? '') === 'true';
 		$out = [
 			'rule_name' => $text($rule['rule_name'] ?? ''),
 			'splittest' => $split ? 1 : 0,
-			'status' => $text($rule['status'] ?? '') === 'active' ? 1 : 0,
+			'status' => ($text($rule['status'] ?? '') === $active->word() ? $active : \Prosper202\Rotator\RuleStatus::Inactive)->stored(),
 			'criteria' => [],
 			'redirects' => [],
 		];

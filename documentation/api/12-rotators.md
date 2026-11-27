@@ -220,7 +220,7 @@ more than one, at least one above 0, whatever its `splittest` says.
 | ----- | ---- | -------- | ----------- |
 | `rule_name` | string | Yes | Rule name (1-255 characters) |
 | `splittest` | integer | No | `1` shows the rule on Setup → Redirectors as a split test, each redirect with its weight; `0` (default). The redirects do not read it: a rule with one redirect sends every visitor it matches there, and one with more splits them by weight either way (every weight 0 sends them all to the first). The page shows a rule with more than one redirect as a split test whatever this says, and saves it with `1` |
-| `status` | integer | No | `1` active (default), `0` paused |
+| `status` | integer | No | `1` active (default), `0` paused. A rule stored before 1.9 with no status answers `null`: the redirects pass it by as they do a paused one, and it keeps none until a write sends `0` or `1` |
 | `criteria` | array | Yes, on a create | At least one; every criterion has to match |
 | `redirects` | array | Yes, on a create | At least one; with more than one, each needs a `weight`, at least one above 0 |
 

@@ -326,6 +326,25 @@ final class SyncRotatorRulesIntegrationTest extends TestCase
         self::assertSame(['live'], array_map(static fn (array $row): string => $names[(int) $row['rule_id']], $active));
     }
 
+    /**
+     * The comparison reads a status as the write does (RuleStatus): a source
+     * rule with none and the inactive rule the first sync made of it are the
+     * same, so a second sync has nothing to write.
+     */
+    public function testARuleWithANullStatusIsNotSyncedAgain(): void
+    {
+        $source = self::rotator(self::SOURCE, 7300029);
+        self::setRules(self::SOURCE, $source, [self::rule('legacy', 'country ALL', 'https://legacy.example/')]);
+        self::assertTrue(self::$db->query("UPDATE 202_rotator_rules SET status = NULL WHERE rotator_id = $source"), (string) self::$db->error);
+        self::rotator(self::TARGET, 7300029);
+
+        [$first] = $this->sync();
+        self::assertSame([0, 1], [$first['failed'], $first['updated']], json_encode($first) ?: '');
+        [$second] = $this->sync();
+
+        self::assertSame([0, 0], [$second['failed'], $second['updated']], json_encode($second) ?: '');
+    }
+
     /** @return array<string, array{bool}> */
     public static function routes(): array
     {

@@ -49,7 +49,7 @@ final class RuleOrder
     public static function activeRules(\mysqli $db, int $rotatorId, ?callable $read = null): array
     {
         $sql = 'SELECT ru.id AS rule_id FROM 202_rotator_rules AS ru'
-            . ' WHERE ru.rotator_id = ' . $rotatorId . " AND ru.status = '1'";
+            . ' WHERE ru.rotator_id = ' . $rotatorId . ' AND ' . RuleStatus::matchesTrafficSql('ru.status');
         $ordered = $sql . ' ' . self::orderBy('ru');
         $read ??= static fn (string $sql): array => foreach_memcache_mysql_fetch_assoc($db, $sql);
         try {

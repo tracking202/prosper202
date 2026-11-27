@@ -349,7 +349,8 @@ $redirectRow = static function (array $redirect) use ($campaignOptions, $pageOpt
 $ruleCard = static function (array $rule, array $criteria, array $redirects, bool $removable, array $warnings = []) use ($criterionRow, $redirectRow, $isSplit): string {
 	$ruleKey = isset($rule['id']) ? (string) $rule['id'] : 'new';
 	$split = $isSplit($rule, $redirects);
-	$inactive = isset($rule['status']) && (string) $rule['status'] === '0';
+	// A new rule's card has no status yet and starts active; a stored rule is shown as the redirects read it.
+	$inactive = array_key_exists('status', $rule) && !\Prosper202\Rotator\RuleStatus::storedMatchesTraffic($rule['status']);
 	if ($criteria === []) {
 		$criteria = [[]];
 	}
@@ -480,9 +481,10 @@ if ($error) {
 											); ?>
 											<li class="p202-list__item">
 												<span class="p202-list__name"><?php echo p202_setup_e($rule['rule_name']); ?></span>
-												<?php if ((string) $rule['status'] === '0') { ?><span class="p202-pill p202-pill--warn">inactive</span><?php } ?>
+												<?php $takesVisitors = \Prosper202\Rotator\RuleStatus::storedMatchesTraffic($rule['status']); ?>
+												<?php if (!$takesVisitors) { ?><span class="p202-pill p202-pill--warn">inactive</span><?php } ?>
 												<?php if ($split) { ?><span class="p202-pill">split test</span><?php } ?>
-												<?php if ($warnedTexts !== [] && (string) $rule['status'] !== '0') { ?><span class="p202-pill p202-pill--warn">check this rule</span><?php } ?>
+												<?php if ($warnedTexts !== [] && $takesVisitors) { ?><span class="p202-pill p202-pill--warn">check this rule</span><?php } ?>
 												<span class="p202-list__meta">If <?php echo p202_setup_e($conditions === [] ? 'any visitor (no criteria)' : implode(' and ', $conditions)); ?> · to <?php echo p202_setup_e($targets === [] ? 'nowhere yet' : implode(', ', $targets)); ?></span>
 												<?php foreach ($warnedTexts as $warnedText) { ?><span class="p202-list__meta text-warning-emphasis"><?php echo p202_setup_e($warnedText); ?></span><?php } ?>
 											</li>

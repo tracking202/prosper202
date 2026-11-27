@@ -19618,6 +19618,12 @@ components:
             either way, and the page shows such a rule as a split test.
         status:
           type: integer
+          nullable: true
+          enum: [0, 1, null]
+          description: >-
+            1 active, 0 paused. null on a rule stored before 1.9 with no
+            status, which the redirects pass by as they do a paused one; it
+            keeps none until a write sends 0 or 1.
         criteria:
           type: array
           description: >-
@@ -19676,7 +19682,9 @@ components:
             redirects needs a weight, at least one above 0.
         status:
           type: integer
+          enum: [0, 1]
           default: 1
+          description: 1 active, 0 paused. The redirects try only an active rule.
         criteria:
           type: array
           minItems: 1

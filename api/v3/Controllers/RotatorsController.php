@@ -17,6 +17,7 @@ use Prosper202\Rotator\Criterion;
 use Prosper202\Rotator\IpCriterion;
 use Prosper202\Rotator\NeverMatches;
 use Prosper202\Rotator\RuleOrder;
+use Prosper202\Rotator\RuleStatus;
 
 class RotatorsController
 {
@@ -588,7 +589,36 @@ class RotatorsController
     }
 
     /**
-     * A 0/1 switch (splittest, status), read raw: '1.5' is not 1.
+     * The status a write leaves a rule with: the one sent, or without one
+     * Active for a new rule and its own for a kept one. A rule stored with no
+     * status (RuleStatus::Unset) keeps none until a write names one.
+     *
+     * @param array<string, mixed>|null $held the rule as stored, null for a new one
+     */
+    private static function plannedStatus(mixed $sent, ?array $held): RuleStatus
+    {
+        try {
+            $to = RuleStatus::ofSent($sent);
+        } catch (\InvalidArgumentException) {
+            throw new ValidationException('Invalid status', ['status' => 'Must be 0 or 1']);
+        }
+        if ($held === null) {
+            return $to ?? RuleStatus::Active;
+        }
+        $from = RuleStatus::tryOfStored($held['status']);
+        if ($to === null && $from === null) {
+            throw new ValidationException('Invalid status', ['status' => 'The rule\'s stored status is neither 0 nor 1, '
+                . 'and the redirects pass it by: send status 0 or 1']);
+        }
+        if ($to === null || $from === null || $to === $from) {
+            return $to ?? $from;
+        }
+
+        return $from->moveTo($to);
+    }
+
+    /**
+     * A 0/1 switch (splittest), read raw: '1.5' is not 1.
      *
      * @param array<string, mixed> $payload
      */
@@ -1377,16 +1407,10 @@ class RotatorsController
             $errors += $e->getFieldErrors();
         }
         $status = null;
-        if (($rule['status'] ?? null) !== null) {
-            try {
-                $status = self::flag($rule, 'status', 1);
-            } catch (ValidationException $e) {
-                $errors += $e->getFieldErrors();
-            }
-        } else {
-            // A rule a pre-1.9 install stored with no status is not active
-            // (the redirects try status 1): kept as it is.
-            $status = $held === null ? 1 : ($held['status'] === null ? null : (int) $held['status']);
+        try {
+            $status = self::plannedStatus($rule['status'] ?? null, $held);
+        } catch (ValidationException $e) {
+            $errors += $e->getFieldErrors();
         }
         $parts = ['criteria' => null, 'redirects' => null];
         try {
@@ -1565,7 +1589,7 @@ class RotatorsController
         if ($rule['splittest'] !== (int) $held['splittest']) {
             $changed[] = 'splittest';
         }
-        if ($rule['status'] !== ($held['status'] === null ? null : (int) $held['status'])) {
+        if ($rule['status'] !== RuleStatus::tryOfStored($held['status'])) {
             $changed[] = 'status';
         }
         if ($rule['position'] !== $held['position']) {
@@ -1648,7 +1672,7 @@ class RotatorsController
                     'weight' => $r['weight'], 'name' => $r['name']];
             }
             $out[] = ['id' => $rule['id'], 'rotator_id' => $rotatorId, 'rule_name' => $rule['rule_name'],
-                'splittest' => $rule['splittest'], 'status' => $rule['status'],
+                'splittest' => $rule['splittest'], 'status' => $rule['status']->stored(),
                 'criteria' => $criteria, 'redirects' => $redirects];
         }
 
@@ -1688,7 +1712,7 @@ class RotatorsController
         foreach ($plan['rules'] as $rule) {
             if ($rule['id'] === null) {
                 $stmt = $this->prepare('INSERT INTO 202_rotator_rules (rotator_id, rule_name, splittest, status, position) VALUES (?, ?, ?, ?, ?)');
-                $this->bind($stmt, 'isiii', $rotatorId, $rule['rule_name'], $rule['splittest'], $rule['status'], $rule['position']);
+                $this->bind($stmt, 'isiii', $rotatorId, $rule['rule_name'], $rule['splittest'], $rule['status']->stored(), $rule['position']);
                 $this->execute($stmt, 'Failed to create rule');
                 $ruleId = (int) $stmt->insert_id;
                 $stmt->close();
@@ -1699,7 +1723,7 @@ class RotatorsController
             // Every kept rule takes its place, whatever else changed: a rule
             // an older install stored at 0 would otherwise be tried first.
             $stmt = $this->prepare('UPDATE 202_rotator_rules SET rule_name = ?, splittest = ?, status = ?, position = ? WHERE id = ? AND rotator_id = ?');
-            $this->bind($stmt, 'siiiii', $rule['rule_name'], $rule['splittest'], $rule['status'], $rule['position'], $rule['id'], $rotatorId);
+            $this->bind($stmt, 'siiiii', $rule['rule_name'], $rule['splittest'], $rule['status']->stored(), $rule['position'], $rule['id'], $rotatorId);
             $this->execute($stmt, 'Failed to update rule');
             $stmt->close();
             $this->writeKeptEntries($rotatorId, $rule);
@@ -1816,7 +1840,7 @@ class RotatorsController
             $rule = $this->planRule($rotatorId, $payload, null, $position);
 
             $stmt = $this->prepare('INSERT INTO 202_rotator_rules (rotator_id, rule_name, splittest, status, position) VALUES (?, ?, ?, ?, ?)');
-            $this->bind($stmt, 'isiii', $rotatorId, $rule['rule_name'], $rule['splittest'], $rule['status'], $position);
+            $this->bind($stmt, 'isiii', $rotatorId, $rule['rule_name'], $rule['splittest'], $rule['status']->stored(), $position);
             $this->execute($stmt, 'Failed to create rule');
             $ruleId = $stmt->insert_id;
             $stmt->close();
@@ -1886,7 +1910,7 @@ class RotatorsController
                     'siiii',
                     $planned['rule_name'],
                     $planned['splittest'],
-                    $planned['status'],
+                    $planned['status']->stored(),
                     $ruleId,
                     $rotatorId
                 );

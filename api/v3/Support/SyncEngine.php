@@ -9,6 +9,7 @@ use Api\V3\Exception\SyncException;
 use Api\V3\Exception\SyncRecordException;
 use Api\V3\Exception\ValidationException;
 use Prosper202\Http\HttpUrlPrefix;
+use Prosper202\Rotator\RuleStatus;
 
 class SyncEngine
 {
@@ -950,9 +951,9 @@ class SyncEngine
         $rulePayload = [
             'rule_name' => $rule['rule_name'] ?? '',
             'splittest' => $rule['splittest'] ?? 0,
-            // Active only as the redirects read it (status '1'); a NULL status
-            // is inactive, and a create sent NULL would store it active
-            'status' => $this->scalarString($rule['status'] ?? null) === '1' ? 1 : 0,
+            // As the redirects read it: a source rule with no status is
+            // inactive, and a create sent none would store it active.
+            'status' => self::ruleStatus($rule)->stored(),
         ];
 
         // A rule stored before 1.9.79 with no criterion is read by the redirects
@@ -1463,6 +1464,17 @@ class SyncEngine
         return 'id:' . $rawId;
     }
 
+    /**
+     * The status a synced rule is written with, which is also what two rules
+     * are compared by: whether the redirects try it.
+     *
+     * @param array<string, mixed> $rule as an install answers it
+     */
+    private static function ruleStatus(array $rule): RuleStatus
+    {
+        return RuleStatus::storedMatchesTraffic($rule['status'] ?? null) ? RuleStatus::Active : RuleStatus::Inactive;
+    }
+
     private function normalizeRulesForComparison(mixed $rawRules, array $lookups): array
     {
         if (!is_array($rawRules) || count($rawRules) === 0) {
@@ -1477,7 +1489,8 @@ class SyncEngine
             $normalized[] = [
                 'rule_name' => $this->scalarString($rule['rule_name'] ?? null),
                 'splittest' => $this->scalarString($rule['splittest'] ?? null),
-                'status' => $this->scalarString($rule['status'] ?? null),
+                // What the write sends, so a rule with no status equals the inactive one made of it.
+                'status' => (string) self::ruleStatus($rule)->stored(),
                 'criteria' => $this->normalizeRuleCriteria($rule['criteria'] ?? []),
                 'redirects' => $this->normalizeRuleRedirects($rule['redirects'] ?? [], $lookups),
             ];

@@ -454,6 +454,16 @@ func normalizeComparableRecord(entity string, row map[string]interface{}, lookup
 	return out
 }
 
+// ruleStatusForComparison reads a rule's status as the redirects do: only 1
+// takes visitors. A rule stored with no status (null) and the paused rule a
+// sync makes of it on the target are then the same rule, not a difference.
+func ruleStatusForComparison(v interface{}) string {
+	if scalarString(v) == "1" {
+		return "1"
+	}
+	return "0"
+}
+
 func normalizeRulesForComparison(rawRules interface{}, lookups entityLookups) []interface{} {
 	rulesSlice := toInterfaceSlice(rawRules)
 	if len(rulesSlice) == 0 {
@@ -469,7 +479,7 @@ func normalizeRulesForComparison(rawRules interface{}, lookups entityLookups) []
 		normalized = append(normalized, map[string]interface{}{
 			"rule_name": scalarString(rule["rule_name"]),
 			"splittest": scalarString(rule["splittest"]),
-			"status":    scalarString(rule["status"]),
+			"status":    ruleStatusForComparison(rule["status"]),
 			"criteria":  normalizeCriteria(rule["criteria"]),
 			"redirects": normalizeRedirects(rule["redirects"], lookups),
 		})
