@@ -12,6 +12,7 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\ServerStateStore;
+use Api\V3\Support\StagedChangeStatus;
 
 /**
  * Staged writes: the model (or any caller) proposes an operator-surface
@@ -26,17 +27,18 @@ use Api\V3\Support\ServerStateStore;
  */
 final class StagedChangesController
 {
-    public const STATUS_STAGED = 'staged';
-    public const STATUS_APPLYING = 'applying';
-    public const STATUS_APPLIED = 'applied';
-    public const STATUS_DISCARDED = 'discarded';
+    public const STATUS_STAGED = StagedChangeStatus::Staged->value;
+    public const STATUS_APPLYING = StagedChangeStatus::Applying->value;
+    public const STATUS_APPLIED = StagedChangeStatus::Applied->value;
+    public const STATUS_DISCARDED = StagedChangeStatus::Discarded->value;
 
     /**
-     * Terminal state for a change whose apply process died mid-dispatch. The
+     * Where a change whose apply process died mid-dispatch is closed. The
      * write may or may not have landed — nothing readable from here can say
-     * which — so the record is closed in that state rather than reopened.
+     * which — so the record is never reopened; only the process that held
+     * the claim, returning with its write landed, still records `applied`.
      */
-    public const STATUS_APPLY_INTERRUPTED = 'apply_interrupted';
+    public const STATUS_APPLY_INTERRUPTED = StagedChangeStatus::ApplyInterrupted->value;
 
     public const DEFAULT_TTL_SECONDS = 86400;
 
@@ -175,7 +177,7 @@ final class StagedChangesController
         $now = time();
         $change = [
             'change_id' => 'chg_' . bin2hex(random_bytes(12)),
-            'status' => self::STATUS_STAGED,
+            'status' => StagedChangeStatus::Staged->value,
             'method' => strtoupper($method),
             'path' => $path,
             'payload' => $payload,
@@ -228,22 +230,16 @@ final class StagedChangesController
         }
 
         $status = strtolower(trim((string)($params['status'] ?? '')));
-        $known = [
-            self::STATUS_STAGED,
-            self::STATUS_APPLYING,
-            self::STATUS_APPLIED,
-            self::STATUS_DISCARDED,
-            self::STATUS_APPLY_INTERRUPTED,
-        ];
-        if ($status !== '' && !in_array($status, $known, true)) {
-            throw new ValidationException('Unknown status filter', [
-                'status' => "Valid statuses are " . implode(', ', $known) . " (got '$status').",
-            ]);
-        }
         if ($status !== '') {
+            $wanted = StagedChangeStatus::tryFrom($status);
+            if ($wanted === null) {
+                throw new ValidationException('Unknown status filter', [
+                    'status' => "Valid statuses are " . implode(', ', StagedChangeStatus::values()) . " (got '$status').",
+                ]);
+            }
             $items = array_values(array_filter(
                 $items,
-                fn(array $c): bool => ($c['status'] ?? '') === $status
+                static fn(array $c): bool => StagedChangeStatus::ofChange($c) === $wanted
             ));
         }
         $items = array_values(array_filter($items, $this->keyReads(...)));
@@ -364,17 +360,18 @@ final class StagedChangesController
         // Status and expiry are re-checked inside the locked transition so a
         // concurrent apply/discard or an expiry crossing between the read
         // above and this claim cannot slip through.
-        $claimed = $this->store->updateStagedChange($ownerId, $changeId, function (array $current): ?array {
-            if (!self::isClaimable($current)) {
-                return null; // someone else applied or discarded it first
+        $claimed = $this->store->moveStagedChange(
+            $ownerId,
+            $changeId,
+            StagedChangeStatus::Applying,
+            static function (array $current): ?array {
+                if (time() > (int)($current['expires_at_epoch'] ?? 0)) {
+                    return null;
+                }
+                $current['applying_since'] = time();
+                return $current;
             }
-            if (time() > (int)($current['expires_at_epoch'] ?? 0)) {
-                return null;
-            }
-            $current['status'] = self::STATUS_APPLYING;
-            $current['applying_since'] = time();
-            return $current;
-        });
+        );
         if ($claimed === null) {
             throw new ConflictException("Change $changeId expired or was applied or discarded concurrently.");
         }
@@ -384,11 +381,15 @@ final class StagedChangesController
         // the one that was reviewed, so fail loudly instead.
         $storedPayload = $change['payload'] ?? null;
         if (!is_array($storedPayload)) {
-            $this->store->updateStagedChange($ownerId, $changeId, function (array $current): array {
-                $current['status'] = self::STATUS_STAGED;
-                $current['last_error'] = 'stored payload is malformed';
-                return $current;
-            });
+            $this->store->moveStagedChange(
+                $ownerId,
+                $changeId,
+                StagedChangeStatus::Staged,
+                static function (array $current): array {
+                    $current['last_error'] = 'stored payload is malformed';
+                    return $current;
+                }
+            );
             throw new ConflictException(sprintf(
                 'Change %s has a malformed stored payload and cannot be applied — discard it and stage the write again.',
                 $changeId
@@ -408,32 +409,69 @@ final class StagedChangesController
             // write a second time, so it is closed the same way an
             // interrupted apply is: terminal, and honest that the outcome
             // needs checking.
-            $this->store->updateStagedChange($ownerId, $changeId, function (array $current) use ($e): array {
-                $current['status'] = self::STATUS_APPLY_INTERRUPTED;
-                $current['interrupted_at'] = gmdate('c');
-                $current['last_error'] = $e->getMessage();
-                return $current;
-            });
+            $closed = $this->store->moveStagedChange(
+                $ownerId,
+                $changeId,
+                StagedChangeStatus::ApplyInterrupted,
+                static function (array $current) use ($e): array {
+                    $current['interrupted_at'] = gmdate('c');
+                    $current['last_error'] = $e->getMessage();
+                    return $current;
+                }
+            );
+            if ($closed === null) {
+                $this->noteOnInterrupted($ownerId, $changeId, $e->getMessage());
+            }
             throw $e;
         } catch (\Throwable $e) {
             // Nothing was written, so the proposal is still applicable: put
             // it back with the error recorded so it can be corrected or
-            // discarded.
-            $this->store->updateStagedChange($ownerId, $changeId, function (array $current) use ($e): array {
-                $current['status'] = self::STATUS_STAGED;
-                $current['last_error'] = $e->getMessage();
-                return $current;
-            });
+            // discarded. Unless this dispatch outran its claim and the
+            // change was closed as interrupted meanwhile: whoever closed it
+            // was told to check and stage again, so it stays closed.
+            $restaged = $this->store->moveStagedChange(
+                $ownerId,
+                $changeId,
+                StagedChangeStatus::Staged,
+                static function (array $current) use ($e): array {
+                    $current['last_error'] = $e->getMessage();
+                    return $current;
+                }
+            );
+            if ($restaged === null) {
+                $this->noteOnInterrupted(
+                    $ownerId,
+                    $changeId,
+                    'the apply finished after the change was closed, and failed with nothing written: ' . $e->getMessage()
+                );
+            }
             throw $e;
         }
 
-        $applied = $this->store->updateStagedChange($ownerId, $changeId, function (array $current): array {
-            $current['status'] = self::STATUS_APPLIED;
-            $current['applied_at'] = gmdate('c');
-            $current['applied_by'] = $this->auth->userId();
-            $current['last_error'] = null;
-            return $current;
-        });
+        // From `applying`, or from `apply_interrupted` when this dispatch
+        // outran its claim: the write landed either way.
+        $appliedBy = $this->auth->userId();
+        $applied = $this->store->moveStagedChange(
+            $ownerId,
+            $changeId,
+            StagedChangeStatus::Applied,
+            static function (array $current) use ($appliedBy): array {
+                $current['applied_at'] = gmdate('c');
+                $current['applied_by'] = $appliedBy;
+                $current['last_error'] = null;
+                return $current;
+            }
+        );
+        if ($applied === null) {
+            // The write landed and is answered as such (CLAUDE.md #13); the
+            // ledger could not be told.
+            $now = $this->store->getStagedChangeForUser($ownerId, $changeId);
+            error_log(sprintf(
+                'p202: staged change %s was applied, but its record is %s and was not marked applied.',
+                $changeId,
+                $now === null ? 'gone' : (string)($now['status'] ?? 'unreadable')
+            ));
+        }
 
         $result = null;
         if (is_array($response)) {
@@ -506,15 +544,17 @@ final class StagedChangesController
             $this->failInterrupted($ownerId, $changeId);
         }
 
-        $updated = $this->store->updateStagedChange($ownerId, $changeId, function (array $current): ?array {
-            if (!self::isClaimable($current)) {
-                return null;
+        $discardedBy = $this->auth->userId();
+        $updated = $this->store->moveStagedChange(
+            $ownerId,
+            $changeId,
+            StagedChangeStatus::Discarded,
+            static function (array $current) use ($discardedBy): array {
+                $current['discarded_at'] = gmdate('c');
+                $current['discarded_by'] = $discardedBy;
+                return $current;
             }
-            $current['status'] = self::STATUS_DISCARDED;
-            $current['discarded_at'] = gmdate('c');
-            $current['discarded_by'] = $this->auth->userId();
-            return $current;
-        });
+        );
         if ($updated === null) {
             throw new ConflictException(sprintf(
                 "Change %s is %s, not staged — nothing to discard.",
@@ -561,13 +601,13 @@ final class StagedChangesController
      */
     private static function isClaimable(array $change): bool
     {
-        return (string)($change['status'] ?? '') === self::STATUS_STAGED;
+        return StagedChangeStatus::ofChange($change) === StagedChangeStatus::Staged;
     }
 
     /** A claim whose process is past STALE_APPLYING_SECONDS without resolving. */
     private static function isStaleApplying(array $change): bool
     {
-        return (string)($change['status'] ?? '') === self::STATUS_APPLYING
+        return StagedChangeStatus::ofChange($change) === StagedChangeStatus::Applying
             && time() - (int)($change['applying_since'] ?? 0) > self::STALE_APPLYING_SECONDS;
     }
 
@@ -587,23 +627,42 @@ final class StagedChangesController
     {
         // Guarded like every other transition: if the original process
         // resolved the change between the read and this write, leave it be.
-        $this->store->updateStagedChange($ownerId, $changeId, function (array $current): ?array {
-            if (!self::isStaleApplying($current)) {
-                return null;
+        $this->store->moveStagedChange(
+            $ownerId,
+            $changeId,
+            StagedChangeStatus::ApplyInterrupted,
+            static function (array $current): ?array {
+                if (!self::isStaleApplying($current)) {
+                    return null;
+                }
+                $current['interrupted_at'] = gmdate('c');
+                $current['last_error'] = 'the apply process did not finish; whether the write landed is unknown';
+                return $current;
             }
-            $current['status'] = self::STATUS_APPLY_INTERRUPTED;
-            $current['interrupted_at'] = gmdate('c');
-            $current['last_error'] = 'the apply process did not finish; whether the write landed is unknown';
-            return $current;
-        });
+        );
 
         throw new ConflictException(sprintf(
             'Change %s was claimed for apply by a process that never finished, so whether the write landed '
             . 'is unknown — it is now recorded as %s and can be neither applied nor discarded. Check current '
             . 'state; if the write did not land, stage it again.',
             $changeId,
-            self::STATUS_APPLY_INTERRUPTED
+            StagedChangeStatus::ApplyInterrupted->value
         ));
+    }
+
+    /**
+     * What the process that held the claim learned, on a change closed as
+     * interrupted while it ran. The status stays; anything else is left.
+     */
+    private function noteOnInterrupted(int $ownerId, string $changeId, string $learned): void
+    {
+        $this->store->updateStagedChange($ownerId, $changeId, static function (array $current) use ($learned): ?array {
+            if (StagedChangeStatus::ofChange($current) !== StagedChangeStatus::ApplyInterrupted) {
+                return null;
+            }
+            $current['last_error'] = $learned;
+            return $current;
+        });
     }
 
     /**
@@ -701,7 +760,7 @@ final class StagedChangesController
         // Which key staged it decides who may withdraw it; readers see the
         // user (created_by), not a digest of the key.
         unset($change['staged_by_key_ref']);
-        $change['expired'] = ($change['status'] ?? '') === self::STATUS_STAGED
+        $change['expired'] = StagedChangeStatus::ofChange($change) === StagedChangeStatus::Staged
             && time() > (int)($change['expires_at_epoch'] ?? 0);
         if (is_array($change['payload'] ?? null)) {
             $change['payload'] = self::redactSecrets($change['payload']);

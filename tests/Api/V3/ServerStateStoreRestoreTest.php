@@ -119,7 +119,7 @@ final class ServerStateStoreRestoreTest extends TestCase
         $dump = $epoch->value;
         $store->putIdempotent('user:1', 'after-dump', ['status' => 201, 'body' => ['id' => 2]]);
         $store->stageWriteChange(1, ['change_id' => 'chg-after', 'status' => 'staged']);
-        $store->updateStagedChange(1, 'chg-before', static fn (array $c): array => ['status' => 'applied'] + $c);
+        $store->updateStagedChange(1, 'chg-before', static fn (array $c): array => ['status' => 'discarded'] + $c);
 
         $epoch->value = $dump;
         $after = $this->store($epoch);

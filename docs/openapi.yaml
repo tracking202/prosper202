@@ -9043,7 +9043,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [staged, applying, applied, discarded]
+            enum: [staged, applying, applied, discarded, apply_interrupted]
         - name: all
           in: query
           schema:
@@ -11032,6 +11032,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BulkUpsertResult'
+        '409':
+          description: >-
+            The Idempotency-Key is held by a request still in flight (`idempotency_in_flight`, retry once it
+            finishes), or by one that stored rows and recorded no answer (`idempotency_indeterminate`, check
+            which rows exist and send the rest under a new key). Nothing was written
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -11077,6 +11086,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BulkUpsertResult'
+        '409':
+          description: >-
+            The Idempotency-Key is held by a request still in flight (`idempotency_in_flight`, retry once it
+            finishes), or by one that stored rows and recorded no answer (`idempotency_indeterminate`, check
+            which rows exist and send the rest under a new key). Nothing was written
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -11122,6 +11140,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BulkUpsertResult'
+        '409':
+          description: >-
+            The Idempotency-Key is held by a request still in flight (`idempotency_in_flight`, retry once it
+            finishes), or by one that stored rows and recorded no answer (`idempotency_indeterminate`, check
+            which rows exist and send the rest under a new key). Nothing was written
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -11167,6 +11194,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BulkUpsertResult'
+        '409':
+          description: >-
+            The Idempotency-Key is held by a request still in flight (`idempotency_in_flight`, retry once it
+            finishes), or by one that stored rows and recorded no answer (`idempotency_indeterminate`, check
+            which rows exist and send the rest under a new key). Nothing was written
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -11212,6 +11248,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BulkUpsertResult'
+        '409':
+          description: >-
+            The Idempotency-Key is held by a request still in flight (`idempotency_in_flight`, retry once it
+            finishes), or by one that stored rows and recorded no answer (`idempotency_indeterminate`, check
+            which rows exist and send the rest under a new key). Nothing was written
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -11257,6 +11302,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BulkUpsertResult'
+        '409':
+          description: >-
+            The Idempotency-Key is held by a request still in flight (`idempotency_in_flight`, retry once it
+            finishes), or by one that stored rows and recorded no answer (`idempotency_indeterminate`, check
+            which rows exist and send the rest under a new key). Nothing was written
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -11302,6 +11356,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BulkUpsertResult'
+        '409':
+          description: >-
+            The Idempotency-Key is held by a request still in flight (`idempotency_in_flight`, retry once it
+            finishes), or by one that stored rows and recorded no answer (`idempotency_indeterminate`, check
+            which rows exist and send the rest under a new key). Nothing was written
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -11347,6 +11410,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BulkUpsertResult'
+        '409':
+          description: >-
+            The Idempotency-Key is held by a request still in flight (`idempotency_in_flight`, retry once it
+            finishes), or by one that stored rows and recorded no answer (`idempotency_indeterminate`, check
+            which rows exist and send the rest under a new key). Nothing was written
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '422':
           $ref: '#/components/responses/ValidationError'
 

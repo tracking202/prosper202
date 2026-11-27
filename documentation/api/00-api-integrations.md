@@ -288,7 +288,7 @@ redirector's rules) when they build a body from another record.
 | `X-P202-CSRF: <token>` | Request | Required on every method but GET and HEAD from a signed-in session: the session's token, which `GET /me` answers as `auth.csrf_token`. |
 | `X-P202-API-Version` | Request | Optional version negotiation; defaults to `v3` if omitted. |
 | `X-P202-API-Version-Resolved: v3` | Response | Always present; reports the resolved API version. |
-| `Idempotency-Key: <string>` | Request | Required for bulk-upsert operations. Optional on single POST creates (CRUD entities, conversions, rotators + rules, attribution models + exports, users): a retry of the same request replays the recorded response (`idempotent_replay: true` in the body) instead of creating a duplicate. A key is scoped to the caller and identifies one request, so reusing it for anything else — a changed body, or a different endpoint — is refused with `422`; mint a new key for a different create. A retry sent while the first request is still running gets `409`; if the first request died outright without recording a response, whether it created the record is unknown, so the key is spent — later retries get `409` telling you to check state and use a new key rather than risking a duplicate. Not honored on API-key creation (secret responses are never stored) or LTV writes (they have their own upsert/dedup semantics). |
+| `Idempotency-Key: <string>` | Request | Required for bulk-upsert operations, which answer the same `409`s below (a retry while the first request runs; a key whose request stored rows and recorded no answer). Optional on single POST creates (CRUD entities, conversions, rotators + rules, attribution models + exports, users): a retry of the same request replays the recorded response (`idempotent_replay: true` in the body) instead of creating a duplicate. A key is scoped to the caller and identifies one request, so reusing it for anything else — a changed body, or a different endpoint — is refused with `422`; mint a new key for a different create. A retry sent while the first request is still running gets `409`; if the first request died outright without recording a response, whether it created the record is unknown, so the key is spent — later retries get `409` telling you to check state and use a new key rather than risking a duplicate. Not honored on API-key creation (secret responses are never stored) or LTV writes (they have their own upsert/dedup semantics). |
 | `If-Match: <etag>` | Request | Optional optimistic concurrency on updates. |
 
 ## Delete Dry-Run
@@ -401,7 +401,11 @@ The contract, in the terms of Anthropic's commerce-agents reference:
   write landed. After 15 minutes such a change is closed as
   `apply_interrupted` — never re-dispatched (that could duplicate a create
   that did land) and never discarded (that would file an audit record saying
-  an executed write was abandoned). Check state, then stage it again.
+  an executed write was abandoned). Check state, then stage it again. An
+  apply that was only slow and returns after that leaves the change closed:
+  if its write landed the change is recorded `applied`; if it failed, the
+  change stays `apply_interrupted` with what it learned in `last_error`, and
+  is never put back on the queue.
 - **No secrets in the ledger.** A staged change is stored as JSON and shown
   to every reviewer, so a write carrying a credential is refused at staging
   time rather than silently redacted — a redacted proposal could not be

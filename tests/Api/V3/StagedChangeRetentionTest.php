@@ -175,7 +175,7 @@ final class StagedChangeRetentionTest extends TestCase
                 $this->store->stageWriteChange(5, $this->change(sprintf('chg_%024x', $i + 1), 'staged', time()));
             }
             $this->store->updateStagedChange(5, sprintf('chg_%024x', 1), function (array $c): array {
-                $c['status'] = 'applied';
+                $c['status'] = 'discarded';
                 return $c;
             });
 

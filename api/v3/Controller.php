@@ -10,6 +10,8 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\NothingToUpdateException;
 use Api\V3\Exception\WriteCommittedException;
+use Api\V3\Support\BulkChunkOutcome;
+use Api\V3\Support\IdempotencyAnswer;
 use Api\V3\Support\PageRows;
 use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\LibraryUsage;
@@ -1321,8 +1323,11 @@ abstract class Controller
         // the duplicate the key was sent to prevent.
         $requestHash = ServerStateStore::idempotencyFingerprint('bulk-upsert:' . $this->tableName(), ['rows' => $rows]);
         $scope = ServerStateStore::idempotencyScopeForUser($this->userId);
-        $lookup = $this->stateStore()->lookupIdempotent($scope, $idempotencyKey, $requestHash);
-        if ($lookup['state'] === 'mismatch') {
+        // Claimed before anything is written: read here and recorded after
+        // the rows, a retry racing this request found nothing and stored the
+        // batch again.
+        $claim = $this->stateStore()->claimIdempotent($scope, $idempotencyKey, $requestHash);
+        if ($claim->answer === IdempotencyAnswer::Mismatch) {
             throw (new ValidationException(
                 'This Idempotency-Key was already used for a different request. Resend the original '
                 . 'rows to this same endpoint to replay the recorded response, or send a new '
@@ -1330,12 +1335,66 @@ abstract class Controller
                 ['idempotency_key' => 'Already used for a different request']
             ))->coded(ErrorCode::IDEMPOTENCY_KEY_REUSED);
         }
-        if ($lookup['state'] === 'replay' && is_array($lookup['response'])) {
-            $existing = $lookup['response'];
+        if ($claim->answer === IdempotencyAnswer::Replay) {
+            $existing = $claim->response ?? [];
             $existing['idempotent_replay'] = true;
             return $existing;
         }
+        if ($claim->answer === IdempotencyAnswer::InFlight) {
+            throw (new ConflictException(
+                'A request with this Idempotency-Key is still in flight; retry once it completes '
+                . 'to receive the recorded response.'
+            ))->coded(ErrorCode::IDEMPOTENCY_IN_FLIGHT);
+        }
+        if ($claim->answer === IdempotencyAnswer::Indeterminate) {
+            throw (new ConflictException(
+                'A previous request with this Idempotency-Key did not finish, so which of its rows were '
+                . 'stored is unknown and this key can be neither replayed nor reused. Check which rows '
+                . 'exist, then send the ones that do not under a new Idempotency-Key.'
+            ))->coded(ErrorCode::IDEMPOTENCY_INDETERMINATE);
+        }
+        if ($claim->answer !== IdempotencyAnswer::Claimed) {
+            throw new \LogicException('An Idempotency-Key claim answered ' . $claim->answer->value . '.');
+        }
 
+        // Whether a chunk may have stored a row decides what a failure does
+        // to the claim: nothing stored frees the key, anything else spends
+        // it (an unconfirmed commit is never "run it again").
+        $mayHaveWritten = false;
+        try {
+            $response = $this->bulkUpsertRows($rows, $maxRows, $mayHaveWritten);
+            $this->stateStore()->incrementMetric('bulk_upsert_created', (int)$response['summary']['created']);
+            $this->stateStore()->incrementMetric('bulk_upsert_updated', (int)$response['summary']['updated']);
+            $this->stateStore()->incrementMetric('bulk_upsert_skipped', (int)$response['summary']['skipped']);
+            $this->stateStore()->incrementMetric('bulk_upsert_errors', (int)$response['summary']['error']);
+            $this->stateStore()->putIdempotent($scope, $idempotencyKey, $response, $requestHash);
+        } catch (\Throwable $e) {
+            try {
+                if ($mayHaveWritten) {
+                    $this->stateStore()->markIdempotentIndeterminate($scope, $idempotencyKey);
+                } else {
+                    $this->stateStore()->releaseIdempotent($scope, $idempotencyKey);
+                }
+            } catch (\Throwable $unsettled) {
+                // The claim then ages into "unknown", which is the safe side.
+                self::logBulkFailure('claim not settled', $unsettled);
+            }
+            throw $e;
+        }
+
+        return $response;
+    }
+
+    /**
+     * The rows of a bulk-upsert, chunk by chunk: each row's answer and the
+     * summary. $mayHaveWritten is set as soon as a chunk stored a row, or
+     * may have.
+     *
+     * @param array<int|string, mixed> $rows
+     * @return array{data: list<array<string, mixed>>, summary: array<string, int>, idempotent_replay: false}
+     */
+    private function bulkUpsertRows(array $rows, int $maxRows, bool &$mayHaveWritten): array
+    {
         $results = [];
         $summary = ['created' => 0, 'updated' => 0, 'skipped' => 0, 'error' => 0, 'retryable' => 0, 'unconfirmed' => 0];
         $chunkSize = max(1, min(100, $maxRows));
@@ -1360,17 +1419,18 @@ abstract class Controller
                         $chunk,
                         'The database failed while the rows written with it were stored, and they were rolled back.'
                     );
-                    $outcome = 'failed';
+                    $outcome = BulkChunkOutcome::Failed;
                 }
                 // A chunk that stored nothing (deadlocked, or every row
                 // skipped or refused) leaves nothing to stand, and every other
                 // outcome stops the chunks after it.
-                $mayStand = $mayStand || $outcome === 'stored';
+                $mayStand = $mayStand || $outcome === BulkChunkOutcome::Stored;
+                $mayHaveWritten = $mayHaveWritten || $outcome->mayHaveWritten();
                 $stoppedBecause = match ($outcome) {
-                    'lock_wait' => 'rows before it waited out the server\'s lock wait timeout',
-                    'unconfirmed' => 'the database did not confirm that rows before it were stored',
-                    'failed' => 'the database failed while rows before it were stored',
-                    default => null,
+                    BulkChunkOutcome::LockWait => 'rows before it waited out the server\'s lock wait timeout',
+                    BulkChunkOutcome::Unconfirmed => 'the database did not confirm that rows before it were stored',
+                    BulkChunkOutcome::Failed => 'the database failed while rows before it were stored',
+                    BulkChunkOutcome::Stored, BulkChunkOutcome::NothingStored, BulkChunkOutcome::Deadlocked => null,
                 };
             }
             foreach ($answers as $result) {
@@ -1385,18 +1445,11 @@ abstract class Controller
             }
         }
 
-        $response = [
+        return [
             'data' => $results,
             'summary' => $summary,
             'idempotent_replay' => false,
         ];
-        $this->stateStore()->incrementMetric('bulk_upsert_created', (int)$summary['created']);
-        $this->stateStore()->incrementMetric('bulk_upsert_updated', (int)$summary['updated']);
-        $this->stateStore()->incrementMetric('bulk_upsert_skipped', (int)$summary['skipped']);
-        $this->stateStore()->incrementMetric('bulk_upsert_errors', (int)$summary['error']);
-        $this->stateStore()->putIdempotent($scope, $idempotencyKey, $response, $requestHash);
-
-        return $response;
     }
 
     /**
@@ -1422,7 +1475,7 @@ abstract class Controller
      * nothing of the chunk written.
      *
      * @param array<int|string, mixed> $chunk
-     * @return array{list<array<string, mixed>>, 'stored'|'nothing_stored'|'deadlocked'|'lock_wait'|'unconfirmed'}
+     * @return array{list<array<string, mixed>>, BulkChunkOutcome}
      */
     private function upsertChunk(array $chunk): array
     {
@@ -1443,7 +1496,7 @@ abstract class Controller
                 if ($conn->rollbackFailed()) {
                     self::logBulkFailure('chunk unconfirmed', $e);
 
-                    return [self::unconfirmedResults($chunk, $answered), 'unconfirmed'];
+                    return [self::unconfirmedResults($chunk, $answered), BulkChunkOutcome::Unconfirmed];
                 }
                 if (Connection::isMysqlError($e, 1213, 'Deadlock found')) {
                     if ($attempt <= self::BULK_DEADLOCK_RETRIES) {
@@ -1453,27 +1506,29 @@ abstract class Controller
                     return [self::notStoredResults($chunk, sprintf(
                         'A deadlock with another write rolled back the rows written with it, on each of %d attempts.',
                         $attempt
-                    )), 'deadlocked'];
+                    )), BulkChunkOutcome::Deadlocked];
                 }
                 if (Connection::isMysqlError($e, 1205, 'Lock wait timeout')) {
                     return [self::notStoredResults(
                         $chunk,
                         'Another write held a lock it waited for until the server\'s lock wait timeout, and the rows'
                             . ' written with it were rolled back.'
-                    ), 'lock_wait'];
+                    ), BulkChunkOutcome::LockWait];
                 }
                 if (!$ran) {
                     throw $e;
                 }
                 self::logBulkFailure('chunk unconfirmed', $e);
 
-                return [self::unconfirmedResults($chunk, $answered), 'unconfirmed'];
+                return [self::unconfirmedResults($chunk, $answered), BulkChunkOutcome::Unconfirmed];
             } finally {
                 $this->holdingChanges = false;
                 $this->heldChanges = [];
             }
 
-            $outcome = array_filter($results, self::wroteItsRow(...)) !== [] ? 'stored' : 'nothing_stored';
+            $outcome = array_filter($results, self::wroteItsRow(...)) !== []
+                ? BulkChunkOutcome::Stored
+                : BulkChunkOutcome::NothingStored;
 
             return [$this->recordChunkChanges($results, $changes), $outcome];
         }

@@ -50,8 +50,8 @@ final class IdempotentCreate
         // Claim the key atomically: a plain read-then-write left a
         // window where two concurrent retries both missed the record and
         // both created a row.
-        $reservation = $this->stateStore->reserveIdempotent($scope, $key, $fingerprint);
-        if ($reservation['state'] === 'mismatch') {
+        $reservation = $this->stateStore->claimIdempotent($scope, $key, $fingerprint);
+        if ($reservation->answer === IdempotencyAnswer::Mismatch) {
             throw (new ValidationException(
                 'This Idempotency-Key was already used for a different request. Resend the original '
                 . 'request — same endpoint, same body — to replay its recorded response, or send a '
@@ -59,18 +59,18 @@ final class IdempotentCreate
                 ['idempotency_key' => 'Already used for a different request']
             ))->coded(ErrorCode::IDEMPOTENCY_KEY_REUSED);
         }
-        if ($reservation['state'] === 'replay') {
-            $existing = $reservation['response'] ?? [];
+        if ($reservation->answer === IdempotencyAnswer::Replay) {
+            $existing = $reservation->response ?? [];
             $existing['idempotent_replay'] = true;
             return $existing;
         }
-        if ($reservation['state'] === 'in_flight') {
+        if ($reservation->answer === IdempotencyAnswer::InFlight) {
             throw (new ConflictException(
                 'A request with this Idempotency-Key is still in flight; retry once it completes '
                 . 'to receive the recorded response.'
             ))->coded(ErrorCode::IDEMPOTENCY_IN_FLIGHT);
         }
-        if ($reservation['state'] === 'indeterminate') {
+        if ($reservation->answer === IdempotencyAnswer::Indeterminate) {
             // A previous holder died without recording a response, so
             // whether it created the record is unknowable. Replaying is
             // impossible and re-executing could duplicate exactly what
@@ -80,6 +80,9 @@ final class IdempotentCreate
                 . 'the record is unknown and this key can be neither replayed nor reused. Check '
                 . 'whether the record exists, then retry with a new Idempotency-Key if it does not.'
             ))->coded(ErrorCode::IDEMPOTENCY_INDETERMINATE);
+        }
+        if ($reservation->answer !== IdempotencyAnswer::Claimed) {
+            throw new \LogicException('An Idempotency-Key claim answered ' . $reservation->answer->value . '.');
         }
         try {
             $response = $op();

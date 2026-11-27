@@ -126,9 +126,13 @@ var changeDiscardCmd = &cobra.Command{
 	},
 }
 
+// stagedChangeStatuses is the server's Api\V3\Support\StagedChangeStatus,
+// in its order (TestStagedChangeStatusesAreTheServers).
+var stagedChangeStatuses = []string{"staged", "applying", "applied", "discarded", "apply_interrupted"}
+
 func init() {
 	changeListCmd.Flags().String("status", "", "Filter by status")
-	enumFlag(changeListCmd, "status", newEnum([]string{"staged", "applying", "applied", "discarded", "apply_interrupted"}, enumFoldCase()))
+	enumFlag(changeListCmd, "status", newEnum(stagedChangeStatuses, enumFoldCase()))
 	changeListCmd.Flags().Bool("all", false, "Every user's changes, not just yours (admin only)")
 	changeApplyCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 

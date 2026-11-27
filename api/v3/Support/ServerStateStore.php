@@ -25,15 +25,6 @@ class ServerStateStore implements QuotaStore
     private const int IDEMPOTENCY_RETENTION = 500;
 
     /**
-     * Staged-change statuses that are finished, and so safe to prune once a
-     * user's ledger passes the retention cap. `staged` is awaiting a
-     * decision; `applying` is mid-dispatch, and dropping one loses the
-     * record its own handler is about to write its outcome into. Only
-     * terminal states are prunable.
-     */
-    private const array PRUNABLE_CHANGE_STATUSES = ['applied', 'discarded', 'apply_interrupted'];
-
-    /**
      * How many proposals one user may have awaiting a decision. Pruning only
      * reclaims resolved and expired records, so without a bound on the live
      * queue a propose-only key can grow its ledger for a whole TTL — and
@@ -549,7 +540,10 @@ class ServerStateStore implements QuotaStore
      * An empty $fingerprint disables the check for callers that have no body
      * to hash.
      *
-     * @return array{state: 'miss'|'replay'|'mismatch', response: ?array}
+     * Answers Miss, Replay or Mismatch, and takes no claim: a record that
+     * holds no response (claimed, indeterminate) is a Miss here.
+     *
+     * @return array{state: value-of<IdempotencyAnswer>, response: ?array<mixed>}
      */
     public function lookupIdempotent(string $scope, string $key, string $fingerprint = ''): array
     {
@@ -558,20 +552,24 @@ class ServerStateStore implements QuotaStore
         $items = $data['items'] ?? [];
         $item = is_array($items) ? ($items[$key] ?? null) : null;
         if (!is_array($item)) {
-            return ['state' => 'miss', 'response' => null];
+            return (new IdempotencyReply(IdempotencyAnswer::Miss))->toArray();
+        }
+        if (self::isForAnotherRequest($item, $fingerprint)) {
+            return (new IdempotencyReply(IdempotencyAnswer::Mismatch))->toArray();
+        }
+        if (IdempotencyRecordState::ofRecord($item) !== IdempotencyRecordState::Committed) {
+            return (new IdempotencyReply(IdempotencyAnswer::Miss))->toArray();
         }
 
-        if ($fingerprint !== '') {
-            $stored = (string)($item['fingerprint'] ?? '');
-            if ($stored !== '' && !hash_equals($stored, $fingerprint)) {
-                return ['state' => 'mismatch', 'response' => null];
-            }
-        }
+        return (new IdempotencyReply(IdempotencyAnswer::Replay, IdempotencyRecordState::responseOf($item)))->toArray();
+    }
 
-        if (!isset($item['response']) || !is_array($item['response'])) {
-            return ['state' => 'miss', 'response' => null];
-        }
-        return ['state' => 'replay', 'response' => $item['response']];
+    /** A record written for a request other than the one $fingerprint names; '' on either side compares nothing. */
+    private static function isForAnotherRequest(mixed $item, string $fingerprint): bool
+    {
+        $stored = IdempotencyRecordState::fingerprintOf($item);
+
+        return $fingerprint !== '' && $stored !== '' && !hash_equals($stored, $fingerprint);
     }
 
     /**
@@ -588,88 +586,79 @@ class ServerStateStore implements QuotaStore
      * a different file and create a second record — the exact duplicate the
      * key was sent to prevent.
      *
-     * @return array{state: 'replay'|'in_flight'|'indeterminate'|'mismatch'|'claimed', response: ?array}
      */
-    public function reserveIdempotent(string $scope, string $key, string $fingerprint = ''): array
+    public function claimIdempotent(string $scope, string $key, string $fingerprint = ''): IdempotencyReply
     {
         $epoch = $this->noteRestoreSensitiveWrite();
-        $result = ['state' => 'claimed', 'response' => null];
+        $reply = null;
         $this->mutateJsonFile(
             $this->idempotencyPath($scope, $key),
             ['items' => []],
-            static function (array $data) use ($key, $fingerprint, $epoch, &$result): array {
+            static function (array $data) use ($key, $fingerprint, $epoch, &$reply): array {
                 $item = $data['items'][$key] ?? null;
 
                 // Checked before every other outcome: a body mismatch makes
                 // replaying, waiting, or claiming all wrong answers.
-                if (is_array($item) && $fingerprint !== '') {
-                    $stored = (string)($item['fingerprint'] ?? '');
-                    if ($stored !== '' && !hash_equals($stored, $fingerprint)) {
-                        $result = ['state' => 'mismatch', 'response' => null];
-                        return $data;
-                    }
+                if (self::isForAnotherRequest($item, $fingerprint)) {
+                    $reply = new IdempotencyReply(IdempotencyAnswer::Mismatch);
+                    return $data;
                 }
 
-                if (is_array($item) && isset($item['response']) && is_array($item['response'])) {
-                    $result = ['state' => 'replay', 'response' => $item['response']];
+                $state = IdempotencyRecordState::ofRecord($item);
+                if ($state === IdempotencyRecordState::Free) {
+                    $state->moveTo(IdempotencyRecordState::Claimed);
+                    $data['items'][$key] = self::stamped(IdempotencyRecordState::claim($fingerprint, time()), $epoch);
+                    $data['items'] = self::pruneIdempotencyItems($data['items'], $key);
+                    $reply = new IdempotencyReply(IdempotencyAnswer::Claimed);
                     return $data;
                 }
-                // Marked by a caller that knows its write landed but could
-                // not record the response: unknown from the first retry
-                // rather than after the claim ages out.
-                if (is_array($item) && ($item['indeterminate'] ?? false) === true) {
-                    $result = ['state' => 'indeterminate', 'response' => null];
-                    return $data;
-                }
-                $claimedAt = (int)($item['claimed_at'] ?? 0);
-                if (is_array($item) && $claimedAt > 0) {
-                    if (time() - $claimedAt <= self::IDEMPOTENCY_CLAIM_TTL_SECONDS) {
-                        // Another request holds this key and has not finished.
-                        $result = ['state' => 'in_flight', 'response' => null];
-                        return $data;
-                    }
-                    // The claim outlived its holder without recording a
-                    // response. A caller whose operation merely *failed*
-                    // releases the claim (see releaseIdempotent), so getting
-                    // here means the process died outright — possibly after
-                    // its write committed. Re-executing would duplicate the
-                    // record this key exists to prevent, so the claim is kept
-                    // and the state reported as unknown rather than reused.
-                    $result = ['state' => 'indeterminate', 'response' => null];
-                    return $data;
-                }
-                // Free: take it.
-                $data['items'][$key] = self::stamped([
-                    'stored_at' => time(),
-                    'claimed_at' => time(),
-                    'fingerprint' => $fingerprint,
-                ], $epoch);
-                $data['items'] = self::pruneIdempotencyItems($data['items'], $key);
+                $reply = match ($state) {
+                    IdempotencyRecordState::Committed => new IdempotencyReply(
+                        IdempotencyAnswer::Replay,
+                        IdempotencyRecordState::responseOf($item)
+                    ),
+                    IdempotencyRecordState::Indeterminate => new IdempotencyReply(IdempotencyAnswer::Indeterminate),
+                    // A claim outlives its TTL only when its holder died or
+                    // is still running: a caller whose operation failed
+                    // releases it. The write may have landed, so the claim is
+                    // kept and the outcome answered as unknown, never re-run.
+                    IdempotencyRecordState::Claimed => new IdempotencyReply(
+                        time() - IdempotencyRecordState::claimedAt($item) <= self::IDEMPOTENCY_CLAIM_TTL_SECONDS
+                            ? IdempotencyAnswer::InFlight
+                            : IdempotencyAnswer::Indeterminate
+                    ),
+                };
+
                 return $data;
             }
         );
-        return $result;
+        if (!$reply instanceof IdempotencyReply) {
+            throw new DatabaseException('The Idempotency-Key record was not read');
+        }
+
+        return $reply;
     }
 
     /**
-     * Drop a claim taken by reserveIdempotent() whose operation failed, so
-     * the caller can retry instead of being told a request is in flight
-     * until the claim expires.
+     * claimIdempotent(), for a reader of `['state']`.
+     *
+     * @return array{state: value-of<IdempotencyAnswer>, response: ?array<mixed>}
+     */
+    public function reserveIdempotent(string $scope, string $key, string $fingerprint = ''): array
+    {
+        return $this->claimIdempotent($scope, $key, $fingerprint)->toArray();
+    }
+
+    /**
+     * Drop a claim taken by claimIdempotent() whose operation failed with
+     * nothing written, so the caller can retry instead of being told a
+     * request is in flight until the claim expires. Only a claim is dropped:
+     * a recorded response, or a key marked indeterminate, stays.
      */
     public function releaseIdempotent(string $scope, string $key): void
     {
         $this->checkAgainstARestore();
-        $this->mutateJsonFile(
-            $this->idempotencyPath($scope, $key),
-            ['items' => []],
-            static function (array $data) use ($key): array {
-                $item = $data['items'][$key] ?? null;
-                if (is_array($item) && !isset($item['response'])) {
-                    unset($data['items'][$key]);
-                }
-                return $data;
-            }
-        );
+        $this->moveIdempotentRecord($scope, $key, IdempotencyRecordState::Free, static fn (): ?array => null);
     }
 
     /**
@@ -681,45 +670,97 @@ class ServerStateStore implements QuotaStore
     public function markIdempotentIndeterminate(string $scope, string $key): void
     {
         $this->checkAgainstARestore();
-        $this->mutateJsonFile(
-            $this->idempotencyPath($scope, $key),
-            ['items' => []],
-            static function (array $data) use ($key): array {
-                $item = $data['items'][$key] ?? null;
-                if (is_array($item) && !isset($item['response'])) {
-                    $item['indeterminate'] = true;
-                    $data['items'][$key] = $item;
-                }
-                return $data;
-            }
+        $this->moveIdempotentRecord(
+            $scope,
+            $key,
+            IdempotencyRecordState::Indeterminate,
+            static fn (mixed $claim): ?array => IdempotencyRecordState::marked(is_array($claim) ? $claim : [])
         );
     }
 
     /**
+     * Record the response a key replays. A key that already holds one, or is
+     * marked indeterminate, keeps what it holds: the response of a second
+     * run is logged, not recorded over it.
+     *
      * @param string $fingerprint Body hash to record when no claim already
      *        carries one — required by callers that write without going
-     *        through reserveIdempotent(), or a later retry with a changed
+     *        through claimIdempotent(), or a later retry with a changed
      *        body cannot be told apart from a replay.
      */
     public function putIdempotent(string $scope, string $key, array $response, string $fingerprint = ''): void
     {
         $epoch = $this->noteRestoreSensitiveWrite();
-        $path = $this->idempotencyPath($scope, $key);
-        $this->mutateJsonFile($path, ['items' => []], static function (array $data) use ($key, $response, $fingerprint, $epoch): array {
+        $held = null;
+        $recorded = $this->moveIdempotentRecord(
+            $scope,
+            $key,
+            IdempotencyRecordState::Committed,
             // Prefer the fingerprint the claim recorded: without it a replay
             // could no longer tell that a later retry changed the body.
-            $existing = $data['items'][$key] ?? null;
-            $stored = is_array($existing) ? (string)($existing['fingerprint'] ?? '') : '';
-            $data['items'][$key] = self::stamped([
-                'stored_at' => time(),
-                'fingerprint' => $stored !== '' ? $stored : $fingerprint,
-                'response' => $response,
-            ], $epoch);
+            static function (mixed $existing) use ($response, $fingerprint, $epoch): array {
+                $claimed = IdempotencyRecordState::fingerprintOf($existing);
 
-            $data['items'] = self::pruneIdempotencyItems($data['items'], $key);
+                return self::stamped(
+                    IdempotencyRecordState::committed($response, $claimed !== '' ? $claimed : $fingerprint, time()),
+                    $epoch
+                );
+            },
+            $held
+        );
+        if ($recorded) {
+            return;
+        }
+        $same = is_array($held) && IdempotencyRecordState::responseOf($held) === $response;
+        if (!$same) {
+            error_log(sprintf(
+                'p202: the Idempotency-Key record in %s is %s; the response of another run was not recorded over it.',
+                $scope,
+                IdempotencyRecordState::ofRecord($held)->value
+            ));
+        }
+    }
 
-            return $data;
-        });
+    /**
+     * Move one key's record to $to under its shard's lock, or leave it as it
+     * is: false when the record, as re-read there, may not become $to.
+     *
+     * @param callable(mixed): ?array<mixed> $record the record in $to, from the one held; null for none
+     * @param mixed $held the record found, for a caller that is refused
+     */
+    private function moveIdempotentRecord(
+        string $scope,
+        string $key,
+        IdempotencyRecordState $to,
+        callable $record,
+        mixed &$held = null
+    ): bool {
+        $moved = false;
+        $found = null;
+        $this->mutateJsonFile(
+            $this->idempotencyPath($scope, $key),
+            ['items' => []],
+            static function (array $data) use ($key, $to, $record, &$moved, &$found): array {
+                $found = $data['items'][$key] ?? null;
+                if (IdempotencyRecordState::ofRecord($found)->canMoveTo($to)) {
+                    $next = $record($found);
+                    if ($next === null) {
+                        unset($data['items'][$key]);
+                    } else {
+                        $data['items'][$key] = $next;
+                    }
+                    $moved = true;
+                }
+                if ($to === IdempotencyRecordState::Committed) {
+                    $data['items'] = self::pruneIdempotencyItems($data['items'] ?? [], $key);
+                }
+
+                return $data;
+            }
+        );
+        $held = $found;
+
+        return $moved;
     }
 
     /**
@@ -976,6 +1017,10 @@ class ServerStateStore implements QuotaStore
         if ($changeId === '') {
             throw new DatabaseException('Staged change missing change_id');
         }
+        $status = StagedChangeStatus::ofChange($change);
+        if ($status !== null && !in_array($status, StagedChangeStatus::initial(), true)) {
+            throw new DatabaseException('A staged change is not created as ' . $status->value);
+        }
         $maxPending = self::maxPendingChanges();
         $change = self::stamped($change, $this->noteRestoreSensitiveWrite());
         $this->mutateJsonFile($this->stagedChangesPath($userId), ['items' => []], static function (array $state) use ($changeId, $change, $maxPending): array {
@@ -990,7 +1035,7 @@ class ServerStateStore implements QuotaStore
             $items = is_array($state['items'] ?? null) ? $state['items'] : [];
             $state['items'] = $items;
             foreach ($items as $item) {
-                if (($item['status'] ?? '') === 'staged'
+                if (StagedChangeStatus::ofChange($item) === StagedChangeStatus::Staged
                     && $cutoff <= (int)($item['expires_at_epoch'] ?? 0)) {
                     $pending++;
                 }
@@ -1012,15 +1057,17 @@ class ServerStateStore implements QuotaStore
                 if (!is_array($item)) {
                     continue;
                 }
-                $status = (string)($item['status'] ?? '');
+                $status = StagedChangeStatus::ofChange($item);
                 // Expired proposals keep the status `staged` but can never be
-                // applied, so counting only terminal records would let them
+                // applied, so counting only resolved records would let them
                 // accumulate without bound -- every later stage and list would
                 // read and rewrite an ever-larger file, which a propose-only
-                // key could drive on purpose.
-                $expired = $status === 'staged'
+                // key could drive on purpose. `applying` is mid-dispatch:
+                // dropping one loses the record its handler is about to
+                // write its outcome into.
+                $expired = $status === StagedChangeStatus::Staged
                     && $now > (int)($item['expires_at_epoch'] ?? 0);
-                if ($expired || in_array($status, self::PRUNABLE_CHANGE_STATUSES, true)) {
+                if ($expired || $status?->isResolved() === true) {
                     $resolved[$id] = (int)($item['created_at_epoch'] ?? 0);
                 }
             }
@@ -1089,11 +1136,40 @@ class ServerStateStore implements QuotaStore
     }
 
     /**
+     * Move one staged change to $to under the file lock, or refuse: null
+     * when the change is missing, when its status as re-read there is not
+     * one that may become $to (someone else moved it first), or when $fields
+     * returns null. $fields receives the current record and returns it with
+     * whatever the move records beside the status.
+     *
+     * @param callable(array<mixed>): ?array<mixed> $fields
+     * @return ?array<mixed> the record as stored
+     */
+    public function moveStagedChange(int $userId, string $changeId, StagedChangeStatus $to, callable $fields): ?array
+    {
+        return $this->updateStagedChange($userId, $changeId, static function (array $current) use ($to, $fields): ?array {
+            if (StagedChangeStatus::ofChange($current)?->canMoveTo($to) !== true) {
+                return null;
+            }
+            $moved = $fields($current);
+            if (!is_array($moved)) {
+                return null;
+            }
+            $moved['status'] = $to->value;
+
+            return $moved;
+        });
+    }
+
+    /**
      * Atomically transform one staged change under the file lock. The
      * mutator receives the current record and returns the updated one, or
-     * null to reject the transition (e.g. a status precondition failed).
-     * Returns the updated record, or null when the change is missing or the
-     * mutator rejected — the caller decides which error that is.
+     * null to leave it. Returns the updated record, or null when the change
+     * is missing or the mutator left it — the caller decides which error
+     * that is. A mutator that changes the status is held to the transition
+     * table (use moveStagedChange(), which refuses instead of throwing).
+     *
+     * @throws \Prosper202\Lifecycle\IllegalTransition|\Prosper202\Lifecycle\UnknownState
      */
     public function updateStagedChange(int $userId, string $changeId, callable $mutator): ?array
     {
@@ -1106,6 +1182,12 @@ class ServerStateStore implements QuotaStore
             }
             $updated = $mutator($item);
             if (is_array($updated)) {
+                $was = $item['status'] ?? null;
+                $becomes = $updated['status'] ?? null;
+                if ($was !== $becomes) {
+                    $where = 'Staged change ' . $changeId;
+                    StagedChangeStatus::ofStored($was, $where)->moveTo(StagedChangeStatus::ofStored($becomes, $where));
+                }
                 $updated = self::stamped($updated, $epoch);
                 $state['items'][$changeId] = $updated;
                 $result = $updated;
