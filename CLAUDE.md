@@ -586,6 +586,21 @@ batch cannot act on for an unknown reason is an error, not a skip. A cursor
 is a claim about an index: name the index, and read the plan with `ANALYZE`
 on a table holding other accounts' rows.
 
+### 38. A lifecycle kept as strings and UPDATEs lets every writer invent a move
+A record with a status (pending, sent, failed) is a state machine whether or
+not the code says so. Left implicit, each writer's WHERE is the only rule, and
+one unguarded `SET status = …` leaves a terminal state or revives a cancelled
+row. A lifecycle is an enum implementing `Prosper202\Lifecycle\State`: its
+cases are the stored values, `next()` is the whole transition table, and
+`initial()` the states a record starts in (`EveryLifecycleHoldsItsContractTest`
+finds each one and holds reachability). One class owns the column's writes.
+An UPDATE names its from-states in its own WHERE (`Moves::whereMayMoveTo()`)
+and reads the row count: a claim made earlier is not a guard on the write that
+follows (#22, #36). A value held in memory moves through `moveTo()`; a stored
+value is read with `ofStored()`, which refuses one no case names (#4, #11).
+Not seen: a lifecycle nobody declared. Before adding a status column, or a
+writer to one, look for its enum; a second spelling of a state is drift (#25).
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 An agent reads a failure once and must know what to do next. Every error
