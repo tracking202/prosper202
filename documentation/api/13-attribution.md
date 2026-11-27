@@ -78,7 +78,16 @@ A change to what a model computes (type, config, lookback, activation) is
 recomputed by the worker for every attributed conversion of the account,
 from the stored journeys; a lookback wider than a journey was built with
 rebuilds that journey from the identity graph first. Deactivating a model
-deletes its credits in the same write.
+deletes its credits in the same write, as the engine does when it marks one
+`invalid`.
+
+An `invalid` model becomes `active` again by an update that leaves it a
+whole valid definition: when the stored `weighting_config` or
+`lookback_days` is what failed, an update that does not send a new one is
+refused (422 naming it). The default model is never `inactive`. If it is
+`invalid`, a breakdown with no `model_id` answers `409` naming the model and
+the reason, rather than reading a model with no credits; a breakdown that
+names another model still answers.
 
 ## What a journey is
 

@@ -14,12 +14,14 @@ use Api\V3\Support\PageRows;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\TimeBound;
 use Prosper202\Attribution\AttributionReports;
+use Prosper202\Attribution\DefaultModelNotComputed;
 use Prosper202\Attribution\ExportFiles;
+use Prosper202\Attribution\ExportStatus;
 use Prosper202\Attribution\ExportStore;
 use Prosper202\Attribution\InvalidModelConfig;
-use Prosper202\Attribution\Model;
 use Prosper202\Attribution\ModelConfig;
 use Prosper202\Attribution\ModelRepository;
+use Prosper202\Attribution\ModelStatus;
 use Prosper202\Attribution\ModelType;
 use Prosper202\Attribution\QueueRetry;
 use Prosper202\Attribution\WebhookGuard;
@@ -90,9 +92,9 @@ class AttributionController
         $type = self::type($typeValue);
         $config = self::config($type, array_key_exists('weighting_config', $payload) ? $payload['weighting_config'] : null);
         $lookback = self::lookback($payload['lookback_days'] ?? null);
-        $status = self::status($payload['status'] ?? Model::STATUS_ACTIVE);
+        $status = self::status($payload['status'] ?? ModelStatus::Active->value);
         $isDefault = self::flag($payload, 'is_default') ?? false;
-        if ($isDefault && $status !== Model::STATUS_ACTIVE) {
+        if ($isDefault && !$status->computes()) {
             throw new ValidationException('The default model must be active', ['is_default' => 'A default model must have status active']);
         }
         $slug = ModelRepository::slugFor($name);
@@ -150,7 +152,7 @@ class AttributionController
             }
             $lookback = array_key_exists('lookback_days', $payload)
                 ? self::lookback($payload['lookback_days'])
-                : (int) $row['lookback_days'];
+                : self::storedLookback($row['lookback_days']);
 
             $wasDefault = (int) ($row['is_default'] ?? 0) === 1;
             $isDefault = self::flag($payload, 'is_default') ?? $wasDefault;
@@ -161,11 +163,13 @@ class AttributionController
                 );
             }
             // A model whose stored definition had gone invalid becomes active
-            // again once this update has validated a whole definition.
+            // again once this update has validated a whole definition (the
+            // type, the config and the lookback above, sent or stored).
+            $from = ModelStatus::ofStored($row['status'], 'attribution model ' . $id);
             $status = array_key_exists('status', $payload)
                 ? self::status($payload['status'])
-                : ((string) $row['status'] === Model::STATUS_INVALID ? Model::STATUS_ACTIVE : (string) $row['status']);
-            if ($isDefault && $status !== Model::STATUS_ACTIVE) {
+                : ($from === ModelStatus::Invalid ? ModelStatus::Active : $from);
+            if ($isDefault && !$status->computes()) {
                 throw new ValidationException(
                     'The default model must be active',
                     ['status' => 'Make another model the default before deactivating this one']
@@ -181,13 +185,16 @@ class AttributionController
                 ))->coded(ErrorCode::NAME_TAKEN);
             }
 
-            $computes = $status === Model::STATUS_ACTIVE;
+            $computes = $status->computes();
             $changed = $type->value !== $row['model_type']
                 || ModelConfig::encode($config) !== self::normalizedStored($row)
                 || $lookback !== (int) $row['lookback_days']
-                || ($computes && (string) $row['status'] !== Model::STATUS_ACTIVE);
+                || ($computes && !$from->computes());
 
-            $this->models->update($this->userId, $id, $name, $slug, $type, $config, $lookback, $status, $isDefault, $computes && $changed);
+            if (!$this->models->update($this->userId, $id, $name, $slug, $type, $config, $lookback, $status, $isDefault, $computes && $changed, $from)) {
+                // The row is locked and was read as $from, so this is not expected; never answered as saved.
+                throw new ConflictException('Model ' . $id . ' changed while it was being updated; read it and send the update again.', ['model_id' => $id]);
+            }
             $this->audit($id, 'model_updated', ['fields' => array_keys($payload), 'recompute' => $computes && $changed]);
         });
 
@@ -290,11 +297,19 @@ class AttributionController
         }
         $offset = self::wholeNumber($params, 'offset') ?? 0;
 
-        $default = $this->models->defaultRow($this->userId);
+        $modelId = self::positiveInt($params, 'model_id');
+        try {
+            // Without a model the report reads the default's credits (and each campaign's own model's).
+            $default = $modelId === null ? $this->models->defaultThatComputes($this->userId) : $this->models->defaultRow($this->userId);
+        } catch (DefaultModelNotComputed $e) {
+            throw new ConflictException(
+                $e->getMessage() . ' Until then, name a model with model_id.',
+                ['model_id' => $e->modelId, 'status' => $e->status]
+            );
+        }
         if ($default === null) {
             throw new ConflictException('This account has no default attribution model; create one with is_default: true.');
         }
-        $modelId = self::positiveInt($params, 'model_id');
         $model = $modelId !== null ? $this->reportableModel($modelId, 'model_id') : null;
         $compareId = self::positiveInt($params, 'compare_model_id');
         $compare = null;
@@ -424,15 +439,16 @@ class AttributionController
     {
         self::rejectUnknown($params, ['status', 'limit']);
         $status = isset($params['status']) && $params['status'] !== '' ? (string) $params['status'] : null;
-        if ($status !== null && !in_array($status, ExportStore::STATUSES, true)) {
-            throw new ValidationException('Invalid status', ['status' => 'Valid: ' . implode(', ', ExportStore::STATUSES)]);
+        $state = $status !== null ? ExportStatus::tryFrom($status) : null;
+        if ($status !== null && $state === null) {
+            throw new ValidationException('Invalid status', ['status' => 'Valid: ' . implode(', ', ExportStatus::values())]);
         }
         $limit = self::positiveInt($params, 'limit') ?? 50;
         if ($limit > 200) {
             throw new ValidationException('limit too large', ['limit' => 'At most 200']);
         }
 
-        return ['data' => array_map([self::class, 'presentExport'], (new ExportStore($this->conn))->rows($this->userId, $status, $limit))];
+        return ['data' => array_map([self::class, 'presentExport'], (new ExportStore($this->conn))->rows($this->userId, $state, $limit))];
     }
 
     /**
@@ -583,7 +599,7 @@ class AttributionController
             'resource' => 'attribution-exports',
             'mode' => 'hard',
             'record' => self::presentExport($row),
-            'refused' => $row['status'] === 'running' ? 'The export is running; delete it once it has finished.' : null,
+            'refused' => $row['status'] === ExportStatus::Running->value ? 'The export is running; delete it once it has finished.' : null,
             'cascade' => [
                 ['resource' => 'export-files', 'count' => $row['file_path'] !== null ? 1 : 0],
             ],
@@ -599,7 +615,7 @@ class AttributionController
         if (!(new ExportStore($this->conn))->delete($this->userId, $id)) {
             throw new ConflictException(
                 'Export ' . $id . ' is running and cannot be deleted until it has finished; try again in a minute.',
-                ['export_id' => $id, 'status' => 'running']
+                ['export_id' => $id, 'status' => ExportStatus::Running->value]
             );
         }
         $this->removeFiles($row['file_path'] !== null ? [(string) $row['file_path']] : []);
@@ -742,7 +758,7 @@ class AttributionController
         if ($row === null) {
             throw new ValidationException('Unknown ' . $field, [$field => 'No model ' . $id . ' in this account; list them with GET /attribution/models']);
         }
-        if ((string) $row['status'] !== Model::STATUS_ACTIVE) {
+        if (ModelStatus::tryFrom((string) $row['status'])?->computes() !== true) {
             throw new ConflictException(
                 'Model ' . $id . ' is ' . $row['status'] . ' and has no credits'
                 . ($row['status_reason'] !== null ? ' (' . $row['status_reason'] . ')' : '')
@@ -853,13 +869,25 @@ class AttributionController
         }
     }
 
-    private static function status(mixed $value): string
+    private static function status(mixed $value): ModelStatus
     {
-        if ($value !== Model::STATUS_ACTIVE && $value !== Model::STATUS_INACTIVE) {
-            throw new ValidationException('Invalid status', ['status' => 'Valid: active, inactive (invalid is set by the engine, not by a request)']);
+        $status = is_string($value) ? ModelStatus::tryFrom($value) : null;
+        if ($status === null || !in_array($status, ModelStatus::requestable(), true)) {
+            throw new ValidationException('Invalid status', ['status' => 'Valid: ' . implode(', ', array_column(ModelStatus::requestable(), 'value'))
+                . ' (' . ModelStatus::Invalid->value . ' is set by the engine, not by a request)']);
         }
 
-        return $value;
+        return $status;
+    }
+
+    /** The lookback a model keeps when an update sends none: validated, as one sent is. */
+    private static function storedLookback(mixed $stored): int
+    {
+        try {
+            return ModelConfig::lookbackDays(is_numeric($stored) ? (int) $stored : $stored);
+        } catch (InvalidModelConfig $e) {
+            throw new ValidationException('The stored lookback_days is invalid; send a new lookback_days with this update', $e->fieldErrors());
+        }
     }
 
     /** A boolean field: true/false, or the integers 1/0. Anything else is refused. */

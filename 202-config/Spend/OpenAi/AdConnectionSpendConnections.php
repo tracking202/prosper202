@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Spend\OpenAi;
 
+use Prosper202\AdPlatforms\AdConnectionStatus;
 use Prosper202\AdPlatforms\AdConnectionStore;
 
 /**
@@ -45,15 +46,13 @@ final class AdConnectionSpendConnections implements SpendConnections
     public function keyRefused(int $userId, int $connectionId, string $why, int $now): void
     {
         // As OpenAiAdsConnections::check() records a refused key.
-        $this->store->recordCheck($userId, $connectionId, null, AdConnectionStore::STATUS_KEY_REFUSED, $why, $now);
+        $this->store->recordCheck($userId, $connectionId, null, AdConnectionStatus::KeyRefused, $why, $now);
     }
 
     public function keyAccepted(int $userId, int $connectionId, int $now): void
     {
-        // Only a key_refused mark is the run's to undo: another status (an unreadable key) is not about this key.
-        if (($this->store->get($userId, $connectionId)['status'] ?? null) === AdConnectionStore::STATUS_KEY_REFUSED) {
-            $this->store->recordCheck($userId, $connectionId, null, AdConnectionStore::STATUS_CONNECTED, null, $now);
-        }
+        // Only a key_refused mark is the run's to undo, and the store's one statement undoes that alone.
+        $this->store->keyAnswered($userId, $connectionId, $now);
     }
 
     public function ofAccount(int $userId): array

@@ -48,7 +48,7 @@ foreach ($attributionModelRows as $attributionModelRow) {
             $attributionModelId = (int) $attributionModelRow['model_id']; ?>
             <option value="<?php echo $attributionModelId; ?>"<?php echo $attributionModelId === $currentAttributionModelId ? ' selected' : ''; ?>><?php
                 echo htmlspecialchars((string) $attributionModelRow['model_name'] . ' — ' . (string) $attributionModelRow['model_type']
-                    . ((string) $attributionModelRow['status'] !== 'active' ? ' (' . (string) $attributionModelRow['status'] . ')' : ''), ENT_QUOTES, 'UTF-8'); ?></option>
+                    . ((string) $attributionModelRow['status'] !== \Prosper202\Attribution\ModelStatus::Active->value ? ' (' . (string) $attributionModelRow['status'] . ')' : ''), ENT_QUOTES, 'UTF-8'); ?></option>
         <?php } ?>
     </select>
     <?php echo p202_setup_feedback($attributionErrors, 'attribution_model_id'); ?>

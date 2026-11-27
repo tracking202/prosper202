@@ -40,7 +40,7 @@ final class DefaultModel
             (user_id, model_name, model_slug, model_type, weighting_config, lookback_days,
              status, status_reason, is_default, recompute_requested_at, recompute_cursor, created_at, updated_at)
         SELECT u.user_id, '" . self::NAME . "', '" . self::SLUG . "', 'last_touch', '{}', 30,
-             'active', NULL, 1, NULL, 0, UNIX_TIMESTAMP(), UNIX_TIMESTAMP()
+             '" . ModelStatus::Active->value . "', NULL, 1, NULL, 0, UNIX_TIMESTAMP(), UNIX_TIMESTAMP()
         FROM 202_users u
         WHERE u.user_deleted = 0
           AND NOT EXISTS (SELECT 1 FROM 202_attribution_models d WHERE d.user_id = u.user_id AND d.is_default = 1)

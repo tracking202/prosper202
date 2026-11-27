@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\AdPlatforms\OpenAiAds;
 
 use Prosper202\AdPlatforms\AdConnectionInputException;
+use Prosper202\AdPlatforms\AdConnectionStatus;
 use Prosper202\AdPlatforms\AdConnectionStore;
 use Prosper202\AdPlatforms\AdPlatformUnavailable;
 use Prosper202\Destinations\DestinationInputException;
@@ -102,13 +103,11 @@ final class OpenAiAdsConnections
         $account = $answer->isOk() ? self::accountOf($answer) : null;
         if ($answer->kind === AdvertiserAnswer::KEY_REFUSED) {
             // Only a refusal says the key is bad; an outage says nothing about it (CLAUDE.md #11).
-            $refused = AdConnectionStore::STATUS_KEY_REFUSED;
-            $this->store->recordCheck($userId, $connectionId, null, $refused, (string) $answer->error, $now);
+            $this->store->recordCheck($userId, $connectionId, null, AdConnectionStatus::KeyRefused, (string) $answer->error, $now);
         } elseif (!is_array($account)) {
             // The check is recorded with the status left as it was, and the caller is told it was not made.
             $why = $account ?? (string) $answer->error;
-            $status = $this->statusOf($userId, $connectionId);
-            $this->store->recordCheck($userId, $connectionId, null, $status, $why, $now);
+            $this->store->recordUnansweredCheck($userId, $connectionId, $why, $now);
 
             throw new AdPlatformUnavailable(
                 self::reasonOf($answer),
@@ -116,9 +115,9 @@ final class OpenAiAdsConnections
                 ['connection' => $this->store->get($userId, $connectionId)]
             );
         } elseif ($account['ref'] !== $connection['account_ref']) {
-            $this->store->recordCheck($userId, $connectionId, null, AdConnectionStore::STATUS_KEY_REFUSED, 'The stored key now reaches ad account ' . $account['ref'] . ', not ' . $connection['account_ref'] . '; replace it with this account\'s key.', $now);
+            $this->store->recordCheck($userId, $connectionId, null, AdConnectionStatus::KeyRefused, 'The stored key now reaches ad account ' . $account['ref'] . ', not ' . $connection['account_ref'] . '; replace it with this account\'s key.', $now);
         } else {
-            $this->store->recordCheck($userId, $connectionId, $account, AdConnectionStore::STATUS_CONNECTED, null, $now);
+            $this->store->recordCheck($userId, $connectionId, $account, AdConnectionStatus::Connected, null, $now);
         }
 
         return $this->store->get($userId, $connectionId);
@@ -145,7 +144,7 @@ final class OpenAiAdsConnections
             throw new AdConnectionInputException('api_key', 'That key reaches ad account ' . $account['ref'] . ', not ' . $connection['account']['id'] . ', which this connection is for; connect it as a new connection instead.');
         }
         $this->store->putCredential($userId, $connectionId, 'advertiser_api_key', $key, $now);
-        $this->store->recordCheck($userId, $connectionId, $account, AdConnectionStore::STATUS_CONNECTED, null, $now);
+        $this->store->recordCheck($userId, $connectionId, $account, AdConnectionStatus::Connected, null, $now);
 
         return $this->store->get($userId, $connectionId);
     }
@@ -189,8 +188,7 @@ final class OpenAiAdsConnections
         if ($this->keyRefused !== null) {
             // A refusal is a fact about the stored key, as a check records it.
             $refused = 'OpenAI refused the stored key during setup (' . $this->keyRefused . '); replace it.';
-            $kept = AdConnectionStore::STATUS_KEY_REFUSED;
-            $this->store->recordCheck($userId, $connectionId, null, $kept, $refused, $now);
+            $this->store->recordCheck($userId, $connectionId, null, AdConnectionStatus::KeyRefused, $refused, $now);
         }
         $stands = $this->store->get($userId, $connectionId) ?? throw new \RuntimeException($gone);
         $ran = ['connection' => $stands, 'steps' => $steps];
@@ -639,13 +637,6 @@ final class OpenAiAdsConnections
         }
 
         return ['ref' => $json['id'], 'name' => $json['name'], 'currency' => $json['currency_code'], 'timezone' => $json['timezone']];
-    }
-
-    private function statusOf(int $userId, int $connectionId): string
-    {
-        $status = $this->store->get($userId, $connectionId)['status'] ?? AdConnectionStore::STATUS_CONNECTED;
-
-        return $status === AdConnectionStore::STATUS_UNREADABLE ? AdConnectionStore::STATUS_CONNECTED : (string) $status;
     }
 
     /**

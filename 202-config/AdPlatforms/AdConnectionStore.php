@@ -18,6 +18,10 @@ use Prosper202\Security\SealedSecret;
  * by SealedSecret under their own key, bound to the connection and its
  * owner, and never served: reads say which are set. What the platform says
  * of its account (name, currency, time zone) is read again at each check.
+ *
+ * A connection's status is an AdConnectionStatus and is written only here. A
+ * read shows AdConnectionStatus::UNREADABLE in its place while the stored
+ * credentials do not open.
  */
 final class AdConnectionStore
 {
@@ -29,9 +33,6 @@ final class AdConnectionStore
         . ' 202_deployment_secrets WHERE secret_name = \'' . self::SECRET_NAME . '\'); then replace each'
         . ' connection\'s Advertiser API key, which makes a new credential key';
     public const MAX_PER_ACCOUNT = 10;
-    public const STATUS_CONNECTED = 'connected';
-    public const STATUS_KEY_REFUSED = 'key_refused';
-    public const STATUS_UNREADABLE = 'credentials_unreadable';
     /** The credentials a connection can hold, by platform. */
     public const CREDENTIALS = ['openai_ads' => ['advertiser_api_key', 'conversions_api_key']];
     private const AAD = 'p202-ad-connection-credential-v1|';
@@ -93,7 +94,7 @@ final class AdConnectionStore
                    VALUES (?, ?, ?, ?, ?, ?, ?, '', '{}', ?, NULL, ?, ?, ?)");
             $this->conn->bind($stmt, 'isisssssiii', [
                 $userId, $platform, $ppcAccountId, $account['ref'], $account['name'], $account['currency'], $account['timezone'],
-                self::STATUS_CONNECTED, $now, $now, $now,
+                AdConnectionStatus::Connected->value, $now, $now, $now,
             ]);
             $id = $this->conn->executeInsert($stmt);
             $this->writeCredentials($userId, $id, $credentials);
@@ -116,26 +117,66 @@ final class AdConnectionStore
     }
 
     /**
-     * What a check found: the account as the platform describes it now (null when it was not read), the status, and
-     * the error to show (null clears it). False when the account has no such connection.
+     * What a check the platform answered found: the account as it describes it now (null when it was not read), what
+     * it said of the key, and the error to show (null clears it). The connection takes that status from the same one
+     * or from one that may move to it. False when the account has no such connection.
      *
      * @param array{ref: string, name: string, currency: string, timezone: string}|null $account
      */
-    public function recordCheck(int $userId, int $connectionId, ?array $account, string $status, ?string $error, int $now): bool
+    public function recordCheck(int $userId, int $connectionId, ?array $account, AdConnectionStatus $status, ?string $error, int $now): bool
     {
         $error = $error === null ? null : mb_substr($error, 0, 255);
+        // A check that finds what the last one found is not a move: the status it holds stands beside the ones it may leave.
+        $from = array_map(static fn (AdConnectionStatus $s): string => $s->value, [$status, ...AdConnectionStatus::sources($status)]);
+        $held = implode(', ', array_fill(0, count($from), '?'));
         if ($account === null) {
-            $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::AD_CONNECTIONS . '` SET status = ?, last_error = ?, checked_at = ?, updated_at = ? WHERE connection_id = ? AND user_id = ? AND deleted_at IS NULL');
-            $this->conn->bind($stmt, 'ssiiii', [$status, $error, $now, $now, $connectionId, $userId]);
+            $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::AD_CONNECTIONS . '` SET status = ?, last_error = ?, checked_at = ?, updated_at = ?'
+                . ' WHERE connection_id = ? AND user_id = ? AND deleted_at IS NULL AND status IN (' . $held . ')');
+            $this->conn->bind($stmt, 'ssiiii' . str_repeat('s', count($from)), [$status->value, $error, $now, $now, $connectionId, $userId, ...$from]);
         } else {
             $account = self::account($account);
-            $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::AD_CONNECTIONS . '` SET name = ?, currency = ?, timezone = ?, status = ?, last_error = ?, checked_at = ?, updated_at = ?
-                 WHERE connection_id = ? AND user_id = ? AND account_ref = ? AND deleted_at IS NULL');
-            $this->conn->bind($stmt, 'sssssiiiis', [$account['name'], $account['currency'], $account['timezone'], $status, $error, $now, $now, $connectionId, $userId, $account['ref']]);
+            $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::AD_CONNECTIONS . '` SET name = ?, currency = ?, timezone = ?, status = ?, last_error = ?, checked_at = ?, updated_at = ?'
+                . ' WHERE connection_id = ? AND user_id = ? AND account_ref = ? AND deleted_at IS NULL AND status IN (' . $held . ')');
+            $this->conn->bind($stmt, 'sssssiiiis' . str_repeat('s', count($from)), [$account['name'], $account['currency'], $account['timezone'], $status->value, $error, $now, $now, $connectionId, $userId, $account['ref'], ...$from]);
         }
         $this->conn->executeUpdate($stmt);
 
+        // Not the affected rows: a check that changed nothing within the second reads as one that matched no row.
+        $row = $this->row($userId, $connectionId);
+        if ($row !== null && AdConnectionStatus::tryFrom((string) $row['status']) === null) {
+            error_log('ad connections: connection ' . $connectionId . ' holds a status that is not one (' . mb_substr((string) $row['status'], 0, 40)
+                . '), so its check was not recorded; set it to ' . AdConnectionStatus::Connected->value . ' and check again');
+        }
+
+        return $row !== null;
+    }
+
+    /**
+     * A check the platform did not answer: the error and the time are recorded and the status stands, in the one
+     * statement, since an outage says nothing of the key. False when the account has no such connection.
+     */
+    public function recordUnansweredCheck(int $userId, int $connectionId, string $error, int $now): bool
+    {
+        $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::AD_CONNECTIONS . '` SET last_error = ?, checked_at = ?, updated_at = ? WHERE connection_id = ? AND user_id = ? AND deleted_at IS NULL');
+        $this->conn->bind($stmt, 'siiii', [mb_substr($error, 0, 255), $now, $now, $connectionId, $userId]);
+        $this->conn->executeUpdate($stmt);
+
         return $this->row($userId, $connectionId) !== null;
+    }
+
+    /**
+     * The platform answered a call made with the key outside a check: a refusal recorded before is stale, so
+     * key_refused becomes connected and its error is cleared. Any other connection is left as it is, last check and
+     * all. Whether one was marked.
+     */
+    public function keyAnswered(int $userId, int $connectionId, int $now): bool
+    {
+        $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::AD_CONNECTIONS . '` SET status = ?, last_error = NULL, checked_at = ?, updated_at = ?'
+            . ' WHERE connection_id = ? AND user_id = ? AND deleted_at IS NULL AND status = ?');
+        $to = AdConnectionStatus::KeyRefused->moveTo(AdConnectionStatus::Connected);
+        $this->conn->bind($stmt, 'siiiis', [$to->value, $now, $now, $connectionId, $userId, AdConnectionStatus::KeyRefused->value]);
+
+        return $this->conn->executeUpdate($stmt) === 1;
     }
 
     /**
@@ -396,11 +437,15 @@ final class AdConnectionStore
             error_log('ad connections: the setup record of connection ' . $id . ' cannot be read');
         }
         $status = (string) $row['status'];
+        if (AdConnectionStatus::tryFrom($status) === null) {
+            // Shown as stored and said, like the setup above: one row does not fail the list.
+            error_log('ad connections: connection ' . $id . ' holds a status that is not one (' . mb_substr($status, 0, 40) . ')');
+        }
         $set = array_fill_keys(self::CREDENTIALS[(string) $row['platform']] ?? [], false);
         if ((string) $row['credentials'] !== '') {
             $opened = $this->openedOrNull($row);
             if ($opened === null) {
-                $status = self::STATUS_UNREADABLE;
+                $status = AdConnectionStatus::UNREADABLE;
             } else {
                 foreach (array_keys($set) as $name) {
                     $set[$name] = is_string($opened[$name] ?? null) && $opened[$name] !== '';

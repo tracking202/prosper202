@@ -32,7 +32,8 @@ var attributionDimensions = []string{"campaign", "traffic_source", "landing_page
 // TimeBound::PERIODS, as every report does.
 var attributionPeriods = reportPeriods
 
-// attributionModelStatuses are Prosper202\Attribution\Model's statuses.
+// attributionModelStatuses are the statuses a request may ask for
+// (Prosper202\Attribution\ModelStatus::requestable(); StatusSurfacesAgreeTest).
 var attributionModelStatuses = []string{"active", "inactive"}
 
 var positiveIntPattern = regexp.MustCompile(`^[1-9][0-9]*$`)

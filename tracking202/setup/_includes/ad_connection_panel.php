@@ -34,7 +34,7 @@ function p202_ad_connections_panel(array $connections, array $ppcAccounts, ?arra
         $out .= '<div class="mb-4" id="ac' . $id . '"><div class="p202-list__item">'
             . '<span class="p202-list__name">' . $e($account['name'] ?? '') . '</span>'
             . '<span class="p202-pill">' . $e($account['id'] ?? '') . '</span>'
-            . '<span class="p202-pill' . ($c['status'] === 'connected' ? ' p202-pill--accent' : '') . '">' . $e(str_replace('_', ' ', (string) $c['status'])) . '</span>'
+            . '<span class="p202-pill' . ($c['status'] === \Prosper202\AdPlatforms\AdConnectionStatus::Connected->value ? ' p202-pill--accent' : '') . '">' . $e(str_replace('_', ' ', (string) $c['status'])) . '</span>'
             . '<span class="p202-list__actions">';
         foreach (['ad_check' => 'check key', 'ad_delete' => 'delete'] as $act => $label) {
             $out .= '<form method="post" action="' . $e($self) . ($act === 'ad_check' ? '#ac' . $id : '') . '" class="d-inline"' . ($act === 'ad_delete' ? ' data-p202-confirm="Delete this connection? Its keys are erased here; nothing is removed at OpenAI."' : '') . '>'
@@ -167,7 +167,7 @@ function p202_ad_connection_replace_key(array $c, ?array $mine, array $keyErrors
 {
     $id = (int) $c['connection_id'];
     $field = 'ac' . $id . '_api_key';
-    $open = $c['status'] !== 'connected' || p202_setup_error_text($mine['errors']['api_key'] ?? '') !== '';
+    $open = $c['status'] !== \Prosper202\AdPlatforms\AdConnectionStatus::Connected->value || p202_setup_error_text($mine['errors']['api_key'] ?? '') !== '';
 
     return '<details class="p202-disclosure mt-3"' . ($open ? ' open' : '') . '><summary>Replace key'
         . ' <span class="p202-disclosure__hint">a new Advertiser API key for this ad account</span></summary>'

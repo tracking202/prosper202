@@ -225,12 +225,12 @@ final class AccountScopedWriteTest extends TestCase
             'owned through its parent | 202_attribution_backfill | backfill_id = 1 AND next_click_id = ?' => 'the install\'s one backfill cursor row (backfill_id = 1), moved by the cron run',
         ],
         '202-config/Attribution/ExportStore.php' => [
-            'no user_id tie | 202_attribution_exports | export_id = ? AND status = \'pending\' AND queued_at <= ?' => 'the export runner\'s (cron) claim and outcome of an export its due() read chose',
-            'no user_id tie | 202_attribution_exports | status = \'running\' AND started_at < ?' => 'the export runner\'s (cron) claim and outcome of an export its due() read chose',
-            'no user_id tie | 202_attribution_exports | export_id = ? AND status = \'running\'' => 'the export runner\'s (cron) claim and outcome of an export its due() read chose',
-            'no user_id tie | 202_attribution_exports | export_id = ? AND status = \'running\' #2' => 'the export runner\'s (cron) claim and outcome of an export its due() read chose',
-            'no user_id tie | 202_attribution_exports | export_id = ? AND status = \'running\' #3' => 'the export runner\'s (cron) claim and outcome of an export its due() read chose',
-            'no user_id tie | 202_attribution_exports | export_id = ? AND status = \'running\' #4' => 'the export runner\'s (cron) claim and outcome of an export its due() read chose',
+            'no user_id tie | 202_attribution_exports | export_id = ? AND status = ? AND queued_at <= ?' => 'the export runner\'s (cron) claim and outcome of an export its due() read chose',
+            'no user_id tie | 202_attribution_exports | status = ? AND started_at < ?' => 'the export runner\'s (cron) claim and outcome of an export its due() read chose',
+            'no user_id tie | 202_attribution_exports | export_id = ? AND status = ?' => 'the export runner\'s (cron) claim and outcome of an export its due() read chose',
+            'no user_id tie | 202_attribution_exports | export_id = ? AND status = ? #2' => 'the export runner\'s (cron) claim and outcome of an export its due() read chose',
+            'no user_id tie | 202_attribution_exports | export_id = ? AND status = ? #3' => 'the export runner\'s (cron) claim and outcome of an export its due() read chose',
+            'no user_id tie | 202_attribution_exports | export_id = ? AND status = ? #4' => 'the export runner\'s (cron) claim and outcome of an export its due() read chose',
         ],
         '202-config/Click/ClickRetention.php' => [
             'table built at runtime | {{$table}} | DELETE FROM {{$table}} WHERE click_id IN ( {$in} )' => self::R_RETENTION,

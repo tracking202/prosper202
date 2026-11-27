@@ -776,7 +776,7 @@ final class AttributionRollup
              JOIN 202_conversion_logs cl ON cl.conv_id = cr.conv_id
              LEFT JOIN 202_aff_campaigns oc ON oc.aff_campaign_id = cl.campaign_id
              LEFT JOIN 202_attribution_models om
-                ON om.model_id = oc.attribution_model_id AND om.user_id = cl.user_id AND om.status = 'active'",
+                ON om.model_id = oc.attribution_model_id AND om.user_id = cl.user_id AND om.status = '" . ModelStatus::Active->value . "'",
             'cr.model_id IN (' . self::intList($modelIds) . ') AND ' . $timePredicate
                 . ' AND cl.user_id = ' . $userId . ' AND cr.model_id = COALESCE(om.model_id, ' . $defaultModelId . ')',
         ];
@@ -791,7 +791,7 @@ final class AttributionRollup
         "SELECT oc.aff_campaign_id AS campaign_id, om.model_id AS model_id
          FROM 202_attribution_models om
          JOIN 202_aff_campaigns oc ON oc.attribution_model_id = om.model_id
-         WHERE om.user_id = %d AND om.status = 'active'";
+         WHERE om.user_id = %d AND om.status = '" . ModelStatus::Active->value . "'";
 
     /**
      * 1 when the stored overrides are exactly the live ones. Both sets are

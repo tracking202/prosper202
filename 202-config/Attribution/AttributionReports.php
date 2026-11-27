@@ -366,7 +366,7 @@ final class AttributionReports
              JOIN 202_conversion_logs cl ON cl.conv_id = cr.conv_id
              LEFT JOIN 202_aff_campaigns oc ON oc.aff_campaign_id = cl.campaign_id
              LEFT JOIN 202_attribution_models om
-                ON om.model_id = oc.attribution_model_id AND om.user_id = cl.user_id AND om.status = 'active'",
+                ON om.model_id = oc.attribution_model_id AND om.user_id = cl.user_id AND om.status = '" . ModelStatus::Active->value . "'",
             "cl.user_id = ? AND $time >= ? AND $time <= ? AND cr.model_id = COALESCE(om.model_id, ?)",
             'iiii',
             [$userId, $from, $to, $defaultModelId],

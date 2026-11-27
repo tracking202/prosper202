@@ -45,7 +45,9 @@ use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
 use Prosper202\Attribution\AttributionReports;
 use Prosper202\Attribution\ExportCsv;
+use Prosper202\Attribution\ExportStatus;
 use Prosper202\Attribution\ModelConfig;
+use Prosper202\Attribution\ModelStatus;
 use Prosper202\Attribution\ModelType;
 
 AUTH::require_user();
@@ -245,12 +247,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 			case 'set_status':
 				$status = (string) ($_POST['status'] ?? '');
-				if (!in_array($status, ['active', 'inactive'], true)) {
+				if (!in_array($status, array_column(ModelStatus::requestable(), 'value'), true)) {
 					p202_account_flash('bad', 'A model is switched on or off; nothing else was asked for, so nothing was saved.');
 					p202_account_redirect($back('models'));
 				}
 				$model = $api->updateModel($id, ['status' => $status])['data'];
-				p202_account_flash('ok', $status === 'active'
+				p202_account_flash('ok', $status === ModelStatus::Active->value
 					? $model['model_name'] . ' is on. The next attribution worker run computes its credits.'
 					: $model['model_name'] . ' is off: its credits are removed and it is no longer computed. Switch it on to compute them again.');
 				p202_account_redirect($back('models'));
@@ -410,7 +412,7 @@ if ($queue !== null && (int) $queue['models_failing'] > 0) {
         . ($failingModels === 1 ? ' model failed to queue its' : ' models failed to queue their')
         . ' conversions for a recompute, while the rest of attribution carries on; the reasons are below.';
 }
-$activeModels = array_values(array_filter($models, static fn (array $m): bool => $m['status'] === 'active'));
+$activeModels = array_values(array_filter($models, static fn (array $m): bool => $m['status'] === ModelStatus::Active->value));
 $defaultModel = null;
 foreach ($models as $m) {
 	if ($m['is_default']) {
@@ -590,8 +592,8 @@ $invalid = static fn (string $name): string => p202_account_invalid($errors, $na
 $feedback = static fn (string $name): string => p202_account_field_error($errors, $name);
 $statusPill = static function (array $m) use ($h): string {
 	return match ($m['status']) {
-		'active' => '<span class="p202-pill p202-pill--good">active</span>',
-		'invalid' => '<span class="p202-pill p202-pill--bad" title="' . $h($m['status_reason']) . '">invalid</span>',
+		ModelStatus::Active->value => '<span class="p202-pill p202-pill--good">active</span>',
+		ModelStatus::Invalid->value => '<span class="p202-pill p202-pill--bad" title="' . $h($m['status_reason']) . '">invalid</span>',
 		default => '<span class="p202-pill">inactive</span>',
 	};
 };
@@ -1031,12 +1033,12 @@ $modelSettings = static function (array $m): string {
 										<td><?php echo $h(ModelType::from($m['model_type'])->label()); ?></td>
 										<td class="num"><?php echo (int) $m['lookback_days']; ?> days</td>
 										<td><?php echo $h($modelSettings($m)); ?></td>
-										<td><?php echo $statusPill($m); ?><?php if ($m['status'] === 'invalid' && $m['status_reason'] !== null) { ?><div class="form-text mt-0"><?php echo $h($m['status_reason']); ?></div><?php } ?></td>
+										<td><?php echo $statusPill($m); ?><?php if ($m['status'] === ModelStatus::Invalid->value && $m['status_reason'] !== null) { ?><div class="form-text mt-0"><?php echo $h($m['status_reason']); ?></div><?php } ?></td>
 										<?php if ($canManage) { ?>
 										<td>
 											<div class="p202-toolbar">
 												<a class="btn btn-secondary btn-sm" href="<?php echo $h($pageUrl . '?view=models&edit=' . $mid); ?>">Edit</a>
-												<?php if (!$m['is_default'] && $m['status'] === 'active') { ?>
+												<?php if (!$m['is_default'] && $m['status'] === ModelStatus::Active->value) { ?>
 													<form method="post" action="<?php echo $h($pageUrl . '?view=models'); ?>" class="d-inline">
 														<?php echo p202_account_token_field(); ?>
 														<input type="hidden" name="action" value="set_default">
@@ -1049,8 +1051,8 @@ $modelSettings = static function (array $m): string {
 														<?php echo p202_account_token_field(); ?>
 														<input type="hidden" name="action" value="set_status">
 														<input type="hidden" name="id" value="<?php echo $mid; ?>">
-														<input type="hidden" name="status" value="<?php echo $m['status'] === 'active' ? 'inactive' : 'active'; ?>">
-														<button type="submit" class="btn btn-secondary btn-sm"><?php echo $m['status'] === 'active' ? 'Switch off' : 'Switch on'; ?></button>
+														<input type="hidden" name="status" value="<?php echo $m['status'] === ModelStatus::Active->value ? ModelStatus::Inactive->value : ModelStatus::Active->value; ?>">
+														<button type="submit" class="btn btn-secondary btn-sm"><?php echo $m['status'] === ModelStatus::Active->value ? 'Switch off' : 'Switch on'; ?></button>
 													</form>
 													<form method="post" action="<?php echo $h($pageUrl . '?view=models'); ?>" class="d-inline" data-p202-confirm="<?php echo $h('Delete ' . $m['model_name'] . '? Its credits and exports are deleted; campaigns that use it go back to the default model. Conversions and clicks are kept.'); ?>">
 														<?php echo p202_account_token_field(); ?>
@@ -1308,10 +1310,10 @@ $modelSettings = static function (array $m): string {
 								<?php foreach ($exports as $x) {
 									$xid = (int) $x['export_id'];
 									$pill = [
-										'pending' => '<span class="p202-pill">' . ($x['run_at'] > time() ? 'scheduled' : 'queued') . '</span>',
-										'running' => '<span class="p202-pill p202-pill--accent">running</span>',
-										'completed' => '<span class="p202-pill p202-pill--good">completed</span>',
-										'failed' => '<span class="p202-pill p202-pill--bad">failed</span>',
+										ExportStatus::Pending->value => '<span class="p202-pill">' . ($x['run_at'] > time() ? 'scheduled' : 'queued') . '</span>',
+										ExportStatus::Running->value => '<span class="p202-pill p202-pill--accent">running</span>',
+										ExportStatus::Completed->value => '<span class="p202-pill p202-pill--good">completed</span>',
+										ExportStatus::Failed->value => '<span class="p202-pill p202-pill--bad">failed</span>',
 									][$x['status']] ?? '<span class="p202-pill">' . $h($x['status']) . '</span>';
 									$host = $x['webhook_url'] !== null ? (string) (parse_url((string) $x['webhook_url'], PHP_URL_HOST) ?? '') : '';
 									?>
@@ -1328,7 +1330,7 @@ $modelSettings = static function (array $m): string {
 												<?php if ($x['file_ready']) { ?>
 													<a class="btn btn-secondary btn-sm" href="<?php echo $h($pageUrl . '?view=exports&download=' . $xid); ?>"><i class="bi bi-download"></i> Download</a>
 												<?php } ?>
-												<?php if ($x['status'] === 'failed') { ?>
+												<?php if ($x['status'] === ExportStatus::Failed->value) { ?>
 													<form method="post" action="<?php echo $h($pageUrl . '?view=exports'); ?>" class="d-inline">
 														<?php echo p202_account_token_field(); ?>
 														<input type="hidden" name="action" value="retry_export">
@@ -1336,7 +1338,7 @@ $modelSettings = static function (array $m): string {
 														<button type="submit" class="btn btn-outline-primary btn-sm">Retry</button>
 													</form>
 												<?php } ?>
-												<?php if ($x['status'] !== 'running') { ?>
+												<?php if ($x['status'] !== ExportStatus::Running->value) { ?>
 													<form method="post" action="<?php echo $h($pageUrl . '?view=exports'); ?>" class="d-inline" data-p202-confirm="<?php echo $h('Delete export ' . $xid . ' and its file? Your models and reports are not affected.'); ?>">
 														<?php echo p202_account_token_field(); ?>
 														<input type="hidden" name="action" value="delete_export">

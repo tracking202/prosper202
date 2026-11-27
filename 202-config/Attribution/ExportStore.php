@@ -9,16 +9,16 @@ use Prosper202\Database\Connection;
 /**
  * Rows of 202_attribution_exports: one export job each.
  *
- * Lifecycle: `pending` (queued_at says from when it may run: now for an
- * on-demand export, later for a scheduled one) → `running` (claimed by one
- * runner, attempts counted) → `completed`, or back to `pending` with a
- * later queued_at for a retryable webhook failure, or `failed` with the
- * reason in last_error. Claiming is a conditional UPDATE, so two runners
- * cannot both take a job.
+ * A job's status is an ExportStatus and is written only here. Every move is
+ * one UPDATE that names the state it leaves, so two runners cannot both take
+ * a job and a run that lost its job cannot end it; each says whether it
+ * landed.
  */
 final class ExportStore
 {
-    public const STATUSES = ['pending', 'running', 'completed', 'failed'];
+    public const STATUSES = [
+        ExportStatus::Pending->value, ExportStatus::Running->value, ExportStatus::Completed->value, ExportStatus::Failed->value,
+    ];
 
     private const COLUMNS = 'export_id, user_id, model_id, compare_model_id, group_by, range_start, range_end, status,
         file_path, rows_exported, webhook_url, webhook_secret, webhook_status_code, attempts, last_error,
@@ -35,9 +35,11 @@ final class ExportStore
             "INSERT INTO 202_attribution_exports
                 (user_id, model_id, compare_model_id, group_by, range_start, range_end, status, webhook_url, webhook_secret,
                  attempts, queued_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, 0, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)"
         );
-        $this->conn->bind($stmt, 'iiisiissiii', [$userId, $modelId, $compareModelId, $groupBy, $from, $to, $webhookUrl, $webhookSecret, $queuedAt, $now, $now]);
+        $this->conn->bind($stmt, 'iiisiisssiii', [
+            $userId, $modelId, $compareModelId, $groupBy, $from, $to, ExportStatus::Pending->value, $webhookUrl, $webhookSecret, $queuedAt, $now, $now,
+        ]);
         $id = $this->conn->executeInsert($stmt);
         if ($id <= 0) {
             throw new \RuntimeException('the export job was not inserted');
@@ -65,14 +67,14 @@ final class ExportStore
     }
 
     /** @return list<array<string, mixed>> newest first */
-    public function rows(int $userId, ?string $status, int $limit): array
+    public function rows(int $userId, ?ExportStatus $status, int $limit): array
     {
         $sql = 'SELECT ' . self::COLUMNS . ' FROM 202_attribution_exports WHERE user_id = ?'
             . ($status !== null ? ' AND status = ?' : '')
             . ' ORDER BY export_id DESC LIMIT ?';
         $stmt = $this->conn->prepareRead($sql);
         if ($status !== null) {
-            $this->conn->bind($stmt, 'isi', [$userId, $status, $limit]);
+            $this->conn->bind($stmt, 'isi', [$userId, $status->value, $limit]);
         } else {
             $this->conn->bind($stmt, 'ii', [$userId, $limit]);
         }
@@ -84,9 +86,9 @@ final class ExportStore
     public function due(int $now, int $limit): array
     {
         $stmt = $this->conn->prepareWrite(
-            "SELECT export_id FROM 202_attribution_exports WHERE status = 'pending' AND queued_at <= ? ORDER BY queued_at, export_id LIMIT ?"
+            'SELECT export_id FROM 202_attribution_exports WHERE status = ? AND queued_at <= ? ORDER BY queued_at, export_id LIMIT ?'
         );
-        $this->conn->bind($stmt, 'ii', [$now, $limit]);
+        $this->conn->bind($stmt, 'sii', [ExportStatus::Pending->value, $now, $limit]);
 
         return array_map(static fn (array $r): int => (int) $r['export_id'], $this->conn->fetchAll($stmt));
     }
@@ -95,29 +97,34 @@ final class ExportStore
     public function claim(int $exportId, int $now): bool
     {
         $stmt = $this->conn->prepareWrite(
-            "UPDATE 202_attribution_exports SET status = 'running', started_at = ?, attempts = attempts + 1, updated_at = ?
-             WHERE export_id = ? AND status = 'pending' AND queued_at <= ?"
+            'UPDATE 202_attribution_exports SET status = ?, started_at = ?, attempts = attempts + 1, updated_at = ?
+             WHERE export_id = ? AND status = ? AND queued_at <= ?'
         );
-        $this->conn->bind($stmt, 'iiii', [$now, $now, $exportId, $now]);
+        [$to, $from] = self::move(ExportStatus::Pending, ExportStatus::Running);
+        $this->conn->bind($stmt, 'siiisi', [$to, $now, $now, $exportId, $from, $now]);
 
         return $this->conn->executeUpdate($stmt) === 1;
     }
 
     /**
      * Jobs left `running` by a runner that died: back to pending while they
-     * have attempts left, failed after that. Returns how many were touched.
+     * have attempts left, failed after that (ended then, as a run that failed
+     * is). Returns how many were touched.
      */
     public function reclaimStale(int $now, int $staleAfter, int $maxAttempts): int
     {
         $cutoff = $now - $staleAfter;
         $stmt = $this->conn->prepareWrite(
             "UPDATE 202_attribution_exports
-             SET status = IF(attempts >= ?, 'failed', 'pending'),
+             SET status = IF(attempts >= ?, ?, ?),
                  last_error = IF(attempts >= ?, 'The run that took this export stopped before finishing, too many times.', 'The run that took this export stopped before finishing; it will be tried again.'),
+                 completed_at = IF(attempts >= ?, ?, completed_at),
                  queued_at = ?, updated_at = ?
-             WHERE status = 'running' AND started_at < ?"
+             WHERE status = ? AND started_at < ?"
         );
-        $this->conn->bind($stmt, 'iiiii', [$maxAttempts, $maxAttempts, $now, $now, $cutoff]);
+        [$failed, $from] = self::move(ExportStatus::Running, ExportStatus::Failed);
+        [$pending] = self::move(ExportStatus::Running, ExportStatus::Pending);
+        $this->conn->bind($stmt, 'issiiiiisi', [$maxAttempts, $failed, $pending, $maxAttempts, $maxAttempts, $now, $now, $now, $from, $cutoff]);
 
         return $this->conn->executeUpdate($stmt);
     }
@@ -125,9 +132,9 @@ final class ExportStore
     public function recordFile(int $exportId, string $fileName, int $rows): void
     {
         $stmt = $this->conn->prepareWrite(
-            "UPDATE 202_attribution_exports SET file_path = ?, rows_exported = ?, updated_at = ? WHERE export_id = ? AND status = 'running'"
+            'UPDATE 202_attribution_exports SET file_path = ?, rows_exported = ?, updated_at = ? WHERE export_id = ? AND status = ?'
         );
-        $this->conn->bind($stmt, 'siii', [$fileName, $rows, time(), $exportId]);
+        $this->conn->bind($stmt, 'siiis', [$fileName, $rows, time(), $exportId, ExportStatus::Running->value]);
         if ($this->conn->executeUpdate($stmt) !== 1) {
             throw new \RuntimeException('export ' . $exportId . ' is no longer running; its file was not recorded');
         }
@@ -143,10 +150,11 @@ final class ExportStore
     public function complete(int $exportId, ?int $webhookStatus, int $now): bool
     {
         $stmt = $this->conn->prepareWrite(
-            "UPDATE 202_attribution_exports SET status = 'completed', webhook_status_code = ?, last_error = NULL, completed_at = ?, updated_at = ?
-             WHERE export_id = ? AND status = 'running'"
+            'UPDATE 202_attribution_exports SET status = ?, webhook_status_code = ?, last_error = NULL, completed_at = ?, updated_at = ?
+             WHERE export_id = ? AND status = ?'
         );
-        $this->conn->bind($stmt, 'iiii', [$webhookStatus, $now, $now, $exportId]);
+        [$to, $from] = self::move(ExportStatus::Running, ExportStatus::Completed);
+        $this->conn->bind($stmt, 'siiiis', [$to, $webhookStatus, $now, $now, $exportId, $from]);
 
         return $this->conn->executeUpdate($stmt) === 1;
     }
@@ -155,10 +163,11 @@ final class ExportStore
     public function deferRetry(int $exportId, string $error, ?int $webhookStatus, int $retryAt, int $now): bool
     {
         $stmt = $this->conn->prepareWrite(
-            "UPDATE 202_attribution_exports SET status = 'pending', last_error = ?, webhook_status_code = ?, queued_at = ?, updated_at = ?
-             WHERE export_id = ? AND status = 'running'"
+            'UPDATE 202_attribution_exports SET status = ?, last_error = ?, webhook_status_code = ?, queued_at = ?, updated_at = ?
+             WHERE export_id = ? AND status = ?'
         );
-        $this->conn->bind($stmt, 'siiii', [mb_substr($error, 0, 2000), $webhookStatus, $retryAt, $now, $exportId]);
+        [$to, $from] = self::move(ExportStatus::Running, ExportStatus::Pending);
+        $this->conn->bind($stmt, 'ssiiiis', [$to, mb_substr($error, 0, 2000), $webhookStatus, $retryAt, $now, $exportId, $from]);
 
         return $this->conn->executeUpdate($stmt) === 1;
     }
@@ -166,10 +175,11 @@ final class ExportStore
     public function fail(int $exportId, string $error, ?int $webhookStatus, int $now): bool
     {
         $stmt = $this->conn->prepareWrite(
-            "UPDATE 202_attribution_exports SET status = 'failed', last_error = ?, webhook_status_code = ?, completed_at = ?, updated_at = ?
-             WHERE export_id = ? AND status = 'running'"
+            'UPDATE 202_attribution_exports SET status = ?, last_error = ?, webhook_status_code = ?, completed_at = ?, updated_at = ?
+             WHERE export_id = ? AND status = ?'
         );
-        $this->conn->bind($stmt, 'siiii', [mb_substr($error, 0, 2000), $webhookStatus, $now, $now, $exportId]);
+        [$to, $from] = self::move(ExportStatus::Running, ExportStatus::Failed);
+        $this->conn->bind($stmt, 'ssiiiis', [$to, mb_substr($error, 0, 2000), $webhookStatus, $now, $now, $exportId, $from]);
 
         return $this->conn->executeUpdate($stmt) === 1;
     }
@@ -179,11 +189,12 @@ final class ExportStore
     {
         $now = time();
         $stmt = $this->conn->prepareWrite(
-            "UPDATE 202_attribution_exports SET status = 'pending', attempts = 0, last_error = NULL, webhook_status_code = NULL,
+            'UPDATE 202_attribution_exports SET status = ?, attempts = 0, last_error = NULL, webhook_status_code = NULL,
                 queued_at = ?, started_at = NULL, completed_at = NULL, updated_at = ?
-             WHERE user_id = ? AND export_id = ? AND status = 'failed'"
+             WHERE user_id = ? AND export_id = ? AND status = ?'
         );
-        $this->conn->bind($stmt, 'iiii', [$now, $now, $userId, $exportId]);
+        [$to, $from] = self::move(ExportStatus::Failed, ExportStatus::Pending);
+        $this->conn->bind($stmt, 'siiiis', [$to, $now, $now, $userId, $exportId, $from]);
 
         return $this->conn->executeUpdate($stmt) === 1;
     }
@@ -191,8 +202,8 @@ final class ExportStore
     /** Delete a job that is not running; false when it is running or gone. */
     public function delete(int $userId, int $exportId): bool
     {
-        $stmt = $this->conn->prepareWrite("DELETE FROM 202_attribution_exports WHERE user_id = ? AND export_id = ? AND status <> 'running'");
-        $this->conn->bind($stmt, 'ii', [$userId, $exportId]);
+        $stmt = $this->conn->prepareWrite('DELETE FROM 202_attribution_exports WHERE user_id = ? AND export_id = ? AND status <> ?');
+        $this->conn->bind($stmt, 'iis', [$userId, $exportId, ExportStatus::Running->value]);
 
         return $this->conn->executeUpdate($stmt) === 1;
     }
@@ -219,12 +230,24 @@ final class ExportStore
         $this->conn->bind($stmt, 'iii', [$userId, $modelId, $modelId]);
         $running = [];
         foreach ($this->conn->fetchAll($stmt) as $row) {
-            if ((string) $row['status'] === 'running') {
+            if ((string) $row['status'] === ExportStatus::Running->value) {
                 $running[] = (int) $row['export_id'];
             }
         }
 
         return $running;
+    }
+
+    /**
+     * A move the lifecycle holds, as the values its UPDATE binds: the state
+     * it sets and the one its WHERE names.
+     *
+     * @return array{0: string, 1: string}
+     * @throws \Prosper202\Lifecycle\IllegalTransition
+     */
+    private static function move(ExportStatus $from, ExportStatus $to): array
+    {
+        return [$from->moveTo($to)->value, $from->value];
     }
 
     /**

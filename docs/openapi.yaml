@@ -5928,7 +5928,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/AttributionBreakdownResponse"
         "409":
-          description: The model named is inactive or invalid and has no credits; the message gives the reason.
+          description: >-
+            The model named is inactive or invalid and has no credits, or no model_id was sent and
+            the account's default model is invalid (details.model_id names it, details.status says
+            invalid); the message gives the reason. A breakdown that names an active model still
+            answers.
         "422":
           $ref: "#/components/responses/ValidationError"
 

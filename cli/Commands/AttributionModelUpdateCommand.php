@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
+use Prosper202\Attribution\ModelStatus;
 use Prosper202\Attribution\ModelType;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
@@ -91,8 +92,9 @@ class AttributionModelUpdateCommand extends BaseCommand
         }
         $status = $input->getOption('status');
         if ($status !== null) {
-            if (!in_array($status, ['active', 'inactive'], true)) {
-                return 'Invalid --status: active or inactive';
+            $valid = array_column(ModelStatus::requestable(), 'value');
+            if (!in_array($status, $valid, true)) {
+                return 'Invalid --status: ' . implode(' or ', $valid);
             }
             $body['status'] = $status;
         }

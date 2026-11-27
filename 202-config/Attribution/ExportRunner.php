@@ -100,7 +100,7 @@ final class ExportRunner
     public function runClaimed(int $exportId): string
     {
         $row = $this->store->rowById($exportId);
-        if ($row === null || $row['status'] !== 'running') {
+        if ($row === null || $row['status'] !== ExportStatus::Running->value) {
             return 'failed';
         }
         $now = ($this->clock)();
@@ -241,7 +241,7 @@ final class ExportRunner
         if ($model === null) {
             throw new \UnexpectedValueException('Model ' . $modelId . ' no longer exists in this account.');
         }
-        if ((string) $model['status'] !== Model::STATUS_ACTIVE) {
+        if (ModelStatus::tryFrom((string) $model['status'])?->computes() !== true) {
             throw new \UnexpectedValueException('Model ' . $modelId . ' is ' . $model['status'] . ', so it has no credits to export.');
         }
     }

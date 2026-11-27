@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
-use Prosper202\Attribution\ExportStore;
+use Prosper202\Attribution\ExportStatus;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -19,7 +19,7 @@ class AttributionExportListCommand extends BaseCommand
     {
         parent::configure();
         $this->setDescription('List attribution exports, newest first')
-            ->addOption('status', 's', InputOption::VALUE_REQUIRED, 'Filter: ' . implode(', ', ExportStore::STATUSES))
+            ->addOption('status', 's', InputOption::VALUE_REQUIRED, 'Filter: ' . implode(', ', ExportStatus::values()))
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Rows, 1-200 (default 50)');
     }
 

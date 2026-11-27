@@ -11,9 +11,9 @@ namespace Prosper202\Attribution;
  */
 final class Model
 {
-    public const STATUS_ACTIVE = 'active';
-    public const STATUS_INACTIVE = 'inactive';
-    public const STATUS_INVALID = 'invalid';
+    public const STATUS_ACTIVE = ModelStatus::Active->value;
+    public const STATUS_INACTIVE = ModelStatus::Inactive->value;
+    public const STATUS_INVALID = ModelStatus::Invalid->value;
 
     /** @param array<string, float> $config */
     public function __construct(
