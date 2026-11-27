@@ -215,6 +215,34 @@ final class UploadBatchUndoIntegrationTest extends TestCase
         self::assertSame([2, 3], array_column($listed, 'undone_rows'));
     }
 
+    /**
+     * The dry run counts a row's postbacks as the undo settles them: one
+     * withheld for consent before any attempt never went out, so nothing is
+     * retracted for it.
+     */
+    public function testThePreviewCountsThePostbacksAsTheUndoSettlesThem(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+        $batch = $this->upload("subid,amount\n100,5\n");
+        $conv = $this->liveRows($batch)[0];
+        foreach ([[1, 'pending', 0], [2, 'withheld', 0], [3, 'withheld', 1], [4, 'sent', 1], [5, 'cancelled', 0], [6, 'failed', 8], [7, 'pending', 2]] as [$pixel, $status, $attempts]) {
+            self::fixture("INSERT INTO 202_notification_pending SET user_id = 1, conv_id = $conv, pixel_id = $pixel, kind = 'reached',
+                status = '$status', url = 'https://ts.example/pb', attempts = $attempts, next_attempt_at = 1, created_at = 1");
+        }
+
+        $api = new UpdateController(self::$db, 1);
+        $preview = $api->undoUpload($batch, [], true)['data'];
+        $api->undoUpload($batch, [], false);
+
+        $count = static fn (string $where): int => (int) self::$db->query("SELECT COUNT(*) FROM 202_notification_pending WHERE conv_id = $conv AND $where")->fetch_row()[0];
+        self::assertSame(
+            ['cancelled' => $count("pixel_id = 1 AND kind = 'reached' AND status = 'cancelled'"), 'retracted' => $count("kind = 'retraction'")],
+            ['cancelled' => $preview['postbacks_cancelled'], 'retracted' => $preview['postbacks_retracted']]
+        );
+        self::assertSame(4, $preview['postbacks_retracted'], 'the attempted, the sent and the failed');
+    }
+
     public function testAnotherAccountsBatchIsNotFoundAndItsRowsAreLeftAlone(): void
     {
         $this->campaign(7);

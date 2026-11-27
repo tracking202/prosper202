@@ -37,9 +37,9 @@ final class OutboxBacklog
     public static function read(Connection $conn, int $now, ?int $userId = null): array
     {
         // The oldest COUNT_CAP + 1 overdue rows, counted here: a queue left for weeks is not counted whole on every page.
-        $sql = "SELECT next_attempt_at FROM 202_notification_pending WHERE status = 'pending' AND next_attempt_at <= ?";
-        $types = 'i';
-        $binds = [$now - self::OVERDUE_SECONDS];
+        $sql = 'SELECT next_attempt_at FROM 202_notification_pending WHERE status = ? AND next_attempt_at <= ?';
+        $types = 'si';
+        $binds = [NotificationStatus::Pending->value, $now - self::OVERDUE_SECONDS];
         if ($userId !== null) {
             $sql .= ' AND user_id = ?';
             $types .= 'i';

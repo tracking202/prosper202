@@ -13,6 +13,7 @@ use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\Ledger\RowCurrency;
 use Prosper202\Conversion\Ledger\SourceRef;
 use Prosper202\Database\Connection;
+use Prosper202\Notifications\NotificationStatus;
 use RuntimeException;
 
 /**
@@ -137,9 +138,8 @@ final class UploadBatchUndo
 
         // As ConversionsController::deletePreview() counts them for one row.
         $stmt = $this->conn->prepareWrite(
-            "SELECT COALESCE(SUM(n.status = 'pending' AND n.attempts = 0), 0) AS cancel,
-                    COALESCE(SUM(n.status <> 'cancelled' AND NOT (n.status = 'pending' AND n.attempts = 0)), 0) AS retract
-             FROM 202_notification_pending n
+            'SELECT ' . NotificationStatus::retirementCountsSql('n.')
+            . " FROM 202_notification_pending n
              JOIN 202_conversion_logs b ON b.conv_id = n.conv_id AND b.user_id = n.user_id
              WHERE b.user_id = ? AND b.source = ? AND b.source_ref = ? AND b.deleted = 0 AND n.kind = 'reached'"
         );

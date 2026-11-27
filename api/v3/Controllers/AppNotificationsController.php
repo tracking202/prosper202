@@ -8,6 +8,7 @@ use Api\V3\Exception\ValidationException;
 use Api\V3\Support\MysqliStatements;
 use Api\V3\Support\PageRows;
 use Api\V3\Support\ResponseSanitizer;
+use Prosper202\Notifications\NotificationStatus;
 
 /**
  * GET /apps/notifications: the traffic-source postbacks the app installs'
@@ -31,7 +32,11 @@ final class AppNotificationsController
 {
     use MysqliStatements;
 
-    public const STATUSES = ['pending', 'sent', 'failed', 'cancelled', 'suppressed', 'withheld'];
+    /** NotificationStatus::values(), which a constant cannot call (NotificationStatusSurfacesTest). */
+    public const STATUSES = [
+        NotificationStatus::Pending->value, NotificationStatus::Sent->value, NotificationStatus::Failed->value,
+        NotificationStatus::Cancelled->value, NotificationStatus::Suppressed->value, NotificationStatus::Withheld->value,
+    ];
     public const KINDS = ['reached', 'correction', 'retraction'];
 
     /** The outcome of an install that a conversion is, one per conversion. */

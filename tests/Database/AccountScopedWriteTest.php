@@ -343,14 +343,12 @@ final class AccountScopedWriteTest extends TestCase
             'no user_id tie | 202_messaging_events | id = ? #2' => 'the messaging sync\'s outcome of an event it read for this service\'s account to send',
         ],
         '202-config/Notifications/NotificationOutbox.php' => [
-            'no user_id tie | 202_notification_pending | conv_id = ? AND pixel_id = ? AND destination = ? AND kind = \'reached\' AND status = \'pending\' AND attempts = 0' => 'notifications of a conversion its caller holds under the click lock for the account (onReplaced(userId, …)), read just above by conv_id',
-            'no user_id tie | 202_notification_pending | notification_id = ? AND status = \'cancelled\' AND attempts = 0' => 'a notification read just above for the revived conversion, which its caller holds under the click lock',
-            'no user_id tie | 202_notification_pending | conv_id = ? AND pixel_id = ? AND destination = ? AND kind = \'reached\' AND status = \'pending\' AND attempts = 0 #2' => 'notifications of a conversion its caller holds under the click lock for the account, read just above by conv_id',
-            'no user_id tie | 202_notification_pending | notification_id = ? AND status = \'pending\' AND attempts = ?' => 'the outbox worker\'s hold (consent withheld) of a notification its due read chose',
-            'no user_id tie | 202_notification_pending | notification_id = ? AND status = \'pending\' AND attempts = ? #2' => 'the outbox worker\'s claim of a notification its due read chose',
-            'no user_id tie | 202_notification_pending | notification_id = ?' => 'the outbox worker\'s own notification, claimed above',
-            'no user_id tie | 202_notification_pending | notification_id = ? #2' => 'the outbox worker\'s own notification, claimed above',
-            'no user_id tie | 202_notification_pending | notification_id = ? #3' => 'a notification read just above for a conversion its caller holds under the click lock',
+            'no user_id tie | 202_notification_pending | notification_id = ? AND status = ? AND attempts = 0' => 'a notification read just above for the revived conversion, which its caller holds under the click lock',
+            'no user_id tie | 202_notification_pending | notification_id = ? AND status = ? AND attempts = ?' => 'the outbox worker\'s claim of a notification its due read chose',
+            'no user_id tie | 202_notification_pending | notification_id = ? AND {$from[\'sql\']}' => 'the outbox worker\'s own notification, claimed above',
+            'no user_id tie | 202_notification_pending | notification_id = ? AND status = ? AND attempts = ? #2' => 'the outbox worker\'s own notification, claimed above',
+            'no user_id tie | 202_notification_pending | notification_id = ? AND status = ? AND attempts = ? #3' => 'move(): a notification the outbox worker\'s due read chose, or one read just above for a conversion its caller holds under the click lock',
+            'no user_id tie | 202_notification_pending | conv_id = ? AND pixel_id = ? AND destination = ? AND kind = ? AND status = ? AND attempts = 0' => 'notifications of a conversion its caller holds under the click lock for the account (onReplaced(userId, …), onAnnouncedBefore(userId, …)), by conv_id',
         ],
         '202-config/OfflineConversion/FeedStore.php' => [
             'no user_id tie | 202_offline_conversion_feeds | feed_id = ?' => self::R_CREDENTIAL,
@@ -441,7 +439,7 @@ final class AccountScopedWriteTest extends TestCase
         ],
     ];
 
-    private const REVIEWED_CEILING = 135;
+    private const REVIEWED_CEILING = 133;
 
     private const STATEMENT_ENDS = ['ORDER', 'LIMIT'];
 

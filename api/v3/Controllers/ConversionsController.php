@@ -22,6 +22,7 @@ use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\Ledger\LedgerReportSql;
 use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\Ledger\RowCurrency;
+use Prosper202\Notifications\NotificationStatus;
 
 class ConversionsController
 {
@@ -832,9 +833,8 @@ class ConversionsController
         // attempted, retracted where one may have gone out. One withheld
         // for consent before any attempt never went out and is left alone.
         $stmt = $this->prepare(
-            "SELECT COALESCE(SUM(status = 'pending' AND attempts = 0), 0) AS cancel,
-                    COALESCE(SUM(status <> 'cancelled' AND NOT (status IN ('pending', 'withheld') AND attempts = 0)), 0) AS retract
-             FROM 202_notification_pending WHERE conv_id = ? AND user_id = ? AND kind = 'reached'"
+            'SELECT ' . NotificationStatus::retirementCountsSql()
+            . " FROM 202_notification_pending WHERE conv_id = ? AND user_id = ? AND kind = 'reached'"
         );
         $this->bind($stmt, 'ii', $id, $this->userId);
         $this->execute($stmt, 'Reading the queued postbacks failed');

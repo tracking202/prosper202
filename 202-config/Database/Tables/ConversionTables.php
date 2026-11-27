@@ -250,11 +250,13 @@ final class ConversionTables
      *   kind for the conversion at the destination for a correction or
      *   retraction, so a row retired, revived and retired again records
      *   each step (plan §5.7);
-     * - status: pending, sent, failed (attempts exhausted), cancelled (a
-     *   pending reached whose outcome was replaced before it went out, or a
-     *   retraction whose outcome was revived before it went out) and
-     *   suppressed (a correction or retraction no correction URL can carry;
-     *   `last_error` says why);
+     * - status (NotificationStatus, which holds the moves between them):
+     *   pending, sent, failed (attempts exhausted, or the sender refused
+     *   the URL), cancelled (a pending reached whose outcome was replaced
+     *   before it went out, or a retraction whose outcome was revived
+     *   before it was delivered), suppressed (a correction or retraction
+     *   no correction URL can carry) and withheld (the visitor refused
+     *   consent); `last_error` says why;
      * - url is resolved when the row is queued, with the tokens of the row
      *   it announces, so what is sent is what was decided in the
      *   transaction.

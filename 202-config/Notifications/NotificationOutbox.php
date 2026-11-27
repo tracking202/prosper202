@@ -79,7 +79,11 @@ use Prosper202\Database\Connection;
  * makes no external calls (plan §7.3). Each row is claimed with a
  * compare-and-set on its attempt count before the send, so two workers
  * never send one row concurrently; a row whose attempts run out is `failed`
- * with its last error. A row whose URL the sender refuses (PostbackSender:
+ * with its last error. The states and the moves between them are
+ * NotificationStatus's, and every write of one names the state it leaves
+ * in its own WHERE: a row cancelled while its send was in flight stays
+ * cancelled when that send fails, and is `sent` when it was delivered.
+ * A row whose URL the sender refuses (PostbackSender:
  * an address it does not call, here or at a redirect) is `failed` at once,
  * with the reason: every later try would be refused the same way.
  *
@@ -164,7 +168,7 @@ final class NotificationOutbox implements OutcomeNotificationSink
         ] + $click['tokens'];
 
         $consent = AdPlatformConsent::ofConversion($this->conn, $userId, $convId, $requestRefused, true);
-        $status = $consent->allows() ? 'pending' : 'withheld';
+        $status = $consent->allows() ? NotificationStatus::Pending : NotificationStatus::Withheld;
         $reason = $consent->reason();
         $note = $reason !== null ? mb_strimwidth($reason, 0, 255, '…', 'UTF-8') : null;
         $queued = 0;
@@ -204,21 +208,26 @@ final class NotificationOutbox implements OutcomeNotificationSink
         $announced = [];
         foreach ($old as $row) {
             $at = [(int) $row['pixel_id'], (int) $row['destination']];
-            $status = (string) $row['status'];
             if ((string) $row['kind'] === self::KIND_CORRECTION) {
                 $announced[$at[0] . ':' . $at[1]] = $at;
                 continue;
             }
-            if ($status === 'pending' && (int) $row['attempts'] === 0) {
-                $this->setStatus((int) $row['notification_id'], 'cancelled',
-                    $newConvId !== null ? 'the outcome was replaced by conversion ' . $newConvId . ' before this was sent' : 'the outcome was retired before this was sent');
-                continue;
-            }
+            $status = self::statusOf($row);
             // Sent, failed, or pending after an attempt: each may have
             // reached the network. A cancelled reached is announced only if
             // a correction says so (above); a withheld one never went out
             // unless an attempt before the refusal did.
-            if ($status !== 'cancelled' && !($status === 'withheld' && (int) $row['attempts'] === 0)) {
+            $fate = $status?->reachedOnRetirement((int) $row['attempts']) ?? NotificationStatus::RETIRED_RETRACT;
+            if ($fate === NotificationStatus::RETIRED_CANCEL && $status !== null) {
+                $cancelled = $this->move((int) $row['notification_id'], $status, 0, NotificationStatus::Cancelled,
+                    $newConvId !== null ? 'the outcome was replaced by conversion ' . $newConvId . ' before this was sent' : 'the outcome was retired before this was sent');
+                if ($cancelled) {
+                    continue;
+                }
+                // A worker claimed it since it was read: it may have gone out.
+                $fate = NotificationStatus::RETIRED_RETRACT;
+            }
+            if ($fate === NotificationStatus::RETIRED_RETRACT) {
                 $announced[$at[0] . ':' . $at[1]] = $at;
             }
         }
@@ -239,17 +248,8 @@ final class NotificationOutbox implements OutcomeNotificationSink
                 // replacement's own "reached" there would count it twice
                 // upstream. Only there — a destination the replaced row never
                 // reached still gets the replacement's.
-                $cancel = $this->conn->prepareWrite(
-                    "UPDATE 202_notification_pending SET status = 'cancelled', last_error = ?
-                     WHERE conv_id = ? AND pixel_id = ? AND destination = ? AND kind = 'reached' AND status = 'pending' AND attempts = 0"
-                );
-                $this->conn->bind($cancel, 'siii', [
-                    'conversion ' . $oldConvId . ' already announced this outcome here; a correction is recorded instead',
-                    $newConvId,
-                    $pixelId,
-                    $destination,
-                ]);
-                $this->conn->executeUpdate($cancel);
+                $this->cancelUnsentReached($newConvId, $pixelId, $destination,
+                    'conversion ' . $oldConvId . ' already announced this outcome here; a correction is recorded instead');
             }
             $this->amend(
                 $userId,
@@ -275,14 +275,14 @@ final class NotificationOutbox implements OutcomeNotificationSink
     private function openRetractions(int $convId): array
     {
         $stmt = $this->conn->prepareWrite(
-            "SELECT pixel_id, destination, kind, status FROM 202_notification_pending
+            "SELECT notification_id, pixel_id, destination, kind, status FROM 202_notification_pending
              WHERE conv_id = ? AND kind IN ('retraction', 'correction') ORDER BY notification_id FOR UPDATE"
         );
         $this->conn->bind($stmt, 'i', [$convId]);
         $open = [];
         foreach ($this->conn->fetchAll($stmt) as $row) {
             $key = (int) $row['pixel_id'] . ':' . (int) $row['destination'];
-            if ((string) $row['kind'] === self::KIND_RETRACTION && (string) $row['status'] !== 'cancelled') {
+            if ((string) $row['kind'] === self::KIND_RETRACTION && self::statusOf($row) !== NotificationStatus::Cancelled) {
                 $open[$key] = true;
             } else {
                 unset($open[$key]);
@@ -303,7 +303,10 @@ final class NotificationOutbox implements OutcomeNotificationSink
      * - delivered (sent, failed, or pending after an attempt — any of which
      *   may have landed): a retrying one is stopped, since a later success
      *   would zero what the correction restores, and a `correction` with
-     *   previous value 0 is recorded under the correction-URL rule;
+     *   previous value 0 is recorded under the correction-URL rule. A
+     *   retrying one may be in flight now, with a worker waiting for the
+     *   answer: its correction is not due until that send has ended
+     *   (sendEndsBy()), so it cannot land first;
      * - no open retraction, and its `reached` cancelled unsent with no
      *   correction beside it (the retirement stopped it before it went out,
      *   and no earlier row announced the outcome there): queued again;
@@ -312,7 +315,7 @@ final class NotificationOutbox implements OutcomeNotificationSink
     public function onRevived(int $userId, int $convId): void
     {
         $stmt = $this->conn->prepareWrite(
-            'SELECT notification_id, pixel_id, destination, kind, status, attempts FROM 202_notification_pending
+            'SELECT notification_id, pixel_id, destination, kind, status, attempts, next_attempt_at FROM 202_notification_pending
              WHERE conv_id = ? ORDER BY notification_id FOR UPDATE'
         );
         $this->conn->bind($stmt, 'i', [$convId]);
@@ -336,30 +339,38 @@ final class NotificationOutbox implements OutcomeNotificationSink
         $now = $this->now();
         foreach ($at as $d) {
             $retraction = $d['retraction'];
-            if ($retraction !== null && (string) $retraction['status'] !== 'cancelled') {
-                $status = (string) $retraction['status'];
+            $status = $retraction !== null ? self::statusOf($retraction) : null;
+            if ($retraction !== null && $status !== NotificationStatus::Cancelled) {
+                $id = (int) $retraction['notification_id'];
                 $attempts = (int) $retraction['attempts'];
-                if ($status === 'suppressed' || ($status === 'pending' && $attempts === 0)) {
-                    $this->setStatus((int) $retraction['notification_id'], 'cancelled',
+                if ($status === NotificationStatus::Suppressed || ($status === NotificationStatus::Pending && $attempts === 0)) {
+                    $this->moveLocked($id, $status, $attempts, NotificationStatus::Cancelled,
                         'the outcome was revived before this retraction went out; the network still holds its value');
                     continue;
                 }
-                if ($status === 'pending') {
-                    $this->setStatus((int) $retraction['notification_id'], 'cancelled',
+                $due = $now;
+                if ($status === NotificationStatus::Pending) {
+                    $this->moveLocked($id, $status, $attempts, NotificationStatus::Cancelled,
                         'the outcome was revived while this retraction was retrying; a correction follows');
+                    $due = max($now, self::sendEndsBy((int) $retraction['next_attempt_at'], $attempts));
                 }
                 $this->amend($userId, $convId, $d['pixel'], $d['destination'], self::KIND_CORRECTION, $convId, '0',
-                    'conversion ' . $convId . ' was revived after its retraction was delivered', $now);
+                    'conversion ' . $convId . ' was revived after its retraction was delivered', $now, $due);
                 continue;
             }
             $reached = $d['reached'];
             if ($reached !== null && !$d['corrected'] && $retraction === null
-                && (string) $reached['status'] === 'cancelled' && (int) $reached['attempts'] === 0) {
+                && self::statusOf($reached) === NotificationStatus::Cancelled && (int) $reached['attempts'] === 0) {
                 $restore = $this->conn->prepareWrite(
-                    "UPDATE 202_notification_pending SET status = 'pending', next_attempt_at = ?, last_error = NULL
-                     WHERE notification_id = ? AND status = 'cancelled' AND attempts = 0"
+                    'UPDATE 202_notification_pending SET status = ?, next_attempt_at = ?, last_error = NULL
+                     WHERE notification_id = ? AND status = ? AND attempts = 0'
                 );
-                $this->conn->bind($restore, 'ii', [$now, (int) $reached['notification_id']]);
+                $this->conn->bind($restore, 'siis', [
+                    NotificationStatus::Cancelled->moveTo(NotificationStatus::Pending)->value,
+                    $now,
+                    (int) $reached['notification_id'],
+                    NotificationStatus::Cancelled->value,
+                ]);
                 if ($this->conn->executeUpdate($restore) !== 1) {
                     throw new \RuntimeException('notification ' . (int) $reached['notification_id'] . ' of revived conversion ' . $convId . ' could not be queued again');
                 }
@@ -393,7 +404,7 @@ final class NotificationOutbox implements OutcomeNotificationSink
             return false;
         }
         $stmt = $this->conn->prepareWrite(
-            'SELECT conv_id, pixel_id, destination, kind, status, attempts FROM 202_notification_pending
+            'SELECT notification_id, conv_id, pixel_id, destination, kind, status, attempts FROM 202_notification_pending
              WHERE conv_id IN (' . implode(',', array_fill(0, count($priorConvIds), '?')) . ') ORDER BY notification_id'
         );
         $this->conn->bind($stmt, str_repeat('i', count($priorConvIds)), $priorConvIds);
@@ -401,8 +412,7 @@ final class NotificationOutbox implements OutcomeNotificationSink
         $announced = [];
         foreach ($this->conn->fetchAll($stmt) as $row) {
             $kind = (string) $row['kind'];
-            $status = (string) $row['status'];
-            $delivered = $status === 'sent' || $status === 'failed' || (int) $row['attempts'] > 0;
+            $delivered = self::statusOf($row)?->mayHaveGoneOut((int) $row['attempts']) ?? (int) $row['attempts'] > 0;
             if ($kind === self::KIND_REACHED && !$delivered) {
                 continue;
             }
@@ -431,12 +441,7 @@ final class NotificationOutbox implements OutcomeNotificationSink
             if ((int) ($this->conn->fetchOne($has)['n'] ?? 0) > 0) {
                 continue;
             }
-            $cancel = $this->conn->prepareWrite(
-                "UPDATE 202_notification_pending SET status = 'cancelled', last_error = ?
-                 WHERE conv_id = ? AND pixel_id = ? AND destination = ? AND kind = 'reached' AND status = 'pending' AND attempts = 0"
-            );
-            $this->conn->bind($cancel, 'siii', [$note, $newConvId, $d['pixel'], $d['destination']]);
-            $this->conn->executeUpdate($cancel);
+            $this->cancelUnsentReached($newConvId, $d['pixel'], $d['destination'], $note);
             // A retraction-only history (its reached cancelled, a correction
             // suppressed) still names the row the network heard of.
             [$lastConv, $retracted] = $d['last'] ?? [$priorConvIds[0], false];
@@ -468,10 +473,10 @@ final class NotificationOutbox implements OutcomeNotificationSink
         $select = static fn (string $parts): string => 'SELECT n.notification_id, n.pixel_id, n.url, n.attempts, n.kind, ' . $parts
             . " FROM 202_notification_pending AS n
                 LEFT JOIN 202_conversion_logs AS cl ON cl.conv_id = n.conv_id AND cl.user_id = n.user_id
-                WHERE n.status = 'pending' AND n.next_attempt_at <= ?";
+                WHERE n.status = ? AND n.next_attempt_at <= ?";
         $sql = '';
-        $types = 'i';
-        $binds = [$now];
+        $types = 'si';
+        $binds = [NotificationStatus::Pending->value, $now];
         if ($convIds !== null) {
             if ($convIds === []) {
                 return ['sent' => 0, 'failed' => 0, 'retrying' => 0, 'withheld' => 0];
@@ -515,23 +520,20 @@ final class NotificationOutbox implements OutcomeNotificationSink
                 $id = (int) $row['notification_id'];
                 $consent = AdPlatformConsent::fromParts($row);
                 if ((string) $row['kind'] !== self::KIND_RETRACTION && !$consent->allows()) {
-                    $hold = $this->conn->prepareWrite(
-                        "UPDATE 202_notification_pending SET status = 'withheld', last_error = ?
-                         WHERE notification_id = ? AND status = 'pending' AND attempts = ?"
-                    );
-                    $this->conn->bind($hold, 'sii', [mb_strimwidth((string) $consent->reason(), 0, 255, '…', 'UTF-8'), $id, (int) $row['attempts']]);
-                    if ($this->conn->executeUpdate($hold) === 1) {
+                    if ($this->move($id, NotificationStatus::Pending, (int) $row['attempts'], NotificationStatus::Withheld, (string) $consent->reason())) {
                         $out['withheld']++;
                     }
                     continue;
                 }
                 $attempts = (int) $row['attempts'] + 1;
                 // Claim: only the worker that moves the attempt count sends.
+                // Stamped with the time of the claim, not of the run's
+                // start: sendEndsBy() reads when this send began from it.
                 $claim = $this->conn->prepareWrite(
-                    "UPDATE 202_notification_pending SET attempts = ?, next_attempt_at = ?
-                     WHERE notification_id = ? AND status = 'pending' AND attempts = ?"
+                    'UPDATE 202_notification_pending SET attempts = ?, next_attempt_at = ?
+                     WHERE notification_id = ? AND status = ? AND attempts = ?'
                 );
-                $this->conn->bind($claim, 'iiii', [$attempts, $now + self::backoff($attempts), $id, $attempts - 1]);
+                $this->conn->bind($claim, 'iiisi', [$attempts, $this->now() + self::backoff($attempts), $id, NotificationStatus::Pending->value, $attempts - 1]);
                 if ($this->conn->executeUpdate($claim) !== 1) {
                     continue;
                 }
@@ -542,11 +544,16 @@ final class NotificationOutbox implements OutcomeNotificationSink
                 $url = (string) $row['url'];
                 $result = PostbackResult::of(($this->fetch)($url));
                 if ($result->isDelivered()) {
+                    // Whatever attempt it now counts, and cancelled meanwhile
+                    // or not: the network has it (CLAUDE.md #13).
+                    $from = NotificationStatus::whereMayMoveTo(NotificationStatus::Sent, 'status');
                     $done = $this->conn->prepareWrite(
-                        "UPDATE 202_notification_pending SET status = 'sent', sent_at = ?, last_error = NULL WHERE notification_id = ?"
+                        'UPDATE 202_notification_pending SET status = ?, sent_at = ?, last_error = NULL WHERE notification_id = ? AND ' . $from['sql']
                     );
-                    $this->conn->bind($done, 'ii', [$now, $id]);
-                    $this->conn->executeUpdate($done);
+                    $this->conn->bind($done, 'sii' . $from['types'], [NotificationStatus::Sent->value, $now, $id, ...$from['binds']]);
+                    if ($this->conn->executeUpdate($done) !== 1) {
+                        error_log('traffic source postback delivered (notification ' . $id . '), but its row was no longer one that can be marked sent');
+                    }
                     $out['sent']++;
                     continue;
                 }
@@ -561,15 +568,34 @@ final class NotificationOutbox implements OutcomeNotificationSink
                     error_log('traffic source postback refused for pixel ' . (int) $row['pixel_id']
                         . ' (notification ' . $id . ', ' . PostbackSender::origin($url) . '): ' . $result->reason);
                 }
-                $status = $result->isRefused() || $attempts >= self::MAX_ATTEMPTS ? 'failed' : 'pending';
-                $mark = $this->conn->prepareWrite('UPDATE 202_notification_pending SET status = ?, last_error = ? WHERE notification_id = ?');
-                $this->conn->bind($mark, 'ssi', [$status, $error, $id]);
+                // Only the row this worker claimed, as it claimed it: one
+                // cancelled or claimed again since is left as it stands.
+                if ($result->isRefused() || $attempts >= self::MAX_ATTEMPTS) {
+                    if ($this->move($id, NotificationStatus::Pending, $attempts, NotificationStatus::Failed, $error)) {
+                        $out['failed']++;
+                    }
+                    continue;
+                }
+                $mark = $this->conn->prepareWrite('UPDATE 202_notification_pending SET last_error = ? WHERE notification_id = ? AND status = ? AND attempts = ?');
+                $this->conn->bind($mark, 'sisi', [$error, $id, NotificationStatus::Pending->value, $attempts]);
+                // The count is not read: it is 0 too when the error is the one already kept.
                 $this->conn->executeUpdate($mark);
-                $out[$status === 'failed' ? 'failed' : 'retrying']++;
+                $out['retrying']++;
             }
         }
 
         return $out;
+    }
+
+    /**
+     * When the send a row's latest claim began has ended, from what the
+     * claim wrote: it began at next_attempt_at - backoff(attempts), and a
+     * send is over well inside backoff(1) (PostbackSender::TIMEOUT bounds
+     * the whole chain), the soonest the row can be claimed again.
+     */
+    private static function sendEndsBy(int $nextAttemptAt, int $attempts): int
+    {
+        return $nextAttemptAt - self::backoff($attempts) + self::backoff(1);
     }
 
     /** Seconds to wait after attempt $n fails: 1 min doubling, at most 6 h. */
@@ -616,11 +642,14 @@ final class NotificationOutbox implements OutcomeNotificationSink
     public function reachedState(int $convId): array
     {
         $stmt = $this->conn->prepareWrite(
-            "SELECT COUNT(*) AS total, COALESCE(SUM(status NOT IN ('cancelled', 'withheld')), 0) AS live,
-                    COALESCE(SUM(status = 'pending'), 0) AS pending, COALESCE(SUM(status = 'withheld'), 0) AS withheld
+            "SELECT COUNT(*) AS total, COALESCE(SUM(status NOT IN (?, ?)), 0) AS live,
+                    COALESCE(SUM(status = ?), 0) AS pending, COALESCE(SUM(status = ?), 0) AS withheld
              FROM 202_notification_pending WHERE conv_id = ? AND kind = 'reached'"
         );
-        $this->conn->bind($stmt, 'i', [$convId]);
+        $this->conn->bind($stmt, 'ssssi', [
+            NotificationStatus::Cancelled->value, NotificationStatus::Withheld->value,
+            NotificationStatus::Pending->value, NotificationStatus::Withheld->value, $convId,
+        ]);
         $row = $this->conn->fetchOne($stmt) ?? [];
 
         return [
@@ -648,8 +677,11 @@ final class NotificationOutbox implements OutcomeNotificationSink
         return $urls;
     }
 
-    private function insert(int $userId, int $convId, int $pixelId, int $destination, string $kind, int $generation, string $status, string $url, ?string $note, int $now): int
+    private function insert(int $userId, int $convId, int $pixelId, int $destination, string $kind, int $generation, NotificationStatus $status, string $url, ?string $note, int $now, ?int $due = null): int
     {
+        if (!in_array($status, NotificationStatus::initial(), true)) {
+            throw new \LogicException('a notification is not created ' . $status->value);
+        }
         $stmt = $this->conn->prepareWrite(
             // ON DUPLICATE KEY, not IGNORE: IGNORE would also turn a value
             // the column refuses into a silently truncated row.
@@ -658,7 +690,7 @@ final class NotificationOutbox implements OutcomeNotificationSink
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL)
              ON DUPLICATE KEY UPDATE notification_id = notification_id'
         );
-        $this->conn->bind($stmt, 'iiiisissisi', [$userId, $convId, $pixelId, $destination, $kind, $generation, $status, $url, $now, $note, $now]);
+        $this->conn->bind($stmt, 'iiiisissisi', [$userId, $convId, $pixelId, $destination, $kind, $generation, $status->value, $url, $due ?? $now, $note, $now]);
 
         return $this->conn->executeUpdate($stmt);
     }
@@ -673,8 +705,9 @@ final class NotificationOutbox implements OutcomeNotificationSink
      * [[timestamp]], [[random]] — and stored `suppressed`, with why,
      * otherwise. $previousValue null means $originalConvId's value; the
      * ledger is read only for a URL, so a suppressed amendment needs no row.
+     * $due, when it is not now, is the first moment it may be sent.
      */
-    private function amend(int $userId, int $convId, int $pixelId, int $destination, string $kind, int $originalConvId, ?string $previousValue, string $why, int $now): void
+    private function amend(int $userId, int $convId, int $pixelId, int $destination, string $kind, int $originalConvId, ?string $previousValue, string $why, int $now, ?int $due = null): void
     {
         $gen = $this->conn->prepareWrite(
             'SELECT COALESCE(MAX(generation) + 1, 0) AS g FROM 202_notification_pending
@@ -685,13 +718,13 @@ final class NotificationOutbox implements OutcomeNotificationSink
 
         $template = ($this->correctionUrl)($pixelId, $destination);
         if ($template === null || trim($template) === '') {
-            $status = 'suppressed';
+            $status = NotificationStatus::Suppressed;
             $url = '';
             $note = mb_strimwidth(self::NO_CORRECTION_URL . ' (' . $why . ')', 0, 255, '…', 'UTF-8');
         } else {
             $row = $this->conversion($convId);
             $holds = $kind === self::KIND_RETRACTION ? '0.00' : self::money($row['value']);
-            $status = 'pending';
+            $status = NotificationStatus::Pending;
             $note = null;
             // The amendment's own tokens exist only on a correction URL, so
             // they are filled here rather than added to the tracker's list,
@@ -716,7 +749,7 @@ final class NotificationOutbox implements OutcomeNotificationSink
                 'random' => (string) random_int(1000000, 9999999),
             ]);
         }
-        if ($this->insert($userId, $convId, $pixelId, $destination, $kind, $generation, $status, $url, $note, $now) !== 1) {
+        if ($this->insert($userId, $convId, $pixelId, $destination, $kind, $generation, $status, $url, $note, $now, $due) !== 1) {
             // Only a concurrent writer at the same generation lands here, and
             // the engine's subject lock rules that out: refused, not lost.
             throw new \RuntimeException('the ' . $kind . ' of conversion ' . $convId . ' at pixel ' . $pixelId . ' destination ' . $destination
@@ -750,11 +783,64 @@ final class NotificationOutbox implements OutcomeNotificationSink
         ];
     }
 
-    private function setStatus(int $id, string $status, string $note): void
+    /**
+     * Move one row out of the state and attempt count it was read in. False
+     * when it is no longer there: someone else moved it first, which stands.
+     *
+     * @throws \Prosper202\Lifecycle\IllegalTransition
+     */
+    private function move(int $id, NotificationStatus $from, int $attempts, NotificationStatus $to, string $note): bool
     {
-        $stmt = $this->conn->prepareWrite('UPDATE 202_notification_pending SET status = ?, last_error = ? WHERE notification_id = ?');
-        $this->conn->bind($stmt, 'ssi', [$status, mb_strimwidth($note, 0, 255, '…', 'UTF-8'), $id]);
+        $from->moveTo($to);
+        $stmt = $this->conn->prepareWrite('UPDATE 202_notification_pending SET status = ?, last_error = ? WHERE notification_id = ? AND status = ? AND attempts = ?');
+        $this->conn->bind($stmt, 'ssisi', [$to->value, mb_strimwidth($note, 0, 255, '…', 'UTF-8'), $id, $from->value, $attempts]);
+
+        return $this->conn->executeUpdate($stmt) === 1;
+    }
+
+    /** move() for a row read FOR UPDATE in this transaction, which nothing else can have moved. */
+    private function moveLocked(int $id, NotificationStatus $from, int $attempts, NotificationStatus $to, string $note): void
+    {
+        if (!$this->move($id, $from, $attempts, $to, $note)) {
+            throw new \RuntimeException('notification ' . $id . ' was read ' . $from->value . ' under its lock and could not be made ' . $to->value);
+        }
+    }
+
+    /** Stop a conversion's `reached` at one destination while it waits unattempted; one that is not is left. */
+    private function cancelUnsentReached(int $convId, int $pixelId, int $destination, string $note): void
+    {
+        $stmt = $this->conn->prepareWrite(
+            'UPDATE 202_notification_pending SET status = ?, last_error = ?
+             WHERE conv_id = ? AND pixel_id = ? AND destination = ? AND kind = ? AND status = ? AND attempts = 0'
+        );
+        $this->conn->bind($stmt, 'ssiiiss', [
+            NotificationStatus::Pending->moveTo(NotificationStatus::Cancelled)->value,
+            mb_strimwidth($note, 0, 255, '…', 'UTF-8'),
+            $convId,
+            $pixelId,
+            $destination,
+            self::KIND_REACHED,
+            NotificationStatus::Pending->value,
+        ]);
         $this->conn->executeUpdate($stmt);
     }
 
+    /**
+     * A row's state. A stored value no case names is logged and answered
+     * null, which no reader here takes for one of the states that stop a
+     * postback: these reads run inside a conversion's write, and one bad
+     * row must not refuse the conversion (CLAUDE.md #24).
+     *
+     * @param array<string, mixed> $row
+     */
+    private static function statusOf(array $row): ?NotificationStatus
+    {
+        $status = is_string($row['status'] ?? null) ? NotificationStatus::tryFrom($row['status']) : null;
+        if ($status === null) {
+            error_log('notification ' . (int) ($row['notification_id'] ?? 0) . ' holds a status that is not a state ('
+                . mb_substr((string) ($row['status'] ?? ''), 0, 16) . ')');
+        }
+
+        return $status;
+    }
 }
