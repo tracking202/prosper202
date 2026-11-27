@@ -8,6 +8,7 @@ use PHPUnit\Framework\TestCase;
 use Prosper202\Lifecycle\State;
 use Tests\Lifecycle\Fixtures\ParcelState;
 use Tests\Support\LifecycleContract;
+use Tests\Support\SourceScan;
 
 /**
  * Every enum that declares itself a lifecycle (implements
@@ -79,10 +80,10 @@ final class EveryLifecycleHoldsItsContractTest extends TestCase
     /** @return array<string, string> path => source of every PHP file that names an enum */
     private static function files(): array
     {
-        $root = dirname(__DIR__, 2);
+        $root = SourceScan::repoRoot();
         $files = [];
         foreach (self::SCANNED as $dir) {
-            $walk = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root . '/' . $dir, \FilesystemIterator::SKIP_DOTS));
+            $walk = new \RecursiveIteratorIterator(SourceScan::tree($root . '/' . $dir));
             foreach ($walk as $file) {
                 if (!$file instanceof \SplFileInfo || $file->getExtension() !== 'php') {
                     continue;
