@@ -110,9 +110,8 @@ final class OneAnalyticsDeliveryAtATimeIntegrationTest extends TestCase
         self::emptyMessaging();
         self::q('DELETE FROM 202_users WHERE user_id = ' . self::USER);
         self::q('DELETE FROM 202_users_pref WHERE user_id = ' . self::USER);
-        // Signed in from outside the EU/UK: analytics is on by default (an
-        // unknown location holds it).
-        self::row('202_users_pref', ['user_id' => self::USER, 'analytics_geo_is_eu' => 0]);
+        // Opted in: analytics is delivered.
+        self::row('202_users_pref', ['user_id' => self::USER, 'analytics_consent' => 'granted']);
         self::row('202_users', [
             'user_id' => self::USER, 'user_name' => 'bt5z', 'user_pass' => 'x', 'user_email' => 'bt5z@example.com',
             'user_dash_email' => '', 'user_time_register' => 1700000000, 'install_hash' => 'ih_bt5z',

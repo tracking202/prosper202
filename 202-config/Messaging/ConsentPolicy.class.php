@@ -1,38 +1,44 @@
 <?php
 // 202-config/Messaging/ConsentPolicy.class.php
 // The single source of truth for whether analytics/marketing may proceed.
-// Nothing else reads the raw consent columns or EU status.
+// Nothing else reads the raw consent columns.
 //
-// Every consent change (and a sign-in that first places the account in the
-// EU/UK) moves 202_users_pref.consent_version up in the same statement, to
-// at least the current Unix time, so a database restored from a backup never
-// reuses a version the receiver already holds:
+// Usage data is opt-in: nothing is recorded or sent for a user until they
+// grant analytics themselves, wherever they are. An unset choice is off.
+//
+// Every consent change moves 202_users_pref.consent_version up in the same
+// statement, to at least the current Unix time, so a database restored from a
+// backup never reuses a version the receiver already holds:
 //  - the change is undelivered while consent_version > consent_acked_version,
 //    and only the receiver's acknowledgement of a version moves the latter;
 //  - analytics_revoked_version is the version at which analytics last
-//    stopped, and analytics data captured under an older version is never
-//    delivered, whether or not the purge that followed the stop succeeded.
+//    stopped or started, and data captured under an older version is never
+//    delivered, whether or not the purge that followed a stop succeeded.
 
 final class ConsentPolicy
 {
     /** The next consent version: above the stored one, and at least the current Unix time. */
     private const NEXT_VERSION = 'GREATEST(`consent_version` + 1, UNIX_TIMESTAMP())';
 
-    /** Set at sign-in when the EU/UK location could not be stored. */
-    public const SESSION_GEO_HELD = 'analytics_geo_held';
+    /** SQL true when a user's usage data may leave: they said yes. Over `202_users_pref` as `p`; no row is false. */
+    public const ANALYTICS_ON_SQL = "p.`analytics_consent` = 'granted'";
 
-    /** Pure decision. No I/O. */
-    public static function decide(string $stored, ?bool $isEu, string $tier): bool
+    /**
+     * SQL true when a user's consent block may go to the portal: something is
+     * granted, or the portal may already hold something of theirs (so a later
+     * "no" reaches it): it acknowledged a block, or a call was made for them
+     * (202_messaging_sync is written before each one, so a yes whose
+     * acknowledgement was lost still counts). Over `202_users_pref` as `p`; a
+     * missing row is NULL, which is false.
+     */
+    public const BLOCK_SHAREABLE_SQL = "(p.`analytics_consent` = 'granted' OR p.`email_marketing_consent` = 'granted'"
+        . ' OR p.`consent_acked_version` > 0'
+        . ' OR EXISTS (SELECT 1 FROM `202_messaging_sync` s WHERE s.`user_id` = p.`user_id` AND s.`last_sync` IS NOT NULL))';
+
+    /** Pure decision. No I/O. Only an explicit grant allows, whatever the tier. */
+    public static function decide(string $stored): bool
     {
-        if ($tier === 'essential') {
-            return true;
-        }
-        // analytics tier
-        if ($stored === 'granted') { return true; }
-        if ($stored !== 'unset')   { return false; } // denied, or a value that is neither
-        // unset: on by default only where the account is known to be outside
-        // the EU/UK; held for the EU/UK and while the location is unknown.
-        return $isEu === false;
+        return $stored === 'granted';
     }
 
     public static function analyticsAllowed(mysqli $db, int $userId): bool
@@ -49,15 +55,12 @@ final class ConsentPolicy
      */
     public static function captureFence(mysqli $db, int $userId): ?array
     {
-        if (self::sessionHoldsAnalytics($userId)) {
-            return ['allowed' => false, 'version' => 0];
-        }
         $row = self::loadPref($db, $userId);
         if ($row === null) {
             return null;
         }
         return [
-            'allowed' => self::decide($row['analytics_consent'], $row['is_eu'], 'analytics'),
+            'allowed' => self::decide($row['analytics_consent']),
             'version' => $row['version'],
         ];
     }
@@ -73,8 +76,10 @@ final class ConsentPolicy
     /**
      * What a delivery sends and checks, from one read: the consent block
      * (receiver spec §6), its version, whether that version is still
-     * unacknowledged, the version analytics last stopped at, and whether
-     * analytics may leave now. A missing row is the all-unset block at
+     * unacknowledged and may be shared (BLOCK_SHAREABLE_SQL: a user who never
+     * opted in to anything, and for whom no call was ever made, is not
+     * announced), the version analytics last stopped or started at, and
+     * whether analytics may leave now. A missing row is the all-unset block at
      * version 0; a failed read throws, so a delivery never sends (or
      * acknowledges) a stand-in for a choice it could not read.
      *
@@ -85,10 +90,11 @@ final class ConsentPolicy
     {
         $conn = new \Prosper202\Database\Connection($db);
         $stmt = $conn->prepareRead(
-            "SELECT `analytics_consent`, `analytics_consent_source`, `analytics_consent_at`,
-                    `email_marketing_consent`, `email_marketing_consent_at`, `analytics_geo_is_eu`,
-                    `consent_version`, `consent_acked_version`, `analytics_revoked_version`
-               FROM `202_users_pref` WHERE `user_id` = ? LIMIT 1"
+            "SELECT p.`analytics_consent`, p.`analytics_consent_source`, p.`analytics_consent_at`,
+                    p.`email_marketing_consent`, p.`email_marketing_consent_at`,
+                    p.`consent_version`, p.`consent_acked_version`, p.`analytics_revoked_version`,
+                    " . self::BLOCK_SHAREABLE_SQL . " AS `shareable`
+               FROM `202_users_pref` p WHERE p.`user_id` = ? LIMIT 1"
         );
         $conn->bind($stmt, 'i', [$userId]);
         $row = $conn->fetchOne($stmt) ?? [];
@@ -98,8 +104,8 @@ final class ConsentPolicy
         // blanked) holds analytics, as decide() does; the block says unset.
         $stored = $row === [] ? 'unset' : (string) ($row['analytics_consent'] ?? 'unset');
         $analytics = in_array($stored, $states, true) ? $stored : 'unset';
-        $isEu = !isset($row['analytics_geo_is_eu']) ? null : ((int) $row['analytics_geo_is_eu']) === 1;
         $version = (int) ($row['consent_version'] ?? 0);
+        $shareable = ((int) ($row['shareable'] ?? 0)) === 1;
 
         return [
             'consent' => [
@@ -111,9 +117,9 @@ final class ConsentPolicy
                 'email_marketing_at' => isset($row['email_marketing_consent_at']) ? (string) $row['email_marketing_consent_at'] : null,
             ],
             'version' => $version,
-            'dirty' => $version > (int) ($row['consent_acked_version'] ?? 0),
+            'dirty' => $shareable && $version > (int) ($row['consent_acked_version'] ?? 0),
             'revoked' => (int) ($row['analytics_revoked_version'] ?? 0),
-            'analytics_allowed' => !self::sessionHoldsAnalytics($userId) && self::decide($stored, $isEu, 'analytics'),
+            'analytics_allowed' => self::decide($stored),
         ];
     }
 
@@ -133,14 +139,44 @@ final class ConsentPolicy
         $conn->executeUpdate($stmt);
     }
 
-    public static function needsEuPrompt(mysqli $db, int $userId): bool
+    /**
+     * Whether to show this user the one-time usage-data question now: they
+     * have made no analytics choice and have not been asked before. True at
+     * most once per user: the question is marked asked in the same statement
+     * that finds it unasked, so it never comes back, answered or not (the
+     * choice stays in Account Settings). Any failure is false, no question.
+     * (`eu_consent_prompt_seen` is named for when only EU/UK accounts were asked.)
+     */
+    public static function takePrompt(mysqli $db, int $userId): bool
     {
-        $row = self::loadPref($db, $userId);
-        // Lookup failure → no prompt (fail closed; analytics is held anyway).
-        return $row !== null
-            && $row['is_eu'] === true
-            && $row['analytics_consent'] === 'unset'
-            && $row['prompt_seen'] === false;
+        try {
+            $conn = new \Prosper202\Database\Connection($db);
+            // Read first, so the pages of a user already asked write nothing.
+            $read = $conn->prepareRead(
+                'SELECT `analytics_consent`, `eu_consent_prompt_seen` FROM `202_users_pref` WHERE `user_id` = ? LIMIT 1'
+            );
+            $conn->bind($read, 'i', [$userId]);
+            $row = $conn->fetchOne($read);
+            if ($row !== null
+                && ((int) $row['eu_consent_prompt_seen'] === 1 || $row['analytics_consent'] !== 'unset')) {
+                return false;
+            }
+            if ($row === null) {
+                $ensure = $conn->prepareWrite('INSERT IGNORE INTO `202_users_pref` (`user_id`) VALUES (?)');
+                $conn->bind($ensure, 'i', [$userId]);
+                $conn->executeUpdate($ensure);
+            }
+            $stmt = $conn->prepareWrite(
+                "UPDATE `202_users_pref` SET `eu_consent_prompt_seen` = 1
+                  WHERE `user_id` = ? AND `eu_consent_prompt_seen` = 0 AND `analytics_consent` = 'unset'"
+            );
+            $conn->bind($stmt, 'i', [$userId]);
+
+            return $conn->executeUpdate($stmt) === 1;
+        } catch (\Throwable $e) {
+            error_log('[ConsentPolicy] takePrompt failed: ' . $e->getMessage());
+            return false;
+        }
     }
 
     public static function record(mysqli $db, int $userId, string $flag, string $state, string $source): bool
@@ -154,13 +190,15 @@ final class ConsentPolicy
             $ensure = $conn->prepareWrite('INSERT IGNORE INTO `202_users_pref` (`user_id`) VALUES (?)');
             $conn->bind($ensure, 'i', [$userId]);
             $conn->executeUpdate($ensure);
-            // The choice, its version and (on a denial) the revocation mark land
-            // in one statement. The revocation is assigned before the version
-            // so it reads the old one under either assignment order.
+            // The choice, its version and the fence land in one statement. A
+            // denial, and a grant that turns analytics on, move the fence to
+            // the new version: nothing captured before the choice is ever
+            // delivered. The fence is assigned before the version and the
+            // choice, so it reads the old ones under either assignment order.
             if ($flag === 'analytics') {
                 $stmt = $conn->prepareWrite(
                     "UPDATE `202_users_pref`
-                        SET `analytics_revoked_version` = IF(? = 'denied', " . self::NEXT_VERSION . ", `analytics_revoked_version`),
+                        SET `analytics_revoked_version` = IF(? = 'denied' OR `analytics_consent` <> 'granted', " . self::NEXT_VERSION . ", `analytics_revoked_version`),
                             `consent_version` = " . self::NEXT_VERSION . ",
                             `analytics_consent` = ?, `analytics_consent_at` = ?,
                             `analytics_consent_source` = ?, `eu_consent_prompt_seen` = 1
@@ -204,67 +242,24 @@ final class ConsentPolicy
         return true;
     }
 
-    public static function rememberGeo(mysqli $db, int $userId, bool $isEu): bool
-    {
-        try {
-            $conn = new \Prosper202\Database\Connection($db);
-            // Without a row the location would be dropped, and the account held
-            // as unknown at every sign-in.
-            $ensure = $conn->prepareWrite('INSERT IGNORE INTO `202_users_pref` (`user_id`) VALUES (?)');
-            $conn->bind($ensure, 'i', [$userId]);
-            $conn->executeUpdate($ensure);
-            // Once seen in the EU/UK an account stays so: one sign-in from
-            // elsewhere (travel, a VPN) must not turn its held analytics on.
-            // First seen there, what was captured under the non-EU default is
-            // revoked unless analytics was granted outright.
-            $stmt = $conn->prepareWrite(
-                "UPDATE `202_users_pref`
-                    SET `analytics_revoked_version` = IF(? = 1 AND NOT (`analytics_geo_is_eu` <=> 1) AND `analytics_consent` <> 'granted',
-                                                         " . self::NEXT_VERSION . ", `analytics_revoked_version`),
-                        `consent_version` = IF(? = 1 AND NOT (`analytics_geo_is_eu` <=> 1), " . self::NEXT_VERSION . ", `consent_version`),
-                        `analytics_geo_is_eu` = IF(`analytics_geo_is_eu` = 1, 1, ?)
-                  WHERE `user_id` = ?"
-            );
-            $eu = $isEu ? 1 : 0;
-            $conn->bind($stmt, 'iiii', [$eu, $eu, $eu, $userId]);
-            $conn->executeUpdate($stmt);
-            return true;
-        } catch (\Throwable $e) {
-            error_log('[ConsentPolicy] rememberGeo failed: ' . $e->getMessage());
-            return false;
-        }
-    }
-
-    /** True when this session's sign-in placed the account in the EU/UK but could not store it. */
-    private static function sessionHoldsAnalytics(int $userId): bool
-    {
-        return isset($_SESSION)
-            && ($_SESSION[self::SESSION_GEO_HELD] ?? false) === true
-            && (int) ($_SESSION['user_id'] ?? 0) === $userId;
-    }
-
     /**
      * Load the stored consent state. Returns NULL on any lookup failure so
      * callers fail CLOSED (spec §6: failure is never an accidental "granted").
-     * A genuine missing row is not a failure: consent unset and the location
-     * unknown, which holds analytics like any account not yet placed.
+     * A genuine missing row is not a failure: every choice unset, which is off.
      *
-     * @return array{analytics_consent:string,email_marketing_consent:string,is_eu:?bool,prompt_seen:bool,version:int}|null
+     * @return array{analytics_consent:string,email_marketing_consent:string,version:int}|null
      */
     private static function loadPref(mysqli $db, int $userId): ?array
     {
         $default = [
             'analytics_consent' => 'unset',
             'email_marketing_consent' => 'unset',
-            'is_eu' => null,
-            'prompt_seen' => false,
             'version' => 0,
         ];
         try {
             $conn = new \Prosper202\Database\Connection($db);
             $stmt = $conn->prepareRead(
-                "SELECT `analytics_consent`, `email_marketing_consent`, `analytics_geo_is_eu`, `eu_consent_prompt_seen`,
-                        `consent_version`
+                "SELECT `analytics_consent`, `email_marketing_consent`, `consent_version`
                    FROM `202_users_pref` WHERE `user_id` = ? LIMIT 1"
             );
             $conn->bind($stmt, 'i', [$userId]);
@@ -277,8 +272,6 @@ final class ConsentPolicy
         return [
             'analytics_consent' => $row['analytics_consent'] ?? 'unset',
             'email_marketing_consent' => $row['email_marketing_consent'] ?? 'unset',
-            'is_eu' => $row['analytics_geo_is_eu'] === null ? null : ((int) $row['analytics_geo_is_eu']) === 1,
-            'prompt_seen' => ((int) ($row['eu_consent_prompt_seen'] ?? 0)) === 1,
             'version' => (int) ($row['consent_version'] ?? 0),
         ];
     }

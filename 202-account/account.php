@@ -1308,8 +1308,8 @@ echo p202_account_render_flashes($extraFlashes);
 
 						<?php
 						// Every user may change these, whatever their permissions.
-						// State comes from ConsentPolicy (the only consent reader), so
-						// 'unset' shows the effective default rather than the raw column.
+						// State comes from ConsentPolicy (the only consent reader): only
+						// an explicit yes shows ticked, so an unset choice shows off.
 						$analyticsChecked = ConsentPolicy::analyticsAllowed($db, (int) $_SESSION['user_id']) ? ' checked' : '';
 						$emailChecked = ConsentPolicy::emailMarketingAllowed($db, (int) $_SESSION['user_id']) ? ' checked' : '';
 						?>
@@ -1320,10 +1320,14 @@ echo p202_account_render_flashes($extraFlashes);
 							<input type="hidden" name="email_marketing_consent_shown" value="<?php echo $emailChecked !== '' ? '1' : '0'; ?>">
 							<div class="form-check">
 								<input class="form-check-input" type="checkbox" name="analytics_consent" id="analytics_consent" value="1"<?php echo $analyticsChecked; ?>>
-								<label class="form-check-label" for="analytics_consent"><strong>Product analytics &amp; personalized help</strong>: lets us surface workflow tips and match
-									you with specially-sourced, higher-paying offers relevant to what you promote. Your usage data,
-									including traffic stats, revenue numbers, and campaign names and destination links, is sent to
-									Prosper202. We never share it with third parties. <a href="<?php echo get_absolute_url(); ?>202-account/disclosure.php" target="_blank" rel="noopener">Learn more</a>.</label>
+								<label class="form-check-label" for="analytics_consent"><strong>Share how I use Prosper202</strong>: the tips, guides and announcements
+									Tracking202 sends you are picked for how you use Prosper202, instead of being the same for everyone.
+									Nothing is sent until you tick this.
+									<span class="d-block">Sent: your account email and sign-up date; 30-day totals of clicks, conversions,
+									revenue and cost; your network, traffic source and campaign names, payouts and the shape of their links;
+									Customer LTV account totals; and which pages and features you use. Never sent: your visitors' or your
+									customers' details. Tracking202 does not share it with third parties.
+									<a href="<?php echo get_absolute_url(); ?>202-account/disclosure.php" target="_blank" rel="noopener">Full details</a>.</span></label>
 							</div>
 							<div class="form-check">
 								<input class="form-check-input" type="checkbox" name="email_marketing_consent" id="email_marketing_consent" value="1"<?php echo $emailChecked; ?>>

@@ -112,7 +112,7 @@ final class ConsentSyncBlockTest extends TestCase
         $this->assertSame(self::ALL_UNSET, $state['consent']);
         $this->assertSame(0, $state['version']);
         $this->assertFalse($state['dirty'], 'nothing was ever chosen, so nothing waits for delivery');
-        $this->assertFalse($state['analytics_allowed'], 'no row: the location is unknown, so analytics is held');
+        $this->assertFalse($state['analytics_allowed'], 'no row: no choice was made, so analytics is off');
     }
 
     public function test_consent_policy_stays_the_only_reader_of_raw_consent_columns(): void

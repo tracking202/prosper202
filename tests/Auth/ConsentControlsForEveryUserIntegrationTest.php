@@ -77,8 +77,8 @@ final class ConsentControlsForEveryUserIntegrationTest extends TestCase
             . " user_email = 'consent-cm@example.com', user_dash_email = '', user_pass = 'x',"
             . " user_timezone = 'UTC', user_time_register = 0, install_hash = '', user_hash = '',"
             . " p202_customer_api_key = 'consent-controls-runner'");
-        // Signed in from outside the EU/UK: analytics is on by default.
-        self::row('202_users_pref', ['user_id' => self::USER, 'analytics_geo_is_eu' => 0]);
+        // Opted in, so the box is ticked and unticking it is a change.
+        self::row('202_users_pref', ['user_id' => self::USER, 'analytics_consent' => 'granted', 'eu_consent_prompt_seen' => 1]);
         self::row('202_user_role', ['user_id' => self::USER, 'role_id' => self::CAMPAIGN_MANAGER]);
         self::q("INSERT INTO 202_licence_answers (key_sha256, valid_yes, valid_at)"
             . " VALUES (SHA2('consent-controls-runner', 256), 1, UNIX_TIMESTAMP() - 3600)");
@@ -186,7 +186,7 @@ final class ConsentControlsForEveryUserIntegrationTest extends TestCase
         self::refuseConsentWrites();
         $post = self::revoke('consent-cm@example.com');
         self::assertNull($post['result']['uncaught'], $post['output']);
-        self::assertSame('unset', self::analytics(), 'nothing was recorded');
+        self::assertSame('granted', self::analytics(), 'nothing was recorded');
         $queued = self::queued($post);
         self::assertStringContainsString('Data & communication choice could not be', $queued, 'the next page says so');
         self::assertStringNotContainsString('Your settings are saved.', $queued);
@@ -198,7 +198,7 @@ final class ConsentControlsForEveryUserIntegrationTest extends TestCase
         self::role($role);
         self::refuseConsentWrites();
         $post = self::revoke('not an email');
-        self::assertSame('unset', self::analytics());
+        self::assertSame('granted', self::analytics());
         self::assertStringContainsString('Your Data &amp; communication choice could not be saved. Try again.', $post['output']);
     }
 
@@ -210,14 +210,14 @@ final class ConsentControlsForEveryUserIntegrationTest extends TestCase
             ['flag' => 'analytics', 'state' => 'denied', 'source' => $source, 'token' => 'SESSION'],
             JSON_THROW_ON_ERROR
         );
-        foreach (['', str_repeat('é', 40), 'settings ', 'api'] as $source) {
+        foreach (['', str_repeat('é', 40), 'settings ', 'api', 'eu_prompt'] as $source) {
             $refused = self::request(['P202_SU_POST' => $post($source), 'P202_SU_AJAX' => '1'], $endpoint);
             self::assertSame(400, $refused['result']['status'], var_export($source, true) . ': ' . $refused['output']);
-            self::assertSame('unset', self::analytics(), 'nothing recorded');
+            self::assertSame('granted', self::analytics(), 'nothing recorded');
         }
-        $saved = self::request(['P202_SU_POST' => $post('eu_prompt'), 'P202_SU_AJAX' => '1'], $endpoint);
+        $saved = self::request(['P202_SU_POST' => $post('prompt'), 'P202_SU_AJAX' => '1'], $endpoint);
         self::assertStringContainsString('{"ok":true}', $saved['output'], 'no status set: 200');
-        self::assertSame(['denied', 'eu_prompt'], self::$db->query(
+        self::assertSame(['denied', 'prompt'], self::$db->query(
             'SELECT analytics_consent, analytics_consent_source FROM 202_users_pref WHERE user_id = ' . self::USER
         )->fetch_row());
     }
@@ -227,7 +227,7 @@ final class ConsentControlsForEveryUserIntegrationTest extends TestCase
         $page = self::request();
         self::assertFalse($page['result']['denied'], $page['output']);
         self::assertStringNotContainsString('name="user_timezone"', $page['output'], 'the personal settings stay hidden');
-        self::assertMatchesRegularExpression('/name="analytics_consent"[^>]*checked/', $page['output'], 'on by default, and shown');
+        self::assertMatchesRegularExpression('/name="analytics_consent"[^>]*checked/', $page['output'], 'ticked for a user who opted in, and shown');
 
         $post = self::request(['P202_SU_POST' => json_encode([
             'update_profile' => '1', 'token' => 'SESSION', 'user_email' => 'consent-cm@example.com',

@@ -3,9 +3,9 @@
 use PHPUnit\Framework\TestCase;
 
 /**
- * Source-level guards for the spec §9 transport boundary: only essential rows
- * sync for non-consented users; the attribute snapshot and analytics-tier
- * events sync only when analyticsAllowed. Behavioral proof lives in
+ * Source-level guards for the spec §9 transport boundary: nothing syncs for a
+ * user who has not opted in, whatever its tier; events and the attribute
+ * snapshot sync only when analyticsAllowed. Behavioral proof lives in
  * ConsentSyncIntegrationTest (DB-gated).
  */
 final class SyncConsentBoundaryTest extends TestCase
@@ -15,13 +15,18 @@ final class SyncConsentBoundaryTest extends TestCase
         return file_get_contents(__DIR__ . '/../../202-config/Messaging/MessagingService.class.php');
     }
 
-    public function test_flush_reads_tier_and_filters_non_consented_to_essential(): void
+    public function test_flush_reads_tier_and_sends_no_event_without_consent(): void
     {
         $src = $this->serviceSrc();
         $this->assertStringContainsString('client_token, tier', $src,
             'flushEvents must SELECT the tier column (it was write-only dead data)');
-        $this->assertStringContainsString("AND tier = 'essential'", $src,
-            'flushEvents must restrict non-consented flushes to essential rows');
+        $this->assertMatchesRegularExpression(
+            "/private function pendingEvents\(array \\\$state\): array\s*\{\s*if \(!\\\$state\['analytics_allowed'\]\) \{\s*return \[\];/",
+            $src,
+            'without consent no event is pending, whatever its tier'
+        );
+        $this->assertStringNotContainsString("tier = 'essential'", $src,
+            'no tier may pass the consent fence');
         $this->assertMatchesRegularExpression("/'tier'\\s*=>\\s*\\(string\\) \\\$row\\['tier'\\]/", $src,
             'the event payload must propagate tier so the server can separate the tiers');
     }

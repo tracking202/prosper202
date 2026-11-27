@@ -27,6 +27,14 @@ Each install is self-hosted and can only make **outbound** HTTPS requests, so
 all communication is client-initiated. The portal never connects to an
 install.
 
+**Opt-in.** An install records and sends nothing for a user until that user
+turns usage data on (`analytics: "granted"`), wherever they are. A choice
+never made (`unset`) is off. Before the opt-in there is no `/track` call for
+the user at all, so the portal does not learn the user exists from this API;
+what was recorded before a grant is never sent after it. The one call made
+for a user who has not opted in to analytics carries only their consent
+block, and only when it may be shared (below).
+
 ---
 
 ## Base URL
@@ -94,18 +102,22 @@ by page JavaScript via `Prosper202Messenger('update', {...})` (see *Client JavaS
 below). Values may be **nested objects and arrays** (e.g. `offers[]`, `ltv`, `device_mix`);
 store them as JSON, not flat key/value pairs.
 
-**Consent-driven variance:** the attribute snapshot is analytics-tier data. For users who
-have not granted analytics consent, the client **omits `identity.attributes` entirely**.
-Treat a missing `attributes` key as "no consent", not as an empty profile — and never wipe
-a previously-stored profile because a request arrived without one.
+**Consent-driven variance:** for users who have not granted analytics consent, the client
+**omits `identity.attributes` entirely**. Treat a missing `attributes` key as "no consent",
+not as an empty profile — and never wipe a previously-stored profile because a request
+arrived without one.
 
-`consent` is attached for **all** users — including analytics-denied ones — because the
-server must know a user is denied. Semantics: each flag is `granted|denied|unset`;
-anything other than an explicit `email_marketing: "granted"` (including a missing
-`consent` object from an older client) means **no marketing email** to that user.
-Analytics consent and email consent are independent flags. A client that
-cannot read a user's consent sends nothing for that user rather than a
-stand-in block, so a stored denial is never overwritten with `unset`.
+`consent` rides on every call, and a call is made for a user without analytics consent
+only when their block may be shared (`ConsentPolicy::BLOCK_SHAREABLE_SQL`): they granted
+analytics or marketing email, or a call was already made for them (acknowledged or not),
+so that a later "no" reaches a portal that may hold a "yes". A user who never opted in to
+anything, and for whom no call was ever made, is not announced. Semantics: each flag is
+`granted|denied|unset`, and only an explicit `"granted"` is consent: `unset` means **no**
+for analytics as for marketing email, whatever the user's location. Anything other than an
+explicit `email_marketing: "granted"` (including a missing `consent` object from an older
+client) means **no marketing email** to that user. Analytics consent and email consent
+are independent flags. A client that cannot read a user's consent sends nothing for that
+user rather than a stand-in block, so a stored denial is never overwritten with `unset`.
 
 Only an active, undeleted user has an identity
 (`MessagingService::identityFor()`, which the chat pass request is built from
@@ -175,18 +187,18 @@ therefore answer without `consent_ack`, or with a non-200, never `ok` alone.
   one), and it only grows: a block
   whose version is lower than one already stored for the user is an older delivery
   arriving late; acknowledge it, but do not let it replace the newer values.
-- Every event carries `tier`: `"essential"` (operational/lifecycle — arrives for all users;
-  usable for support and account operations) or `"analytics"` (behavioural — arrives only
-  for consented users; usable for segmentation and marketing). Store it; never treat an
-  unrecognized tier as `essential`, and never feed essential-only users into marketing
-  segmentation.
+- Every event carries `tier`: `"essential"` (operational/lifecycle, such as a sign-in) or
+  `"analytics"` (behavioural). Both arrive only for users who granted analytics, recorded
+  after the grant; the tier is a label for how the portal may use the event, not a way
+  past consent. Store it, and never treat an unrecognized tier as `essential`.
 - Each event has a `client_token`; treat repeated tokens as idempotent so retries do not
   double-count.
 - The central server stores attributes on the user profile and records events on a
   timeline, both usable to define audiences for broadcasts.
-- The client calls `/track` only when an event is pending, the attribute
-  snapshot changed since the last delivery, or a consent change is not yet
-  acknowledged (then with `events: []` if nothing else is pending), at most once per
+- The client calls `/track` only when, with analytics granted, an event is
+  pending or the attribute snapshot changed since the last delivery, or when a
+  consent change that may be shared is not yet acknowledged (then with
+  `events: []` if nothing else is pending), at most once per
   `MESSAGING_SYNC_THROTTLE` seconds (default 20) per user from a page, and
   once per run from the cron job.
 
@@ -239,9 +251,10 @@ The client never shows transport errors to users.
 
 ## Operational note: the cron delivers users one by one
 
-`MessagingService::deliverPendingExclusive()` lists the active users with an event
-still pending, a changed attribute snapshot or an unacknowledged consent change,
-and delivers each one's rows in
+`MessagingService::deliverPendingExclusive()` lists the active users who granted
+analytics and have an event still pending or a changed attribute snapshot, and
+those with an unacknowledged consent change that may be shared, and delivers
+each one's rows in
 batches of 100 events, one `/track` call per batch, up to 10 batches a user a
 run. Users with nothing pending are not visited. After three failed
 deliveries in a row the run stops and the rest wait for the next run: the

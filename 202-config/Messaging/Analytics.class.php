@@ -6,16 +6,16 @@ require_once __DIR__ . '/MessagingService.class.php';
 final class Analytics
 {
     /** Pure gate, delegates to ConsentPolicy. Exposed for testing. */
-    public static function gate(string $stored, bool $isEu, string $tier): bool
+    public static function gate(string $stored): bool
     {
-        return ConsentPolicy::decide($stored, $isEu, $tier);
+        return ConsentPolicy::decide($stored);
     }
 
     /**
-     * Normalize a tier with the same semantics as ConsentPolicy::decide:
-     * anything that is not exactly 'essential' is treated as 'analytics'
-     * and therefore consent-gated. Never fail open on a typo or a future
-     * tier name. Exposed for testing.
+     * The tier label the portal receives: anything that is not exactly
+     * 'essential' is 'analytics', so a typo or a future tier name is never
+     * read there as operational. Every tier needs consent here. Exposed for
+     * testing.
      */
     public static function normalizeTier(string $tier): string
     {
@@ -26,7 +26,7 @@ final class Analytics
     {
         self::guarded(function (mysqli $db, int $uid) use ($name, $meta, $tier) {
             $tier = self::normalizeTier($tier);
-            if (!self::wouldRecord($db, $uid, $tier)) {
+            if (!self::wouldRecord($db, $uid)) {
                 return;
             }
             $service = new MessagingService($db, $uid, []);
@@ -37,8 +37,8 @@ final class Analytics
 
     public static function attr(array $attributes, string $tier = 'analytics'): void
     {
-        self::guarded(function (mysqli $db, int $uid) use ($attributes, $tier) {
-            if (!self::wouldRecord($db, $uid, self::normalizeTier($tier))) {
+        self::guarded(function (mysqli $db, int $uid) use ($attributes) {
+            if (!self::wouldRecord($db, $uid)) {
                 return;
             }
             $service = new MessagingService($db, $uid, []);
@@ -46,12 +46,9 @@ final class Analytics
         });
     }
 
-    /** Thin testable wrapper: would a write of this tier be recorded for this user? */
-    public static function wouldRecord(mysqli $db, int $userId, string $tier): bool
+    /** Thin testable wrapper: would a write be recorded for this user? Only once they opted in, whatever the tier. */
+    public static function wouldRecord(mysqli $db, int $userId): bool
     {
-        if (self::normalizeTier($tier) === 'essential') {
-            return true;
-        }
         return ConsentPolicy::analyticsAllowed($db, $userId);
     }
 
@@ -63,7 +60,7 @@ final class Analytics
     {
         try {
             $tier = self::normalizeTier($tier);
-            if ($userId <= 0 || !self::wouldRecord($db, $userId, $tier)) {
+            if ($userId <= 0 || !self::wouldRecord($db, $userId)) {
                 return;
             }
             (new MessagingService($db, $userId, []))->recordEvent($name, $meta, $tier);
