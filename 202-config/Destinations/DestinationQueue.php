@@ -45,14 +45,13 @@ use Prosper202\Report\AccountZone;
  * A send that says to wait (SendResult::$waitUntil: a click too recent for
  * the platform, a destination not yet authorised) is not a try: the row
  * stays pending with its attempts unchanged until then.
+ *
+ * A row's status is DeliveryStatus, and every write of a row is DeliveryRows'.
  */
 final class DestinationQueue
 {
     public const KIND_CONVERSION = 'conversion';
     public const KIND_TEST = 'test';
-    public const STATUSES = ['pending', 'sent', 'failed', 'withheld', 'cancelled'];
-    /** The statuses a row can be sent again from. */
-    public const RESENDABLE = ['failed', 'withheld'];
     /** Rows a bulk send-again takes are at most this old: no platform takes an older click. */
     public const RESEND_DAYS = 90;
     public const RESEND_BATCH = 5000;
@@ -61,7 +60,7 @@ final class DestinationQueue
     public const SENT_A_MINUTE = 200;
 
     /** Why a conversion with no currency recorded is held back; releaseHeldForCurrency() finds its rows by it. */
-    public const NO_CURRENCY = 'withheld: nothing recorded which currency this conversion\'s amount is in';
+    public const NO_CURRENCY = WithheldFor::NoCurrency->value;
     /** What a conversion of a visitor who refused consent says, on every try, a send again included. */
     public const REFUSED = \Prosper202\Conversion\AdPlatformConsent::REFUSED;
     /** The minutely cron's budget. */
@@ -76,6 +75,7 @@ final class DestinationQueue
     ];
 
     private readonly DestinationStore $store;
+    private readonly DeliveryRows $rows;
     /** @var \Closure(string): bool */
     private \Closure $mayBeEuropean;
     /** @var array<int, string> */
@@ -85,6 +85,7 @@ final class DestinationQueue
     public function __construct(private readonly Connection $conn, ?DestinationStore $store = null, ?callable $mayBeEuropean = null)
     {
         $this->store = $store ?? new DestinationStore($conn);
+        $this->rows = new DeliveryRows($conn);
         $this->mayBeEuropean = \Closure::fromCallable($mayBeEuropean ?? static fn (string $ip): bool => EuropeanVisitor::mayBe($ip));
     }
 
@@ -114,7 +115,7 @@ final class DestinationQueue
             if (is_array($campaigns) && $campaigns !== [] && !in_array($campaignId, $campaigns, true)) {
                 continue;
             }
-            $queued += $this->insert($userId, (int) $row['destination_id'], $convId, self::KIND_CONVERSION, 'pending', $now);
+            $queued += $this->rows->queue($userId, (int) $row['destination_id'], $convId, $now);
         }
 
         return $queued;
@@ -129,12 +130,7 @@ final class DestinationQueue
      */
     public function releaseHeldForCurrency(int $userId, int $now): int
     {
-        $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATION_DELIVERIES
-            . "` SET status = 'pending', attempts = 0, next_attempt_at = ?, last_error = NULL"
-            . " WHERE user_id = ? AND kind = 'conversion' AND status = 'withheld' AND last_error = ?");
-        $this->conn->bind($stmt, 'iis', [$now, $userId, self::NO_CURRENCY]);
-
-        return $this->conn->executeUpdate($stmt);
+        return $this->rows->release($userId, WithheldFor::NoCurrency, $now);
     }
 
     /**
@@ -156,11 +152,13 @@ final class DestinationQueue
             // Paged by id, so rows passed over this run do not fill the next page (CLAUDE.md #37).
             try {
                 // A switched-off destination's rows are not read at all: they wait, however many there are.
+                // A deleted one's are read to be cancelled: its delete saw only the rows committed before it,
+                // and a row can be queued (or released, or sent again) after.
                 $stmt = $this->conn->prepareWrite("SELECT q.delivery_id, q.user_id, q.destination_id, q.conv_id, q.attempts
                     FROM 202_destination_deliveries q
-                    JOIN 202_destinations d ON d.destination_id = q.destination_id AND d.user_id = q.user_id AND d.enabled = 1 AND d.deleted_at IS NULL
+                    JOIN 202_destinations d ON d.destination_id = q.destination_id AND d.user_id = q.user_id AND (d.enabled = 1 OR d.deleted_at IS NOT NULL)
                     JOIN 202_users u ON u.user_id = q.user_id AND u.user_active = 1 AND u.user_deleted = 0
-                    WHERE q.status = 'pending' AND q.kind = 'conversion' AND q.next_attempt_at <= ? AND q.delivery_id > ? ORDER BY q.delivery_id LIMIT ?");
+                    WHERE q.status = " . DeliveryStatus::Pending->quoted() . " AND q.kind = 'conversion' AND q.next_attempt_at <= ? AND q.delivery_id > ? ORDER BY q.delivery_id LIMIT ?");
             } catch (\Throwable $e) {
                 // Code deployed before the upgrade made the table: nothing is queued yet.
                 if ($after === 0 && Connection::isMysqlError($e, 1146, "doesn't exist")) {
@@ -182,8 +180,9 @@ final class DestinationQueue
                 $destinations[$key] ??= $this->destination((int) $row['user_id'], (int) $row['destination_id']);
                 $destination = $destinations[$key];
                 if ($destination === null) {
-                    $this->finish($after, 'cancelled', null, 'the destination was deleted before this was sent', null, $now);
-                    $out['cancelled']++;
+                    if ($this->rows->finish((int) $row['user_id'], $after, DeliveryStatus::Cancelled, null, null, DeliveryRows::DESTINATION_DELETED, null, $now)) {
+                        $out['cancelled']++;
+                    }
                     continue;
                 }
                 if (is_array($destination) && (!$destination['enabled'] || isset($unanswered[$destination['host']]) || isset($waiting[$key]))) {
@@ -191,10 +190,7 @@ final class DestinationQueue
                     continue;
                 }
                 $attempts = (int) $row['attempts'] + 1;
-                $claim = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATION_DELIVERIES
-                    . "` SET attempts = ?, next_attempt_at = ? WHERE delivery_id = ? AND status = 'pending' AND attempts = ?");
-                $this->conn->bind($claim, 'iiii', [$attempts, $now + NotificationOutbox::backoff($attempts), $after, $attempts - 1]);
-                if ($this->conn->executeUpdate($claim) !== 1) {
+                if (!$this->rows->claim((int) $row['user_id'], $after, $attempts - 1, $now)) {
                     continue;
                 }
                 $tried++;
@@ -202,11 +198,11 @@ final class DestinationQueue
                 try {
                     // A destination that cannot be read says why on each of its rows, which end failed after their tries.
                     [$status, $result] = is_string($destination)
-                        ? ['pending', new SendResult(false, true, null, 'not sent: ' . $destination)]
+                        ? [DeliveryStatus::Pending, new SendResult(false, true, null, 'not sent: ' . $destination)]
                         : $this->deliver($destination, (int) $row['conv_id'], $now);
                 } catch (\JsonException | DestinationInputException $e) {
                     // This row's data, not the run's: it fails alone (CLAUDE.md #24).
-                    [$status, $result] = ['failed', new SendResult(false, false, null, 'not sent: ' . $e->getMessage())];
+                    [$status, $result] = [DeliveryStatus::Failed, new SendResult(false, false, null, 'not sent: ' . $e->getMessage())];
                 } catch (\Throwable $e) {
                     if (Connection::isRetryableLockError($e)) {
                         throw $e;
@@ -214,25 +210,37 @@ final class DestinationQueue
                     // Counted as a try, so a row that always throws ends failed rather than blocking the queue.
                     error_log('destinations: delivery ' . $after . ' could not be sent: ' . $e->getMessage());
                     $threw = true;
-                    [$status, $result] = ['pending', new SendResult(false, true, null, 'not sent: ' . get_class($e) . ' while reading the conversion; tried again later')];
+                    [$status, $result] = [DeliveryStatus::Pending, new SendResult(false, true, null, 'not sent: ' . get_class($e) . ' while reading the conversion; tried again later')];
                 }
                 if (!$threw && $result->unanswered()) {
                     $unanswered[$destination['host']] = true;
                 }
-                if (!$threw && $status === 'pending' && $result->waitUntil !== null) {
-                    $this->wait($after, $attempts - 1, $result, $result->waitUntil);
+                if (!$threw && $status === DeliveryStatus::Pending && $result->waitUntil !== null) {
+                    $held = $this->rows->wait((int) $row['user_id'], $after, $attempts, $result, $result->waitUntil);
                     if ($result->destinationWaits) {
                         $waiting[$key] = true;
-                        $this->waitDestination((int) $row['user_id'], (int) $row['destination_id'], $result->waitUntil);
+                        $this->rows->holdUntil((int) $row['user_id'], (int) $row['destination_id'], $result->waitUntil);
                     }
-                    $out['retrying']++;
+                    if ($held) {
+                        $out['retrying']++;
+                    } else {
+                        self::movedMeanwhile($after, 'wait');
+                    }
                     continue;
                 }
-                if ($status === 'pending' && $attempts >= NotificationOutbox::MAX_ATTEMPTS) {
-                    $status = 'failed';
+                if ($status === DeliveryStatus::Pending && $attempts >= NotificationOutbox::MAX_ATTEMPTS) {
+                    $status = DeliveryStatus::Failed;
                 }
-                $this->finish($after, $status, $result?->status, $result?->reason ?? '', $result?->summary, $now);
-                $out[$status === 'pending' ? 'retrying' : $status]++;
+                $written = $status === DeliveryStatus::Pending
+                    ? $this->rows->retryLater((int) $row['user_id'], $after, $attempts, $result->status, $result->reason, $result->summary)
+                    : $this->rows->finish((int) $row['user_id'], $after, $status, $attempts, $result->status, $result->reason, $result->summary, $now);
+                if (!$written) {
+                    // Cancelled with its destination, or claimed and ended by a later run, while this send
+                    // was out: the row is theirs, and this run counts nothing for it.
+                    self::movedMeanwhile($after, $status === DeliveryStatus::Pending ? 'retry' : $status->value);
+                    continue;
+                }
+                $out[$status === DeliveryStatus::Pending ? 'retrying' : $status->value]++;
             }
         }
         foreach ($destinations as $destination) {
@@ -268,7 +276,7 @@ final class DestinationQueue
         } catch (\JsonException $e) {
             $result = new SendResult(false, false, null, 'not sent: ' . $e->getMessage());
         }
-        $id = $this->insertTest($userId, $destinationId, $result, $now);
+        $id = $this->rows->logTest($userId, $destinationId, $result, $result->summary, $now);
 
         return [
             'delivery_id' => $id,
@@ -291,23 +299,17 @@ final class DestinationQueue
      */
     public function resend(int $userId, int $destinationId, ?int $deliveryId, string $status, int $now): ?array
     {
-        if ($deliveryId === null && !in_array($status, self::RESENDABLE, true)) {
-            throw new DestinationInputException('status', 'status must be one of: ' . implode(', ', self::RESENDABLE) . '.');
+        $from = $deliveryId === null ? DeliveryStatus::tryFrom($status) : null;
+        if ($deliveryId === null && ($from === null || !in_array($from, DeliveryStatus::resendable(), true))) {
+            throw new DestinationInputException('status', 'status must be one of: ' . implode(', ', DeliveryStatus::values(DeliveryStatus::resendable())) . '.');
         }
         if ($this->store->get($userId, $destinationId) === null) {
             return null;
         }
-        $set = "` SET status = 'pending', attempts = 0, next_attempt_at = ?, last_status_code = NULL, last_error = NULL, sent_at = NULL
-             WHERE user_id = ? AND destination_id = ? AND kind = 'conversion'";
-        if ($deliveryId !== null) {
-            $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATION_DELIVERIES . $set . " AND status IN ('failed', 'withheld') AND delivery_id = ?");
-            $this->conn->bind($stmt, 'iiii', [$now, $userId, $destinationId, $deliveryId]);
-
-            return ['queued' => $this->conn->executeUpdate($stmt), 'more' => false];
+        if ($from === null) {
+            return ['queued' => $this->rows->resendOne($userId, $destinationId, (int) $deliveryId, $now), 'more' => false];
         }
-        $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATION_DELIVERIES . $set . ' AND status = ? AND created_at >= ? ORDER BY delivery_id LIMIT ' . self::RESEND_BATCH);
-        $this->conn->bind($stmt, 'iiisi', [$now, $userId, $destinationId, $status, $now - self::RESEND_DAYS * 86400]);
-        $queued = $this->conn->executeUpdate($stmt);
+        $queued = $this->rows->resendAll($userId, $destinationId, $from, $now - self::RESEND_DAYS * 86400, self::RESEND_BATCH, $now);
 
         return ['queued' => $queued, 'more' => $queued === self::RESEND_BATCH];
     }
@@ -350,7 +352,7 @@ final class DestinationQueue
             $rows = $this->conn->fetchAll($stmt);
             foreach ($rows as $row) {
                 $after = (int) $row['conv_id'];
-                $queued += $this->insert($userId, $destinationId, $after, self::KIND_CONVERSION, 'pending', $now);
+                $queued += $this->rows->queue($userId, $destinationId, $after, $now);
             }
             if (count($rows) < 500) {
                 return ['queued' => $queued, 'more' => false];
@@ -374,7 +376,7 @@ final class DestinationQueue
     {
         $out = [];
         foreach ($destinationIds as $id) {
-            $out[$id] = ['counts' => array_fill_keys(self::STATUSES, 0), 'reasons' => [], 'resendable' => array_fill_keys(self::RESENDABLE, 0), 'waiting' => 0];
+            $out[$id] = ['counts' => array_fill_keys(DeliveryStatus::values(), 0), 'reasons' => [], 'resendable' => array_fill_keys(DeliveryStatus::values(DeliveryStatus::resendable()), 0), 'waiting' => 0];
         }
         if ($out === []) {
             return [];
@@ -384,24 +386,25 @@ final class DestinationQueue
         $ids = array_keys($out);
         $where = ' FROM `' . TableRegistry::DESTINATION_DELIVERIES . "` WHERE user_id = ? AND destination_id IN ($in) AND kind = 'conversion' AND status IN (";
         $types = 'i' . str_repeat('i', count($ids)) . 'i';
-        $all = "'" . implode("','", self::STATUSES) . "'";
+        $all = DeliveryStatus::quotedList(DeliveryStatus::cases());
+        $resendable = DeliveryStatus::quotedList(DeliveryStatus::resendable());
         $stmt = $this->conn->prepareRead('SELECT destination_id, status, COUNT(*) AS n' . $where . $all . ') AND created_at >= ? GROUP BY destination_id, status');
         $this->conn->bind($stmt, $types, [$userId, ...$ids, $since]);
         foreach ($this->conn->fetchAll($stmt) as $row) {
             $out[(int) $row['destination_id']]['counts'][(string) $row['status']] = (int) $row['n'];
         }
-        $stmt = $this->conn->prepareRead('SELECT destination_id, status, COUNT(*) AS n' . $where . "'failed','withheld') AND created_at >= ? GROUP BY destination_id, status");
+        $stmt = $this->conn->prepareRead('SELECT destination_id, status, COUNT(*) AS n' . $where . $resendable . ') AND created_at >= ? GROUP BY destination_id, status');
         $this->conn->bind($stmt, $types, [$userId, ...$ids, $now - self::RESEND_DAYS * 86400]);
         foreach ($this->conn->fetchAll($stmt) as $row) {
             $out[(int) $row['destination_id']]['resendable'][(string) $row['status']] = (int) $row['n'];
         }
-        $stmt = $this->conn->prepareRead('SELECT destination_id, COUNT(*) AS n' . $where . "'pending') GROUP BY destination_id");
+        $stmt = $this->conn->prepareRead('SELECT destination_id, COUNT(*) AS n' . $where . DeliveryStatus::Pending->quoted() . ') GROUP BY destination_id');
         $this->conn->bind($stmt, substr($types, 0, -1), [$userId, ...$ids]);
         foreach ($this->conn->fetchAll($stmt) as $row) {
             $out[(int) $row['destination_id']]['waiting'] = (int) $row['n'];
         }
         $stmt = $this->conn->prepareRead("SELECT destination_id, status, COALESCE(last_error, '') AS reason, COUNT(*) AS n" . $where
-            . "'failed','withheld') AND created_at >= ? GROUP BY destination_id, status, reason ORDER BY n DESC, reason LIMIT 500");
+            . $resendable . ') AND created_at >= ? GROUP BY destination_id, status, reason ORDER BY n DESC, reason LIMIT 500');
         $this->conn->bind($stmt, $types, [$userId, ...$ids, $since]);
         foreach ($this->conn->fetchAll($stmt) as $row) {
             $id = (int) $row['destination_id'];
@@ -438,11 +441,11 @@ final class DestinationQueue
     }
 
     /**
-     * One conversion's send. Returns the row's next status and the send's
-     * answer (null when nothing was sent).
+     * One conversion's send. Returns the row's next status (pending: tried
+     * again, or waiting) and the send's answer, or why nothing was sent.
      *
      * @param array<string, mixed> $destination
-     * @return array{0: string, 1: SendResult|null}
+     * @return array{0: DeliveryStatus, 1: SendResult}
      */
     private function deliver(array $destination, int $convId, int $now): array
     {
@@ -463,57 +466,57 @@ final class DestinationQueue
         $this->conn->bind($stmt, 'ii', [$convId, $userId]);
         $conv = $this->conn->fetchOne($stmt);
         if ($conv === null || (int) $conv['deleted'] === 1) {
-            return ['cancelled', new SendResult(false, false, null, 'the conversion was deleted before this was sent')];
+            return [DeliveryStatus::Cancelled, new SendResult(false, false, null, 'the conversion was deleted before this was sent')];
         }
         if ($conv['superseded_by'] !== null) {
-            return ['cancelled', new SendResult(false, false, null, 'the conversion was replaced by conversion ' . (int) $conv['superseded_by'] . ' before this was sent')];
+            return [DeliveryStatus::Cancelled, new SendResult(false, false, null, 'the conversion was replaced by conversion ' . (int) $conv['superseded_by'] . ' before this was sent')];
         }
         $campaigns = $destination['settings']['campaign_ids'] ?? [];
         if (!is_array($campaigns)) {
             // A filter that is not a list is not read as "every campaign".
-            return ['failed', new SendResult(false, false, null, 'not sent: destination ' . (int) $destination['destination_id'] . '\'s campaign filter cannot be read; save its campaigns again')];
+            return [DeliveryStatus::Failed, new SendResult(false, false, null, 'not sent: destination ' . (int) $destination['destination_id'] . '\'s campaign filter cannot be read; save its campaigns again')];
         }
         if ($campaigns !== [] && !in_array((int) $conv['campaign_id'], $campaigns, true)) {
-            return ['cancelled', new SendResult(false, false, null, 'the conversion\'s campaign is not one this destination sends')];
+            return [DeliveryStatus::Cancelled, new SendResult(false, false, null, 'the conversion\'s campaign is not one this destination sends')];
         }
         // A visitor who refused consent is sent nothing: not the event, not
         // the click's ids, not the user data. Reports still count the sale.
         // The rule the traffic source pixels and postbacks ask too (AdPlatformConsent).
         $refused = ConsentWithheld::refusalOf($conv);
         if ($refused !== null) {
-            return ['withheld', new SendResult(false, false, null, self::REFUSED . ' ' . $refused)];
+            return [DeliveryStatus::Withheld, new SendResult(false, false, null, self::REFUSED . ' ' . $refused)];
         }
         $ip = (string) ($conv['ip_address'] ?? '');
         // Only a click the conversion named: a guess would teach the platform the wrong clicks.
         $method = MatchMethod::tryFrom((string) ($conv['match_method'] ?? '')) ?? MatchMethod::UNKNOWN;
         if (!$method->namesTheClick()) {
-            return ['withheld', new SendResult(false, false, null, 'withheld: the click was found by ' . $method->label() . ', not named by the conversion')];
+            return [DeliveryStatus::Withheld, new SendResult(false, false, null, 'withheld: the click was found by ' . $method->label() . ', not named by the conversion')];
         }
         $setting = PrivacySetting::forAccount($this->conn, $userId);
         if ($setting === 'all') {
-            return ['withheld', new SendResult(false, false, null, 'withheld: your privacy setting holds back every visitor')];
+            return [DeliveryStatus::Withheld, new SendResult(false, false, null, 'withheld: your privacy setting holds back every visitor')];
         }
         if (($this->mayBeEuropean)($ip)) {
             if ($setting !== 'disabled') {
-                return ['withheld', new SendResult(false, false, null, 'withheld: your privacy setting holds back visitors who may be in Europe, and this click\'s address is not placed outside it')];
+                return [DeliveryStatus::Withheld, new SendResult(false, false, null, 'withheld: your privacy setting holds back visitors who may be in Europe, and this click\'s address is not placed outside it')];
             }
             if (!$destination['adapter']->takesConsent()) {
-                return ['withheld', new SendResult(false, false, null, 'withheld: the visitor may be in the EEA or UK, and this destination\'s platform has no field that states their consent to measurement')];
+                return [DeliveryStatus::Withheld, new SendResult(false, false, null, 'withheld: the visitor may be in the EEA or UK, and this destination\'s platform has no field that states their consent to measurement')];
             }
             if (!self::consentGranted($destination['settings'])) {
-                return ['withheld', new SendResult(false, false, null, 'withheld: the visitor may be in the EEA or UK, and this destination does not state consent granted (ad_user_data and ad_personalization)')];
+                return [DeliveryStatus::Withheld, new SendResult(false, false, null, 'withheld: the visitor may be in the EEA or UK, and this destination does not state consent granted (ad_user_data and ad_personalization)')];
             }
         }
         // The platform is told the currency the row recorded, never the
         // account's now; an amount whose currency nothing recorded is not sent.
         $currency = RowCurrency::read($conv['currency'] ?? null);
         if ($currency === RowCurrency::UNKNOWN) {
-            return ['withheld', new SendResult(false, false, null, self::NO_CURRENCY)];
+            return [DeliveryStatus::Withheld, new SendResult(false, false, null, WithheldFor::NoCurrency->value)];
         }
         $clickId = (int) $conv['click_id'];
         $click = TrafficSourcePixels::clickTokens($this->conn, $userId, $clickId, true);
         if ($click === null) {
-            return ['failed', new SendResult(false, false, null, 'not sent: the conversion\'s click ' . $clickId . ' is not found')];
+            return [DeliveryStatus::Failed, new SendResult(false, false, null, 'not sent: the conversion\'s click ' . $clickId . ' is not found')];
         }
         $tokens = $click['tokens'];
         // The first visit's, as the click's ids are: when the platform saw the click.
@@ -558,10 +561,10 @@ final class DestinationQueue
         $result = $destination['adapter']->send($destination['settings'], $destination['credentials'], $facts, false, $now);
 
         return [match (true) {
-            $result->delivered => 'sent',
-            $result->withheld => 'withheld',
-            $result->retry || $result->waitUntil !== null => 'pending',
-            default => 'failed',
+            $result->delivered => DeliveryStatus::Sent,
+            $result->withheld => DeliveryStatus::Withheld,
+            $result->retry || $result->waitUntil !== null => DeliveryStatus::Pending,
+            default => DeliveryStatus::Failed,
         }, $result];
     }
 
@@ -756,42 +759,12 @@ final class DestinationQueue
         return $this->zones[$userId] ??= AccountZone::read($this->conn, $userId);
     }
 
-    /** A row that waits: pending, its claim undone, due again at $until. */
-    private function wait(int $deliveryId, int $attempts, SendResult $result, int $until): void
-    {
-        $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATION_DELIVERIES
-            . "` SET attempts = ?, next_attempt_at = ?, last_status_code = ?, last_error = ?, summary = COALESCE(?, summary) WHERE delivery_id = ? AND status = 'pending'");
-        $this->conn->bind($stmt, 'iiissi', [$attempts, $until, $result->status, $result->reason === '' ? null : self::clip($result->reason, 255),
-            $result->summary === [] ? null : self::summaryJson($result->summary), $deliveryId]);
-        $this->conn->executeUpdate($stmt);
-    }
-
-    /** Every pending conversion of a destination that needs its operator waits until $until, so no run reads them before. */
-    private function waitDestination(int $userId, int $destinationId, int $until): void
-    {
-        $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATION_DELIVERIES
-            . "` SET next_attempt_at = GREATEST(next_attempt_at, ?) WHERE destination_id = ? AND user_id = ? AND status = 'pending' AND kind = 'conversion'");
-        $this->conn->bind($stmt, 'iii', [$until, $destinationId, $userId]);
-        $this->conn->executeUpdate($stmt);
-    }
-
     private function currency(int $userId): string
     {
         $stmt = $this->conn->prepareWrite('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1');
         $this->conn->bind($stmt, 'i', [$userId]);
 
         return \Api\V3\Controllers\UsersController::normalizeCurrency($this->conn->fetchOne($stmt)['user_account_currency'] ?? null);
-    }
-
-    private function insert(int $userId, int $destinationId, ?int $convId, string $kind, string $status, int $now): int
-    {
-        // ON DUPLICATE KEY, not IGNORE: a replayed conversion queues once, and nothing is truncated in silence.
-        $stmt = $this->conn->prepareWrite('INSERT INTO `' . TableRegistry::DESTINATION_DELIVERIES
-            . '` (user_id, destination_id, conv_id, kind, status, attempts, next_attempt_at, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)
-             ON DUPLICATE KEY UPDATE delivery_id = delivery_id');
-        $this->conn->bind($stmt, 'iiissii', [$userId, $destinationId, $convId, $kind, $status, $now, $now]);
-
-        return $this->conn->executeUpdate($stmt);
     }
 
     /**
@@ -801,7 +774,7 @@ final class DestinationQueue
      */
     public function recordRealTest(int $userId, int $destinationId, SendResult $result, int $now): int
     {
-        return $this->insertTest($userId, $destinationId, $result, $now, ['real' => true] + $result->summary);
+        return $this->rows->logTest($userId, $destinationId, $result, ['real' => true] + $result->summary, $now);
     }
 
     /**
@@ -814,8 +787,8 @@ final class DestinationQueue
     {
         // The primary, which the send was just written to: a replica behind it would say no event was sent.
         $stmt = $this->conn->prepareWrite('SELECT summary FROM `' . TableRegistry::DESTINATION_DELIVERIES
-            . "` WHERE user_id = ? AND destination_id = ? AND kind = 'test' AND status = 'sent'
-             AND created_at = ? AND sent_at = ?");
+            . "` WHERE user_id = ? AND destination_id = ? AND kind = 'test' AND status = " . DeliveryStatus::Sent->quoted() . '
+             AND created_at = ? AND sent_at = ?');
         $this->conn->bind($stmt, 'iiii', [$userId, $destinationId, $sentAt, $sentAt]);
         foreach ($this->conn->fetchAll($stmt) as $row) {
             $summary = is_string($row['summary']) ? json_decode($row['summary'], true) : null;
@@ -827,48 +800,9 @@ final class DestinationQueue
         return null;
     }
 
-    /** @param array<string, mixed>|null $summary what the log keeps, when not the result's own */
-    private function insertTest(
-        int $userId,
-        int $destinationId,
-        SendResult $result,
-        int $now,
-        ?array $summary = null
-    ): int {
-        $stmt = $this->conn->prepareWrite('INSERT INTO `' . TableRegistry::DESTINATION_DELIVERIES
-            . '` (user_id, destination_id, conv_id, kind, status, attempts, next_attempt_at, last_status_code, last_error, summary, created_at, sent_at)
-             VALUES (?, ?, NULL, ?, ?, 1, ?, ?, ?, ?, ?, ?)');
-        $this->conn->bind($stmt, 'iissiissii', [$userId, $destinationId, self::KIND_TEST, $result->delivered ? 'sent' : 'failed', $now,
-            $result->status, self::clip($result->reason, 255), self::summaryJson($summary ?? $result->summary), $now,
-            $result->delivered ? $now : null]);
-
-        return $this->conn->executeInsert($stmt);
-    }
-
-    /** @param array<string, mixed>|null $summary */
-    private function finish(int $deliveryId, string $status, ?int $code, string $reason, ?array $summary, int $now): void
+    /** A send's last write met a row that had moved: said once, in the log, and the row left as it is. */
+    private static function movedMeanwhile(int $deliveryId, string $write): void
     {
-        $stmt = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATION_DELIVERIES
-            . '` SET status = ?, last_status_code = ?, last_error = ?, summary = COALESCE(?, summary), sent_at = ? WHERE delivery_id = ?');
-        $this->conn->bind($stmt, 'sissii', [$status, $code, $reason === '' ? null : self::clip($reason, 255),
-            $summary === null || $summary === [] ? null : self::summaryJson($summary), $status === 'sent' ? $now : null, $deliveryId]);
-        $this->conn->executeUpdate($stmt);
-    }
-
-    /** @param array<string, mixed> $summary */
-    private static function summaryJson(array $summary): ?string
-    {
-        if ($summary === []) {
-            return null;
-        }
-        $json = json_encode($summary, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR);
-
-        // A summary too long for its column is dropped whole, never cut into invalid JSON.
-        return strlen($json) <= 1000 ? $json : null;
-    }
-
-    private static function clip(string $text, int $chars): string
-    {
-        return mb_strimwidth($text, 0, $chars, '…', 'UTF-8');
+        error_log('destinations: delivery ' . $deliveryId . ' moved while it was being sent; this send\'s answer (' . $write . ') was not recorded');
     }
 }

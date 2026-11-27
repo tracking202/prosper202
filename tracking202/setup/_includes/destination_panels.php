@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Prosper202\Destinations\DeliveryStatus;
 use Prosper202\Destinations\DestinationForm;
 use Prosper202\Destinations\DestinationQueue;
 use Prosper202\Destinations\DestinationStore;
@@ -112,6 +113,17 @@ function p202_destination_send_time(int $n): string
     return $minutes < 90 ? 'about ' . $minutes . ($minutes === 1 ? ' minute' : ' minutes') : 'about ' . round($minutes / 60, 1) . ' hours';
 }
 
+/** The pill modifier a delivery status is shown with. */
+function p202_delivery_pill(DeliveryStatus $status): string
+{
+    return match ($status) {
+        DeliveryStatus::Sent => ' p202-pill--good',
+        DeliveryStatus::Failed => ' p202-pill--bad',
+        DeliveryStatus::Withheld => ' p202-pill--warn',
+        DeliveryStatus::Pending, DeliveryStatus::Cancelled => '',
+    };
+}
+
 /** How many conversions a destination still has to send, and how long that takes. */
 function p202_destination_waiting_sentence(int $waiting): string
 {
@@ -130,18 +142,18 @@ function p202_destination_waiting_sentence(int $waiting): string
 function p202_destination_health(array $d, array $health, string $self, string $token, bool $canSeeLog): string
 {
     $id = (int) $d['destination_id'];
-    $labels = ['sent' => ['sent', ' p202-pill--good'], 'pending' => ['waiting', ''], 'failed' => ['failed', ' p202-pill--bad'], 'withheld' => ['withheld', ' p202-pill--warn'], 'cancelled' => ['cancelled', '']];
+    $shown = [DeliveryStatus::Sent, ...array_filter(DeliveryStatus::cases(), static fn (DeliveryStatus $s): bool => $s !== DeliveryStatus::Sent)];
     $log = p202_setup_e($self) . '?log=' . $id;
     ob_start(); ?>
     <div class="form-text mb-2">Last 7 days:
         <?php echo array_sum($health['counts']) === 0 ? 'no conversions queued for it.' : ''; ?>
-        <?php foreach ($labels as $status => [$label, $class]) {
-            $n = $health['counts'][$status] ?? 0;
+        <?php foreach ($shown as $status) {
+            $n = $health['counts'][$status->value] ?? 0;
             if ($n === 0) {
                 continue;
             }
-            $pill = '<span class="p202-pill' . $class . '">' . number_format($n) . ' ' . $label . '</span>';
-            echo $canSeeLog ? '<a href="' . $log . '&amp;status=' . $status . '">' . $pill . '</a> ' : $pill . ' ';
+            $pill = '<span class="p202-pill' . p202_delivery_pill($status) . '">' . number_format($n) . ' ' . $status->label() . '</span>';
+            echo $canSeeLog ? '<a href="' . $log . '&amp;status=' . $status->value . '">' . $pill . '</a> ' : $pill . ' ';
         } ?>
         <?php echo $canSeeLog ? '· <a href="' . $log . '">full log</a>' : ''; ?>
     </div>
@@ -152,7 +164,11 @@ function p202_destination_health(array $d, array $health, string $self, string $
     <div class="form-text"><?php echo number_format($reason['n']) . ' ' . p202_setup_e($reason['status']); ?>: <?php echo p202_setup_e($reason['reason'] !== '' ? (string) preg_replace('/\A(withheld|not sent): /', '', $reason['reason']) : 'no reason recorded'); ?></div>
     <?php } ?>
     <div class="d-flex flex-wrap gap-2 align-items-center mt-2 mb-3">
-        <?php foreach (['failed' => 'Fix the cause first (the reason above), then send them again with all their tries.', 'withheld' => 'They are checked again: one still held back is withheld again.'] as $status => $title) {
+        <?php foreach (DeliveryStatus::resendable() as $from) {
+            $status = $from->value;
+            $title = $from === DeliveryStatus::Withheld
+                ? 'They are checked again: one still held back is withheld again.'
+                : 'Fix the cause first (the reason above), then send them again with all their tries.';
             $n = $health['resendable'][$status] ?? 0;
             if ($n === 0) {
                 continue;
@@ -400,7 +416,6 @@ function p202_destination_log(array $d, array $rows, ?string $status, int $page,
     $rows = array_slice($rows, 0, $perPage);
     $here = p202_setup_e($self) . '?log=' . $id;
     $link = static fn (?string $s, int $p): string => $here . ($s !== null ? '&amp;status=' . $s : '') . ($p > 1 ? '&amp;page=' . $p : '');
-    $pill = ['sent' => ' p202-pill--good', 'failed' => ' p202-pill--bad', 'withheld' => ' p202-pill--warn'];
     ob_start(); ?>
     <section class="p202-panel" id="log">
         <div class="p202-panel__head">
@@ -409,7 +424,7 @@ function p202_destination_log(array $d, array $rows, ?string $status, int $page,
         </div>
         <div class="p202-panel__body">
             <div class="form-text mb-3">Show:
-                <?php foreach ([null => 'everything'] + array_combine(DestinationQueue::STATUSES, ['waiting', 'sent', 'failed', 'withheld', 'cancelled']) as $s => $label) {
+                <?php foreach ([null => 'everything'] + array_combine(DeliveryStatus::values(), array_map(static fn (DeliveryStatus $s): string => $s->label(), DeliveryStatus::cases())) as $s => $label) {
                     $s = $s === '' ? null : (string) $s;
                     echo $s === $status ? '<span class="p202-pill p202-pill--accent">' . $label . '</span> ' : '<a href="' . $link($s, 1) . '">' . $label . '</a> ';
                 } ?>
@@ -426,6 +441,8 @@ function p202_destination_log(array $d, array $rows, ?string $status, int $page,
                     <thead><tr><th>When</th><th>Conversion</th><th>Status</th><th class="num">Tries</th><th>Last answer</th><th></th></tr></thead>
                     <tbody>
                         <?php foreach ($rows as $row) {
+                            // A status no case names is shown as stored, and offers nothing (CLAUDE.md #24).
+                            $state = DeliveryStatus::tryFrom((string) $row['status']);
                             $conversion = match (true) {
                                 $row['conv_id'] === null => 'test',
                                 $row['click_id'] !== null => '<a href="' . p202_setup_e($base) . 'tracking202/logs/?click_id=' . (int) $row['click_id']
@@ -435,11 +452,11 @@ function p202_destination_log(array $d, array $rows, ?string $status, int $page,
                         <tr>
                             <td><?php echo p202_setup_e($when((int) $row['created_at'])); ?></td>
                             <td><?php echo $conversion; ?></td>
-                            <td><span class="p202-pill<?php echo $pill[(string) $row['status']] ?? ''; ?>"><?php echo p202_setup_e($row['status'] === 'pending' ? 'waiting' : (string) $row['status']); ?></span></td>
+                            <td><span class="p202-pill<?php echo $state === null ? '' : p202_delivery_pill($state); ?>"><?php echo p202_setup_e($state === null ? (string) $row['status'] : $state->label()); ?></span></td>
                             <td class="num"><?php echo (int) $row['attempts']; ?></td>
                             <td><?php echo p202_setup_e(trim(($row['last_status_code'] !== null ? $row['last_status_code'] . ' ' : '') . (string) ($row['last_error'] ?? ''))); ?></td>
                             <td>
-                                <?php if ($row['kind'] === DestinationQueue::KIND_CONVERSION && in_array($row['status'], DestinationQueue::RESENDABLE, true)) { ?>
+                                <?php if ($row['kind'] === DestinationQueue::KIND_CONVERSION && $state !== null && in_array($state, DeliveryStatus::resendable(), true)) { ?>
                                 <form method="post" action="<?php echo $link($status, $page); ?>">
                                     <?php echo p202_setup_token_field($token); ?>
                                     <input type="hidden" name="action" value="resend"><input type="hidden" name="destination_id" value="<?php echo $id; ?>"><input type="hidden" name="delivery_id" value="<?php echo (int) $row['delivery_id']; ?>">

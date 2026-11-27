@@ -50,6 +50,12 @@ out when you turn it on again (a GA4 event by then more than 72 hours old
 fails instead). A deleted destination's unsent rows are
 cancelled, and its credentials erased.
 
+`sent` is final, and a cancelled row is never queued again. A conversion
+that was already on its way when its destination was deleted is shown as
+`sent` if the platform took it, and stays `cancelled` if it did not. A row
+queued, released or sent again for a destination just as it was deleted is
+cancelled by the next run of the cron job.
+
 ## Seeing what failed, and sending it again
 
 Under each destination, Setup › Destinations counts the last 7 days'

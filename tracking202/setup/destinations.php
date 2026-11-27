@@ -57,7 +57,7 @@ $redirectUri = GoogleAdsOAuth::redirectUri($_SERVER);
 $canSeeLog = $userObj->hasPermission('access_to_campaign_data');
 // The full log of one destination (?log=<id>), for a role that may see it.
 $logId = \Prosper202\Http\PostedId::read($_GET['log'] ?? null);
-$logStatus = is_string($_GET['status'] ?? null) && in_array($_GET['status'], DestinationQueue::STATUSES, true) ? $_GET['status'] : null;
+$logStatus = is_string($_GET['status'] ?? null) && \Prosper202\Destinations\DeliveryStatus::tryFrom($_GET['status']) !== null ? $_GET['status'] : null;
 $logPage = \Prosper202\Http\PostedId::read($_GET['page'] ?? null) ?? 1;
 $logQuery = $logId === null ? '' : '?log=' . $logId . ($logStatus !== null ? '&status=' . $logStatus : '') . ($logPage > 1 ? '&page=' . $logPage : '');
 $errors = [];

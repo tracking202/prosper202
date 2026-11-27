@@ -816,6 +816,10 @@ var destinationDeliveriesCmd = &cobra.Command{
 	},
 }
 
+// The server's DeliveryStatus, and the states a delivery is sent again from
+// (tests/Destinations/DeliveryStatusTest.php holds both lists to the enum).
+var destinationDeliveryStatuses = newEnum([]string{"pending", "sent", "failed", "withheld", "cancelled"})
+
 var destinationResendStatuses = newEnum([]string{"failed", "withheld"})
 
 var destinationResendCmd = &cobra.Command{
@@ -935,7 +939,7 @@ func init() {
 	destinationDeliveriesCmd.Flags().Int("conv-id", 0, "Only this conversion's delivery")
 	destinationDeliveriesCmd.Flags().Int("limit", 50, "Rows to return (1-500)")
 	destinationDeliveriesCmd.Flags().Int("offset", 0, "Rows to skip")
-	enumFlag(destinationDeliveriesCmd, "status", newEnum([]string{"pending", "sent", "failed", "withheld", "cancelled"}))
+	enumFlag(destinationDeliveriesCmd, "status", destinationDeliveryStatuses)
 	enumFlag(destinationDeliveriesCmd, "kind", newEnum([]string{"conversion", "test"}))
 	destinationConversionActionsCmd.Flags().String("customer-id", "", "The account whose actions to list (123-456-7890); default the destination's own")
 	destinationConversionActionsCmd.Flags().String("login-customer-id", "", "The manager account --customer-id is reached through, if any")

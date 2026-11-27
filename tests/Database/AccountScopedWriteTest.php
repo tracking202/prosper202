@@ -288,11 +288,6 @@ final class AccountScopedWriteTest extends TestCase
             'multi-table DELETE | 202_clicks | DELETE de FROM 202_clicks AS 2c STRAIGHT_JOIN 202_click_latest_visits AS lv ON (' => 'the report rollup\'s own rows (202_dataengine) of the clicks the rollup is rebuilding, joined by click id; the rollup is install-wide work',
             'multi-table DELETE | 202_click_latest_visits | DELETE de FROM 202_click_latest_visits AS lv STRAIGHT_JOIN 202_clicks AS 2c FORCE INDEX' => 'the report rollup\'s own rows (202_dataengine) of the clicks the rollup is rebuilding, joined by click id; the rollup is install-wide work',
         ],
-        '202-config/Destinations/DestinationQueue.php' => [
-            'no user_id tie | 202_destination_deliveries | delivery_id = ? AND status = \'pending\' AND attempts = ?' => 'the queue worker\'s claim of a delivery its due() read chose',
-            'no user_id tie | 202_destination_deliveries | delivery_id = ? AND status = \'pending\'' => 'the queue worker\'s own delivery, claimed above in sendDue()',
-            'no user_id tie | 202_destination_deliveries | delivery_id = ?' => 'the queue worker\'s own delivery, claimed above in sendDue()',
-        ],
         '202-config/Fraud/IpqsScoring.php' => [
             'no user_id tie | 202_ipqs_scores | scored_at < ?' => self::R_RETENTION,
         ],
@@ -441,7 +436,7 @@ final class AccountScopedWriteTest extends TestCase
         ],
     ];
 
-    private const REVIEWED_CEILING = 135;
+    private const REVIEWED_CEILING = 132;
 
     private const STATEMENT_ENDS = ['ORDER', 'LIMIT'];
 

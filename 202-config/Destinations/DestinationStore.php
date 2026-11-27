@@ -198,10 +198,7 @@ final class DestinationStore
             if ($this->conn->executeUpdate($stmt) !== 1) {
                 return false;
             }
-            $cancel = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATION_DELIVERIES
-                . "` SET status = 'cancelled', last_error = 'the destination was deleted before this was sent' WHERE destination_id = ? AND user_id = ? AND status = 'pending'");
-            $this->conn->bind($cancel, 'ii', [$destinationId, $userId]);
-            $this->conn->executeUpdate($cancel);
+            (new DeliveryRows($this->conn))->cancelForDeletedDestination($userId, $destinationId);
 
             return true;
         });
@@ -237,10 +234,7 @@ final class DestinationStore
     /** The destination's waiting conversions made due now (one still too recent for its platform just waits again, uncounted). */
     private function releaseWaiting(int $userId, int $destinationId, int $now): void
     {
-        $due = $this->conn->prepareWrite('UPDATE `' . TableRegistry::DESTINATION_DELIVERIES
-            . "` SET next_attempt_at = ? WHERE destination_id = ? AND user_id = ? AND status = 'pending' AND kind = 'conversion' AND next_attempt_at > ?");
-        $this->conn->bind($due, 'iiii', [$now, $destinationId, $userId, $now]);
-        $this->conn->executeUpdate($due);
+        (new DeliveryRows($this->conn))->makeDue($userId, $destinationId, $now);
     }
 
     /** The key OAuth states are signed with: derived from the credential key, never the key itself. */
@@ -465,7 +459,7 @@ final class DestinationStore
     {
         // status_next first: only rows waiting now are read, however long the log.
         $stmt = $this->conn->prepareRead('SELECT last_error, last_status_code, next_attempt_at FROM `' . TableRegistry::DESTINATION_DELIVERIES
-            . "` WHERE status = 'pending' AND next_attempt_at > ? AND destination_id = ? AND user_id = ? AND kind = 'conversion' AND last_error LIKE ?
+            . '` WHERE status = ' . DeliveryStatus::Pending->quoted() . " AND next_attempt_at > ? AND destination_id = ? AND user_id = ? AND kind = 'conversion' AND last_error LIKE ?
              ORDER BY delivery_id DESC LIMIT 1");
         $this->conn->bind($stmt, 'iiis', [$now, $destinationId, $userId, SendResult::FOR_OPERATOR . '%']);
         $row = $this->conn->fetchOne($stmt);

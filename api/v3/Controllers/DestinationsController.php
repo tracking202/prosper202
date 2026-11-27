@@ -16,6 +16,7 @@ use Prosper202\AdPlatforms\OpenAiAds\AdvertiserApi;
 use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsConnections;
 use Prosper202\AdPlatforms\OpenAiAds\OpenAiAdsTestEvent;
 use Prosper202\Database\Connection;
+use Prosper202\Destinations\DeliveryStatus;
 use Prosper202\Destinations\DestinationInputException;
 use Prosper202\Destinations\DestinationQueue;
 use Prosper202\Destinations\DestinationStore;
@@ -100,7 +101,7 @@ final class DestinationsController
     public function deletePreview(int $id): array
     {
         $destination = $this->store->get($this->userId, $id) ?? throw self::notFound($id);
-        $pending = $this->rows("SELECT COUNT(*) AS n FROM 202_destination_deliveries WHERE user_id = ? AND destination_id = ? AND status = 'pending'", 'ii', [$this->userId, $id]);
+        $pending = $this->rows("SELECT COUNT(*) AS n FROM 202_destination_deliveries WHERE user_id = ? AND destination_id = ? AND status = ?", 'iis', [$this->userId, $id, DeliveryStatus::Pending->value]);
 
         return ['data' => [
             'dry_run' => true,
@@ -209,8 +210,9 @@ final class DestinationsController
     {
         PayloadKeys::refuseUnknown($payload, ['delivery_id', 'status'], 'a resend');
         $hasDelivery = array_key_exists('delivery_id', $payload);
+        $resendable = DeliveryStatus::values(DeliveryStatus::resendable());
         if ($hasDelivery === array_key_exists('status', $payload)) {
-            throw new ValidationException('Validation failed', ['body' => 'Send delivery_id (one delivery) or status (every delivery of it: ' . implode(' or ', DestinationQueue::RESENDABLE) . '), not both.']);
+            throw new ValidationException('Validation failed', ['body' => 'Send delivery_id (one delivery) or status (every delivery of it: ' . implode(' or ', $resendable) . '), not both.']);
         }
         $deliveryId = null;
         if ($hasDelivery) {
@@ -218,8 +220,8 @@ final class DestinationsController
             if (!is_int($deliveryId) || $deliveryId <= 0) {
                 throw new ValidationException('Validation failed', ['delivery_id' => 'Must be a delivery id, a whole number greater than 0 (p202 destination deliveries).']);
             }
-        } elseif (!is_string($payload['status']) || !in_array($payload['status'], DestinationQueue::RESENDABLE, true)) {
-            throw new ValidationException('Validation failed', ['status' => 'Must be one of: ' . implode(', ', DestinationQueue::RESENDABLE)]);
+        } elseif (!is_string($payload['status']) || !in_array($payload['status'], $resendable, true)) {
+            throw new ValidationException('Validation failed', ['status' => 'Must be one of: ' . implode(', ', $resendable)]);
         }
         $queue = new DestinationQueue($this->conn, $this->store);
         $result = $queue->resend($this->userId, $id, $deliveryId, $hasDelivery ? '' : (string) $payload['status'], time()) ?? throw self::notFound($id);
@@ -351,13 +353,13 @@ final class DestinationsController
                 $binds[] = AppPostbacksController::strictInt($params[$param], $param, 'Invalid filter value', 'Must be an integer');
             }
         }
-        $summary = array_fill_keys(DestinationQueue::STATUSES, 0);
+        $summary = array_fill_keys(DeliveryStatus::values(), 0);
         foreach ($this->rows('SELECT status, COUNT(*) AS n FROM 202_destination_deliveries WHERE ' . implode(' AND ', $where) . ' GROUP BY status', $types, $binds) as $row) {
             $summary[(string) $row['status']] = (int) $row['n'];
         }
         if (isset($params['status']) && $params['status'] !== '') {
-            if (!in_array($params['status'], DestinationQueue::STATUSES, true)) {
-                throw new ValidationException('Invalid filter value', ['status' => 'Must be one of: ' . implode(', ', DestinationQueue::STATUSES)]);
+            if (!in_array($params['status'], DeliveryStatus::values(), true)) {
+                throw new ValidationException('Invalid filter value', ['status' => 'Must be one of: ' . implode(', ', DeliveryStatus::values())]);
             }
             $where[] = 'status = ?';
             $types .= 's';
