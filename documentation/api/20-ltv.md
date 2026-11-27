@@ -540,6 +540,12 @@ it is sent, so a delivery is never sent by two runs.
 - A delivery is sent at least once: one whose outcome could not be recorded
   (the database went away mid-run) is sent again 5 minutes later.
   `X-P202-Delivery` is the same each time; de-duplicate by it.
+- An outcome is recorded only on a delivery still `pending`. A run that
+  comes back after its 5-minute claim lapsed, when another run has sent the
+  delivery or it was expired or held, leaves the row as it is and writes
+  its own outcome to the PHP error log: a `delivered` delivery is never
+  made pending again, and a late failure does not count against the
+  webhook.
 
 ### A dead webhook
 

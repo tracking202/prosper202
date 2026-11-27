@@ -18,8 +18,8 @@ import (
 // here, in either direction.
 func TestLtvListsAreTheServers(t *testing.T) {
 	ltv := readPHP(t, "202-config", "Ltv", "MysqlLtvRepository.php")
-	subscriptions := readPHP(t, "202-config", "Ltv", "MysqlSubscriptionRepository.php")
-	webhooks := readPHP(t, "202-config", "Ltv", "MysqlWebhookRepository.php")
+	subscriptionStatuses := phpEnumValues(t, repoPath("202-config", "Ltv", "SubscriptionStatus.php"))
+	deliveryStatuses := phpEnumValues(t, repoPath("202-config", "Ltv", "DeliveryStatus.php"))
 
 	for _, c := range []struct {
 		flag   string
@@ -31,8 +31,8 @@ func TestLtvListsAreTheServers(t *testing.T) {
 		{"ltv customers --segment", ltvCustomerSegments, phpConstKeys(t, ltv, "CUSTOMER_SEGMENTS")},
 		// breakdowns(): the acquisition dimensions, and product.
 		{"ltv breakdown/predict --by", ltvDimensions, append(phpConstKeys(t, ltv, "ACQUISITION_BREAKDOWNS"), "product")},
-		{"ltv subscriptions --status", ltvSubscriptionStatuses, phpConstList(t, subscriptions, "STATUSES")},
-		{"ltv webhooks deliveries --status", ltvDeliveryStatuses, phpConstList(t, webhooks, "DELIVERY_STATUSES")},
+		{"ltv subscriptions --status", ltvSubscriptionStatuses, subscriptionStatuses},
+		{"ltv webhooks deliveries --status", ltvDeliveryStatuses, deliveryStatuses},
 	} {
 		if strings.Join(c.cli, ",") != strings.Join(c.server, ",") {
 			t.Errorf("%s offers [%s]; the server takes [%s]", c.flag, strings.Join(c.cli, " "), strings.Join(c.server, " "))
@@ -61,6 +61,25 @@ func phpConstList(t *testing.T, php, name string) []string {
 	values := phpStringList(m[1])
 	if len(values) < 2 {
 		t.Fatalf("read %d values from const %s: the scan is blind", len(values), name)
+	}
+	return values
+}
+
+// phpEnumValues reads a lifecycle enum's stored values, its `case Name =
+// 'value';` lines in order. Fewer than two fails the test: the scan is blind,
+// not the enum short.
+func phpEnumValues(t *testing.T, path string) []string {
+	t.Helper()
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var values []string
+	for _, m := range regexp.MustCompile(`(?m)^    case \w+ = '([^']+)';$`).FindAllStringSubmatch(string(src), -1) {
+		values = append(values, m[1])
+	}
+	if len(values) < 2 {
+		t.Fatalf("read %d cases from %s: the scan is blind", len(values), path)
 	}
 	return values
 }

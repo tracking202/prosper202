@@ -29,8 +29,8 @@ var ltvCmd = &cobra.Command{
 }
 
 // Values the LTV endpoints accept: MysqlLtvRepository's breakdowns(),
-// CUSTOMER_SORTS and CUSTOMER_SEGMENTS, and MysqlSubscriptionRepository's
-// STATUSES. The server refuses any other value naming the parameter, and
+// CUSTOMER_SORTS and CUSTOMER_SEGMENTS, and the SubscriptionStatus enum's
+// cases. The server refuses any other value naming the parameter, and
 // TestLtvListsAreTheServers holds these lists to its.
 var (
 	ltvDimensions           = []string{"campaign", "ppc_account", "landing_page", "product"}

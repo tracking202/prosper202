@@ -19121,7 +19121,7 @@ components:
         webhook_id: {type: integer}
         webhook_url: {type: string}
         subscribed_events: {type: string, description: "Comma-separated event names; empty for every event"}
-        status: {type: string, enum: [active, disabled, dead]}
+        status: {type: string, enum: [active, dead]}
         created_at: {type: integer, description: "Unix seconds"}
         updated_at: {type: integer, description: "Unix seconds"}
 

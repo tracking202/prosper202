@@ -89,7 +89,6 @@ final class ServerListsTest extends TestCase
             'ltv:breakdown --by and ltv:predict --by (the acquisition dimensions, and product)'
         );
         self::assertSame($constant(\Prosper202\Ltv\MysqlLtvRepository::class, 'CUSTOMER_SORTS'), ServerLists::LTV_CUSTOMER_SORTS, 'ltv:customers --sort');
-        self::assertSame($constant(\Prosper202\Ltv\MysqlSubscriptionRepository::class, 'STATUSES'), ServerLists::LTV_SUBSCRIPTION_STATUSES, 'ltv:subscriptions --status');
     }
 
     /** @return iterable<string, array{string, string, list<string>}> */
@@ -103,7 +102,7 @@ final class ServerListsTest extends TestCase
         yield 'ltv:breakdown --by' => ['ltv:breakdown', 'by', ServerLists::LTV_BREAKDOWNS];
         yield 'ltv:predict --by' => ['ltv:predict', 'by', ServerLists::LTV_BREAKDOWNS];
         yield 'ltv:customers --sort' => ['ltv:customers', 'sort', ServerLists::LTV_CUSTOMER_SORTS];
-        yield 'ltv:subscriptions --status' => ['ltv:subscriptions', 'status', ServerLists::LTV_SUBSCRIPTION_STATUSES];
+        yield 'ltv:subscriptions --status' => ['ltv:subscriptions', 'status', ServerLists::ltvSubscriptionStatuses()];
         yield 'conversion:list --source' => ['conversion:list', 'source', ServerLists::conversionSources()];
         yield 'app:notifications --status' => ['app:notifications', 'status', ServerLists::appNotificationStatuses()];
         yield 'app:notifications --kind' => ['app:notifications', 'kind', \Api\V3\Controllers\AppNotificationsController::KINDS];

@@ -22,10 +22,11 @@ final class SubscriptionWritesAreAnnouncedTest extends TestCase
     /** file => [statements, who announces them] */
     private const WRITERS = [
         '202-config/Ltv/MysqlSubscriptionRepository.php' => [
-            3,
-            'upsert() and recordEvent(); LtvController::upsertSubscription() and subscriptionEvent() queue the event',
+            5,
+            'upsert() (its INSERT and its UPDATE) and recordEvent() (cancel, renewal): LtvController::'
+                . 'upsertSubscription() and subscriptionEvent() queue the event. lapse(): its one caller, the sweep,'
+                . ' queues it in the batch\'s transaction (LtvMaintenance::sweepBatch())',
         ],
-        '202-config/Ltv/LtvMaintenance.php' => [1, 'the sweep queues it in the batch\'s transaction (sweepBatch())'],
         '202-config/User/UserDataPurge.php' => [1, 'the account is deleted, its webhooks with it: nobody to tell'],
     ];
 
@@ -64,6 +65,22 @@ final class SubscriptionWritesAreAnnouncedTest extends TestCase
             '/->enqueue\(\s*\$userId,\s*\'subscription\.changed\'/',
             self::body(self::read('202-config/Ltv/LtvMaintenance.php'), 'sweepBatch'),
             'the sweep no longer queues subscription.changed for what it writes'
+        );
+    }
+
+    public function testOnlyTheSweepCallsTheRepositorysLapse(): void
+    {
+        $callers = [];
+        foreach (SourceScan::phpFiles() as $file => $source) {
+            if (SourceScan::countMatches('/::lapse\s*\(/', $source, $file) > 0) {
+                $callers[] = $file;
+            }
+        }
+        self::assertSame(['202-config/Ltv/LtvMaintenance.php'], $callers, 'lapse() writes a status and queues'
+            . ' nothing: a caller queues subscription.changed as sweepBatch() does');
+        self::assertStringContainsString(
+            'MysqlSubscriptionRepository::lapse(',
+            self::body(self::read('202-config/Ltv/LtvMaintenance.php'), 'sweepBatch')
         );
     }
 

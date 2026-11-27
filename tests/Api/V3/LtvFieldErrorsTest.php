@@ -93,6 +93,7 @@ final class LtvFieldErrorsTest extends TestCase
         ],
         '202-config/Ltv/MysqlWebhookRepository.php' => [
             'Failed to encode webhook payload for' => 'an event this install built',
+            'Webhook ' => 'revive(): a write the database did not keep under its row lock',
         ],
         '202-config/Ltv/WebhookDispatcher.php' => [
             'GET_LOCK failed for' => 'the cron\'s dispatcher, which no /ltv route reaches',

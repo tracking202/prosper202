@@ -292,7 +292,7 @@ try {
     // The optimizer's webhook is not rotated here (rotateSecret() refuses it).
     $optimizerWebhookId = $webhooks === [] ? null : $webhooksRepo->pairingWebhookOf($userId);
     $rotateHours = intdiv(\Prosper202\Ltv\MysqlWebhookRepository::ROTATION_OVERLAP_DEFAULT_SECONDS, 3600);
-    $missedDeliveries = in_array('dead', array_column($webhooks, 'status'), true)
+    $missedDeliveries = in_array(\Prosper202\Ltv\WebhookStatus::Dead->value, array_column($webhooks, 'status'), true)
         ? $webhooksRepo->missedCounts($userId, time())
         : [];
 
@@ -467,6 +467,7 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
                 <?php } ?>
                 <?php foreach ($webhooks as $webhook) {
                     $status = (string) ($webhook['status'] ?? '');
+                    $isDead = $status === \Prosper202\Ltv\WebhookStatus::Dead->value;
                     $hookId = (int) $webhook['webhook_id'];
                     $reviveConfirm = 'Revive webhook #' . $hookId . '? It is sent new events again, and '
                         . ($missedDeliveries[$hookId] ?? 0) . ' delivery(ies) from the last 7 days'
@@ -479,15 +480,15 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
                         <td><?php echo $esc(mb_strimwidth((string) ($webhook['webhook_url'] ?? ''), 0, 70, '…')); ?></td>
                         <td><span class="text-secondary" style="font-size: 12px;"><?php echo $esc(str_replace(',', ', ', (string) ($webhook['subscribed_events'] ?? ''))); ?></span></td>
                         <td>
-                            <?php if ($status === 'dead') { ?>
-                                <span title="A delivery failed 6 times; events are held. Fix the endpoint, then Revive."><?php echo p202_ltv_status_pill('dead'); ?></span>
+                            <?php if ($isDead) { ?>
+                                <span title="A delivery failed 6 times; events are held. Fix the endpoint, then Revive."><?php echo p202_ltv_status_pill($status); ?></span>
                             <?php } else { ?>
                                 <?php echo p202_ltv_status_pill($status); ?>
                             <?php } ?>
                         </td>
                         <td><?php echo $when($webhook['created_at'] ?? 0); ?></td>
                         <td class="num" style="white-space: nowrap;">
-                            <?php if ($status === 'dead') { ?>
+                            <?php if ($isDead) { ?>
                                 <button type="button" class="btn btn-sm btn-primary" onclick="ltvSettingsAction(
                                     'revive_webhook', 'webhook_id', <?php echo $hookId; ?>,
                                     <?php echo $esc(json_encode($reviveConfirm)); ?>);">
@@ -560,7 +561,7 @@ $csrfToken = (string) ($_SESSION['token'] ?? '');
                             <td class="small"<?php echo $lastResponseTitle; ?>><?php echo $lastResponse; ?></td>
                             <td class="num"><?php echo (int) ($delivery['attempts'] ?? 0); ?></td>
                             <td class="num"><?php echo ($delivery['last_status_code'] ?? null) !== null ? (int) $delivery['last_status_code'] : '<span class="text-secondary">—</span>'; ?></td>
-                            <td><?php echo $deliveryStatus === 'pending' ? date('M j, g:ia', (int) ($delivery['next_attempt_at'] ?? 0)) : '<span class="text-secondary">—</span>'; ?></td>
+                            <td><?php echo $deliveryStatus === \Prosper202\Ltv\DeliveryStatus::Pending->value ? date('M j, g:ia', (int) ($delivery['next_attempt_at'] ?? 0)) : '<span class="text-secondary">—</span>'; ?></td>
                             <td><?php echo $when($delivery['created_at'] ?? 0); ?></td>
                             <td><?php echo $when($delivery['updated_at'] ?? 0); ?></td>
                         </tr>

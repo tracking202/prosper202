@@ -99,7 +99,10 @@ final class LtvMaintenance
     public const EVENT_WINDOW_SECONDS = WebhookDispatcher::MAX_AGE_SECONDS;
 
     /** What the API's change of each status the sweep writes queues as its action. */
-    public const EVENT_ACTIONS = ['past_due' => 'upsert', 'canceled' => 'cancel'];
+    public const EVENT_ACTIONS = [
+        SubscriptionStatus::PastDue->value => 'upsert',
+        SubscriptionStatus::Canceled->value => 'cancel',
+    ];
 
     /** The reconcile's window: customers active this recently. */
     public const ACTIVE_WINDOW_SECONDS = 172800;
@@ -259,15 +262,10 @@ final class LtvMaintenance
     {
         $lapse = 'current_period_end + grace_days * 86400';
         $cancelAt = 'current_period_end + (grace_days + ' . self::CANCEL_AFTER_DAYS . ') * 86400';
-        $phases = [
-            // lapsed when its period (a trial's, or a pause's) and grace are over
-            ['active', $lapse],
-            ['trialing', $lapse],
-            ['paused', $lapse],
-            // canceled once the cancel window is over too
-            ['past_due', $cancelAt],
-        ];
-        foreach ($phases as [$status, $lapsedAt]) {
+        foreach (SubscriptionStatus::lapsing() as $status) {
+            // Lapsed when its period (a trial's, or a pause's) and grace are
+            // over; a past due one is canceled once the cancel window is over too.
+            $lapsedAt = $status === SubscriptionStatus::PastDue ? $cancelAt : $lapse;
             $now = time();
             $afterEnd = 0;
             $afterId = 0;
@@ -287,7 +285,7 @@ final class LtvMaintenance
                 $this->conn->bind(
                     $stmt,
                     'siiiiii',
-                    [$status, $now, $now, $afterEnd, $afterEnd, $afterId, $this->batch]
+                    [$status->value, $now, $now, $afterEnd, $afterEnd, $afterId, $this->batch]
                 );
                 $rows = $this->conn->fetchAll($stmt);
                 if ($rows === []) {
@@ -308,9 +306,9 @@ final class LtvMaintenance
                 );
                 $report['past_due'] += $pastDue;
                 $report['canceled'] += $canceled;
-                if ($status === 'trialing') {
+                if ($status === SubscriptionStatus::Trialing) {
                     $report['lapsed_trials'] += $pastDue + $canceled;
-                } elseif ($status === 'paused') {
+                } elseif ($status === SubscriptionStatus::Paused) {
                     $report['lapsed_pauses'] += $pastDue + $canceled;
                 }
                 $report['swept_customers'] += $customers;
@@ -332,8 +330,13 @@ final class LtvMaintenance
      * @param array<int, array{subs: list<int>, customers: array<int, true>}> $byUser
      * @return array{0: int, 1: int, 2: int, 3: int, 4: int}
      */
-    private function sweepBatch(array $byUser, string $status, string $lapsedAt, string $cancelAt, int $now): array
-    {
+    private function sweepBatch(
+        array $byUser,
+        SubscriptionStatus $status,
+        string $lapsedAt,
+        string $cancelAt,
+        int $now
+    ): array {
         $counts = [0, 0, 0, 0, 0];
         $webhooks = new MysqlWebhookRepository($this->conn);
         foreach ($byUser as $userId => $ids) {
@@ -345,43 +348,41 @@ final class LtvMaintenance
                    AND status = ? AND {$lapsedAt} < ?
                  FOR UPDATE"
             );
-            $this->conn->bind($stmt, 'i' . str_repeat('i', count($subs)) . 'si', [$userId, ...$subs, $status, $now]);
+            $this->conn->bind(
+                $stmt,
+                'i' . str_repeat('i', count($subs)) . 'si',
+                [$userId, ...$subs, $status->value, $now]
+            );
             // new status => [subscription id, customer id, the moment it took effect]
-            $to = ['canceled' => [], 'past_due' => []];
+            $to = [SubscriptionStatus::Canceled->value => [], SubscriptionStatus::PastDue->value => []];
             foreach ($this->conn->fetchAll($stmt) as $row) {
                 $canceling = (int) $row['cancel_at'] < $now;
-                $to[$canceling ? 'canceled' : 'past_due'][] = [
+                $to[($canceling ? SubscriptionStatus::Canceled : SubscriptionStatus::PastDue)->value][] = [
                     (int) $row['subscription_id'],
                     (int) $row['customer_id'],
                     (int) ($canceling ? $row['cancel_at'] : $row['lapsed_at']),
                 ];
             }
-            $set = [
-                'canceled' => "status = 'canceled', canceled_at = {$cancelAt}",
-                'past_due' => "status = 'past_due'",
-            ];
             foreach ($to as $newStatus => $changes) {
                 if ($changes === []) {
                     continue;
                 }
                 $changed = array_column($changes, 0);
-                $stmt = $this->conn->prepareWrite(
-                    "UPDATE 202_subscriptions SET {$set[$newStatus]}, updated_at = ?
-                     WHERE user_id = ? AND subscription_id IN (" . self::placeholders(count($changed)) . ')
-                       AND status = ?'
+                $written = MysqlSubscriptionRepository::lapse(
+                    $this->conn,
+                    $userId,
+                    $changed,
+                    $status,
+                    SubscriptionStatus::from($newStatus),
+                    self::CANCEL_AFTER_DAYS,
+                    $now
                 );
-                $this->conn->bind(
-                    $stmt,
-                    'ii' . str_repeat('i', count($changed)) . 's',
-                    [$now, $userId, ...$changed, $status]
-                );
-                $written = $this->conn->executeUpdate($stmt);
                 if ($written !== count($changed)) {
                     // Locked above, so each still matches; an event for a row not moved would be false.
                     throw new \RuntimeException('The sweep locked ' . count($changed) . ' subscriptions to move to '
                         . $newStatus . ' and moved ' . $written);
                 }
-                $counts[$newStatus === 'canceled' ? 1 : 0] += $written;
+                $counts[$newStatus === SubscriptionStatus::Canceled->value ? 1 : 0] += $written;
                 foreach ($changes as [$subscriptionId, $customerId, $effectiveAt]) {
                     if ($effectiveAt < $now - self::EVENT_WINDOW_SECONDS) {
                         $counts[4]++;

@@ -19,7 +19,7 @@ class LtvSubscriptionsCommand extends BaseCommand
     {
         parent::configure();
         $this->setDescription('Account-wide subscription list joined to customers, filterable by lifecycle status')
-            ->addOption('status', 's', InputOption::VALUE_REQUIRED, 'Filter: ' . ServerLists::list(ServerLists::LTV_SUBSCRIPTION_STATUSES))
+            ->addOption('status', 's', InputOption::VALUE_REQUIRED, 'Filter: ' . ServerLists::list(ServerLists::ltvSubscriptionStatuses()))
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Rows per page (max 500)')
             ->addOption('offset', 'o', InputOption::VALUE_REQUIRED, 'Pagination offset');
     }

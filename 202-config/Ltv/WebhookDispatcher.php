@@ -60,7 +60,7 @@ final class WebhookDispatcher
     /** Deliveries expired per statement. */
     public const EXPIRE_BATCH = 1000;
 
-    public const EXPIRED_REASON = 'expired: still unsent 7 days after it was queued, so it was not sent';
+    public const EXPIRED_REASON = DeliveryStatus::EXPIRED;
 
     /** @var callable(array<string, mixed>): array{0: bool, 1: ?int, 2: string} */
     private $send;
@@ -225,14 +225,17 @@ final class WebhookDispatcher
                 }
                 $claimed++;
 
-                $webhookStatus = (string) $delivery['webhook_status'];
-                if ($webhookStatus === 'dead' && $repo->holdDelivery($deliveryId, time())) {
+                $webhookStatus = WebhookStatus::tryFrom((string) $delivery['webhook_status']);
+                if ($webhookStatus === WebhookStatus::Dead && $repo->holdDelivery($deliveryId, time())) {
                     // Kept for a revival (MysqlWebhookRepository::revive()), not tried.
                     $report['held']++;
                     continue;
                 }
-                if ($webhookStatus !== 'active' && $webhookStatus !== 'dead') {
-                    $repo->recordAttempt($deliveryId, $webhookId, false, null, 'endpoint not active');
+                if ($webhookStatus === null) {
+                    // A stored status no case names (the column's `disabled`):
+                    // this delivery is not sent, and the attempt is spent. Nothing
+                    // was sent, so an attempt someone else's move refused loses nothing.
+                    $repo->recordAttempt($deliveryId, $webhookId, false, null, DeliveryStatus::WEBHOOK_NOT_ACTIVE);
                     $report['failed']++;
                     continue;
                 }
@@ -244,7 +247,12 @@ final class WebhookDispatcher
                     [$success, $statusCode, $responseBody] = [false, null, 'error: ' . $e->getMessage()];
                 }
                 $responseBody = DeliveryReason::redactSafely($responseBody, (string) ($delivery['webhook_secret'] ?? ''));
-                $repo->recordAttempt($deliveryId, $webhookId, $success, $statusCode, $responseBody);
+                if (!$repo->recordAttempt($deliveryId, $webhookId, $success, $statusCode, $responseBody)) {
+                    // Moved by someone else since the claim: its row is theirs.
+                    error_log('ltv_webhooks: delivery ' . $deliveryId . ' to webhook ' . $webhookId . ' was '
+                        . ($success ? 'delivered' : 'tried') . ' but was no longer pending, so its outcome was'
+                        . ' not recorded');
+                }
 
                 if ($success) {
                     $report['delivered']++;

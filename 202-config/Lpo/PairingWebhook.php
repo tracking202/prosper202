@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Lpo;
 
 use Prosper202\Ltv\MysqlWebhookRepository;
+use Prosper202\Ltv\WebhookStatus;
 
 /**
  * Whether the Landing Page Optimizer receives events: the status of the
@@ -19,7 +20,7 @@ final class PairingWebhook
     public const RECEIVING = 'receiving';
     /** A delivery failed MAX_ATTEMPTS times and the webhook was stopped. */
     public const DEAD = 'dead';
-    /** The webhook is neither active nor dead (`disabled`). */
+    /** The webhook's stored status is one WebhookStatus does not name (the column's `disabled`). */
     public const OFF = 'off';
     /** No webhook of this account has the id the pairing names. */
     public const GONE = 'gone';
@@ -43,11 +44,10 @@ final class PairingWebhook
             return ['state' => self::UNNAMED, 'webhook_id' => 0];
         }
         $webhook = $webhooks->get($userId, $webhookId);
-        $state = match ($webhook['status'] ?? null) {
-            null => self::GONE,
-            'active' => self::RECEIVING,
-            'dead' => self::DEAD,
-            default => self::OFF,
+        $state = $webhook === null ? self::GONE : match (WebhookStatus::tryFrom((string) $webhook['status'])) {
+            WebhookStatus::Active => self::RECEIVING,
+            WebhookStatus::Dead => self::DEAD,
+            null => self::OFF,
         };
 
         return ['state' => $state, 'webhook_id' => $webhookId];

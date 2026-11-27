@@ -22,8 +22,10 @@ AUTH::set_timezone($_SESSION['user_timezone']);
 $userId = (int) $_SESSION['user_id'];
 $limit = 50;
 
-$statuses = ['' => 'All', 'trialing' => 'Trialing', 'active' => 'Active',
-    'past_due' => 'Past Due', 'paused' => 'Paused', 'canceled' => 'Canceled'];
+$statuses = ['' => 'All'];
+foreach (\Prosper202\Ltv\SubscriptionStatus::values() as $value) {
+    $statuses[$value] = ucwords(str_replace('_', ' ', $value));
+}
 
 require_once __DIR__ . '/ltv_ui.php';
 $money = p202_ltv_money(...);

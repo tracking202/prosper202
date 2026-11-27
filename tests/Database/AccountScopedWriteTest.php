@@ -326,15 +326,11 @@ final class AccountScopedWriteTest extends TestCase
             'no user_id tie | 202_personalization_tokens | p13n_id = ? AND redeemed_at IS NULL' => self::R_CREDENTIAL,
             'no user_id tie | 202_personalization_tokens | replay_until < ?' => self::R_RETENTION,
         ],
-        '202-config/Ltv/MysqlSubscriptionRepository.php' => [
-            'no user_id tie | 202_subscriptions | subscription_id = ?' => 'the subscription read just before `WHERE user_id = ? AND external_sub_id = ? … FOR UPDATE`, by its id',
-            'no user_id tie | 202_subscriptions | subscription_id = ? #2' => 'the subscription read just before `WHERE user_id = ? AND external_sub_id = ? … FOR UPDATE`, by its id',
-        ],
         '202-config/Ltv/MysqlWebhookRepository.php' => [
             'no user_id tie | 202_ltv_webhook_deliveries | delivery_id = ? AND status = \'pending\' AND next_attempt_at <= ?' => 'the webhook dispatcher\'s (cron) claim and outcome of a delivery its due read chose',
             'no user_id tie | 202_ltv_webhook_deliveries | status = \'pending\' AND next_attempt_at <= ? AND created_at < ?' => 'the webhook dispatcher\'s (cron) claim and outcome of a delivery its due read chose',
-            'no user_id tie | 202_ltv_webhook_deliveries | delivery_id = ?' => 'the webhook dispatcher\'s (cron) claim and outcome of a delivery its due read chose',
-            'no user_id tie | 202_ltv_webhook_deliveries | delivery_id = ? #2' => 'the webhook dispatcher\'s (cron) claim and outcome of a delivery its due read chose',
+            'no user_id tie | 202_ltv_webhook_deliveries | delivery_id = ? AND status = \'pending\'' => 'the webhook dispatcher\'s (cron) claim and outcome of a delivery its due read chose',
+            'no user_id tie | 202_ltv_webhook_deliveries | delivery_id = ? AND status = \'pending\' #2' => 'the webhook dispatcher\'s (cron) claim and outcome of a delivery its due read chose',
             'no user_id tie | 202_ltv_webhooks | webhook_id = ? AND status = \'active\'' => 'the webhook dispatcher\'s (cron) claim and outcome of a delivery its due read chose',
             'no user_id tie | 202_ltv_webhook_deliveries | d.delivery_id = ? AND d.status = \'pending\' AND w.status = \'dead\'' => 'the webhook dispatcher\'s (cron) claim and outcome of a delivery its due read chose',
         ],
@@ -441,7 +437,7 @@ final class AccountScopedWriteTest extends TestCase
         ],
     ];
 
-    private const REVIEWED_CEILING = 135;
+    private const REVIEWED_CEILING = 133;
 
     private const STATEMENT_ENDS = ['ORDER', 'LIMIT'];
 

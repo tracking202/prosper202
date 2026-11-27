@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Ltv;
 
 use Prosper202\Database\Connection;
+use Prosper202\Lifecycle\IllegalTransition;
 use RuntimeException;
 
 /**
@@ -15,14 +16,14 @@ use RuntimeException;
  * customer aggregate — no drift), and the ltv_maintenance cron reconciles
  * everything anyway.
  *
- * Time-based transitions (active, trialing or paused -> past_due -> canceled)
- * are LtvMaintenance's sweep, which the hourly cron runs, not here.
+ * Every statement that writes a subscription's status is here, and the
+ * moves are SubscriptionStatus's. The time-based ones (active, trialing or
+ * paused -> past_due -> canceled) are asked for by LtvMaintenance's sweep,
+ * which the hourly cron runs (lapse()).
  */
 final class MysqlSubscriptionRepository
 {
     private const INTERVALS = ['day', 'week', 'month', 'year'];
-    /** A subscription's lifecycle states; GET /ltv/subscriptions filters by them. */
-    public const STATUSES = ['trialing', 'active', 'past_due', 'paused', 'canceled'];
 
     /** Months per interval unit, for normalizing amounts to MRR. */
     private const MONTHS_PER_INTERVAL = [
@@ -75,12 +76,13 @@ final class MysqlSubscriptionRepository
 
         $currency = $this->validateCurrency($userId, $payload['currency'] ?? null);
 
-        $status = strtolower(trim((string) ($payload['status'] ?? 'active')));
-        if (!in_array($status, self::STATUSES, true)) {
+        $sentStatus = strtolower(trim((string) ($payload['status'] ?? SubscriptionStatus::Active->value)));
+        $status = SubscriptionStatus::tryFrom($sentStatus);
+        if ($status === null) {
             throw new LtvInputException(
                 'status',
-                'invalid subscription status: ' . $status,
-                'Must be one of: ' . implode(', ', self::STATUSES)
+                'invalid subscription status: ' . $sentStatus,
+                'Must be one of: ' . implode(', ', SubscriptionStatus::values())
             );
         }
 
@@ -97,7 +99,7 @@ final class MysqlSubscriptionRepository
         $planName = trim((string) ($payload['plan_name'] ?? ''));
 
         // Trials do not collect money yet, so they carry no MRR.
-        $mrr = $status === 'trialing' ? 0.0 : self::normalizeMrr($amount, $interval, $intervalCount);
+        $mrr = $status === SubscriptionStatus::Trialing ? 0.0 : self::normalizeMrr($amount, $interval, $intervalCount);
 
         $write = fn (): array => $this->conn->transaction(function () use (
             $userId,
@@ -129,61 +131,96 @@ final class MysqlSubscriptionRepository
             // an unlocked read would let both see the same stale owner and
             // leave an intermediate owner's MRR rollup never refreshed.
             $prevStmt = $this->conn->prepareWrite(
-                'SELECT customer_id FROM 202_subscriptions WHERE user_id = ? AND external_sub_id = ? LIMIT 1 FOR UPDATE'
+                'SELECT subscription_id, customer_id, status FROM 202_subscriptions
+                 WHERE user_id = ? AND external_sub_id = ? LIMIT 1 FOR UPDATE'
             );
             $this->conn->bind($prevStmt, 'is', [$userId, $externalSubId]);
             $previous = $this->conn->fetchOne($prevStmt);
 
-            $stmt = $this->conn->prepareWrite(
-                "INSERT INTO 202_subscriptions
-                    (user_id, customer_id, external_sub_id, plan_name, amount, currency,
-                     billing_interval, billing_interval_count, status, mrr,
-                     started_at, current_period_start, current_period_end, grace_days,
-                     canceled_at, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON DUPLICATE KEY UPDATE
-                    subscription_id = LAST_INSERT_ID(subscription_id),
-                    customer_id = VALUES(customer_id),
-                    plan_name = VALUES(plan_name),
-                    amount = VALUES(amount),
-                    billing_interval = VALUES(billing_interval),
-                    billing_interval_count = VALUES(billing_interval_count),
-                    status = VALUES(status),
-                    mrr = VALUES(mrr),
-                    current_period_start = VALUES(current_period_start),
-                    current_period_end = VALUES(current_period_end),
-                    grace_days = VALUES(grace_days),
-                    canceled_at = IF(VALUES(status) = 'canceled', COALESCE(canceled_at, VALUES(canceled_at), VALUES(updated_at)), NULL),
-                    updated_at = VALUES(updated_at)"
-            );
-            // user_id(i) customer_id(i) external_sub_id(s) plan_name(s) amount(d)
-            // currency(s) billing_interval(s) billing_interval_count(i) status(s)
-            // mrr(d) started_at(i) period_start(i) period_end(i) grace_days(i)
-            // canceled_at(i) created_at(i) updated_at(i)
-            // A first-time INSERT arriving already canceled must carry
-            // canceled_at — mrr()'s trailing-churn window filters on it.
-            $this->conn->bind($stmt, 'iissdssisdiiiiiii', [
-                $userId,
-                $customerId,
-                $externalSubId,
-                $planName !== '' ? $planName : null,
-                $amount,
-                $currency,
-                $interval,
-                $intervalCount,
-                $status,
-                $mrr,
-                $startedAt,
-                $periodStart,
-                $periodEnd,
-                $graceDays,
-                $status === 'canceled' ? $now : null,
-                $now,
-                $now,
-            ]);
-            $subscriptionId = $this->conn->executeInsert($stmt);
-            if ($subscriptionId <= 0) {
-                throw new RuntimeException('Subscription upsert did not yield a subscription_id');
+            if ($previous === null) {
+                $stmt = $this->conn->prepareWrite(
+                    'INSERT INTO 202_subscriptions
+                        (user_id, customer_id, external_sub_id, plan_name, amount, currency,
+                         billing_interval, billing_interval_count, status, mrr,
+                         started_at, current_period_start, current_period_end, grace_days,
+                         canceled_at, created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                );
+                // user_id(i) customer_id(i) external_sub_id(s) plan_name(s) amount(d)
+                // currency(s) billing_interval(s) billing_interval_count(i) status(s)
+                // mrr(d) started_at(i) period_start(i) period_end(i) grace_days(i)
+                // canceled_at(i) created_at(i) updated_at(i)
+                // A first-time INSERT arriving already canceled must carry
+                // canceled_at — mrr()'s trailing-churn window filters on it.
+                $this->conn->bind($stmt, 'iissdssisdiiiiiii', [
+                    $userId,
+                    $customerId,
+                    $externalSubId,
+                    $planName !== '' ? $planName : null,
+                    $amount,
+                    $currency,
+                    $interval,
+                    $intervalCount,
+                    $status->value,
+                    $mrr,
+                    $startedAt,
+                    $periodStart,
+                    $periodEnd,
+                    $graceDays,
+                    $status === SubscriptionStatus::Canceled ? $now : null,
+                    $now,
+                    $now,
+                ]);
+                $subscriptionId = $this->conn->executeInsert($stmt);
+                if ($subscriptionId <= 0) {
+                    throw new RuntimeException('Subscription upsert did not yield a subscription_id');
+                }
+            } else {
+                $subscriptionId = (int) $previous['subscription_id'];
+                $from = SubscriptionStatus::ofStored($previous['status'], 'subscription ' . $subscriptionId);
+                if ($from !== $status && !$from->canMoveTo($status)) {
+                    throw new LtvInputException(
+                        'status',
+                        'subscription ' . $externalSubId . ' is ' . $from->value . ', which may not become '
+                            . $status->value
+                    );
+                }
+                // The statuses this one may be written over: itself, and those that may move to it.
+                $held = [$status, ...SubscriptionStatus::sources($status)];
+                $stmt = $this->conn->prepareWrite(
+                    'UPDATE 202_subscriptions
+                     SET customer_id = ?, plan_name = ?, amount = ?, billing_interval = ?,
+                         billing_interval_count = ?, status = ?, mrr = ?, current_period_start = ?,
+                         current_period_end = ?, grace_days = ?,
+                         canceled_at = IF(? = 1, COALESCE(canceled_at, ?), NULL), updated_at = ?
+                     WHERE subscription_id = ? AND user_id = ?
+                       AND status IN (' . implode(', ', array_fill(0, count($held), '?')) . ')'
+                );
+                // customer_id(i) plan_name(s) amount(d) billing_interval(s)
+                // billing_interval_count(i) status(s) mrr(d) period_start(i)
+                // period_end(i) grace_days(i) canceled(i) canceled_at(i)
+                // updated_at(i) subscription_id(i) user_id(i) held statuses(s…)
+                $this->conn->bind($stmt, 'isdsisdiiiiiiii' . str_repeat('s', count($held)), [
+                    $customerId,
+                    $planName !== '' ? $planName : null,
+                    $amount,
+                    $interval,
+                    $intervalCount,
+                    $status->value,
+                    $mrr,
+                    $periodStart,
+                    $periodEnd,
+                    $graceDays,
+                    $status === SubscriptionStatus::Canceled ? 1 : 0,
+                    $now,
+                    $now,
+                    $subscriptionId,
+                    $userId,
+                    ...array_map(static fn (SubscriptionStatus $s): string => $s->value, $held),
+                ]);
+                // No row changed is a row that already held every value: it
+                // is locked, and its status was read above.
+                $this->conn->executeUpdate($stmt);
             }
 
             $this->refreshCustomerSubscriptionRollups($userId, $customerId, $now);
@@ -198,12 +235,14 @@ final class MysqlSubscriptionRepository
         try {
             [$subscriptionId, $customerId] = $write();
         } catch (\Throwable $e) {
-            if (!Connection::isRetryableLockError($e)) {
+            if (!Connection::isRetryableLockError($e) && !Connection::isMysqlError($e, 1062, 'Duplicate entry')) {
                 throw $e;
             }
             // Two concurrent FIRST-TIME upserts of the same external_sub_id
-            // can deadlock on the FOR UPDATE gap + insert-intention locks;
-            // the retry sees the winner's committed row and updates it.
+            // can deadlock on the FOR UPDATE gap + insert-intention locks,
+            // or, where the locking read holds no gap (READ COMMITTED), the
+            // loser's INSERT meets the winner's row; the retry sees the
+            // winner's committed row and updates it.
             [$subscriptionId, $customerId] = $write();
         }
 
@@ -254,21 +293,30 @@ final class MysqlSubscriptionRepository
 
             $subscriptionId = (int) $sub['subscription_id'];
             $customerId = (int) $sub['customer_id'];
+            $stored = SubscriptionStatus::ofStored($sub['status'], 'subscription ' . $subscriptionId);
             $eventId = null;
             $inserted = false;
             $changed = false;
 
             if ($eventType === 'cancel') {
-                // A repeat cancel is an idempotent no-op — report it as
-                // unchanged so callers (webhooks) don't re-notify.
-                $changed = ((string) $sub['status']) !== 'canceled';
+                // A repeat cancel is an idempotent no-op: no row matches, and
+                // it is reported unchanged so callers (webhooks) don't re-notify.
+                $from = SubscriptionStatus::sources(SubscriptionStatus::Canceled);
                 $upd = $this->conn->prepareWrite(
-                    "UPDATE 202_subscriptions
-                     SET status = 'canceled', canceled_at = COALESCE(canceled_at, ?), updated_at = ?
-                     WHERE subscription_id = ?"
+                    'UPDATE 202_subscriptions
+                     SET status = ?, canceled_at = COALESCE(canceled_at, ?), updated_at = ?
+                     WHERE subscription_id = ? AND user_id = ?
+                       AND status IN (' . implode(', ', array_fill(0, count($from), '?')) . ')'
                 );
-                $this->conn->bind($upd, 'iii', [$occurredAt, $now, $subscriptionId]);
-                $this->conn->executeUpdate($upd);
+                $this->conn->bind($upd, 'siiii' . str_repeat('s', count($from)), [
+                    SubscriptionStatus::Canceled->value,
+                    $occurredAt,
+                    $now,
+                    $subscriptionId,
+                    $userId,
+                    ...array_map(static fn (SubscriptionStatus $s): string => $s->value, $from),
+                ]);
+                $changed = $this->conn->executeUpdate($upd) === 1;
             } else {
                 $isRefund = $eventType === 'refund';
                 $amount = isset($payload['amount']) ? (float) $payload['amount'] : (float) $sub['amount'];
@@ -359,8 +407,9 @@ final class MysqlSubscriptionRepository
                     );
 
                     if (!$isRefund) {
-                        // A renewal extends the paid-through period and clears
-                        // past_due/paused back to active. MRR is recomputed
+                        // A renewal extends the paid-through period and makes
+                        // the subscription active, whatever it was: one that
+                        // lapsed or was canceled is reactivated. MRR is recomputed
                         // here too: a trial row was stored with mrr = 0, and
                         // flipping it active without setting mrr would keep
                         // the converted subscriber reporting zero MRR.
@@ -381,13 +430,34 @@ final class MysqlSubscriptionRepository
                             (string) $sub['billing_interval'],
                             (int) $sub['billing_interval_count']
                         );
+                        if ($stored !== SubscriptionStatus::Active && !$stored->canMoveTo(SubscriptionStatus::Active)) {
+                            throw new LtvInputException(
+                                'event_type',
+                                'subscription ' . $externalSubId . ' is ' . $stored->value . ', which a renewal may'
+                                    . ' not make active'
+                            );
+                        }
+                        // The statuses a renewal is written over: active, and those that may become it.
+                        $held = [SubscriptionStatus::Active, ...SubscriptionStatus::sources(SubscriptionStatus::Active)];
                         $upd = $this->conn->prepareWrite(
-                            "UPDATE 202_subscriptions
-                             SET status = 'active', mrr = ?, current_period_start = ?, current_period_end = ?,
+                            'UPDATE 202_subscriptions
+                             SET status = ?, mrr = ?, current_period_start = ?, current_period_end = ?,
                                  canceled_at = NULL, updated_at = ?
-                             WHERE subscription_id = ?"
+                             WHERE subscription_id = ? AND user_id = ?
+                               AND status IN (' . implode(', ', array_fill(0, count($held), '?')) . ')'
                         );
-                        $this->conn->bind($upd, 'diiii', [$mrr, $occurredAt, $newPeriodEnd, $now, $subscriptionId]);
+                        $this->conn->bind($upd, 'sdiiiii' . str_repeat('s', count($held)), [
+                            SubscriptionStatus::Active->value,
+                            $mrr,
+                            $occurredAt,
+                            $newPeriodEnd,
+                            $now,
+                            $subscriptionId,
+                            $userId,
+                            ...array_map(static fn (SubscriptionStatus $s): string => $s->value, $held),
+                        ]);
+                        // No row changed is a row that already held every
+                        // value: it is locked, and its status was read above.
                         $this->conn->executeUpdate($upd);
                     }
                 }
@@ -457,6 +527,45 @@ final class MysqlSubscriptionRepository
             'Already used for event ' . $existing['event_id'] . ' with a different '
                 . implode(', ', array_keys($differences)) . '; send a new ' . $field . ' for a different one'
         );
+    }
+
+    /**
+     * The sweep's move: the account's subscriptions among $subscriptionIds
+     * still $from become $to, a move $from->lapsesTo() names, and a canceled
+     * one is dated the end of its cancel window ($cancelAfterDays past its
+     * period end and grace). Answers how many moved; the caller holds their
+     * locks and compares the count.
+     *
+     * @param list<int> $subscriptionIds at least one
+     */
+    public static function lapse(
+        Connection $conn,
+        int $userId,
+        array $subscriptionIds,
+        SubscriptionStatus $from,
+        SubscriptionStatus $to,
+        int $cancelAfterDays,
+        int $now
+    ): int {
+        if (!in_array($to, $from->lapsesTo(), true)) {
+            throw IllegalTransition::between($from, $to);
+        }
+        $canceledAt = $to === SubscriptionStatus::Canceled
+            ? ', canceled_at = current_period_end + (grace_days + ' . $cancelAfterDays . ') * 86400'
+            : '';
+        $stmt = $conn->prepareWrite(
+            'UPDATE 202_subscriptions SET status = ?' . $canceledAt . ', updated_at = ?
+             WHERE user_id = ? AND subscription_id IN ('
+            . implode(', ', array_fill(0, count($subscriptionIds), '?')) . ')
+               AND status = ?'
+        );
+        $conn->bind(
+            $stmt,
+            'sii' . str_repeat('i', count($subscriptionIds)) . 's',
+            [$to->value, $now, $userId, ...$subscriptionIds, $from->value]
+        );
+
+        return $conn->executeUpdate($stmt);
     }
 
     /**
@@ -578,8 +687,11 @@ final class MysqlSubscriptionRepository
      */
     public function listForUser(int $userId, ?string $status = null, int $limit = 50, int $offset = 0): array
     {
-        if ($status !== null && $status !== '' && !in_array($status, self::STATUSES, true)) {
-            throw new LtvInputException('status', 'status must be one of: ' . implode(', ', self::STATUSES));
+        if ($status !== null && $status !== '' && SubscriptionStatus::tryFrom($status) === null) {
+            throw new LtvInputException(
+                'status',
+                'status must be one of: ' . implode(', ', SubscriptionStatus::values())
+            );
         }
         $statusWhere = ($status !== null && $status !== '') ? ' AND s.status = ?' : '';
 

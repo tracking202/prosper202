@@ -18,6 +18,10 @@ use RuntimeException;
  * Enqueueing is a plain DB insert (safe inside request handling); actual HTTP
  * delivery happens ONLY in WebhookDispatcher, which the cron runs — never
  * inline in ingest or API writes.
+ *
+ * Every statement that writes a webhook's status (WebhookStatus) or a
+ * delivery's (DeliveryStatus) is here, and each UPDATE that changes one
+ * names the status it moves from.
  */
 final class MysqlWebhookRepository
 {
@@ -55,11 +59,10 @@ final class MysqlWebhookRepository
     public const PORTS = [443, 8443];
 
     /** The last response of a delivery held for a dead webhook (holdDelivery()). */
-    public const HELD_REASON = 'held: its webhook is dead, so it was not sent; reviving the webhook within 7 days'
-        . ' of when this was queued sends it';
+    public const HELD_REASON = DeliveryStatus::HELD;
 
     /** The last response of a delivery a revival without requeue set aside (revive()). */
-    public const REVIVED_HELD_REASON = 'held: its webhook was revived for new events only, so it was not sent';
+    public const REVIVED_HELD_REASON = DeliveryStatus::HELD_ON_REVIVAL;
 
     /** How long rotateSecret() signs with the replaced secret too, unless told otherwise. */
     public const ROTATION_OVERLAP_DEFAULT_SECONDS = 86400;
@@ -517,9 +520,6 @@ final class MysqlWebhookRepository
         return $rows;
     }
 
-    /** The states a delivery is in (the column's enum). */
-    public const DELIVERY_STATUSES = ['pending', 'delivered', 'failed'];
-
     /**
      * The delivery log the API serves: recentDeliveries()'s columns plus
      * the last attempt's response body or error ("curl: …", "blocked: …",
@@ -531,10 +531,10 @@ final class MysqlWebhookRepository
      */
     public function deliveries(int $userId, int $webhookId, int $limit, ?string $status = null): array
     {
-        if ($status !== null && !in_array($status, self::DELIVERY_STATUSES, true)) {
+        if ($status !== null && DeliveryStatus::tryFrom($status) === null) {
             throw new LtvInputException(
                 'status',
-                'Delivery status must be one of: ' . implode(', ', self::DELIVERY_STATUSES)
+                'Delivery status must be one of: ' . implode(', ', DeliveryStatus::values())
             );
         }
         $sql = 'SELECT delivery_id, event_name, status, attempts, last_status_code, last_response_body,
@@ -622,12 +622,19 @@ final class MysqlWebhookRepository
     }
 
     /**
-     * Dispatch-side: record one attempt's outcome. On success the delivery is
-     * delivered; on failure it backs off exponentially (2^attempts minutes)
-     * until MAX_ATTEMPTS, then is marked failed and the endpoint is marked
-     * dead (visible state, no silent infinite retry).
+     * Dispatch-side: record one attempt's outcome on a delivery still
+     * pending. On success the delivery is delivered; on failure it backs off
+     * exponentially (2^attempts minutes) until MAX_ATTEMPTS, then is marked
+     * failed and the endpoint is marked dead (visible state, no silent
+     * infinite retry).
+     *
+     * False when the delivery is no longer pending and nothing was written:
+     * someone else moved it since this run claimed it (another run delivered
+     * it once the claim lapsed, an expiry or a hold set it aside, its webhook
+     * was deleted). Its row is theirs: a delivered one is not made pending
+     * again, and a late failure does not count against the webhook.
      */
-    public function recordAttempt(int $deliveryId, int $webhookId, bool $success, ?int $statusCode, string $responseBody): void
+    public function recordAttempt(int $deliveryId, int $webhookId, bool $success, ?int $statusCode, string $responseBody): bool
     {
         $now = time();
         // A receiver's body is any bytes. Cut mid-character, or not UTF-8 at
@@ -640,11 +647,11 @@ final class MysqlWebhookRepository
                 "UPDATE 202_ltv_webhook_deliveries
                  SET status = 'delivered', attempts = attempts + 1,
                      last_status_code = ?, last_response_body = ?, updated_at = ?
-                 WHERE delivery_id = ?"
+                 WHERE delivery_id = ? AND status = 'pending'"
             );
             $this->conn->bind($stmt, 'isii', [$statusCode, $truncated, $now, $deliveryId]);
-            $this->conn->executeUpdate($stmt);
-            return;
+
+            return $this->conn->executeUpdate($stmt) === 1;
         }
 
         $stmt = $this->conn->prepareWrite(
@@ -659,7 +666,7 @@ final class MysqlWebhookRepository
                  next_attempt_at = ? + (POW(2, LEAST(attempts + 1, 10)) * 60),
                  last_status_code = ?, last_response_body = ?, updated_at = ?,
                  attempts = attempts + 1
-             WHERE delivery_id = ?"
+             WHERE delivery_id = ? AND status = 'pending'"
         );
         $this->conn->bind($stmt, 'iiisii', [
             self::MAX_ATTEMPTS,
@@ -669,7 +676,9 @@ final class MysqlWebhookRepository
             $now,
             $deliveryId,
         ]);
-        $this->conn->executeUpdate($stmt);
+        if ($this->conn->executeUpdate($stmt) !== 1) {
+            return false;
+        }
 
         // If this delivery just exhausted its attempts, kill the endpoint so
         // the operator sees it (they can re-activate after fixing).
@@ -678,13 +687,16 @@ final class MysqlWebhookRepository
         );
         $this->conn->bind($check, 'i', [$deliveryId]);
         $row = $this->conn->fetchOne($check);
-        if ($row !== null && (string) $row['status'] === 'failed') {
+        if ($row !== null && DeliveryStatus::tryFrom((string) $row['status']) === DeliveryStatus::Failed) {
+            // Already dead, or deleted: no row matches, and there is nothing to mark.
             $kill = $this->conn->prepareWrite(
                 "UPDATE 202_ltv_webhooks SET status = 'dead', updated_at = ? WHERE webhook_id = ? AND status = 'active'"
             );
             $this->conn->bind($kill, 'ii', [$now, $webhookId]);
             $this->conn->executeUpdate($kill);
         }
+
+        return true;
     }
 
     /**
@@ -708,8 +720,8 @@ final class MysqlWebhookRepository
     }
 
     /**
-     * Make one of the account's webhooks that is not active (dead: a
-     * delivery failed MAX_ATTEMPTS times) active again, keeping its id, URL
+     * Make one of the account's webhooks that is dead (a delivery failed
+     * MAX_ATTEMPTS times) active again, keeping its id, URL
      * and secret, so whatever was set up with them (the Landing Page
      * Optimizer's pairing) goes on as it was.
      *
@@ -737,7 +749,9 @@ final class MysqlWebhookRepository
      * does not end in time is an LtvConflictException, and nothing changed.
      * The webhook's row is locked too: two revivals do not both count one
      * delivery. An active webhook is left as it is (revived false). Another
-     * account's webhook, or none, is a RecordNotFoundException.
+     * account's webhook, or none, is a RecordNotFoundException; one whose
+     * stored status WebhookStatus does not name is an UnknownState, and
+     * nothing changed.
      *
      * @return array{revived: bool, requeued: int, attempts_reset: int, held: int}
      */
@@ -768,15 +782,19 @@ final class MysqlWebhookRepository
         if ($row === null) {
             throw new RecordNotFoundException('Webhook not found');
         }
-        if ((string) $row['status'] === 'active') {
+        if (WebhookStatus::ofStored($row['status'], 'webhook ' . $webhookId) === WebhookStatus::Active) {
             return ['revived' => false, 'requeued' => 0, 'attempts_reset' => 0, 'held' => 0];
         }
 
         $stmt = $this->conn->prepareWrite(
-            "UPDATE 202_ltv_webhooks SET status = 'active', updated_at = ? WHERE webhook_id = ? AND user_id = ?"
+            "UPDATE 202_ltv_webhooks SET status = 'active', updated_at = ?
+             WHERE webhook_id = ? AND user_id = ? AND status = 'dead'"
         );
         $this->conn->bind($stmt, 'iii', [$now, $webhookId, $userId]);
-        $this->conn->executeUpdate($stmt);
+        if ($this->conn->executeUpdate($stmt) !== 1) {
+            // Locked and read as dead above, so it matches.
+            throw new RuntimeException('Webhook ' . $webhookId . ' was locked dead and was not made active');
+        }
 
         if (!$requeue) {
             $stmt = $this->conn->prepareWrite(

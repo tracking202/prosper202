@@ -9,6 +9,7 @@ use Api\V3\Controllers\ReportsController;
 use Api\V3\Support\TimeBound;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\MatchMethod;
+use Prosper202\Ltv\SubscriptionStatus;
 
 /**
  * The value lists this CLI's help and offline checks name — periods,
@@ -58,9 +59,6 @@ final class ServerLists
     /** GET /ltv/customers's sort. */
     public const LTV_CUSTOMER_SORTS = ['total_revenue', 'order_count', 'last_activity_time', 'first_seen_time', 'mrr'];
 
-    /** A subscription's status. */
-    public const LTV_SUBSCRIPTION_STATUSES = ['trialing', 'active', 'past_due', 'paused', 'canceled'];
-
     private function __construct()
     {
     }
@@ -87,6 +85,12 @@ final class ServerLists
     public static function conversionMatchMethods(): array
     {
         return MatchMethod::values();
+    }
+
+    /** A subscription's status (GET /ltv/subscriptions?status=). */
+    public static function ltvSubscriptionStatuses(): array
+    {
+        return SubscriptionStatus::values();
     }
 
     /** An app notification's status (GET /apps/notifications?status=). */

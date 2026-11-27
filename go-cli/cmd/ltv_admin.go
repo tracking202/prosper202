@@ -287,7 +287,7 @@ var ltvWebhooksCreateCmd = &cobra.Command{
 	}),
 }
 
-// ltvDeliveryStatuses is MysqlWebhookRepository::DELIVERY_STATUSES.
+// ltvDeliveryStatuses is the DeliveryStatus enum's cases (TestLtvListsAreTheServers).
 var ltvDeliveryStatuses = []string{"pending", "delivered", "failed"}
 
 // ltvMaxDeliveries is the most deliveries one request lists.

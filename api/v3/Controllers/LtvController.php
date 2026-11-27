@@ -19,6 +19,7 @@ use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\TimeBound;
 use Prosper202\Attribution\WebhookRefused;
 use Prosper202\Database\Connection;
+use Prosper202\Ltv\DeliveryStatus;
 use Prosper202\Ltv\LtvQuery;
 use Prosper202\Ltv\MysqlCompanyRepository;
 use Prosper202\Ltv\MysqlCustomerCrmRepository;
@@ -32,9 +33,11 @@ use Prosper202\Ltv\RecordNotFoundException;
 use Prosper202\Ltv\MysqlLtvRepository;
 use Prosper202\Ltv\LtvNumbers;
 use Prosper202\Ltv\MysqlSubscriptionRepository;
+use Prosper202\Ltv\SubscriptionStatus;
 use Prosper202\Ltv\MysqlWebhookRepository;
 use Prosper202\Ltv\RevenueReplay;
 use Prosper202\Ltv\SubscriptionNotFoundException;
+use Prosper202\Ltv\WebhookStatus;
 
 /**
  * /ltv endpoints: realized + predictive LTV reads, customer CRM management,
@@ -1216,8 +1219,8 @@ class LtvController
         }
         $status = null;
         if (array_key_exists('status', $params)) {
-            if (!is_string($params['status']) || !in_array($params['status'], MysqlWebhookRepository::DELIVERY_STATUSES, true)) {
-                $errors['status'] = 'must be one of: ' . implode(', ', MysqlWebhookRepository::DELIVERY_STATUSES);
+            if (!is_string($params['status']) || DeliveryStatus::tryFrom($params['status']) === null) {
+                $errors['status'] = 'must be one of: ' . implode(', ', DeliveryStatus::values());
             } else {
                 $status = $params['status'];
             }
@@ -1238,7 +1241,9 @@ class LtvController
                 'event_name' => (string) $row['event_name'],
                 'status' => (string) $row['status'],
                 'attempts' => (int) $row['attempts'],
-                'next_attempt_at' => (string) $row['status'] === 'pending' ? (int) $row['next_attempt_at'] : null,
+                'next_attempt_at' => DeliveryStatus::tryFrom((string) $row['status']) === DeliveryStatus::Pending
+                    ? (int) $row['next_attempt_at']
+                    : null,
                 'last_status_code' => $row['last_status_code'] === null ? null : (int) $row['last_status_code'],
                 'last_response_body' => $row['last_response_body'] === null ? null : (string) $row['last_response_body'],
                 'created_at' => (int) $row['created_at'],
@@ -1280,7 +1285,7 @@ class LtvController
                 'status' => 'Send "active" to revive a dead webhook',
             ]);
         }
-        if ($payload['status'] !== 'active') {
+        if ($payload['status'] !== WebhookStatus::Active->value) {
             throw new ValidationException('Invalid status', [
                 'status' => 'must be "active", which revives a dead webhook: the server alone marks one dead,'
                     . ' and DELETE /ltv/webhooks/{id} removes one',
@@ -1476,7 +1481,7 @@ class LtvController
         return $this->wrap(function () use ($params): array {
             $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
             $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
-            $status = self::choices($params, ['status' => MysqlSubscriptionRepository::STATUSES])['status'];
+            $status = self::choices($params, ['status' => SubscriptionStatus::values()])['status'];
             $result = $this->subscriptions->listForUser($this->userId, $status, PageRows::fetchLimit($limit), $offset);
             [$rows, $truncated] = PageRows::cut($result['rows'], $limit);
 
