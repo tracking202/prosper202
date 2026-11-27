@@ -526,7 +526,7 @@ $last_cron_job_execution_time = $cron_log_row === null
     ? 'never'
     : CronJobLastExecution('@' . $cron_log_row['last_execution_time']);
 
-$de_query = "SELECT count(*) as total, sum(processed) as done FROM 202_dataengine_job";
+$de_query = \Prosper202\DataEngine\RebuildWindows::progressSql();
 $de_result = _mysqli_query($db, $de_query);
 if ($de_result === false) {
 	// Not "0 of 0": the report rebuild's progress is unknown, not done.

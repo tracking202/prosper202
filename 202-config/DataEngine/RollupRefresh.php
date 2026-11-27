@@ -56,12 +56,6 @@ final class RollupRefresh
                 'a rollup refresh names an account and its traffic source account or campaign'
             );
         }
-        $stmt = $conn->prepareWrite(
-            'INSERT INTO 202_dirty_hours'
-            . ' (ppc_account_id, aff_campaign_id, user_id, click_time_from, click_time_to, landing_page_id)'
-            . ' VALUES (?, ?, ?, 0, ?, 0) ON DUPLICATE KEY UPDATE processed = 0, deleted = 0'
-        );
-        $conn->bind($stmt, 'iiii', [$ppcAccountId, $campaignId, $userId, $now]);
-        $conn->executeUpdate($stmt);
+        (new DirtyHours($conn))->queue($userId, 0, $now, $ppcAccountId, $campaignId);
     }
 }

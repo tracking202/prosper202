@@ -93,7 +93,18 @@ final class SubidResetIntegrationTest extends TestCase
         $first = (int) self::$db->query('SELECT MIN(click_time) FROM 202_clicks WHERE click_id = ' . self::CLICK)->fetch_row()[0];
         self::assertSame($first, $rows[0]['click_time'], 'at the time of its first visit, where the report hours to rebuild begin');
 
+        // The hours' queue row for each second the reset may run in, as a
+        // pass that has rolled it up leaves it until its sweep.
+        $now = time();
+        for ($to = $now; $to <= $now + 30; $to++) {
+            self::q('INSERT INTO 202_dirty_hours SET ppc_account_id = 0, aff_campaign_id = ' . self::$campaign
+                . ', user_id = ' . self::USER . ", click_time_from = $first, click_time_to = $to, landing_page_id = 0,"
+                . ' processed = 1, deleted = 1');
+        }
+
         self::assertSame(2, $batch->reset(self::USER, self::$network, self::$campaign), 'two clicks cleared');
+        self::assertSame(1, (int) self::$db->query('SELECT COUNT(*) FROM 202_dirty_hours WHERE processed = 0 AND deleted = 0'
+            . ' AND user_id = ' . self::USER)->fetch_row()[0], 'their hours are queued, though a row for them was already rolled up');
         self::assertSame(0, (int) self::$db->query('SELECT COUNT(*) FROM 202_conversion_logs WHERE deleted = 0 AND click_id IN ('
             . self::CLICK . ', ' . self::OTHER_CLICK . ')')->fetch_row()[0], 'and their sales are gone');
     }

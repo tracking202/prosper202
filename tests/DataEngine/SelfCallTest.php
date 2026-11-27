@@ -171,7 +171,11 @@ final class SelfCallTest extends TestCase
                 }
                 $reads[] = [$call . ')', $t[2]];
             }
-            if ($claim === null && is_array($t) && $t[0] === T_CONSTANT_ENCAPSED_STRING && str_contains($t[1], "SET processing = '1'")) {
+            // RebuildWindows::take() is the claim.
+            if (
+                $claim === null && is_array($t) && $t[0] === T_STRING && $t[1] === 'take'
+                && is_array($tokens[$i - 1]) && $tokens[$i - 1][0] === T_OBJECT_OPERATOR
+            ) {
                 $claim = $t[2];
             }
         }

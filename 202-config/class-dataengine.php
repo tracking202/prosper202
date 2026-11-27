@@ -5,10 +5,12 @@ declare(strict_types=1);
 use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\DataEngine\ClickRollupSql;
+use Prosper202\DataEngine\DirtyHours;
 use Prosper202\DataEngine\GroupedReportDefinition;
 use Prosper202\DataEngine\GroupedReportRegistry;
 use Prosper202\DataEngine\HtmlReportFormatter;
 use Prosper202\DataEngine\LedgerClicks;
+use Prosper202\DataEngine\RebuildWindows;
 use Prosper202\DataEngine\ReportView;
 use Prosper202\DataEngine\MetricsSql;
 use Prosper202\DataEngine\ReportTotals;
@@ -988,36 +990,20 @@ ORDER BY 2st.ppc_network_id, name,
     {
         set_time_limit(0);
 
-        // Thrown, not exit(): the cron job logs it and runs its other jobs.
-        $db = self::$db;
-        $delayed_result = $db->query("SELECT * FROM 202_dirty_hours where processed != 1");
-        if ($delayed_result === false) {
-            throw new QueryException(self::failedStep($db, 'read of the dirty hours'));
-        }
-
-        while ($delayed_row = $delayed_result->fetch_assoc()) {
-            $value = fn(string $key): string => self::$db->real_escape_string((string) ($delayed_row[$key] ?? ''));
-
-            $snippet = "AND 2c.user_id = " . $value('user_id');
-            if ($value('ppc_account_id')) {
-                $snippet .= " AND 2c.ppc_account_id =" . $value('ppc_account_id');
+        // A failure is thrown, not exit(): the cron job logs it and runs its
+        // other jobs. The range it was rolling up is taken by the next pass.
+        (new DirtyHours(new Connection(self::$db)))->pass(function (array $hour): void {
+            $snippet = 'AND 2c.user_id = ' . $hour['user_id'];
+            if ($hour['ppc_account_id'] !== 0) {
+                $snippet .= ' AND 2c.ppc_account_id =' . $hour['ppc_account_id'];
             }
-            if ($value('aff_campaign_id')) {
-                $snippet .= " AND 2ac.aff_campaign_id =" . $value('aff_campaign_id');
+            if ($hour['aff_campaign_id'] !== 0) {
+                $snippet .= ' AND 2ac.aff_campaign_id =' . $hour['aff_campaign_id'];
             }
 
-            $this->getSummary($value('click_time_from'), $value('click_time_to'), $snippet);
-
-            // Left unmarked, the hour is rolled up again next run.
-            if (!$db->query("UPDATE 202_dirty_hours set processed='1', deleted='1' where id=" . $delayed_row['id'])) {
-                throw new QueryException(self::failedStep($db, 'mark of dirty hour ' . (int) $delayed_row['id']));
-            }
+            $this->getSummary($hour['click_time_from'], $hour['click_time_to'], $snippet);
             flush();
-        }
-
-        if (!$db->query("DELETE FROM 202_dirty_hours where deleted=1")) {
-            throw new QueryException(self::failedStep($db, 'cleanup of the dirty hours'));
-        }
+        });
     }
 
     /**
@@ -1026,6 +1012,9 @@ ORDER BY 2st.ppc_network_id, name,
      * removal of those clicks' rows at earlier visits, in whatever hour they
      * are (ClickRollupSql). A click whose latest visit is elsewhere is left
      * as it is.
+     *
+     * $upgrade is read by nothing: a rebuild window is claimed and marked by
+     * the run that took it (RebuildWindows), not by the roll-up of its hours.
      */
     public function getSummary($start, $end, $params, $user_id = 1, $upgrade = false, $new = false)
     {
@@ -1033,47 +1022,15 @@ ORDER BY 2st.ppc_network_id, name,
         $from = $db->real_escape_string((string) $start);
         $to = $db->real_escape_string((string) $end);
 
-        if ($upgrade) {
-            $sql = "UPDATE 202_dataengine_job SET processing = '1' WHERE time_from ='" . $from . "' AND time_to = '" . $to . "'";
-            if (!$db->query($sql)) {
-                throw new QueryException(self::failedStep($db, 'claim of window ' . $from . '-' . $to));
-            }
-        }
-
         $table = $new ? '202_dataengine_new' : '202_dataengine';
 
         $where = '2c.click_time >= ' . $from . "\nAND 2c.click_time <= " . $to . ' ' . $params;
         $query = ClickRollupSql::insertSelect($table, $where);
         $removal = ClickRollupSql::deleteEarlierVisits($table, $where);
 
-        $job = "WHERE time_from = '" . $from . "' AND time_to = '" . $to . "'";
-        try {
-            $this->doQuery($query, $from, $to, $upgrade, $new);
-            $this->doQuery($removal, $from, $to, $upgrade, $new);
-        } catch (RuntimeException $e) {
-            // Released, not finished: the next run takes the window again.
-            if ($upgrade) {
-                if (!$db->query("UPDATE 202_dataengine_job SET processing = '0' " . $job)) {
-                    throw new QueryException(
-                        self::failedStep($db, 'release of claimed window ' . $from . '-' . $to),
-                        0,
-                        $e
-                    );
-                }
-            }
-            throw $e;
-        }
-        // The window is done. doSummary() marked it, but an INSERT … SELECT
-        // never reaches doSummary() (doQuery() returns at once), so a window
-        // the cron job's processClickUpgrade() took stayed `processing` and
-        // unprocessed for good, and no window after it was ever taken.
-        if ($upgrade) {
-            if (!$db->query("UPDATE 202_dataengine_job SET processing = '0', processed = '1' " . $job)) {
-                throw new QueryException(
-                    self::failedStep($db, 'mark of window ' . $from . '-' . $to . ' as processed')
-                );
-            }
-        }
+        $this->doQuery($query, $from, $to, $upgrade, $new);
+        $this->doQuery($removal, $from, $to, $upgrade, $new);
+
         return $query . "<br><br>" . $removal . "<br><br>";
     }
 
@@ -1103,9 +1060,6 @@ ORDER BY 2st.ppc_network_id, name,
     {
         global $db, $dbGlobalLink;
         $dbGlobalLink = $db;
-
-        $upgrade_from = $db->real_escape_string((string) $from);
-        $upgrade_to = $db->real_escape_string((string) $to);
 
         $table = $new ? '202_dataengine_new' : '202_dataengine';
 
@@ -1149,13 +1103,6 @@ ORDER BY 2st.ppc_network_id, name,
                 error_log('DataEngine doSummary insert failed: ' . $db->error);
             }
         }
-
-        if ($upgrade) {
-            $sql = "UPDATE 202_dataengine_job SET processing = '0', processed = '1' WHERE time_from = '" . $upgrade_from . "' AND time_to = '" . $upgrade_to . "'";
-            if (!_mysqli_query($sql)) {
-                error_log('DataEngine doSummary job flag failed: ' . $db->error);
-            }
-        }
     }
 
     public function setRowsForOldClickUpgrade($start)
@@ -1172,6 +1119,7 @@ ORDER BY 2st.ppc_network_id, name,
             throw new QueryException(self::failedStep($db, 'read of the hours to rebuild'));
         }
 
+        $windows = new RebuildWindows(new Connection($db));
         $full_day = [];
         $hours = 1;
         $counter = 0;
@@ -1187,15 +1135,7 @@ ORDER BY 2st.ppc_network_id, name,
                 $full_day[] = $row['hourstart'] + 3599;
                 $hours = 0;
 
-                $time_from = $db->real_escape_string((string) $full_day[0]);
-                $time_to = $db->real_escape_string((string) $full_day[1]);
-
-                $sql = "INSERT INTO 202_dataengine_job SET time_from = '" . $time_from . "', time_to = '" . $time_to . "'";
-                if (!$db->query($sql)) {
-                    throw new QueryException(
-                        self::failedStep($db, 'queueing of window ' . $time_from . '-' . $time_to)
-                    );
-                }
+                $windows->queue((int) $full_day[0], (int) $full_day[1]);
 
                 $full_day = [];
             }
@@ -1214,22 +1154,32 @@ ORDER BY 2st.ppc_network_id, name,
             return;
         }
 
-        // Loop daily.
-        $sql = "SELECT * FROM 202_dataengine_job WHERE processed = '0'";
-        $result = $db->query($sql);
-        if ($result === false) {
-            throw new QueryException(self::failedStep($db, 'read of the rebuild windows'));
+        // One window a run.
+        $windows = new RebuildWindows(new Connection($db));
+        $window = $windows->take();
+        if ($window === null) {
+            return;
         }
-
-        $row = p202FetchRow($result, $sql);
-        if ($row !== null && !$row['processing']) {
-            $time_from = $db->real_escape_string((string) $row['time_from']);
-            $time_to = $db->real_escape_string((string) $row['time_to']);
+        try {
             // Every account's clicks in the window, as the curl path's
             // dej.php rolls them up: this fallback rolled up user 1's only,
             // so without curl a rebuild left every other account's clicks
             // out of the reports.
-            $this->getSummary($time_from, $time_to, '', 1, true);
+            $this->getSummary($window['from'], $window['to'], '');
+        } catch (\Throwable $e) {
+            // Released, not finished: the next run takes the window again,
+            // as it does when the release fails too (RebuildWindows::take()).
+            try {
+                $windows->release($window);
+            } catch (\Throwable $release) {
+                error_log('DataEngine rebuild: window ' . $window['from'] . '-' . $window['to']
+                    . ' was not released: ' . $release->getMessage());
+            }
+            throw $e;
+        }
+        if (!$windows->complete($window)) {
+            error_log('DataEngine rebuild: window ' . $window['from'] . '-' . $window['to']
+                . ' was rebuilt, and was no longer this run\'s to mark; left as it is.');
         }
     }
 

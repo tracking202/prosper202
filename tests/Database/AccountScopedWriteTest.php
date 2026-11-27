@@ -374,13 +374,15 @@ final class AccountScopedWriteTest extends TestCase
         '202-config/User/ApiKeyStore.php' => [
             'no user_id tie | 202_api_keys | ends_at IS NOT NULL AND ends_at <= ?' => self::R_RETENTION,
         ],
-        '202-config/class-dataengine.php' => [
-            'no user_id tie | 202_dirty_hours | id = {$delayed_row[\'id\']}' => 'the data engine\'s (cron) own queue and job rows',
-            'no user_id tie | 202_dirty_hours | deleted = 1' => 'the data engine\'s (cron) own queue and job rows',
-            'owned through its parent | 202_dataengine_job | time_from = \'{$from}\' AND time_to = \'{$to}\'' => 'the data engine\'s (cron) own queue and job rows',
-            'owned through its parent | 202_dataengine_job | time_from = \'{$from}\' AND time_to = \'{$to}\' #2' => 'the data engine\'s (cron) own queue and job rows',
-            'owned through its parent | 202_dataengine_job | time_from = \'{$from}\' AND time_to = \'{$to}\' #3' => 'the data engine\'s (cron) own queue and job rows',
-            'owned through its parent | 202_dataengine_job | time_from = \'{$upgrade_from}\' AND time_to = \'{$upgrade_to}\'' => 'the data engine\'s (cron) own queue and job rows',
+        '202-config/DataEngine/DirtyHours.php' => [
+            'no user_id tie | 202_dirty_hours | id = ? AND {DirtyHourState::IS_QUEUED}' => 'the data engine\'s (cron) own queue and job rows',
+            'no user_id tie | 202_dirty_hours | {DirtyHourState::IS_TAKEN}' => 'the data engine\'s (cron) own queue and job rows',
+            'no user_id tie | 202_dirty_hours | id = ? AND {DirtyHourState::IS_TAKEN}' => 'the data engine\'s (cron) own queue and job rows',
+        ],
+        '202-config/DataEngine/RebuildWindows.php' => [
+            'owned through its parent | 202_dataengine_job | time_from = ? AND time_to = ? AND {RebuildWindowState::IS_PENDING}' => 'the data engine\'s (cron) own queue and job rows',
+            'owned through its parent | 202_dataengine_job | time_from = ? AND time_to = ? AND {RebuildWindowState::IS_PROCESSING}' => 'the data engine\'s (cron) own queue and job rows',
+            'owned through its parent | 202_dataengine_job | time_from = ? AND time_to = ? AND {RebuildWindowState::IS_PROCESSING} #2' => 'the data engine\'s (cron) own queue and job rows',
         ],
         '202-config/functions-auth.php' => [
             'no user_id tie | 202_auth_keys | expires < UNIX_TIMESTAMP ( )' => self::R_RETENTION,

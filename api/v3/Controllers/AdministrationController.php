@@ -13,6 +13,7 @@ use Prosper202\Click\ClickRetention;
 use Prosper202\Click\TrackingBaseUrl;
 use Prosper202\Click\UnsavedClickRedirects;
 use Prosper202\Database\Connection;
+use Prosper202\DataEngine\RebuildWindows;
 use Prosper202\GeoIp\CityDatabase;
 use Prosper202\GeoIp\RefreshStore;
 use Prosper202\InboundLog\InboundLog;
@@ -142,7 +143,7 @@ final class AdministrationController
                  FROM information_schema.TABLES WHERE table_schema = DATABASE()'
             );
             $cron = $this->one('SELECT last_execution_time FROM 202_cronjob_logs WHERE id = 1 LIMIT 1');
-            $engine = $this->one('SELECT COUNT(*) AS total, COALESCE(SUM(processed), 0) AS done FROM 202_dataengine_job');
+            $engine = $this->one(RebuildWindows::progressSql());
             $keyword = $this->one('SELECT user_keyword_searched_or_bidded FROM 202_users_pref WHERE user_id = ? LIMIT 1', 'i', [$this->userId]);
 
             $total = (int) ($engine['total'] ?? 0);

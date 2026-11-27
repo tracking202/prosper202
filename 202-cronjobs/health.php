@@ -65,7 +65,7 @@ try {
     }
     
     // Get DataEngine job status
-    $de_sql = "SELECT COUNT(*) as total, SUM(processed) as done FROM 202_dataengine_job";
+    $de_sql = \Prosper202\DataEngine\RebuildWindows::progressSql();
     $de_result = $db->query($de_sql);
     if ($de_result === false) {
         throw new \Prosper202\Database\Exceptions\QueryException(

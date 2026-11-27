@@ -10,6 +10,9 @@ use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\QueryInt;
 use Prosper202\Click\ReClickBackfill;
 use Prosper202\Database\Connection;
+use Prosper202\DataEngine\DirtyHours;
+use Prosper202\DataEngine\RebuildWindowState;
+use Prosper202\DataEngine\RebuildWindows;
 use Prosper202\Notifications\OutboxBacklog;
 
 class SystemController
@@ -194,7 +197,7 @@ class SystemController
 
     public function dataengineStatus(): array
     {
-        $result = $this->db->query('SELECT time_from, time_to, processing, processed FROM 202_dataengine_job ORDER BY time_from DESC LIMIT 20');
+        $result = $this->db->query(RebuildWindows::recentSql(20));
         if ($result === false) {
             throw new DatabaseException('Data engine jobs query failed [errno ' . $this->db->errno . ']');
         }
@@ -202,18 +205,12 @@ class SystemController
         while ($row = $result->fetch_assoc()) {
             $row['time_from_human'] = date('Y-m-d H:i:s', (int)$row['time_from']);
             $row['time_to_human'] = date('Y-m-d H:i:s', (int)$row['time_to']);
-            if ((int)$row['processed'] === 1) {
-                $row['status'] = 'completed';
-            } elseif ((int)$row['processing'] === 1) {
-                $row['status'] = 'processing';
-            } else {
-                $row['status'] = 'pending';
-            }
+            $row['status'] = RebuildWindowState::ofRow($row['processing'], $row['processed'])->value;
             $jobs[] = $row;
         }
 
         // Not 0 when unread: 0 pending hours reads as reports up to date.
-        $result = $this->db->query('SELECT COUNT(*) as cnt FROM 202_dirty_hours WHERE processed = 0');
+        $result = $this->db->query(DirtyHours::waitingSql());
         if ($result === false) {
             throw new DatabaseException('Dirty hours query failed [errno ' . $this->db->errno . ']');
         }
@@ -225,7 +222,7 @@ class SystemController
         return [
             'data' => [
                 'recent_jobs'        => $jobs,
-                'pending_dirty_hours' => (int)$dirtyRow['cnt'],
+                'pending_dirty_hours' => (int)$dirtyRow['waiting'],
                 // How far the cron job has brought the clicks re-clicked
                 // before 1.9.79 to one visit each; null once it is done.
                 'reclick_backfill'   => (new ReClickBackfill(new Connection($this->db)))->progress(),

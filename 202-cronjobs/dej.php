@@ -19,7 +19,9 @@ try {
     //$end =$_GET['e'];
 
     $de = new DataEngine();
-    $de->getSummary($start, $start + 3599, $snippet, 1, true);
+    // The hour only: the window it belongs to is its run's to mark
+    // (process_dataengine_job.php).
+    $de->getSummary($start, $start + 3599, $snippet);
 } catch (\Throwable $e) {
     // process_dataengine_job.php marks the hour processed when every call
     // answers 200, so a rollup that failed answered 200 here and its hour

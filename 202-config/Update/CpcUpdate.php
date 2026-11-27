@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Update;
 
 use Prosper202\Database\Connection;
+use Prosper202\DataEngine\DirtyHours;
 use Prosper202\Report\RollupDirty;
 use Tracking202\Report\ReportFilterInput;
 
@@ -649,34 +650,26 @@ final class CpcUpdate
      */
     private static function queueRollup(Connection $conn, array $values, int $userId, array $uncovered): void
     {
-        $stmt = $conn->prepareWrite(
-            'INSERT INTO 202_dirty_hours SET ppc_account_id = ?, aff_campaign_id = ?, user_id = ?, click_time_from = ?,'
-            . ' click_time_to = ?, aff_network_id = ?, text_ad_id = ?, landing_page_id = ?, ppc_network_id = ?'
-            . ' ON DUPLICATE KEY UPDATE processed = 0, deleted = 0'
+        $queue = new DirtyHours($conn);
+        $queue->queue(
+            $userId,
+            (int) $values['from_time'],
+            (int) $values['to_time'],
+            (int) $values['ppc_account_id'],
+            (int) $values['aff_campaign_id'],
+            (int) $values['landing_page_id'],
+            (int) $values['aff_network_id'],
+            (int) $values['text_ad_id'],
+            (int) $values['ppc_network_id']
         );
-        $conn->bind($stmt, 'iiiiiiiii', [
-            (int) $values['ppc_account_id'], (int) $values['aff_campaign_id'], $userId, (int) $values['from_time'],
-            (int) $values['to_time'], (int) $values['aff_network_id'], (int) $values['text_ad_id'],
-            (int) $values['landing_page_id'], (int) $values['ppc_network_id'],
-        ]);
-        $conn->executeUpdate($stmt);
 
-        $rows = [];
+        $ranges = [];
         foreach ($uncovered as $account => $hours) {
             foreach (self::runs(array_keys($hours)) as [$first, $last]) {
-                array_push($rows, $account, $userId, $first * 3600, $last * 3600 + 3599);
+                $ranges[] = [$account, $first * 3600, $last * 3600 + 3599];
             }
         }
-        foreach (array_chunk($rows, 4 * 500) as $chunk) {
-            $count = intdiv(count($chunk), 4);
-            $stmt = $conn->prepareWrite(
-                'INSERT INTO 202_dirty_hours (ppc_account_id, aff_campaign_id, user_id, click_time_from, click_time_to,'
-                . ' landing_page_id) VALUES ' . implode(', ', array_fill(0, $count, '(?, 0, ?, ?, ?, 0)'))
-                . ' ON DUPLICATE KEY UPDATE processed = 0, deleted = 0'
-            );
-            $conn->bind($stmt, str_repeat('iiii', $count), $chunk);
-            $conn->executeUpdate($stmt);
-        }
+        $queue->queueRanges($userId, $ranges);
     }
 
     /**

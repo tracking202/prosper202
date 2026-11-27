@@ -15,6 +15,7 @@ use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\DedupeKey;
 use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\MysqlConversionRepository;
+use Prosper202\DataEngine\DirtyHours;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
 
@@ -836,9 +837,7 @@ final class SubidBatch
 
     private function markDirtyHours(int $userId, int $networkId, int $campaignId, int $from): void
     {
-        $dirty = $this->conn->prepareWrite('INSERT IGNORE INTO 202_dirty_hours SET ppc_account_id = 0, aff_campaign_id = ?, aff_network_id = ?, landing_page_id = 0, user_id = ?, click_time_from = ?, click_time_to = ?');
-        $this->conn->bind($dirty, 'iiiii', [$campaignId, $networkId, $userId, $from, time()]);
-        $this->conn->executeUpdate($dirty);
+        (new DirtyHours($this->conn))->queue($userId, $from, time(), 0, $campaignId, 0, $networkId);
     }
 
     /**

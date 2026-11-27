@@ -132,9 +132,9 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             'A failed cleanup is logged; closing its connection also removes the temporary table.',
         ],
         '202-config/class-dataengine.php::doSummary' => [
-            2,
+            1,
             'Not reached: doQuery()\'s one caller hands it an INSERT … SELECT (ClickRollupSql), which answers true'
-            . ' and returns before doSummary(). Its insert and its window mark log a failure.',
+            . ' and returns before doSummary(). Its insert logs a failure.',
         ],
         '202-config/functions-auth.php::remember_me_on_auth' => [
             1,

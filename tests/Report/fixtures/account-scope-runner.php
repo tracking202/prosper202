@@ -39,6 +39,9 @@ declare(strict_types=1);
  *                   an int)
  *   dirty-hours     the cron job's DataEngine::processDirtyHours(), then
  *                   the 202_dirty_hours rows it left (RollupRefreshIntegrationTest)
+ *   hour            202-cronjobs/dej.php for the hour that starts at
+ *                   P202_TEST_FROM, and what it printed
+ *                   (RebuildWindowsIntegrationTest)
  *   click-upgrade   the cron job's DataEngine::processClickUpgrade(), and
  *                   whether curl was loaded, which sends it the other way
  *                   (ClickUpgradeIntegrationTest runs it without)
@@ -223,6 +226,12 @@ try {
             (new DataEngine())->processClickUpgrade();
         }
         $result = ['curl' => $curl];
+    } elseif ($reader === 'hour') {
+        $_GET['s'] = (string) $from;
+        ob_start();
+        require $root . '/202-cronjobs/dej.php';
+        $printed = (string) ob_get_clean();
+        $result = ['printed' => $printed . (string) ob_get_clean()];
     } elseif ($reader === 'lists') {
         $result = [
             'store' => (new \Tracking202\Report\ReportPrefsStore($db))->lists($userId),

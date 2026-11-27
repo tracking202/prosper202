@@ -346,13 +346,7 @@ SQL;
                 return 'no row of the click was found to queue';
             }
             $hour = intdiv(self::whole($row['click_time'] ?? null, 'click_time'), 3600) * 3600;
-            $queue = $conn->prepareWrite(
-                'INSERT INTO 202_dirty_hours (ppc_account_id, aff_campaign_id, user_id, click_time_from,'
-                . ' click_time_to, landing_page_id) VALUES (0, 0, ?, ?, ?, 0)'
-                . ' ON DUPLICATE KEY UPDATE processed = 0, deleted = 0'
-            );
-            $conn->bind($queue, 'iii', [self::whole($row['user_id'] ?? null, 'user_id'), $hour, $hour + 3599]);
-            $conn->executeUpdate($queue);
+            (new DirtyHours($conn))->queue(self::whole($row['user_id'] ?? null, 'user_id'), $hour, $hour + 3599);
         } catch (\Throwable $e) {
             return 'its latest visit\'s hour could not be queued for the cron job (' . $e::class . ': '
                 . $e->getMessage() . '), so its report rows are out of date until it or that hour is rolled up again';
