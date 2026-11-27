@@ -7,6 +7,7 @@ namespace Api\V3\Controllers;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\StatementHelpers;
+use Api\V3\Support\SyncJobState;
 use Api\V3\Support\QueryInt;
 use Prosper202\Click\ReClickBackfill;
 use Prosper202\Database\Connection;
@@ -239,8 +240,8 @@ class SystemController
         $metrics = $store->metrics();
         $counters = is_array($metrics['counters'] ?? null) ? $metrics['counters'] : [];
 
-        $queued = $store->listJobs(['queued'], 5000);
-        $running = $store->listJobs(['running'], 5000);
+        $queued = $store->listJobs([SyncJobState::Queued], 5000);
+        $running = $store->listJobs([SyncJobState::Running], 5000);
         $oldestQueueEpoch = null;
         foreach ($queued as $job) {
             $candidate = (int)($job['next_run_at'] ?? $job['created_at_epoch'] ?? 0);

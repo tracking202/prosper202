@@ -139,9 +139,7 @@ final class SyncJobKeysAndStopsTest extends TestCase
 
     public function testAJobQueuedBeforeKeysWereSealedRunsAndIsSealedByItsRun(): void
     {
-        $old = $this->store->createJob(self::job(['options' => [], 'max_attempts' => 3]), 42);
-        $old['next_run_at'] = 0;
-        $this->store->saveJob($old);
+        $old = $this->store->createJob(self::job(['options' => [], 'max_attempts' => 3]), 42, ['next_run_at' => 0]);
 
         $engine = new KeyCapturingSyncEngine($this->store, new \RuntimeException('Transient'));
         $this->controller($engine)->runWorker(['limit' => 5]);
@@ -155,9 +153,7 @@ final class SyncJobKeysAndStopsTest extends TestCase
     /** Sealed before anything else is tried: a run that cannot start (its pair is busy) still seals. */
     public function testAJobQueuedBeforeKeysWereSealedIsSealedEvenIfItsRunCannotStart(): void
     {
-        $old = $this->store->createJob(self::job(['options' => [], 'max_attempts' => 3]), 42);
-        $old['next_run_at'] = 0;
-        $this->store->saveJob($old);
+        $old = $this->store->createJob(self::job(['options' => [], 'max_attempts' => 3]), 42, ['next_run_at' => 0]);
         $release = $this->store->acquirePairLock('https://prod.example.com', 'https://stage.example.com');
         try {
             $engine = new KeyCapturingSyncEngine($this->store);
@@ -176,7 +172,8 @@ final class SyncJobKeysAndStopsTest extends TestCase
         foreach (['succeeded', 'failed', 'cancelled', 'partial'] as $status) {
             $old = $this->store->createJob(self::job(), 42);
             $old['status'] = $status;
-            $this->store->saveJob($old);
+            // Written as that version left it: the store itself makes no such move.
+            file_put_contents($this->dir . '/jobs/' . $old['job_id'] . '.json', json_encode($old));
         }
         self::assertStringContainsString(self::TARGET_KEY, $this->stored(), 'planted');
 

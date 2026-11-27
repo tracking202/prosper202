@@ -852,12 +852,22 @@ class ServerStateStore implements QuotaStore
         ];
     }
 
-    public function createJob(array $payload, int $actorUserId): array
+    /**
+     * A job is created queued, in one write.
+     *
+     * @param array<string, mixed> $payload the request, as the job keeps it
+     * @param array<string, mixed> $fields what else it starts with (attempts, max_attempts, next_run_at)
+     * @return array<string, mixed>
+     */
+    public function createJob(array $payload, int $actorUserId, array $fields = []): array
     {
+        if (array_key_exists('status', $fields) || array_key_exists('job_id', $fields)) {
+            throw new \LogicException('A sync job is created queued under its own id; neither is a field to pass.');
+        }
         $jobId = bin2hex(random_bytes(16));
         $job = [
             'job_id' => $jobId,
-            'status' => 'queued',
+            'status' => SyncJobState::Queued->value,
             'created_at' => gmdate('c'),
             'created_at_epoch' => time(),
             'updated_at' => gmdate('c'),
@@ -866,11 +876,13 @@ class ServerStateStore implements QuotaStore
             'results' => null,
             'error' => null,
             'cancel_requested' => false,
-        ];
+        ] + $fields;
 
         $job = self::stamped($job, $this->noteRestoreSensitiveWrite());
-        $this->writeJsonFileAtomic($this->jobPath($jobId), $job);
+        // The record last: once it is written the job is queued and will
+        // run, so nothing that can fail comes after it (CLAUDE.md #13).
         $this->writeJsonFileAtomic($this->jobEventsPath($jobId), ['items' => []]);
+        $this->writeJsonFileAtomic($this->jobPath($jobId), $job);
 
         return $job;
     }
@@ -890,21 +902,61 @@ class ServerStateStore implements QuotaStore
         return $job;
     }
 
-    public function saveJob(array $job): void
+    /**
+     * The one way a job's record changes once it exists. $change is handed
+     * the record as it is stored, read under the record's lock, and its
+     * state; it answers the fields to set, or null to leave the record as it
+     * is. A `status` among them is a SyncJobState and a move: one the
+     * lifecycle does not hold throws, and nothing is written. Deciding inside
+     * $change, on the state it is handed, is what keeps a caller from writing
+     * over a state it never saw.
+     *
+     * @param callable(array<string, mixed>, SyncJobState): ?array<string, mixed> $change
+     * @return array{job: array<string, mixed>, from: SyncJobState, changed: bool}|null null when there is no such job
+     * @throws \Prosper202\Lifecycle\IllegalTransition
+     * @throws \Prosper202\Lifecycle\UnknownState when the stored status is one no state names
+     */
+    public function changeJob(string $jobId, callable $change): ?array
     {
-        if (!isset($job['job_id'])) {
-            throw new DatabaseException('Job payload missing job_id');
+        $this->checkAgainstARestore();
+        $path = $this->jobPath($jobId);
+        if (!is_file($path)) {
+            return null;
         }
-        $job = self::stamped($job, $this->noteRestoreSensitiveWrite());
-        $this->mutateJsonFile($this->jobPath((string)$job['job_id']), [], static function (array $current) use ($job): array {
-            // The worker saves its whole in-memory copy after long-running
-            // work; a cancel flag set concurrently on disk must survive that.
-            if (!empty($current['cancel_requested'])) {
-                $job['cancel_requested'] = true;
+        $epoch = $this->noteRestoreSensitiveWrite();
+        $result = null;
+        $this->mutateJsonFile($path, [], static function (array $current) use ($jobId, $change, $epoch, &$result): array {
+            if ($current === []) {
+                // Written as it is, an empty record would read as no job.
+                throw new DatabaseException('Sync job ' . $jobId . ' could not be read, so it was not changed');
             }
+            $from = SyncJobState::ofStored($current['status'] ?? null, 'Sync job ' . $jobId);
+            $set = $change($current, $from);
+            if ($set === null) {
+                $result = ['job' => $current, 'from' => $from, 'changed' => false];
+
+                return $current;
+            }
+            $to = $from;
+            if (array_key_exists('status', $set)) {
+                $to = $set['status'];
+                if (!$to instanceof SyncJobState) {
+                    throw new \LogicException('A sync job\'s status is set as a SyncJobState, not ' . get_debug_type($to) . '.');
+                }
+                if ($to !== $from) {
+                    $from->moveTo($to);
+                }
+            }
+            $job = array_replace($current, $set);
+            $job['status'] = $to->value;
             $job['updated_at'] = gmdate('c');
+            $job = self::stamped($job, $epoch);
+            $result = ['job' => $job, 'from' => $from, 'changed' => true];
+
             return $job;
         });
+
+        return $result;
     }
 
     public function appendJobEvent(string $jobId, string $level, string $message, array $data = []): void
@@ -1319,9 +1371,13 @@ class ServerStateStore implements QuotaStore
         return is_array($item) && (int) ($item['expires_at'] ?? 0) >= time();
     }
 
-    /** @return array<int, array<string, mixed>> */
-    public function listJobs(array $statuses = [], int $limit = 50): array
+    /**
+     * @param list<SyncJobState> $states the states to list; all when empty
+     * @return array<int, array<string, mixed>>
+     */
+    public function listJobs(array $states = [], int $limit = 50): array
     {
+        $statuses = array_map(static fn (SyncJobState $state): string => $state->value, $states);
         $this->checkAgainstARestore();
         $files = glob($this->dir('jobs') . '/*.json') ?: [];
         sort($files, SORT_STRING);

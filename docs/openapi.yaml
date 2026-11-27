@@ -14024,7 +14024,13 @@ paths:
       tags:
       - Sync
       summary: Queue a sync job
-      description: Admin only, with the `sync:write` scope. Honors `Idempotency-Key`.
+      description: >-
+        Admin only, with the `sync:write` scope. Honors `Idempotency-Key`: the
+        same request under the same key answers the job it queued
+        (`idempotent_replay`), a different request under it is a 422
+        (`idempotency_key_reused`), and one that arrives while the first is
+        still being queued is a 409 (`idempotency_in_flight`), so two requests
+        under one key never queue two jobs.
       operationId: syncCreateJob
       requestBody:
         required: true
@@ -14097,6 +14103,17 @@ paths:
                     additionalProperties: true
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          description: >-
+            `idempotency_in_flight` (another request with this Idempotency-Key
+            is still queueing its job; send it again for that job) or
+            `idempotency_indeterminate` (an earlier request with the key ended
+            without recording its answer; look at the pair's history before
+            queueing under a new key).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '422':
           description: >-
             Validation failed (`field_errors` names each field). A profile `url`
@@ -14218,7 +14235,12 @@ paths:
       tags:
       - Sync
       summary: Run a sync job now
-      description: Admin only, with the `sync:write` scope.
+      description: >-
+        Admin only, with the `sync:write` scope. Starts a `queued` job that is
+        due. A job in any other status is answered as it stands: one that
+        ended runs no more, and one that is `running` is not started a second
+        time beside its run (a run whose process ended is failed as
+        `sync_worker_lost` once its time has passed).
       operationId: syncRunJob
       parameters:
       - name: id
@@ -14248,7 +14270,12 @@ paths:
       tags:
       - Sync
       summary: Cancel a sync job
-      description: Admin only, with the `sync:write` scope.
+      description: >-
+        Admin only, with the `sync:write` scope. A `queued` job ends
+        `cancelled` at once. A `running` job gets `cancel_requested` and its
+        run ends it `cancelled`. A job that has ended (`succeeded`, `partial`,
+        `failed`, `cancelled`) is answered as it ended and is not changed: a
+        cancel that arrives as the run finishes leaves the run's result.
       operationId: syncCancelJob
       parameters:
       - name: id

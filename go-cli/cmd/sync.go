@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -725,6 +726,15 @@ func firstFlag(cmd *cobra.Command, names ...string) string {
 // syncPollInterval is the wait between the polls of a server-side job.
 var syncPollInterval = 250 * time.Millisecond
 
+// syncJobPolls is how many times a server-side job is kicked and read before
+// the command stops waiting for it.
+const syncJobPolls = 20
+
+// syncJobEnds are the statuses a server-side job ends in: the terminal states
+// of the server's SyncJobState (TestSyncJobEndsAreTheServersTerminalStates).
+// Any other status is a job that has not finished.
+var syncJobEnds = []string{"succeeded", "partial", "failed", "cancelled"}
+
 func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOptions) (bool, error) {
 	orchestrator, err := api.NewFromProfile(fromProfile)
 	if err != nil {
@@ -786,7 +796,7 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 	if parseErr == nil {
 		jobID = scalarString(obj["job_id"])
 		if jobID != "" {
-			for attempt := 0; attempt < 20; attempt++ {
+			for attempt := 0; attempt < syncJobPolls; attempt++ {
 				_, kickErr = orchestrator.Post("sync/worker/run", map[string]interface{}{"limit": 10})
 				jobResp, getErr := orchestrator.Get("sync/jobs/"+jobID, nil)
 				if getErr != nil {
@@ -800,7 +810,7 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 				}
 				status := strings.ToLower(strings.TrimSpace(scalarString(jobObj["status"])))
 				lastStatus, lastJobResp = status, jobResp
-				if status == "succeeded" || status == "failed" || status == "partial" || status == "cancelled" {
+				if slices.Contains(syncJobEnds, status) {
 					if err := render(jobResp); err != nil {
 						return true, err
 					}
@@ -840,6 +850,31 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 				"Fix the cause above, then run the same sync again: it runs this job too, and records already synced are found on the target by their natural key, not created twice.")
 	}
 
+	// The checks ran out on a job that has not ended. What is printed is the
+	// job as it stood, never the creation reply, which says "queued" of a job
+	// that may since have been tried and failed.
+	if pollErr == nil && jobID != "" && lastJobResp != nil {
+		if lastStatus == "running" {
+			output.Success(
+				"Warning: sync job %s is still running after %d checks. "+
+					"The output below is the job as it stood, not its result — `p202 sync history --from %s --to %s` shows how it ended.",
+				jobID, syncJobPolls, fromProfile, toProfile)
+			if err := render(lastJobResp); err != nil {
+				return true, err
+			}
+			return true, nil // the job is running server-side; falling back would run the sync twice
+		}
+		if err := render(lastJobResp); err != nil {
+			return true, err
+		}
+		return true, partialFailureError("sync job %s has not finished: it is still %s after %d checks; the job above is how it stands", jobID, syncJobStatusWord(lastStatus), syncJobPolls).
+			WithHint("The job stays on the --from profile's install. An `error` in the job above is why a try of it stopped, and `next_run_at` is when it is tried next; "+
+				"with no `error` the worker has not reached it (another sync of the same two installs is running, or older jobs are ahead of it). "+
+				"`p202 sync history --from %s --to %s` lists the job once it has ended. "+
+				"Running the same sync again runs the server's worker again and queues one more job: records already synced are found on the target by their natural key, not created twice.",
+				fromProfile, toProfile)
+	}
+
 	if pollErr != nil {
 		output.Success(
 			"Warning: the sync job was created but its status could not be read (%v). "+
@@ -853,6 +888,15 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 	// nilerr is right that an error was seen and nil is returned; that is
 	// deliberate here and the warning above says so.
 	return true, nil //nolint:nilerr // the job exists server-side; falling back would run the sync twice
+}
+
+// syncJobStatusWord is a job's status as an error names it: a status the
+// server did not send is said, not printed as nothing.
+func syncJobStatusWord(status string) string {
+	if status == "" {
+		return "in no status the server named"
+	}
+	return status
 }
 
 // syncURLHint is the next step for a profile url the server that runs the

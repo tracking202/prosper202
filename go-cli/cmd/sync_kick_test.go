@@ -3,6 +3,9 @@ package cmd
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -35,7 +38,7 @@ func kickRecorder(t *testing.T, workerStatus int, jobStatus string) (*httptest.S
 			}
 			_, _ = w.Write([]byte(`{"data":{"processed":0}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/sync/jobs/j1":
-			_, _ = w.Write([]byte(`{"data":{"job_id":"j1","status":"` + jobStatus + `"}}`))
+			_, _ = w.Write([]byte(`{"data":{"job_id":"j1","status":"` + jobStatus + `","attempts":1}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"message":"not found"}`))
@@ -149,5 +152,120 @@ func TestSyncKickThatSucceedsAddsNoWarning(t *testing.T) {
 	}
 	if !strings.Contains(stdout, `"status": "succeeded"`) {
 		t.Fatalf("expected the finished job, got:\n%s", stdout)
+	}
+}
+
+// The checks ran out and the job is still queued (a try of it failed and it
+// waits for its next, or the worker never reached it): the sync has not
+// happened, so the command fails naming the job and where its end will show,
+// with the job as it stands on stdout, not the creation reply and exit 0.
+func TestSyncFailsWhenTheChecksRunOutOnAJobStillQueued(t *testing.T) {
+	fastSyncPolls(t)
+	orchestrator, hits := kickRecorder(t, http.StatusOK, "queued")
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("the target was called (%s %s): a queued server-side job must not fall back to a client-side sync", r.Method, r.URL.Path)
+	}))
+	defer target.Close()
+	syncProfiles(t, orchestrator.URL, target.URL)
+
+	stdout, _, err := executeCommand("sync", "campaigns", "--from", "source", "--to", "target", "--json")
+	if err == nil {
+		t.Fatalf("a job that has not run to an end is not a sync that happened; stdout:\n%s", stdout)
+	}
+	if got := countHits(hits(), "POST /api/v3/sync/worker/run"); got != syncJobPolls {
+		t.Errorf("the worker was kicked %d times, want %d", got, syncJobPolls)
+	}
+	if got := countHits(hits(), "POST /api/v3/sync/jobs"); got != 1 {
+		t.Fatalf("expected exactly one job created, got %d: %v", got, hits())
+	}
+	if code := exitCodeForError(err); code != ExitPartialFailure {
+		t.Errorf("exit code = %d, want %d", code, ExitPartialFailure)
+	}
+	for _, want := range []string{"sync job j1", "has not finished", "still queued"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err.Error(), want)
+		}
+	}
+	hint := hintFor(err)
+	for _, want := range []string{"p202 sync history --from source --to target", "next_run_at", "queues one more job"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("hint %q does not name %q", hint, want)
+		}
+	}
+	if !strings.Contains(stdout, `"attempts": 1`) || !strings.Contains(stdout, `"status": "queued"`) {
+		t.Errorf("expected the job as it stands (as read, with its attempts), got:\n%s", stdout)
+	}
+}
+
+// The checks ran out while the server runs the job: it will end by itself,
+// so the command succeeds as it does when a kick failed on a running job,
+// with a warning naming the job and the job as it stood.
+func TestSyncWarnsWhenTheChecksRunOutOnAJobStillRunning(t *testing.T) {
+	fastSyncPolls(t)
+	orchestrator, _ := kickRecorder(t, http.StatusOK, "running")
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("the target was called (%s %s)", r.Method, r.URL.Path)
+	}))
+	defer target.Close()
+	syncProfiles(t, orchestrator.URL, target.URL)
+
+	stdout, stderr, err := executeCommand("sync", "campaigns", "--from", "source", "--to", "target", "--json")
+	if err != nil {
+		t.Fatalf("a running job is not a failed sync: %v", err)
+	}
+	for _, want := range []string{"Warning", "sync job j1", "still running", "p202 sync history --from source --to target"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr does not contain %q:\n%s", want, stderr)
+		}
+	}
+	if !strings.Contains(stdout, `"status": "running"`) || !strings.Contains(stdout, `"attempts": 1`) {
+		t.Fatalf("expected the job as it stood (running, as read), got:\n%s", stdout)
+	}
+}
+
+// The statuses the CLI takes as a job's end are the server's terminal states,
+// and the two it waits on are the rest: a state added on the server that the
+// CLI does not know would be waited on for ever, or read as an end.
+func TestSyncJobEndsAreTheServersTerminalStates(t *testing.T) {
+	src, err := os.ReadFile(repoPath("api", "v3", "Support", "SyncJobState.php"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]string{}
+	for _, m := range regexp.MustCompile(`(?m)^\s*case (\w+) = '([a-z_]+)';`).FindAllStringSubmatch(string(src), -1) {
+		values[m[1]] = m[2]
+	}
+	if len(values) < 3 {
+		t.Fatalf("read %d states from SyncJobState.php: the enum's cases are no longer `case Name = 'value';`", len(values))
+	}
+	// The arm of next() whose states move nowhere.
+	arm := regexp.MustCompile(`((?:self::\w+,\s*)*self::\w+)\s*=>\s*\[\],`).FindAllStringSubmatch(string(src), -1)
+	if len(arm) != 1 {
+		t.Fatalf("found %d arms of next() that move nowhere, want the one that lists the terminal states", len(arm))
+	}
+	var terminal, waiting []string
+	ends := map[string]bool{}
+	for _, m := range regexp.MustCompile(`self::(\w+)`).FindAllStringSubmatch(arm[0][1], -1) {
+		value, ok := values[m[1]]
+		if !ok {
+			t.Fatalf("next() names %s, which is no case", m[1])
+		}
+		terminal = append(terminal, value)
+		ends[m[1]] = true
+	}
+	for name, value := range values {
+		if !ends[name] {
+			waiting = append(waiting, value)
+		}
+	}
+	slices.Sort(terminal)
+	slices.Sort(waiting)
+	got := slices.Clone(syncJobEnds)
+	slices.Sort(got)
+	if !slices.Equal(got, terminal) {
+		t.Errorf("syncJobEnds = %v, the server's terminal states are %v", got, terminal)
+	}
+	if want := []string{"queued", "running"}; !slices.Equal(waiting, want) {
+		t.Errorf("the server's unfinished states are %v; tryServerSideSync answers for %v", waiting, want)
 	}
 }

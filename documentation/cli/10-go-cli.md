@@ -314,6 +314,8 @@ Sync respects entity dependencies: aff-network/ppc-network -> ppc-account -> cam
 
 When the `--from` profile's install runs the sync (server-side jobs), it calls both profiles' URLs, and only at public `https://` addresses. A profile URL it refuses is a validation error whose hint names the profile to repoint (`p202 --profile <name> config set-url https://…`) and the setting that admits an install on the server's own machine or network, `P202_WEBHOOK_ALLOW_NETWORKS` in its `202-config.php` (write that install as `http://127.0.0.1:8001`, not `localhost`). A job that stops on a cap (8 MiB of one answer, 200 pages of 500 records of one list, 900 seconds in all) or on a refused URL exits 5 with that reason's next step. See [the Sync API](../api/16-sync.md#what-a-profile-url-may-name).
 
+`p202 sync` waits for the job it queued: it asks the server to run its sync worker and reads the job, up to 20 times. The job's end is the command's: `succeeded` is exit 0, and `failed`, `partial` or `cancelled` is exit 5 with the job on stdout. A job that has not ended when the checks run out is never printed as done. Still `queued` (a try of it failed and it waits for its next, or the worker has not reached it) is exit 5: stdout is the job as it stands, with its `error` and `next_run_at`, and the error names the job and `p202 sync history --from <from> --to <to>`, which lists it once it has ended. Still `running` is exit 0 with a warning on stderr naming the job and the same command, and stdout is the job as it stood, `"status": "running"`: check the status before reading it as a sync that finished.
+
 ## Data Export/Import
 
 ```bash

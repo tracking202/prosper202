@@ -50,7 +50,10 @@ Pass an `Idempotency-Key` header to prevent duplicate job creation on
 retries. The key covers the whole request: retry it with the same source,
 target, entity and options and the recorded response replays
 (`idempotent_replay: true`). Reusing the key for a different sync is refused
-with `422` rather than queueing a second job — mint a new key instead.
+with `422` rather than queueing a second job — mint a new key instead. A
+request that arrives while another with the same key is still queueing its
+job is a `409` (`idempotency_in_flight`): send it again and it answers that
+job. Two requests under one key never queue two jobs.
 
 ```bash
 curl -X POST https://your-domain.com/api/v3/sync/jobs \
@@ -153,6 +156,20 @@ so `"prune_denylist": "campaigns"` protected no campaign from the prune.
 | `failed` | Job failed (check events for details) |
 | `cancelled` | Job was cancelled |
 | `partial` | Some items succeeded, some failed |
+
+A job is created `queued`. A run moves it to `running` and then to one of the
+four ends, or back to `queued` when a try stopped on something the next may
+not meet (up to `max_attempts`). `succeeded`, `partial`, `failed` and
+`cancelled` are final: nothing moves a job out of them, and each job has one
+audit record, written when it ends.
+
+- `POST /sync/jobs/{id}/cancel` ends a `queued` job at once. A `running` job
+  gets `cancel_requested` and its run ends it `cancelled`. A job that has
+  ended is answered as it ended: a cancel that arrives as the run finishes
+  leaves the run's result.
+- `POST /sync/jobs/{id}/run` starts a `queued` job that is due. A job in any
+  other status is answered as it stands; one that is `running` is not started
+  a second time beside its run.
 
 ### Failures and conflicts
 

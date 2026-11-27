@@ -185,15 +185,12 @@ final class SystemControllerBehaviorTest extends TestCase
             $span = $store->startSpan('sync.execute', ['entity' => 'campaigns']);
             $store->endSpan($span, 'ok', ['done' => true]);
 
-            $job = $store->createJob([
+            $store->createJob([
                 'entity' => 'campaigns',
                 'source' => ['url' => 'https://prod.example.com'],
                 'target' => ['url' => 'https://stage.example.com'],
                 'options' => [],
-            ], 1);
-            $job['status'] = 'queued';
-            $job['next_run_at'] = time() - 10;
-            $store->saveJob($job);
+            ], 1, ['next_run_at' => time() - 10]);
 
             $controller = new SystemController($db);
             $result = $controller->metrics();

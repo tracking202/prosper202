@@ -570,10 +570,8 @@ final class SyncFeaturesTest extends TestCase
         $this->assertSame('queued', $firstState['data']['status']);
         $this->assertSame(1, (int)$firstState['data']['attempts']);
 
-        $jobRaw = $store->getJob($jobId);
-        $this->assertIsArray($jobRaw);
-        $jobRaw['next_run_at'] = time() - 1;
-        $store->saveJob($jobRaw);
+        $due = $store->changeJob($jobId, static fn (): array => ['next_run_at' => time() - 1]);
+        $this->assertIsArray($due);
 
         $secondWorker = $controller->runWorker(['limit' => 5]);
         $this->assertSame(1, $secondWorker['data']['processed']);

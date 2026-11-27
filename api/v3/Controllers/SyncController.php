@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\ErrorCode;
+use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\SyncException;
@@ -16,6 +17,7 @@ use Api\V3\Support\RemoteApiClient;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\SyncEngine;
 use Api\V3\Support\SyncFailure;
+use Api\V3\Support\SyncJobState;
 use Api\V3\Support\SyncProfileKeys;
 use Api\V3\Support\QueryInt;
 use Api\V3\Support\RequestFlag;
@@ -24,9 +26,6 @@ class SyncController
 {
     private readonly SyncEngine $engine;
     private readonly ServerStateStore $store;
-
-    /** The statuses a job ends in: it runs no more, and keeps no key. */
-    private const FINISHED = ['succeeded', 'failed', 'cancelled', 'partial'];
 
     /**
      * How long a job may read 'running' with no process holding its lock
@@ -38,6 +37,14 @@ class SyncController
      * lock this host's flock() may not see, and the time cannot be wrong there.
      */
     public const ABANDONED_AFTER = RemoteApiClient::MAX_SECONDS + 300;
+
+    /** The counter each end of a job adds to, by the state it ended in. */
+    private const END_METRICS = [
+        SyncJobState::Succeeded->value => 'jobs_succeeded',
+        SyncJobState::Partial->value => 'jobs_partial',
+        SyncJobState::Failed->value => 'jobs_failed',
+        SyncJobState::Cancelled->value => 'jobs_cancelled',
+    ];
 
     /** The fatal errors PHP ends a run with before any catch can see them. */
     private const FATAL_ERRORS = [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR];
@@ -130,43 +137,87 @@ class SyncController
         $requestHash = ServerStateStore::idempotencyFingerprint('sync-job', $jobPayload);
         $idempotencyScope = ServerStateStore::idempotencyScopeForUser($this->userId);
         if ($idempotencyKey !== '') {
-            $lookup = $this->store->lookupIdempotent($idempotencyScope, $idempotencyKey, $requestHash);
-            if ($lookup['state'] === 'mismatch') {
-                throw (new ValidationException(
-                    'This Idempotency-Key was already used for a different request. Resend the original '
-                    . 'sync request to replay its recorded response, or send a new Idempotency-Key to '
-                    . 'queue a different job.',
-                    ['idempotency_key' => 'Already used for a different request']
-                ))->coded(ErrorCode::IDEMPOTENCY_KEY_REUSED);
-            }
-            if ($lookup['state'] === 'replay' && is_array($lookup['response'])) {
-                $cached = $lookup['response'];
-                $cached['idempotent_replay'] = true;
-                return ['_status' => 202] + $cached;
+            $recorded = $this->claimIdempotencyKey($idempotencyScope, $idempotencyKey, $requestHash);
+            if ($recorded !== null) {
+                $recorded['idempotent_replay'] = true;
+                return ['_status' => 202] + $recorded;
             }
         }
 
         $jobPayload['request_hash'] = $requestHash;
-        // The keys are sealed in the job file and dropped when it ends
-        // (SyncProfileKeys); the fingerprint above is of the request as sent.
-        $jobPayload['source'] = $this->keys()->seal($source, 'source');
-        $jobPayload['target'] = $this->keys()->seal($target, 'target');
-        $job = $this->store->createJob($jobPayload, $this->userId);
-        $job['attempts'] = 0;
-        $job['max_attempts'] = $maxAttempts;
-        $job['next_run_at'] = time();
-        $job['status'] = 'queued';
-        $this->store->saveJob($job);
-        $this->store->incrementMetric('jobs_started', 1);
-
-        $jobId = (string)$job['job_id'];
-        $this->store->appendJobEvent($jobId, 'info', 'Job queued', ['entity' => $entity]);
+        try {
+            // The keys are sealed in the job file and dropped when it ends
+            // (SyncProfileKeys); the fingerprint above is of the request as sent.
+            $jobPayload['source'] = $this->keys()->seal($source, 'source');
+            $jobPayload['target'] = $this->keys()->seal($target, 'target');
+            $job = $this->store->createJob($jobPayload, $this->userId, [
+                'attempts' => 0,
+                'max_attempts' => $maxAttempts,
+                'next_run_at' => time(),
+            ]);
+        } catch (\Throwable $e) {
+            // Nothing was queued: the key is free for the retry.
+            if ($idempotencyKey !== '') {
+                $this->store->releaseIdempotent($idempotencyScope, $idempotencyKey);
+            }
+            throw $e;
+        }
 
         $response = ['data' => $this->sanitizeJobForResponse($job)];
         if ($idempotencyKey !== '') {
-            $this->store->putIdempotent($idempotencyScope, $idempotencyKey, $response, $requestHash);
+            try {
+                $this->store->putIdempotent($idempotencyScope, $idempotencyKey, $response, $requestHash);
+            } catch (\Throwable $e) {
+                // The job is queued (CLAUDE.md #13): the key is spent, never
+                // freed for a retry that would queue a second one.
+                $this->store->markIdempotentIndeterminate($idempotencyScope, $idempotencyKey);
+                throw $e;
+            }
         }
+        $this->store->incrementMetric('jobs_started', 1);
+        $this->store->appendJobEvent((string)$job['job_id'], 'info', 'Job queued', ['entity' => $entity]);
+
         return ['_status' => 202] + $response;
+    }
+
+    /**
+     * Take the Idempotency-Key for this request in one step with reading it,
+     * so two requests under one key cannot both find it unused. The recorded
+     * answer when the key's request already queued its job; null when the key
+     * is now this request's, to record its answer under or to release.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function claimIdempotencyKey(string $scope, string $key, string $requestHash): ?array
+    {
+        $claim = $this->store->reserveIdempotent($scope, $key, $requestHash);
+        if ($claim['state'] === 'mismatch') {
+            throw (new ValidationException(
+                'This Idempotency-Key was already used for a different request. Resend the original '
+                . 'sync request to replay its recorded response, or send a new Idempotency-Key to '
+                . 'queue a different job.',
+                ['idempotency_key' => 'Already used for a different request']
+            ))->coded(ErrorCode::IDEMPOTENCY_KEY_REUSED);
+        }
+        if ($claim['state'] === 'replay') {
+            return $claim['response'] ?? [];
+        }
+        if ($claim['state'] === 'in_flight') {
+            throw (new ConflictException(
+                'A request with this Idempotency-Key is still in flight; retry once it completes '
+                . 'to receive the job it queued.'
+            ))->coded(ErrorCode::IDEMPOTENCY_IN_FLIGHT);
+        }
+        if ($claim['state'] === 'indeterminate') {
+            throw (new ConflictException(
+                'A previous request with this Idempotency-Key did not finish, so whether it queued a '
+                . 'job is unknown and this key can be neither replayed nor reused. Look at the pair\'s '
+                . 'sync history (GET /sync/history) and the queue (GET /system/metrics), then queue the '
+                . 'job under a new Idempotency-Key if it is not there.'
+            ))->coded(ErrorCode::IDEMPOTENCY_INDETERMINATE);
+        }
+
+        return null;
     }
 
     public function getJob(string $jobId): array
@@ -187,22 +238,61 @@ class SyncController
             throw new NotFoundException('Sync job not found');
         }
         $job = $this->failIfAbandoned($job);
-        if (in_array((string)($job['status'] ?? ''), self::FINISHED, true)) {
+        if (SyncJobState::ofRecord($job)?->isTerminal() === true) {
             return ['data' => $this->sanitizeJobForResponse($job)];
         }
 
-        $job['cancel_requested'] = true;
-        if ((string)($job['status'] ?? '') === 'queued') {
-            $job['status'] = 'cancelled';
-            $job['next_run_at'] = null;
-            $job = self::withoutKeys($job);
-            $this->store->incrementMetric('jobs_cancelled', 1);
-            $this->appendAuditForJob($job);
-        }
-        $this->store->saveJob($job);
-        $this->store->appendJobEvent($jobId, 'warning', 'Job cancelled by request');
+        // Decided on the job as stored, not on the copy read above: a run
+        // may have started or ended it since. A queued job ends here; a
+        // running one is asked to stop, and its run ends it.
+        $asked = $this->changed($jobId, static function (array $stored, SyncJobState $state): ?array {
+            if ($state->isTerminal()) {
+                return null;
+            }
+            if ($state === SyncJobState::Queued) {
+                return ['status' => SyncJobState::Cancelled, 'cancel_requested' => true, 'next_run_at' => null]
+                    + self::keysDropped($stored);
+            }
 
-        return ['data' => $this->sanitizeJobForResponse($job)];
+            return ['cancel_requested' => true];
+        });
+        if ($asked['changed']) {
+            if ($asked['from'] === SyncJobState::Queued) {
+                $this->store->incrementMetric('jobs_cancelled', 1);
+                $this->appendAuditForJob($asked['job']);
+            }
+            $this->store->appendJobEvent($jobId, 'warning', 'Job cancelled by request');
+        }
+
+        return ['data' => $this->sanitizeJobForResponse($asked['job'])];
+    }
+
+    /**
+     * Change the job through the store, which reads it again under its lock
+     * and makes only a move SyncJobState holds.
+     *
+     * @param callable(array<string, mixed>, SyncJobState): ?array<string, mixed> $change
+     * @return array{job: array<string, mixed>, from: SyncJobState, changed: bool}
+     */
+    private function changed(string $jobId, callable $change): array
+    {
+        $result = $this->store->changeJob($jobId, $change);
+        if ($result === null) {
+            throw new NotFoundException('Sync job not found');
+        }
+
+        return $result;
+    }
+
+    /**
+     * The fields that take both profiles' keys out of a job's record.
+     *
+     * @param array<string, mixed> $job
+     * @return array<string, mixed>
+     */
+    private static function keysDropped(array $job): array
+    {
+        return is_array($job['request'] ?? null) ? ['request' => self::withoutKeys($job)['request']] : [];
     }
 
     public function events(string $jobId, array $params): array
@@ -242,13 +332,18 @@ class SyncController
         // A job that ended before 1.9.79 still holds both keys as sent; a
         // finished job needs none.
         foreach ($all as $job) {
-            if (in_array((string)($job['status'] ?? ''), self::FINISHED, true) && self::holdsKey($job)) {
-                $this->store->saveJob(self::withoutKeys($job));
+            if (SyncJobState::ofRecord($job)?->isTerminal() === true && self::holdsKey($job)) {
+                $this->store->changeJob(
+                    (string)$job['job_id'],
+                    static fn (array $stored, SyncJobState $state): ?array => $state->isTerminal() && self::holdsKey($stored)
+                        ? self::keysDropped($stored)
+                        : null
+                );
             }
         }
         $jobs = array_slice(array_values(array_filter(
             $all,
-            static fn (array $job): bool => (string)($job['status'] ?? '') === 'queued'
+            static fn (array $job): bool => SyncJobState::ofRecord($job) === SyncJobState::Queued
         )), 0, $limit);
 
         $processed = 0;
@@ -263,16 +358,14 @@ class SyncController
             }
             $processed++;
             $updated = $this->runJobInternal((string)$job['job_id']);
-            $status = (string)($updated['status'] ?? '');
-            if ($status === 'succeeded') {
-                $succeeded++;
-            } elseif ($status === 'partial') {
-                $partial++;
-            } elseif ($status === 'queued') {
-                $requeued++;
-            } elseif ($status === 'failed' || $status === 'cancelled') {
-                $failed++;
-            }
+            match (SyncJobState::ofRecord($updated)) {
+                SyncJobState::Succeeded => $succeeded++,
+                SyncJobState::Partial => $partial++,
+                SyncJobState::Queued => $requeued++,
+                SyncJobState::Failed, SyncJobState::Cancelled => $failed++,
+                // Another run has it, or its record cannot be read: not this pass's to count.
+                SyncJobState::Running, null => null,
+            };
         }
 
         return [
@@ -338,19 +431,18 @@ class SyncController
         return $this->store->listChanges($entity, $cursor, $limit, $cursorTtl, $updatedSince, $deletedSince);
     }
 
-    /** The statuses an audit record is written with: a job's terminal ones. */
-    private const AUDIT_STATUSES = ['succeeded', 'partial', 'failed', 'cancelled'];
-
     public function auditList(array $params): array
     {
         $format = self::auditFormat($params);
         $status = $params['status'] ?? '';
-        if ($status !== '' && (!is_string($status) || !in_array($status, self::AUDIT_STATUSES, true))) {
+        // An audit record is written when a job ends, with the state it ended in.
+        $ends = array_map(static fn (SyncJobState $state): string => $state->value, SyncJobState::finished());
+        if ($status !== '' && (!is_string($status) || !in_array($status, $ends, true))) {
             // A filter nothing can match answered an empty list that read
             // as "no such jobs" (status=sucess, status=success).
             throw new ValidationException(
                 'Invalid status',
-                ['status' => 'Valid values: ' . implode(', ', self::AUDIT_STATUSES)]
+                ['status' => 'Valid values: ' . implode(', ', $ends)]
             );
         }
         $filters = [
@@ -394,11 +486,10 @@ class SyncController
             throw new NotFoundException('Sync job not found');
         }
         $job = $this->failIfAbandoned($job);
-        $status = (string)($job['status'] ?? '');
-        if (in_array($status, self::FINISHED, true)) {
-            return $job;
-        }
-        if (!in_array($status, ['queued', 'running'], true)) {
+        // Only a queued job is started. A finished one runs no more, and one
+        // that reads running has its run, here or on a host whose lock this
+        // one cannot see, until failIfAbandoned() finds that run gone.
+        if (SyncJobState::ofRecord($job) !== SyncJobState::Queued) {
             return $job;
         }
         if ((int)($job['next_run_at'] ?? 0) > time()) {
@@ -412,15 +503,27 @@ class SyncController
             return $job;
         }
 
+        $startedHere = false;
         try {
             $job = $this->store->getJob($jobId) ?? $job;
             if ((bool)($job['cancel_requested'] ?? false)) {
-                $job['status'] = 'cancelled';
-                $job = self::withoutKeys($job);
-                $this->store->saveJob($job);
-                $this->store->appendJobEvent($jobId, 'warning', 'Job cancelled before execution');
-                $this->store->incrementMetric('jobs_cancelled', 1);
-                $this->appendAuditForJob($job);
+                $cancelled = $this->changed($jobId, static function (array $stored, SyncJobState $state): ?array {
+                    if ($state !== SyncJobState::Queued || !(bool)($stored['cancel_requested'] ?? false)) {
+                        return null;
+                    }
+
+                    return ['status' => SyncJobState::Cancelled] + self::keysDropped($stored);
+                });
+                if ($cancelled['changed']) {
+                    $this->store->appendJobEvent($jobId, 'warning', 'Job cancelled before execution');
+                    $this->store->incrementMetric('jobs_cancelled', 1);
+                    $this->appendAuditForJob($cancelled['job']);
+                }
+
+                return $cancelled['job'];
+            }
+            // Ended or started between the read above and the lock.
+            if (SyncJobState::ofRecord($job) !== SyncJobState::Queued) {
                 return $job;
             }
 
@@ -434,9 +537,13 @@ class SyncController
             if (SyncProfileKeys::holdsPlainKey($source) || SyncProfileKeys::holdsPlainKey($target)) {
                 $source = $this->keys()->seal($source, 'source');
                 $target = $this->keys()->seal($target, 'target');
-                $job['request']['source'] = $source;
-                $job['request']['target'] = $target;
-                $this->store->saveJob($job);
+                $this->changed($jobId, static function (array $stored, SyncJobState $state) use ($source, $target): ?array {
+                    if ($state !== SyncJobState::Queued || !is_array($stored['request'] ?? null)) {
+                        return null;
+                    }
+
+                    return ['request' => array_replace($stored['request'], ['source' => $source, 'target' => $target])];
+                });
             }
 
             $pairKey = SyncEngine::pairKeyFor($source, $target);
@@ -459,13 +566,27 @@ class SyncController
                 }
             });
             try {
-                $job['status'] = 'running';
-                $job['attempts'] = (int)($job['attempts'] ?? 0) + 1;
-                $job['running_since'] = time();
                 // Logged first: what a lost run wrote is counted from it.
-                $this->store->appendJobEvent($jobId, 'info', 'Job started', ['attempt' => $job['attempts']]);
-                $this->store->saveJob($job);
+                $this->store->appendJobEvent($jobId, 'info', 'Job started', ['attempt' => (int)($job['attempts'] ?? 0) + 1]);
+                $started = $this->changed($jobId, static function (array $stored, SyncJobState $state): ?array {
+                    if ($state !== SyncJobState::Queued) {
+                        return null;
+                    }
+
+                    return [
+                        'status' => SyncJobState::Running,
+                        'attempts' => (int)($stored['attempts'] ?? 0) + 1,
+                        'running_since' => time(),
+                    ];
+                });
+                if (!$started['changed']) {
+                    // A cancel ended it between the lock and here.
+                    $this->store->appendJobEvent($jobId, 'warning', 'Job not started', ['status' => $started['from']->value]);
+
+                    return $started['job'];
+                }
                 $running['on'] = true;
+                $startedHere = true;
 
                 $source = $this->keys()->open($source, 'source');
                 $target = $this->keys()->open($target, 'target');
@@ -480,32 +601,6 @@ class SyncController
                 );
 
                 $summary = $this->summarizeJobResults($results);
-                $job['results'] = $results;
-                $job['error'] = null;
-                $job['error_code'] = null;
-                $job['written'] = null;
-                $job['conflict'] = null;
-                $job['next_run_at'] = null;
-                // Re-read the persisted flag: a cancel may have landed while
-                // execute() was running and our in-memory copy is stale.
-                $fresh = $this->store->getJob($jobId);
-                if (is_array($fresh) && !empty($fresh['cancel_requested'])) {
-                    $job['cancel_requested'] = true;
-                }
-                if ((bool)($job['cancel_requested'] ?? false)) {
-                    $job['status'] = 'cancelled';
-                    $this->store->incrementMetric('jobs_cancelled', 1);
-                } elseif (($summary['failed'] ?? 0) > 0 && (($summary['synced'] ?? 0) > 0 || ($summary['skipped'] ?? 0) > 0)) {
-                    $job['status'] = 'partial';
-                    $this->store->incrementMetric('jobs_partial', 1);
-                } elseif (($summary['failed'] ?? 0) > 0) {
-                    $job['status'] = 'failed';
-                    $this->store->incrementMetric('jobs_failed', 1);
-                } else {
-                    $job['status'] = 'succeeded';
-                    $this->store->incrementMetric('jobs_succeeded', 1);
-                }
-
                 $manifest['last_sync_epoch'] = time();
                 if (is_array($results['mappings'] ?? null)) {
                     $manifest['mappings'] = $results['mappings'];
@@ -515,64 +610,116 @@ class SyncController
                 }
                 $this->store->saveSyncManifest($pairKey, $manifest);
 
-                $job = self::withoutKeys($job);
-                $this->store->saveJob($job);
-                $this->store->appendJobEvent($jobId, 'info', 'Job completed', ['status' => $job['status']]);
-                $this->appendAuditForJob($job);
+                $ended = $this->changed($jobId, static function (array $stored, SyncJobState $state) use ($results, $summary): ?array {
+                    if ($state !== SyncJobState::Running) {
+                        return null;
+                    }
+                    // Read from the record as stored: a cancel may have been
+                    // asked while execute() ran.
+                    if ((bool)($stored['cancel_requested'] ?? false)) {
+                        $to = SyncJobState::Cancelled;
+                    } elseif (($summary['failed'] ?? 0) > 0 && (($summary['synced'] ?? 0) > 0 || ($summary['skipped'] ?? 0) > 0)) {
+                        $to = SyncJobState::Partial;
+                    } elseif (($summary['failed'] ?? 0) > 0) {
+                        $to = SyncJobState::Failed;
+                    } else {
+                        $to = SyncJobState::Succeeded;
+                    }
+
+                    return [
+                        'status' => $to,
+                        'results' => $results,
+                        'error' => null,
+                        'error_code' => null,
+                        'written' => null,
+                        'conflict' => null,
+                        'next_run_at' => null,
+                    ] + self::keysDropped($stored);
+                });
+                if ($ended['changed']) {
+                    $this->store->incrementMetric(self::END_METRICS[$ended['job']['status']], 1);
+                    $this->store->appendJobEvent($jobId, 'info', 'Job completed', ['status' => $ended['job']['status']]);
+                    $this->appendAuditForJob($ended['job']);
+                } else {
+                    // Taken as lost and ended while this run went on (a host
+                    // that cannot see this one's lock): that end stands.
+                    $this->store->appendJobEvent(
+                        $jobId,
+                        'warning',
+                        'Job run finished after the job had ended',
+                        ['status' => $ended['from']->value, 'summary' => $summary]
+                    );
+                }
             } finally {
                 $running['on'] = false;
                 $pairLock();
             }
         } catch (\Throwable $e) {
-            $job = $this->store->getJob($jobId) ?? $job;
-            $attempts = (int)($job['attempts'] ?? 1);
-            $maxAttempts = max(1, (int)($job['max_attempts'] ?? 3));
             // Named, not "Internal server error": a remote refusal's own
             // getMessage() is that sentence (RemoteApiException), and so is
             // every DatabaseException's, which this server's own failures
             // are; those are logged with the job's id instead (SyncFailure).
-            $job['error'] = SyncFailure::report($e, 'job ' . $jobId);
+            $error = SyncFailure::report($e, 'job ' . $jobId);
             if (SyncFailure::isInternal($e)) {
-                $job['error'] = 'The sync stopped on ' . $job['error'] . '.';
+                $error = 'The sync stopped on ' . $error . '.';
             }
-            $job['results'] = null;
             // A write the target refused with a 409 is not retried by the
             // job: the retry re-reads the target and force-writes over the
             // change the 409 protected (CLAUDE.md #13). The record is named
             // so the caller can look before re-running.
             $conflict = $e instanceof SyncRecordException ? $e->conflict : null;
-            $job['conflict'] = $conflict;
             // Nor is a URL this server will not call, a cap the sync reached
             // or a key that does not open: the next try meets the same.
             $cause = SyncException::in($e);
-            $job['error_code'] = $cause?->errorCode
-                ?? (SyncFailure::hasInternalCause($e) ? SyncException::INTERNAL : null);
-            $job['written'] = $e instanceof SyncRecordException ? $e->written : null;
+            $retryable = $conflict === null && ($cause === null || $cause->retryable);
+            $fields = [
+                'error' => $error,
+                'results' => null,
+                'conflict' => $conflict,
+                'error_code' => $cause?->errorCode ?? (SyncFailure::hasInternalCause($e) ? SyncException::INTERNAL : null),
+                'written' => $e instanceof SyncRecordException ? $e->written : null,
+            ];
 
-            if ((bool)($job['cancel_requested'] ?? false)) {
-                $job['status'] = 'cancelled';
-                $this->store->incrementMetric('jobs_cancelled', 1);
-            } elseif ($conflict === null && ($cause === null || $cause->retryable) && $attempts < $maxAttempts) {
-                $job['status'] = 'queued';
-                $backoff = min(900, 15 * (2 ** max(0, $attempts - 1)));
-                $job['next_run_at'] = time() + $backoff;
-                $this->store->incrementMetric('jobs_retried', 1);
-            } else {
-                $job['status'] = 'failed';
-                $job['next_run_at'] = null;
-                $this->store->incrementMetric('jobs_failed', 1);
-                $this->appendAuditForJob($job);
-            }
-            if ($job['status'] !== 'queued') {
-                $job = self::withoutKeys($job);
-            }
+            $stopped = $this->changed($jobId, static function (array $stored, SyncJobState $state) use ($fields, $retryable, $startedHere): ?array {
+                // The job's end was saved and a step after it threw: the end
+                // stands, and it is not tried again.
+                if ($state->isTerminal()) {
+                    return null;
+                }
+                // Running, and not by this try, which stopped before it
+                // started: the run is another host's to end.
+                if ($state === SyncJobState::Running && !$startedHere) {
+                    return null;
+                }
+                $attempts = (int)($stored['attempts'] ?? 1);
+                $maxAttempts = max(1, (int)($stored['max_attempts'] ?? 3));
+                if ((bool)($stored['cancel_requested'] ?? false)) {
+                    return $fields + ['status' => SyncJobState::Cancelled] + self::keysDropped($stored);
+                }
+                if ($retryable && $attempts < $maxAttempts) {
+                    // Queued again after a try; or still queued, when the
+                    // run could not start (a busy pair) and waits its turn.
+                    $backoff = min(900, 15 * (2 ** max(0, $attempts - 1)));
 
-            $this->store->saveJob($job);
+                    return $fields + ['status' => SyncJobState::Queued, 'next_run_at' => time() + $backoff];
+                }
+
+                return $fields + ['status' => SyncJobState::Failed, 'next_run_at' => null] + self::keysDropped($stored);
+            });
+            if ($stopped['changed']) {
+                $state = SyncJobState::ofStored($stopped['job']['status'], 'Sync job ' . $jobId);
+                if ($state === SyncJobState::Queued) {
+                    $this->store->incrementMetric('jobs_retried', 1);
+                } else {
+                    $this->store->incrementMetric(self::END_METRICS[$state->value], 1);
+                    $this->appendAuditForJob($stopped['job']);
+                }
+            }
             $this->store->appendJobEvent(
                 $jobId,
                 'error',
                 'Job execution error',
-                ['error' => $job['error']] + ($conflict !== null ? ['conflict' => $conflict] : [])
+                ['error' => $error] + ($conflict !== null ? ['conflict' => $conflict] : [])
             );
         } finally {
             $releaseLock();
@@ -596,7 +743,7 @@ class SyncController
      */
     private function failIfAbandoned(array $job): array
     {
-        if ((string)($job['status'] ?? '') !== 'running' || !self::pastAbandonment($job)) {
+        if (SyncJobState::ofRecord($job) !== SyncJobState::Running || !self::pastAbandonment($job)) {
             return $job;
         }
         $jobId = (string)($job['job_id'] ?? '');
@@ -610,7 +757,7 @@ class SyncController
             if ($current === null) {
                 return $job;
             }
-            if ((string)($current['status'] ?? '') !== 'running' || !self::pastAbandonment($current)) {
+            if (SyncJobState::ofRecord($current) !== SyncJobState::Running || !self::pastAbandonment($current)) {
                 return $current;
             }
             $since = self::runningSince($current);
@@ -645,7 +792,7 @@ class SyncController
         }
         try {
             $job = $this->store->getJob($jobId);
-            if ($job !== null && (string)($job['status'] ?? '') === 'running') {
+            if ($job !== null && SyncJobState::ofRecord($job) === SyncJobState::Running) {
                 $this->abandon($job, $why);
             }
         } catch (\Throwable $e) {
@@ -685,19 +832,34 @@ class SyncController
                 . ($complete ? '' : ' (at least: the log keeps only its latest events)')
                 . ': ' . implode('; ', $parts) . '.';
         }
-        $cancelled = (bool)($job['cancel_requested'] ?? false);
-        $job['status'] = $cancelled ? 'cancelled' : 'failed';
-        $job['error'] = $why . $what . ($cancelled ? '' : ' It is not tried again by itself: run the sync again to '
-            . 'finish it (plan first to see what is left).');
-        $job['error_code'] = SyncException::WORKER_LOST;
-        $job['written'] = $written;
-        $job['results'] = null;
-        $job['conflict'] = null;
-        $job['next_run_at'] = null;
-        $job = self::withoutKeys($job);
-        $this->store->saveJob($job);
+        $ended = $this->store->changeJob($jobId, static function (array $stored, SyncJobState $state) use ($why, $what, $written): ?array {
+            // Only a job still running is lost: one that ended, or was
+            // queued again, since the caller read it is left as it is.
+            if ($state !== SyncJobState::Running) {
+                return null;
+            }
+            $cancelled = (bool)($stored['cancel_requested'] ?? false);
+
+            return [
+                'status' => $cancelled ? SyncJobState::Cancelled : SyncJobState::Failed,
+                'error' => $why . $what . ($cancelled ? '' : ' It is not tried again by itself: run the sync again to '
+                    . 'finish it (plan first to see what is left).'),
+                'error_code' => SyncException::WORKER_LOST,
+                'written' => $written,
+                'results' => null,
+                'conflict' => null,
+                'next_run_at' => null,
+            ] + self::keysDropped($stored);
+        });
+        if ($ended === null) {
+            return $job;
+        }
+        if (!$ended['changed']) {
+            return $ended['job'];
+        }
+        $job = $ended['job'];
         $this->store->appendJobEvent($jobId, 'error', 'Job run lost', ['error' => $job['error']]);
-        $this->store->incrementMetric($cancelled ? 'jobs_cancelled' : 'jobs_failed', 1);
+        $this->store->incrementMetric(self::END_METRICS[$job['status']], 1);
         $this->store->incrementMetric('jobs_abandoned', 1);
         $this->appendAuditForJob($job);
 
@@ -785,7 +947,7 @@ class SyncController
             'actor_user_id' => (int)($job['actor_user_id'] ?? $this->userId),
             'source' => $this->profileLabel($source),
             'target' => $this->profileLabel($target),
-            'status' => (string)($job['status'] ?? 'unknown'),
+            'status' => SyncJobState::ofStored($job['status'] ?? null, 'Sync job ' . (string)($job['job_id'] ?? ''))->value,
             'entity' => (string)($request['entity'] ?? 'all'),
             'options' => [
                 'dry_run' => $options['dry_run'] ?? false,
@@ -1068,9 +1230,13 @@ class SyncController
         $activeJobs = array_filter(
             array_map(
                 fn (array $job): array => $this->failIfAbandoned($job),
-                $this->store->listJobs(['queued', 'running'], 5000)
+                $this->store->listJobs([SyncJobState::Queued, SyncJobState::Running], 5000)
             ),
-            static fn (array $job): bool => in_array((string)($job['status'] ?? ''), ['queued', 'running'], true)
+            static fn (array $job): bool => in_array(
+                SyncJobState::ofRecord($job),
+                [SyncJobState::Queued, SyncJobState::Running],
+                true
+            )
         );
         $samePairCount = 0;
         foreach ($activeJobs as $job) {
