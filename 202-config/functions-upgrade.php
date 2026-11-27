@@ -994,11 +994,12 @@ if (!function_exists('_upgrade_withhold_unconsented_analytics')) {
     /**
      * Before 1.9.80 analytics was recorded with no consent check. Before the
      * reconcile gives those rows a tier and consent version that would read
-     * as consented, the unsent events (all but sign-ins and new accounts)
-     * become 'withheld' and the attribute snapshot is marked withheld: kept,
-     * and never delivered. The enum value and column are added here in the
-     * installer's words so the reconcile finds them. Keyed on the columns the reconcile
-     * adds, so a rerun marks nothing recorded since. False on any failure.
+     * as consented, every unsent event becomes 'withheld' and the attribute
+     * snapshot is marked withheld: kept, and never delivered, since only
+     * what is recorded after its owner opted in leaves. The enum value and
+     * column are added here in the installer's words so the reconcile finds
+     * them. Keyed on the columns the reconcile adds, so a rerun marks nothing
+     * recorded since. False on any failure.
      */
     function _upgrade_withhold_unconsented_analytics(): bool
     {
@@ -1007,7 +1008,7 @@ if (!function_exists('_upgrade_withhold_unconsented_analytics')) {
                 "ALTER TABLE `202_messaging_events` MODIFY COLUMN `delivery_status`
                     enum('pending','sent','failed','withheld') NOT NULL DEFAULT 'pending'",
                 "UPDATE `202_messaging_events` SET delivery_status = 'withheld'
-                    WHERE delivery_status <> 'sent' AND event_name NOT IN ('login', 'account_created')",
+                    WHERE delivery_status <> 'sent'",
             ]],
             '202_messaging_attributes' => ['consent_version', [
                 "ALTER TABLE `202_messaging_attributes` ADD COLUMN `withheld` tinyint(1) NOT NULL DEFAULT '0' AFTER `updated_at`",
@@ -1349,7 +1350,7 @@ if (!function_exists('_upgrade_measurement_tables')) {
             }
         }
 
-        // The sign-ins and new accounts it kept are essential.
+        // Sign-ins and new accounts carry the tier they are recorded with since.
         if ($ok && $messagingEvents && _upgrade_query("UPDATE `202_messaging_events` SET tier = 'essential'
                 WHERE event_name IN ('login', 'account_created') AND tier <> 'essential'") === false) {
             $ok = false;

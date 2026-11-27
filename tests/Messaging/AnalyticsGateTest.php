@@ -6,21 +6,20 @@ require_once __DIR__ . '/../../202-config/Messaging/Analytics.class.php';
 
 final class AnalyticsGateTest extends TestCase
 {
-    // The gate Analytics applies must equal ConsentPolicy::decide for the tier.
-    public function test_gate_matches_policy_for_analytics_unset_eu(): void
+    // The gate Analytics applies is ConsentPolicy::decide: only a grant.
+    public function test_gate_unset_is_off(): void
     {
-        $this->assertFalse(Analytics::gate('unset', true, 'analytics'));
+        $this->assertFalse(Analytics::gate('unset'));
     }
-    public function test_gate_essential_always_true(): void
+    public function test_gate_denied_is_off(): void
     {
-        $this->assertTrue(Analytics::gate('denied', true, 'essential'));
+        $this->assertFalse(Analytics::gate('denied'));
     }
     public function test_gate_analytics_granted(): void
     {
-        $this->assertTrue(Analytics::gate('granted', true, 'analytics'));
+        $this->assertTrue(Analytics::gate('granted'));
     }
-    // Unknown tiers must not bypass the gate: anything not 'essential'
-    // normalizes to 'analytics' and is consent-gated (matches decide()).
+    // Unknown tiers are labelled 'analytics', never 'essential'.
     public function test_normalize_tier_treats_unknown_as_analytics(): void
     {
         $this->assertSame('analytics', Analytics::normalizeTier('analytic'));
@@ -30,10 +29,13 @@ final class AnalyticsGateTest extends TestCase
         $this->assertSame('essential', Analytics::normalizeTier('essential'));
         $this->assertSame('analytics', Analytics::normalizeTier('analytics'));
     }
-    public function test_gate_unknown_tier_is_gated_like_analytics(): void
+    public function test_every_tier_waits_for_the_opt_in(): void
     {
-        $this->assertFalse(Analytics::gate('denied', false, Analytics::normalizeTier('marketing')));
-        $this->assertFalse(Analytics::gate('unset', true, Analytics::normalizeTier('analytic')));
-        $this->assertTrue(Analytics::gate('granted', true, Analytics::normalizeTier('marketing')));
+        $src = file_get_contents(__DIR__ . '/../../202-config/Messaging/Analytics.class.php');
+        $this->assertMatchesRegularExpression(
+            '/function wouldRecord\(mysqli \$db, int \$userId\): bool\s*\{\s*return ConsentPolicy::analyticsAllowed\(\$db, \$userId\);\s*\}/',
+            $src,
+            'no tier is recorded before the user opts in'
+        );
     }
 }

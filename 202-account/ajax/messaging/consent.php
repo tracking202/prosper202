@@ -23,7 +23,7 @@ $source = isset($_POST['source']) ? (string) $_POST['source'] : 'settings';
 
 if (!in_array($flag, ['analytics', 'email_marketing'], true)
     || !in_array($state, ['granted', 'denied'], true)
-    || !in_array($source, ['settings', 'eu_prompt'], true)) {
+    || !in_array($source, ['settings', 'prompt'], true)) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'bad_args']);
     exit;

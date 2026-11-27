@@ -421,8 +421,9 @@ function p202_chrome_header(array $navigation, ?object $userObj, array $userData
 			$p202ChatJson = JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_INVALID_UTF8_SUBSTITUTE;
 			?>
 			<?php
-			// Server-side page-view (analytics tier, consent-gated) and the
-			// one-time EU/UK consent prompt; neither may break the page.
+			// Server-side page-view (recorded only after the user opted in) and
+			// the one-time usage-data question, asked of every user who has not
+			// chosen, at most once; neither may break the page.
 			$p202_needs_prompt = false;
 			try {
 				$p202_analytics = (defined('CONFIG_PATH') ? CONFIG_PATH : __DIR__) . '/Messaging/Analytics.class.php';
@@ -434,7 +435,7 @@ function p202_chrome_header(array $navigation, ?object $userObj, array $userData
 				Analytics::event('page_viewed', ['path' => $p202_route], 'analytics');
 				$p202_consent_db = $GLOBALS['db'] ?? null;
 				$p202_needs_prompt = ($p202_consent_db instanceof mysqli)
-					&& ConsentPolicy::needsEuPrompt($p202_consent_db, (int) $_SESSION['user_id']);
+					&& ConsentPolicy::takePrompt($p202_consent_db, (int) $_SESSION['user_id']);
 			} catch (\Throwable $p202_consent_e) {
 				$p202_needs_prompt = false;
 				error_log('[Consent] ' . $p202_consent_e->getMessage());

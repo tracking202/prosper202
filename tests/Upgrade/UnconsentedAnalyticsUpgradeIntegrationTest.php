@@ -9,11 +9,11 @@ use PHPUnit\Framework\TestCase;
 /**
  * The 1.9.79 -> 1.9.80 rung adds a tier and a consent version to the
  * analytics queue. Before 1.9.80 analytics was recorded with no consent
- * check, so what was queued then would read as consented analytics: the
- * rung keeps the unsent analytics events and the attribute snapshot but
- * marks them withheld, which no delivery sends, a re-grant included; the
- * essential events become essential, what was sent stays, and a second run
- * marks nothing recorded since.
+ * check, and usage data is opt-in from 1.9.80: the rung keeps every unsent
+ * event (of either tier) and the attribute snapshot but marks them
+ * withheld, which no delivery sends, a grant included; the essential events
+ * are labelled essential, what was sent stays, and a second run marks
+ * nothing recorded since.
  *
  * @group integration
  */
@@ -134,18 +134,18 @@ final class UnconsentedAnalyticsUpgradeIntegrationTest extends TestCase
             ['page_viewed', 'withheld', 'analytics'],
             ['tracker_created', 'withheld', 'analytics'],
             ['feature_used', 'sent', 'analytics'],
-            ['login', 'pending', 'essential'],
-            ['account_created', 'pending', 'essential'],
-        ], self::events(), 'every row stays; the unsent analytics is withheld');
+            ['login', 'withheld', 'essential'],
+            ['account_created', 'withheld', 'essential'],
+        ], self::events(), 'every row stays; everything unsent is withheld');
         [$data, $withheld, $dirty] = self::$db->query(
             'SELECT data, withheld, dirty FROM 202_messaging_attributes WHERE user_id = ' . self::USER
         )->fetch_row();
         self::assertSame([['clicks_30d' => 9], '1', '0'], [json_decode((string) $data, true), $withheld, $dirty]);
 
-        // Delivered after an explicit grant: the essential rows and the
-        // consent change go; the withheld rows and snapshot never do.
+        // After an explicit grant only the consent change goes; the withheld
+        // rows and snapshot never do.
         require_once dirname(__DIR__, 2) . '/202-config/Messaging/MessagingService.class.php';
-        self::assertTrue(\ConsentPolicy::rememberGeo(self::$db, self::USER, false));
+        self::assertSame([], \MessagingService::usersWithPendingDelivery(self::$db), 'nothing goes before the grant');
         self::assertTrue(\ConsentPolicy::record(self::$db, self::USER, 'analytics', 'granted', 'settings'));
         $service = \MessagingService::forUser(self::USER, self::$db);
         self::assertNotNull($service);
@@ -162,13 +162,14 @@ final class UnconsentedAnalyticsUpgradeIntegrationTest extends TestCase
         (new \ReflectionProperty(\MessagingService::class, 'client'))->setValue($service, $client);
         self::assertSame(\MessagingService::SYNC_SENT, $service->sync(true, 10));
         $calls = $client->calls;
-        self::assertSame(['login', 'account_created'], array_column(array_merge(...array_column($calls, 'events')), 'name'));
+        self::assertCount(1, $calls, 'the consent change');
+        self::assertSame([], array_merge(...array_column($calls, 'events')));
         foreach ($calls as $call) {
             self::assertSame([], $call['attributes']);
             self::assertSame([], $call['identity']['attributes'] ?? []);
         }
         self::assertSame([], \MessagingService::usersWithPendingDelivery(self::$db), 'withheld rows never bring the user back');
-        self::assertSame(['withheld', 'withheld'], array_column(array_slice(self::events(), 0, 2), 1));
+        self::assertSame(['withheld', 'withheld', 'sent', 'withheld', 'withheld'], array_column(self::events(), 1));
 
         // A snapshot computed after the grant replaces the withheld one.
         $service->updateAttributes(['clicks_30d' => 3]);
@@ -183,6 +184,6 @@ final class UnconsentedAnalyticsUpgradeIntegrationTest extends TestCase
         [$out, $err] = self::upgrade();
         self::assertSame('RETURNED true', $out, $err);
         self::assertSame('0', (string) self::$db->query('SELECT withheld FROM 202_messaging_attributes WHERE user_id = ' . self::USER)->fetch_row()[0]);
-        self::assertSame(['login', 'sent', 'essential'], self::events()[3]);
+        self::assertSame(['login', 'withheld', 'essential'], self::events()[3]);
     }
 }

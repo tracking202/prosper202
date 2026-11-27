@@ -15,10 +15,21 @@ final class ConsentEndpointTest extends TestCase
         $this->assertStringContainsString('analytics_consent', $src);
         $this->assertStringContainsString('email_marketing_consent', $src);
     }
-    public function test_template_mounts_eu_prompt_conditionally(): void
+    public function test_template_mounts_the_prompt_conditionally(): void
     {
         $src = file_get_contents(__DIR__ . '/../../202-config/template.php');
-        $this->assertStringContainsString('needsEuPrompt', $src);
+        $this->assertStringContainsString('ConsentPolicy::takePrompt(', $src);
+    }
+
+    public function test_the_settings_box_starts_unticked(): void
+    {
+        // Ticked only from an explicit grant; an unset choice shows off.
+        $src = file_get_contents(__DIR__ . '/../../202-account/account.php');
+        $this->assertMatchesRegularExpression(
+            "/\\\$analyticsChecked = ConsentPolicy::analyticsAllowed\(/",
+            $src
+        );
+        $this->assertDoesNotMatchRegularExpression('/id="analytics_consent"[^>]*\schecked(?![a-z])/', $src);
     }
 
     public function test_disclosure_page_exists_and_links_are_live(): void
@@ -34,7 +45,7 @@ final class ConsentEndpointTest extends TestCase
             'account.php must not link a nonexistent root-absolute /disclosure route');
         $this->assertStringContainsString('202-account/disclosure.php', $account);
 
-        // The EU prompt is a consent surface too — it must carry the same link.
+        // The one-time question is a consent surface too — it must carry the same link.
         $prompt = file_get_contents(__DIR__ . '/../../202-js/consent-prompt.js');
         $this->assertStringContainsString('202-account/disclosure.php', $prompt);
     }

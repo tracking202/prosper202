@@ -330,17 +330,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				}
 			}
 
-			// Essential-tier lifecycle event for the NEW account, recorded on that
-			// user (the Analytics facade would attach it to the creating admin).
-			if ($editing !== true && $savedUserId > 0) {
-				try {
-					require_once dirname(__DIR__) . '/202-config/Messaging/MessagingService.class.php';
-					(new MessagingService($db, $savedUserId, []))->recordEvent('account_created', [], 'essential');
-				} catch (Throwable $analytics_e) {
-					error_log('[Analytics] account_created event failed: ' . $analytics_e->getMessage());
-				}
-			}
-
 			p202_account_flash('ok', $editing
 				? trim((string)$_POST['user_name']) . ' is saved as ' . $role . '.'
 				: trim((string)$_POST['user_name']) . ' is added as ' . $role . '. They sign in with the username and password you set.');

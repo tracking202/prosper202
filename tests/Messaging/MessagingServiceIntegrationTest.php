@@ -490,8 +490,7 @@ final class MessagingServiceIntegrationTest extends TestCase
             $this->assertTrue($stmt->execute());
             $stmt->close();
         }
-        // Signed in from outside the EU/UK: analytics is on by default. An
-        // account whose location is unknown has it held.
-        $this->assertTrue($db->query('INSERT INTO 202_users_pref (user_id, analytics_geo_is_eu) SELECT user_id, 0 FROM 202_users'));
+        // Every account opted in: usage data is off until it does.
+        $this->assertTrue($db->query("INSERT INTO 202_users_pref (user_id, analytics_consent) SELECT user_id, 'granted' FROM 202_users"));
     }
 }

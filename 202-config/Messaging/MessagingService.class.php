@@ -227,8 +227,9 @@ class MessagingService
     }
 
     /**
-     * The identity as sent: the attribute snapshot is analytics-tier, so it
-     * is left out for a user without analytics consent; consent always rides.
+     * The identity as sent: the attribute snapshot is left out for a user
+     * without analytics consent; consent always rides (a call is made only
+     * when the block may be shared: ConsentPolicy::BLOCK_SHAREABLE_SQL).
      *
      * @param array<string,mixed> $attributes the snapshot this delivery sends
      * @param array<string,string|null> $consent
@@ -354,10 +355,11 @@ class MessagingService
     }
 
     /**
-     * The active users with something to deliver: an event still pending
-     * (and not out of attempts, nor captured before analytics was last
-     * revoked), a changed attribute snapshot, or an unacknowledged consent
-     * change.
+     * The active users with something to deliver: with analytics granted, an
+     * event still pending (and not out of attempts, nor captured before the
+     * latest analytics choice) or a changed attribute snapshot; or an
+     * unacknowledged consent change that may be shared. A user who never
+     * opted in has nothing to deliver.
      *
      * @return list<int> user ids, ascending
      * @throws \Prosper202\Database\Exceptions\QueryException
@@ -370,14 +372,15 @@ class MessagingService
                FROM 202_users u
                LEFT JOIN 202_users_pref p ON p.user_id = u.user_id
               WHERE u.user_active = 1 AND u.user_deleted = 0
-                AND (EXISTS (SELECT 1 FROM 202_messaging_events e
-                              WHERE e.user_id = u.user_id AND e.delivery_status = 'pending'
-                                AND e.sync_attempts < ?
-                                AND (e.tier = 'essential' OR e.consent_version >= COALESCE(p.analytics_revoked_version, 0)))
-                  OR EXISTS (SELECT 1 FROM 202_messaging_attributes a
-                              WHERE a.user_id = u.user_id AND a.dirty = 1 AND a.withheld = 0
-                                AND a.consent_version >= COALESCE(p.analytics_revoked_version, 0))
-                  OR p.consent_version > p.consent_acked_version)
+                AND ((" . ConsentPolicy::ANALYTICS_ON_SQL . "
+                      AND (EXISTS (SELECT 1 FROM 202_messaging_events e
+                                    WHERE e.user_id = u.user_id AND e.delivery_status = 'pending'
+                                      AND e.sync_attempts < ?
+                                      AND e.consent_version >= p.analytics_revoked_version)
+                        OR EXISTS (SELECT 1 FROM 202_messaging_attributes a
+                                    WHERE a.user_id = u.user_id AND a.dirty = 1 AND a.withheld = 0
+                                      AND a.consent_version >= p.analytics_revoked_version)))
+                  OR (p.consent_version > p.consent_acked_version AND " . ConsentPolicy::BLOCK_SHAREABLE_SQL . "))
               ORDER BY u.user_id ASC"
         );
         $conn->bind($stmt, 'i', [self::MAX_PUSH_ATTEMPTS]);
@@ -613,11 +616,12 @@ class MessagingService
     }
 
     /**
-     * Record a behavioural event for delivery to the portal. An analytics-tier
-     * event is held to the same consent check as updateAttributes().
+     * Record a behavioural event for delivery to the portal, held to the same
+     * consent check as updateAttributes() whatever its tier: nothing is
+     * recorded before the user opts in.
      *
      * @param array<string,mixed>|null $metadata
-     * @param string $tier 'essential' (always delivered) or 'analytics' (consent-gated)
+     * @param string $tier 'essential' (operational) or 'analytics' (behavioural); a label for the portal
      * @throws \Prosper202\Database\Exceptions\QueryException
      */
     public function recordEvent(string $name, ?array $metadata = null, string $tier = 'analytics'): void
@@ -631,7 +635,7 @@ class MessagingService
             error_log("MessagingService: recordEvent rejected unknown tier '{$tier}' for event '{$name}'");
             return;
         }
-        if ($tier === 'analytics' && ($this->captureFence === null || !$this->captureFence['allowed'])) {
+        if ($this->captureFence === null || !$this->captureFence['allowed']) {
             return;
         }
 
@@ -646,14 +650,14 @@ class MessagingService
 
         $token = $this->generateToken();
         $now   = date('Y-m-d H:i:s');
-        $version = $this->captureFence['version'] ?? 0;
+        $version = $this->captureFence['version'];
         $stmt  = $this->conn->prepareWrite(
             "INSERT INTO 202_messaging_events
                 (user_id, event_name, metadata, occurred_at, client_token, delivery_status, tier, consent_version)
              SELECT ?, ?, ?, ?, ?, 'pending', ?, ? FROM DUAL
-              WHERE ? = 'essential' OR " . self::NOT_REVOKED_SINCE
+              WHERE " . self::NOT_REVOKED_SINCE
         );
-        $this->conn->bind($stmt, 'isssssisii', [$this->userId, $name, $metaJson, $now, $token, $tier, $version, $tier, $version, $this->userId]);
+        $this->conn->bind($stmt, 'isssssiii', [$this->userId, $name, $metaJson, $now, $token, $tier, $version, $version, $this->userId]);
         $this->conn->executeUpdate($stmt);
     }
 
@@ -662,8 +666,8 @@ class MessagingService
 
     /**
      * The events waiting for delivery, oldest first, at most BATCH_SIZE a call.
-     * Without analytics consent only essential-tier rows; an analytics row
-     * captured before analytics was last revoked is never one of them.
+     * None without analytics consent, whatever their tier; a row captured
+     * before the latest analytics choice is never one of them.
      *
      * @param array{analytics_allowed:bool,revoked:int} $state from ConsentPolicy::deliveryState()
      * @return list<array{_local_id: int, _consent_version: int, name: string, metadata: mixed, occurred_at: string, client_token: string, tier: string}>
@@ -671,20 +675,18 @@ class MessagingService
      */
     private function pendingEvents(array $state): array
     {
+        if (!$state['analytics_allowed']) {
+            return [];
+        }
         $stmt = $this->conn->prepareRead(
             "SELECT id, event_name, metadata, occurred_at, client_token, tier, consent_version
                FROM 202_messaging_events
               WHERE user_id = ? AND delivery_status = 'pending'
-                AND sync_attempts < ?"
-            . ($state['analytics_allowed'] ? " AND (tier = 'essential' OR consent_version >= ?)" : " AND tier = 'essential'")
-            . " ORDER BY id ASC
+                AND sync_attempts < ? AND consent_version >= ?
+              ORDER BY id ASC
               LIMIT ?"
         );
-        if ($state['analytics_allowed']) {
-            $this->conn->bind($stmt, 'iiii', [$this->userId, self::MAX_PUSH_ATTEMPTS, $state['revoked'], self::BATCH_SIZE]);
-        } else {
-            $this->conn->bind($stmt, 'iii', [$this->userId, self::MAX_PUSH_ATTEMPTS, self::BATCH_SIZE]);
-        }
+        $this->conn->bind($stmt, 'iiii', [$this->userId, self::MAX_PUSH_ATTEMPTS, $state['revoked'], self::BATCH_SIZE]);
 
         $events = [];
         foreach ($this->conn->fetchAll($stmt) as $row) {
@@ -710,9 +712,9 @@ class MessagingService
     /**
      * Deliver one batch: the pending events, the attribute snapshot when it
      * changed, and the consent block with its version. Consent is read again
-     * right before sending and decides what goes: analytics rows and the
-     * snapshot only while analytics is allowed and only when captured since
-     * it was last revoked.
+     * right before sending and decides what goes: events and the snapshot
+     * only while analytics is allowed and only when captured since the latest
+     * analytics choice; the block only when it may be shared.
      *
      * Events are marked sent, and the snapshot clean, only when the portal
      * took them; a consent change only when the portal acknowledged its
@@ -731,11 +733,11 @@ class MessagingService
         $fresh = static fn (int $version): bool => $state['analytics_allowed'] && $version >= $state['revoked'];
         $events = array_values(array_filter(
             $events,
-            static fn (array $e): bool => $e['tier'] === 'essential' || $fresh($e['_consent_version'])
+            static fn (array $e): bool => $fresh($e['_consent_version'])
         ));
         if ($attributesHash === null || !$fresh($attributesVersion)) {
-            // Analytics-tier: never sent without consent; the dirty flag stays
-            // so a later grant delivers a fresh snapshot.
+            // Never sent without consent; the dirty flag stays so a later
+            // grant delivers a snapshot captured since.
             $attributes = [];
             $attributesDirty = false;
         }
@@ -830,16 +832,16 @@ class MessagingService
     }
 
     /**
-     * Remove analytics-tier data that has not left the install: undelivered
-     * analytics events and the whole attribute snapshot (all analytics-tier).
-     * Called by ConsentPolicy::record() on a denial. False when a delete failed.
+     * Remove the usage data that has not left the install: every undelivered
+     * event, whatever its tier, and the whole attribute snapshot. Called by
+     * ConsentPolicy::record() on a denial. False when a delete failed.
      */
     public static function purgeAnalyticsData(mysqli $db, int $userId): bool
     {
         $conn = new Connection($db);
         $ok = true;
         foreach ([
-            "DELETE FROM 202_messaging_events WHERE user_id = ? AND tier = 'analytics' AND delivery_status != 'sent'",
+            "DELETE FROM 202_messaging_events WHERE user_id = ? AND delivery_status != 'sent'",
             'DELETE FROM 202_messaging_attributes WHERE user_id = ?',
         ] as $sql) {
             try {

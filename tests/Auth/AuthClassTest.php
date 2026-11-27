@@ -296,14 +296,8 @@ final class AuthClassTest extends TestCase
         $this->assertSame('UTC', $_SESSION['user_timezone']);
     }
 
-    /**
-     * A sign-in placed in the EU/UK whose location cannot be stored still
-     * signs in, and its session holds analytics; an unknown location writes
-     * nothing; a non-EU result that cannot be stored holds nothing.
-     *
-     * @dataProvider signInLocations
-     */
-    public function testTheSignInLocationIsStoredOrHeldNeverFatal(?bool $isEu, bool $held): void
+    /** A sign-in looks up no location and writes no preference: usage data is opt-in everywhere. */
+    public function testASignInWritesNoConsentOrLocation(): void
     {
         $hadDb = array_key_exists('db', $GLOBALS);
         $oldDb = $GLOBALS['db'] ?? null;
@@ -316,42 +310,26 @@ final class AuthClassTest extends TestCase
         $GLOBALS['db'] = $db;
         $_SESSION = [];
         try {
-            AUTH::begin_user_session(['user_id' => 42, 'user_name' => 'testuser'], static fn (): ?bool => $isEu);
+            AUTH::begin_user_session(['user_id' => 42, 'user_name' => 'testuser']);
 
             self::assertSame(42, $_SESSION['user_id']);
-            self::assertSame($held, $_SESSION[\ConsentPolicy::SESSION_GEO_HELD]);
-            if ($held) {
-                self::assertFalse(\ConsentPolicy::captureFence($db, 42)['allowed'] ?? true, 'the session holds analytics');
-            }
-            $writes = preg_grep('/^\s*(UPDATE|INSERT IGNORE INTO) `202_users_pref`/', $prepared);
-            if ($isEu === null) {
-                self::assertSame([], $writes, 'an unknown location writes nothing');
-            } else {
-                self::assertNotSame([], $writes, 'a definitive location is written');
-            }
+            self::assertSame([], preg_grep('/^\s*(UPDATE|INSERT IGNORE INTO) `202_users_pref`/', $prepared));
+            self::assertArrayNotHasKey('analytics_geo_held', $_SESSION);
         } finally {
             if ($hadDb) { $GLOBALS['db'] = $oldDb; } else { unset($GLOBALS['db']); }
         }
     }
 
-    /** @return array<string, array{?bool, bool}> */
-    public static function signInLocations(): array
-    {
-        return [
-            'EU/UK, not stored' => [true, true],
-            'elsewhere, not stored' => [false, false],
-            'unknown' => [null, false],
-        ];
-    }
-
     /**
-     * The sign-in location comes from REMOTE_ADDR alone: a request carrying
-     * any forwarding header is unknown, which holds analytics.
+     * VisitorIp::cloudflareOrUnforwardedPeer() names the connecting peer, or
+     * behind Cloudflare the visitor Cloudflare names; a request carrying any
+     * other forwarding header names nobody. Asked here through a country map,
+     * as the sign-in once asked it.
      *
      * @dataProvider signInRequests
      * @param array<string, string> $server
      */
-    public function testTheSignInLocationIsTheConnectingPeersNeverAForwardedOne(array $server, ?bool $expected): void
+    public function testTheConnectingPeerIsNeverAForwardedOne(array $server, ?bool $expected): void
     {
         $countries = [
             '192.0.2.10' => ['DE', true],
@@ -360,9 +338,12 @@ final class AuthClassTest extends TestCase
             '2001:db8::10' => ['FR', true],
             '2001:db8::20' => ['US', false],
         ];
-        $country = static fn (string $ip): ?array => $countries[$ip] ?? null;
+        $ip = \Prosper202\Http\VisitorIp::cloudflareOrUnforwardedPeer($server);
+        $packed = $ip === '' ? false : inet_pton($ip);
+        $found = $packed === false ? null : ($countries[(string) inet_ntop($packed)] ?? null);
+        $isEu = $found === null ? null : ($found[1] || in_array($found[0], ['GB', 'NO', 'IS', 'LI'], true));
 
-        self::assertSame($expected, AUTH::sign_in_is_eu($server, $country));
+        self::assertSame($expected, $isEu);
     }
 
     /** @return array<string, array{array<string, string>, ?bool}> */
